@@ -23,6 +23,7 @@ mod goal_continuation;
 mod goal_continuation_tests;
 mod handoff_compaction;
 pub use handoff_compaction::HandoffOutcome;
+pub(crate) mod hosted_notice;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;
@@ -53,6 +54,7 @@ mod pruning_tests;
 mod request_messages;
 #[cfg(test)]
 pub(crate) use request_messages::request_extra_clone_counters;
+pub use request_messages::tool_result_trim;
 pub(crate) use request_messages::{join_request_messages, record_request_extra_clone};
 mod response_recovery;
 mod resume_commit;
@@ -92,6 +94,7 @@ mod turn_start_tests;
 #[path = "agent/turn_state_transition_tests.rs"]
 mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
+pub use turn_streaming_mpsc::prose_repeat;
 mod usage;
 mod utils;
 #[cfg(test)]
@@ -547,22 +550,21 @@ pub struct Agent {
     /// resolution (available rungs, pinned effort, movement rules) happens at
     /// turn start so it reads the state that is current for that turn.
     armed_effort_keyword: Option<magic_keywords::EffortKeyword>,
-    /// True when the session's reasoning effort has been explicitly pinned
-    /// (via `SetReasoningEffort`). This prevents keyword overrides from
-    /// lowering the effort below the pinned value.
+    /// True when the effort was explicitly pinned (`SetReasoningEffort`), so
+    /// keyword overrides cannot lower it below the pinned value.
     reasoning_effort_pinned: bool,
     /// True when this agent runs inside the persistent serve/api-bridge daemon.
     /// Idle background compaction only starts here; a one-shot `run` leaves it
     /// false so it never compacts a transcript nobody will resume.
     persistent_runtime: bool,
-    /// Opted-in advisor worker, created on the session's first completed tool
-    /// round. `None` until then, after a disable, or when `[advisor]` is off.
+    /// Opted-in advisor worker, created on the first completed tool round; `None` before that, after a disable, or when off.
     advisor: Option<advisor::Handle>,
     /// Number of main-session messages the advisor has already been fed.
     advisor_cursor: usize,
-    /// User-turn index at which a blocker interrupt was last delivered, so the
-    /// configured immune window can route later notes to the reminder slot.
+    /// User-turn index of the last blocker interrupt, so the immune window can route later notes to the reminder slot.
     advisor_blocker_turn: Option<usize>,
+    /// This session's `/advisor` or `--advisor` choice; `None` follows `[advisor] enabled`. Not persisted.
+    advisor_enabled: Option<bool>,
 }
 
 impl Agent {
@@ -690,6 +692,7 @@ impl Agent {
             advisor: None,
             advisor_cursor: 0,
             advisor_blocker_turn: None,
+            advisor_enabled: None,
         };
         agent.restore_failover_budget();
         agent.refresh_prompt_skills_snapshot();
@@ -836,21 +839,6 @@ impl Agent {
                 self.session.id
             ));
         }
-    }
-
-    fn current_skills_snapshot(&self) -> Arc<SkillRegistry> {
-        // Global skills come from the process-wide shared registry; the
-        // project-local overlay is composed fresh from this session's
-        // workspace root so per-repo skills are session-scoped, immediately
-        // visible, and never leak across sessions (issue #457).
-        let global = self
-            .registry
-            .skills()
-            .try_read()
-            .map(|skills| Arc::new(skills.clone()))
-            .unwrap_or_else(|_| self.skills.clone());
-        let working_dir = self.session.working_dir.as_deref().map(std::path::Path::new);
-        Arc::new(SkillRegistry::effective_for_working_dir(&global, working_dir))
     }
 
     pub fn available_skill_names(&self) -> Vec<String> {

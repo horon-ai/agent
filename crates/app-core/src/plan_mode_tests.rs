@@ -376,3 +376,28 @@ fn plan_state_transitions_are_recorded_as_session_events() {
         "the recorded name must parse back"
     );
 }
+
+#[test]
+fn reviewing_a_pending_plan_leaves_it_waiting_for_a_verdict() {
+    let _env = crate::storage::lock_test_env();
+    let session = "plan-review-session";
+    clear_state(session);
+    set_state(session, PlanState::PendingApproval);
+    record_submission(
+        session,
+        SubmittedPlan {
+            request_id: "req-review".to_owned(),
+            text: "Edit the parser and run the tests.".to_owned(),
+            files: vec!["src/parser.rs".to_owned()],
+        },
+    );
+    let before = pending_plan(session);
+    let (data, message) = command(session, &["review".to_owned()]).expect("review");
+    assert_eq!(data["review"]["revision"].as_str().map(str::len), Some(12));
+    assert!(message.contains("decided nothing"));
+    assert_eq!(state_for(session), PlanState::PendingApproval);
+    assert_eq!(pending_plan(session), before);
+    assert!(approved_plan(session).is_none());
+    clear_state(session);
+    assert!(command(session, &["review".to_owned()]).is_err());
+}

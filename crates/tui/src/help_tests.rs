@@ -441,15 +441,15 @@ fn the_selection_stops_at_both_ends_and_tab_fills_it() {
 #[test]
 fn tab_fills_the_row_a_fuzzy_match_offers() {
     let mut app = app();
-    type_text(&mut app, "/mdl");
-    assert!(app.slash.is_open(), "the letters of `/model` did not offer it");
+    type_text(&mut app, "/qit");
+    assert!(app.slash.is_open(), "the letters of `/quit` did not offer it");
     assert_eq!(
         app.slash.selected_name(),
-        Some("model"),
+        Some("quit"),
         "the marker is not on the row Tab would fill"
     );
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/model", "tab did not fill the offered row");
+    assert_eq!(app.input.text(), "/quit", "tab did not fill the offered row");
     assert!(
         !app.slash.is_open(),
         "the popup stayed open over the command it had just filled"
@@ -846,4 +846,45 @@ fn the_fingerprint_reads_the_first_word_and_the_length() {
     // which is what bounds the per-frame check.
     let long = format!("/mo{}", "x".repeat(100_000));
     assert_ne!(hash("/mo"), hash(&long), "the length is part of the answer");
+}
+
+#[test]
+fn alt_m_asks_the_harness_for_read_only_plan_mode() {
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    let mut app = App::new("default socket".to_string(), receiver);
+    let key = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT);
+    let plan = Action::Runtime {
+        command: horon_agent_sdk::RuntimeCommand::Plan,
+        arguments: vec!["on".to_string()],
+    };
+    assert_eq!(app.on_key(key), Some(plan));
+}
+
+#[test]
+fn usage_covers_launch_flags_keys_and_builtin_commands() {
+    for needle in [
+        "--plan",
+        "--goal <objective>",
+        "--goal-budget <tokens>",
+        "selected cut tool call",
+        "Alt-T",
+        "Alt-M",
+        "Ctrl-P",
+        "Ctrl-Alt-P",
+        "Ctrl-Right",
+        "Ctrl-G",
+        "/commit",
+        "/diff",
+        "/export",
+        "/note",
+        "/queue",
+        "/stats",
+        "/swarm",
+    ] {
+        assert!(help::USAGE.contains(needle), "`{needle}` missing from help::USAGE");
+    }
+    assert!(
+        !help::USAGE.contains("newest cut tool call"),
+        "stale Ctrl-O description remained in help::USAGE"
+    );
 }

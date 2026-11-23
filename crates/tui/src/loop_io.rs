@@ -92,6 +92,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 }
             }
             Incoming::Models { models, current } => app.show_models(models, current),
+            Incoming::Tools(tools) => app.show_tools(tools),
             Incoming::Usage(snapshot) => app.usage(snapshot),
             Incoming::RuntimeInfo {
                 provider,
@@ -105,6 +106,8 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             Incoming::ArchivedSessions(rows) => app.show_archived_sessions(rows),
             Incoming::SessionsChecked { gone, unverified } => app.sessions_checked(&gone, unverified),
             Incoming::Skills(rows) => app.show_skills(rows),
+            Incoming::PackageCommands(commands) => app.show_package_commands(commands),
+            Incoming::PackageCommand(outcome) => app.package_command(*outcome),
             Incoming::BackgroundJobs(rows) => app.show_jobs(rows),
             Incoming::BackgroundJobCancelled {
                 call_id,
@@ -152,6 +155,18 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         },
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
         Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
+        Action::PackageCommand {
+            package_id,
+            command,
+            arguments,
+            display,
+        } => Command::PackageCommand {
+            package_id,
+            command,
+            arguments,
+            display,
+        },
+        Action::Stats => Command::Stats,
         Action::Context(command) => Command::Context(command),
         Action::Model(name) => Command::Model(name),
         Action::Effort(level) => Command::Effort(level),
@@ -186,7 +201,9 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // The user opened the list, so a failure is theirs to see and the
         // request announces itself.
         Action::Skills => Command::Skills { announce: true },
+        Action::Tools => Command::Tools,
         Action::BackgroundJobs => Command::BackgroundJobs,
+        Action::Export(path) => Command::Export { path },
         // The frame loop answers these two: the editor needs the terminal that
         // loop is drawing on, so the action never reaches the bridge thread.
         Action::EditDraft | Action::OpenArtifact(_) => return,

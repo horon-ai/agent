@@ -79,13 +79,171 @@ pub(crate) fn forget_removed_session(session_id: &str, retired_sink: Option<&mps
     // input store. Without this a daemon that opens and closes sessions forever
     // keeps every one of them, and their threads, alive.
     crate::tool::forget_session_caches(session_id);
+    crate::agent::tool_result_trim::clear_policy(session_id);
+    crate::plan_mode::clear_state(session_id);
+    crate::tool::run_approval::clear_floor(session_id);
+    crate::agent::Agent::clear_appended_system_text(session_id);
+    crate::extensions::observer::forget_session(session_id);
     horon_agent_provider_core::degradation::forget_session(session_id);
     crate::server::session_observation::forget_session(session_id);
     crate::server::session_notes::forget_session(session_id);
     crate::durable_input_runtime::forget_session(session_id);
     crate::server::control_receipts::forget_session(session_id);
+    crate::agent::hosted_notice::clear_session(session_id);
     if let Some(bus) = horon_agent_irc_core::global::get() {
         bus.forget(session_id);
     }
     forget_pending_relays(session_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::Agent;
+    use crate::agent::tool_result_trim::{self, TrimPolicy};
+    use crate::config::ApprovalMode;
+    use crate::message::{Message, ToolDefinition};
+    use crate::plan_mode::{self, PlanState, SubmittedPlan};
+    use crate::provider::{EventStream, Provider};
+    use crate::session::Session;
+    use crate::tool::{Registry, run_approval};
+    use async_trait::async_trait;
+    use std::ffi::OsString;
+    use std::sync::Arc;
+
+    struct StubProvider;
+
+    #[async_trait]
+    impl Provider for StubProvider {
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+            _system: &str,
+            _resume_session_id: Option<&str>,
+        ) -> anyhow::Result<EventStream> {
+            anyhow::bail!("stub provider must never be called")
+        }
+
+        fn name(&self) -> &str {
+            "stub"
+        }
+
+        fn fork(&self) -> Arc<dyn Provider> {
+            Arc::new(StubProvider)
+        }
+    }
+
+    struct EnvGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        prev: Option<OsString>,
+        _dir: tempfile::TempDir,
+    }
+
+    impl EnvGuard {
+        fn new() -> Self {
+            let lock = crate::storage::lock_test_env();
+            let dir = tempfile::tempdir().expect("isolated HORON_HOME");
+            let prev = std::env::var_os("HORON_HOME");
+            crate::env::set_var("HORON_HOME", dir.path());
+            Self {
+                _lock: lock,
+                prev,
+                _dir: dir,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.prev.take() {
+                Some(prev) => crate::env::set_var("HORON_HOME", prev),
+                None => crate::env::remove_var("HORON_HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn forget_removed_session_clears_policy_plan_floor_and_appended_prompt() {
+        let _env = EnvGuard::new();
+        let session = Session::create(None, None);
+        let target_id = session.id.clone();
+        let other_id = "session-forget-retained-peer";
+
+        let mut agent = Agent::new_with_session(Arc::new(StubProvider), Registry::empty(), session, None);
+        agent
+            .set_appended_system_text("custom-forget-prompt-marker")
+            .expect("append prompt text");
+        assert!(agent.system_prompt_for_debug().contains("custom-forget-prompt-marker"));
+
+        let policy = TrimPolicy::new(1_000).expect("valid trim policy");
+        tool_result_trim::set_policy(&target_id, policy);
+        tool_result_trim::set_policy(other_id, policy);
+
+        plan_mode::set_state(&target_id, PlanState::Planning);
+        plan_mode::record_submission(
+            &target_id,
+            SubmittedPlan {
+                request_id: "req-1".to_string(),
+                text: "plan body".to_string(),
+                files: vec!["a.rs".to_string()],
+            },
+        );
+        plan_mode::approve_pending_plan(&target_id);
+        plan_mode::record_submission(
+            &target_id,
+            SubmittedPlan {
+                request_id: "req-2".to_string(),
+                text: "pending body".to_string(),
+                files: vec!["b.rs".to_string()],
+            },
+        );
+        plan_mode::allow_unattended_approval(&target_id);
+
+        plan_mode::set_state(other_id, PlanState::Planning);
+
+        run_approval::set_floor(&target_id, ApprovalMode::All);
+        run_approval::set_floor(other_id, ApprovalMode::Write);
+
+        forget_removed_session(&target_id, None);
+
+        assert_eq!(tool_result_trim::policy_for(&target_id), None);
+        assert_eq!(plan_mode::state_for(&target_id), PlanState::Off);
+        assert_eq!(plan_mode::pending_plan(&target_id), None);
+        assert_eq!(plan_mode::approved_plan(&target_id), None);
+        assert_eq!(plan_mode::approve_if_opted_in(&target_id).expect("opt-in check"), None);
+        assert_eq!(
+            run_approval::stricter(&target_id, ApprovalMode::Yolo),
+            ApprovalMode::Yolo
+        );
+        assert!(
+            !agent.system_prompt_for_debug().contains("custom-forget-prompt-marker"),
+            "appended system text must be cleared when session is forgotten"
+        );
+
+        // Unrelated peer session remains intact.
+        assert_eq!(tool_result_trim::policy_for(other_id), Some(policy));
+        assert_eq!(plan_mode::state_for(other_id), PlanState::Planning);
+        assert_eq!(
+            run_approval::stricter(other_id, ApprovalMode::Yolo),
+            ApprovalMode::Write
+        );
+
+        forget_removed_session(other_id, None);
+    }
+
+    #[test]
+    fn forget_removed_session_clears_queued_hosted_notices_without_touching_peer() {
+        let target_id = "session-forget-hosted-notice-target";
+        let peer_id = "session-forget-hosted-notice-peer";
+
+        crate::agent::hosted_notice::push(target_id, "target mcp refusal".to_string());
+        crate::agent::hosted_notice::push(peer_id, "peer mcp refusal".to_string());
+
+        forget_removed_session(target_id, None);
+
+        assert_eq!(crate::agent::hosted_notice::take(target_id), None);
+        let peer_notice = crate::agent::hosted_notice::take(peer_id).expect("peer notice remains queued");
+        assert!(peer_notice.contains("- peer mcp refusal"), "{peer_notice}");
+    }
 }

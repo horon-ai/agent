@@ -488,29 +488,6 @@ impl BackgroundTaskManager {
         .await
     }
 
-    /// List all tasks (both running and completed from disk)
-    pub async fn list(&self) -> Vec<TaskStatusFile> {
-        let mut results = Vec::new();
-
-        // Read all status files from disk
-        if let Ok(mut entries) = fs::read_dir(&self.output_dir).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let path = entry.path();
-                if path.extension().map(|e| e == "json").unwrap_or(false)
-                    && let Some(status) = self.read_status_file(&path).await
-                {
-                    let reconciled = self.finalize_detached_status_if_needed(status, &path).await;
-                    let reconciled = self.finalize_orphaned_status_if_needed(reconciled, &path).await;
-                    results.push(reconciled);
-                }
-            }
-        }
-
-        // Sort by task_id (which includes timestamp)
-        results.sort_by(|a, b| b.task_id.cmp(&a.task_id));
-        results
-    }
-
     /// Get status of a specific task
     pub async fn status(&self, task_id: &str) -> Option<TaskStatusFile> {
         let status_path = self.status_path_for(task_id);

@@ -22,6 +22,7 @@
 //! it closes the screen. A query in force covers the registry's rows and takes
 //! the screen off the daemon tab, whose rows the client does not name.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -77,11 +78,27 @@ impl Row {
 
     /// The value as it appears on the row.
     pub fn text(&self) -> String {
+        self.value_cow().into_owned()
+    }
+
+    fn value_cow(&self) -> Cow<'_, str> {
         match &self.value {
-            SettingValue::Bool(value) => value.to_string(),
-            SettingValue::Str(value) => value.clone(),
-            SettingValue::Number(value) => value.to_string(),
-            SettingValue::List(items) => items.join(", "),
+            SettingValue::Bool(value) => Cow::Borrowed(if *value { "true" } else { "false" }),
+            SettingValue::Str(value) => Cow::Borrowed(value.as_str()),
+            SettingValue::Number(value) => Cow::Owned(value.to_string()),
+            SettingValue::List(items) => match items.as_slice() {
+                [] => Cow::Borrowed(""),
+                [single] => Cow::Borrowed(single.as_str()),
+                _ => Cow::Owned(items.join(", ")),
+            },
+        }
+    }
+
+    fn source_cow(&self) -> Cow<'static, str> {
+        match &self.provenance {
+            Provenance::Default => Cow::Borrowed("  default"),
+            Provenance::Flag => Cow::Borrowed("  command line"),
+            _ => Cow::Owned(format!("  {}", self.provenance)),
         }
     }
 }
@@ -133,23 +150,27 @@ pub struct SettingsOverlay {
 
 impl SettingsOverlay {
     /// An overlay listing the built-in themes plus the `*.json` files in
-    /// `themes_dir`.
+    /// `themes_dir`, initialized with default settings.
     pub fn new(themes_dir: PathBuf) -> Self {
-        let theme_choices = theme_choices(&themes_dir);
+        Self::with_settings(themes_dir, &Settings::defaults())
+    }
+
+    /// An overlay seeded directly from `settings`, reading `themes_dir` once.
+    pub fn with_settings(themes_dir: PathBuf, settings: &Settings) -> Self {
         let mut overlay = Self {
             tabs: tab_names(),
             tab: 0,
             row: 0,
-            rows: Vec::new(),
-            tab_rows: Vec::new(),
+            rows: Vec::with_capacity(settings::registry::REGISTRY.len()),
+            tab_rows: Vec::with_capacity(settings::registry::REGISTRY.len()),
             mode: Mode::Browse,
             query: String::new(),
             daemon: DaemonSettings::default(),
             daemon_row: 0,
             themes_dir,
-            theme_choices,
+            theme_choices: Vec::new(),
         };
-        overlay.refresh(&Settings::defaults());
+        overlay.refresh(settings);
         overlay
     }
 
@@ -158,18 +179,16 @@ impl SettingsOverlay {
     /// The selection and an open editor survive, so a reload while the overlay
     /// is open does not move the row the user is looking at.
     pub fn refresh(&mut self, settings: &Settings) {
-        self.rows = settings::registry::REGISTRY
-            .iter()
-            .map(|spec| Row {
-                id: spec.id,
-                spec,
-                value: match settings.get(spec.id) {
-                    Some(entry) => entry.value.clone(),
-                    None => spec.default_value(),
-                },
-                provenance: settings.provenance(spec.id).cloned().unwrap_or(Provenance::Default),
-            })
-            .collect();
+        self.rows.clear();
+        self.rows.extend(settings::registry::REGISTRY.iter().map(|spec| Row {
+            id: spec.id,
+            spec,
+            value: match settings.get(spec.id) {
+                Some(entry) => entry.value.clone(),
+                None => spec.default_value(),
+            },
+            provenance: settings.provenance(spec.id).cloned().unwrap_or(Provenance::Default),
+        }));
         self.theme_choices = theme_choices(&self.themes_dir);
         self.rebuild_tab();
     }
@@ -178,7 +197,9 @@ impl SettingsOverlay {
     pub fn set_daemon(&mut self, daemon: DaemonSettings) {
         self.daemon = daemon;
         self.daemon_row = 0;
-        self.rebuild_tab();
+        if self.on_daemon_tab() && self.query.is_empty() {
+            self.rebuild_tab();
+        }
     }
 
     /// The tabs: the registry's own, then the read-only daemon tab.
@@ -509,29 +530,31 @@ impl SettingsOverlay {
             };
             return;
         }
-        self.tab_rows = if self.query.is_empty() {
+        self.tab_rows.clear();
+        if self.query.is_empty() {
             let tab = self.tab_name();
-            self.rows
-                .iter()
-                .enumerate()
-                .filter(|(_, row)| Some(row.spec.ui.tab) == tab)
-                .map(|(index, _)| index)
-                .collect()
+            self.tab_rows.extend(
+                self.rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| Some(row.spec.ui.tab) == tab)
+                    .map(|(index, _)| index),
+            );
         } else {
             // Best hit first, so the selection a query lands on is the row it
             // describes best rather than the first one that happens to share
             // its letters. Equal scores keep registry order, which is why a
             // one-letter query still reads top to bottom.
             let needle = self.query.to_lowercase();
-            let mut ranked: Vec<(i32, usize)> = self
-                .rows
-                .iter()
-                .enumerate()
-                .filter_map(|(index, row)| match_score(&needle, row).map(|score| (score, index)))
-                .collect();
+            let mut ranked: Vec<(i32, usize)> = Vec::with_capacity(self.rows.len());
+            for (index, row) in self.rows.iter().enumerate() {
+                if let Some(score) = match_score(&needle, row) {
+                    ranked.push((score, index));
+                }
+            }
             ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
-            ranked.into_iter().map(|(_, index)| index).collect()
-        };
+            self.tab_rows.extend(ranked.into_iter().map(|(_, index)| index));
+        }
         self.row = match self.tab_rows.len() {
             0 => 0,
             length => self.row.min(length - 1),
@@ -661,12 +684,30 @@ fn stepped(position: usize, length: usize, delta: i32) -> usize {
 /// finds its row on a tab that is not open. The best field decides the rank, so
 /// the row a query lands on is the one whose name it matches before the ones it
 /// only shares a key or a sentence with.
+fn contains_case_insensitive(haystack: &str, lower_needle: &str) -> bool {
+    if lower_needle.is_empty() {
+        return true;
+    }
+    if haystack.is_ascii() && lower_needle.is_ascii() {
+        let needle = lower_needle.as_bytes();
+        return haystack
+            .as_bytes()
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle));
+    }
+    haystack.to_lowercase().contains(lower_needle)
+}
+
 fn match_score(needle: &str, row: &Row) -> Option<i32> {
-    [(3, row.spec.ui.label), (2, row.id), (1, row.spec.ui.description)]
-        .into_iter()
-        .filter(|(_, field)| field.to_lowercase().contains(needle))
-        .map(|(rank, _)| rank)
-        .max()
+    if contains_case_insensitive(row.spec.ui.label, needle) {
+        Some(3)
+    } else if contains_case_insensitive(row.id, needle) {
+        Some(2)
+    } else if contains_case_insensitive(row.spec.ui.description, needle) {
+        Some(1)
+    } else {
+        None
+    }
 }
 
 /// The tabs in registry order, each named once, then the daemon tab.
@@ -748,7 +789,7 @@ fn theme_choices(dir: &std::path::Path) -> Vec<String> {
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        if !choices.contains(&stem.to_string()) && !user.contains(&stem.to_string()) {
+        if stem != "dark" && stem != "light" && !user.iter().any(|existing| existing == stem) {
             user.push(stem.to_string());
         }
     }
@@ -891,7 +932,8 @@ pub fn draw(
     let [tabs_area, body_area, footer_area] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(2)]).areas(inner);
 
-    let mut tabs: Vec<Span<'static>> = Vec::new();
+    let searching = !overlay.query.is_empty();
+    let mut tabs: Vec<Span<'_>> = Vec::with_capacity(overlay.tabs.len() * 4 + if searching { 2 } else { 0 });
     for (index, tab) in overlay.tabs.iter().enumerate() {
         let style = if index == overlay.tab {
             Style::default()
@@ -900,23 +942,23 @@ pub fn draw(
         } else {
             Style::default().fg(theme.core.muted)
         };
-        tabs.push(Span::styled(format!(" {tab} "), style));
+        tabs.push(Span::styled(" ", style));
+        tabs.push(Span::styled(*tab, style));
+        tabs.push(Span::styled(" ", style));
         tabs.push(Span::raw(" "));
     }
-    let searching = !overlay.query.is_empty();
     // A filter outlives the search line, and it decides which rows are on
     // screen, so the header keeps it in view: otherwise a short list with the
     // matching tab highlighted would read as the whole tab.
     if searching {
-        tabs.push(Span::styled(
-            format!("/{}", overlay.query),
-            Style::default().fg(theme.core.text).add_modifier(Modifier::BOLD),
-        ));
+        let style = Style::default().fg(theme.core.text).add_modifier(Modifier::BOLD);
+        tabs.push(Span::styled("/", style));
+        tabs.push(Span::styled(overlay.query.as_str(), style));
     }
     frame.render_widget(Line::from(tabs), tabs_area);
 
     let visible = body_area.height as usize;
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut lines: Vec<Line<'_>> = Vec::with_capacity(overlay.tab_rows.len().saturating_add(8));
     let mut selected_line = 0usize;
     if overlay.on_daemon_tab() && !searching {
         // The daemon tab is a read-only table, so it draws its own rows and
@@ -933,22 +975,32 @@ pub fn draw(
         draw_daemon_footer(frame, footer_area, overlay, theme);
         return None;
     }
-    let mut group: Option<String> = None;
-    for (position, row) in overlay.rows().into_iter().enumerate() {
+    const SPACES_20: &str = "                    ";
+    let mut group: Option<(&'static str, &'static str)> = None;
+    for (position, row) in overlay
+        .tab_rows
+        .iter()
+        .filter_map(|&index| overlay.rows.get(index))
+        .enumerate()
+    {
         // A filter puts rows from every tab in one list, so the header names
         // the tab as well: one `Content` heading under `Transcript` and another
         // under `Editor` would read as the same group twice.
-        let heading = if searching {
-            format!("{} · {}", row.spec.ui.tab, row.spec.ui.group)
-        } else {
-            row.spec.ui.group.to_string()
-        };
-        if group.as_deref() != Some(heading.as_str()) {
-            lines.push(Line::from(Span::styled(
-                format!(" {heading}"),
-                Style::default().fg(theme.core.muted).add_modifier(Modifier::BOLD),
-            )));
-            group = Some(heading);
+        if group != Some((row.spec.ui.tab, row.spec.ui.group)) {
+            let group_style = Style::default().fg(theme.core.muted).add_modifier(Modifier::BOLD);
+            let line = if searching {
+                Line::from(Span::styled(
+                    format!(" {} · {}", row.spec.ui.tab, row.spec.ui.group),
+                    group_style,
+                ))
+            } else {
+                Line::from(vec![
+                    Span::styled(" ", group_style),
+                    Span::styled(row.spec.ui.group, group_style),
+                ])
+            };
+            lines.push(line);
+            group = Some((row.spec.ui.tab, row.spec.ui.group));
         }
         let chosen = position == overlay.row;
         if chosen {
@@ -970,11 +1022,21 @@ pub fn draw(
         } else {
             Style::default().fg(theme.core.muted)
         };
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {:<20}", row.spec.ui.label), base),
-            Span::styled(row.text(), base),
-            Span::styled(format!("  {}", row.source()), origin),
-        ]));
+        let label = row.spec.ui.label;
+        let value = Span::styled(row.value_cow(), base);
+        let source = Span::styled(row.source_cow(), origin);
+        let spans = if label.is_ascii() && label.len() <= 20 {
+            vec![
+                Span::styled("  ", base),
+                Span::styled(label, base),
+                Span::styled(&SPACES_20[..20 - label.len()], base),
+                value,
+                source,
+            ]
+        } else {
+            vec![Span::styled(format!("  {label:<20}"), base), value, source]
+        };
+        lines.push(Line::from(spans));
     }
     if lines.is_empty() && searching {
         // A filter with no hit is a result, not a blank panel: the screen says
@@ -1012,10 +1074,10 @@ pub fn draw(
             };
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::from(Span::styled(
-                        format!(" {description}"),
-                        Style::default().fg(theme.core.text),
-                    )),
+                    Line::from(vec![
+                        Span::raw(" "),
+                        Span::styled(description, Style::default().fg(theme.core.text)),
+                    ]),
                     Line::from(Span::styled(hint, Style::default().fg(theme.core.muted))),
                 ]),
                 footer_area,
@@ -1028,12 +1090,13 @@ pub fn draw(
                 .unwrap_or("no setting matches that search");
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::from(Span::styled(
-                        format!(" {description}"),
-                        Style::default().fg(theme.core.text),
-                    )),
                     Line::from(vec![
-                        Span::styled(format!(" /{}", overlay.query), Style::default().fg(theme.core.text)),
+                        Span::raw(" "),
+                        Span::styled(description, Style::default().fg(theme.core.text)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(" /", Style::default().fg(theme.core.text)),
+                        Span::styled(overlay.query.as_str(), Style::default().fg(theme.core.text)),
                         Span::styled("  enter keep filter  esc clear", Style::default().fg(theme.core.muted)),
                     ]),
                 ]),
@@ -1074,16 +1137,16 @@ pub fn draw(
         }
         Mode::Edit { buffer, error } => {
             let (hint, style) = match error {
-                Some(error) => (error.clone(), Style::default().fg(theme.core.error)),
-                None => (
-                    " enter save  esc cancel".to_string(),
-                    Style::default().fg(theme.core.muted),
-                ),
+                Some(error) => (error.as_str(), Style::default().fg(theme.core.error)),
+                None => (" enter save  esc cancel", Style::default().fg(theme.core.muted)),
             };
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::from(Span::styled(format!(" {buffer}"), Style::default().fg(theme.core.text))),
-                    Line::from(Span::styled(format!(" {hint}"), style)),
+                    Line::from(vec![
+                        Span::raw(" "),
+                        Span::styled(buffer.as_str(), Style::default().fg(theme.core.text)),
+                    ]),
+                    Line::from(vec![Span::raw(" "), Span::styled(hint, style)]),
                 ]),
                 footer_area,
             );

@@ -47,6 +47,14 @@ impl App {
                 self.transcript.push_notice(format!(
                     "recording to {shown}; approval answers, unsent drafts and tool bodies stay out; /record stop ends it"
                 ));
+                let live = self.replay.as_ref().map_or(&self.transcript, |replay| &replay.live);
+                let published = live
+                    .items()
+                    .iter()
+                    .filter(|item| matches!(item, crate::transcript::Item::Assistant(_)))
+                    .count();
+                self.record_scan = (live.revision(), published);
+                self.record_generation = live.items_generation();
             }
             Err(error) => self.warn(format!("recording: {error}")),
         }
@@ -107,37 +115,41 @@ impl App {
     /// A replay owns the transcript while it runs, so its scratch conversation
     /// never moves the count: the live conversation is the one being recorded.
     pub(super) fn record_new_assistants(&mut self) {
-        if self.replay.is_some() {
+        if self.replay.is_some() || self.recorder.is_none() {
             return;
         }
+        let generation = self.transcript.items_generation();
+        if generation == self.record_generation {
+            return;
+        }
+        self.record_generation = generation;
         let revision = self.transcript.revision();
-        let published = self
-            .transcript
-            .items()
-            .iter()
-            .filter(|item| matches!(item, crate::transcript::Item::Assistant(_)))
-            .count();
-        if self.recorder.is_none() {
-            self.record_scan = (revision, published);
-            return;
+        let same_revision = revision == self.record_scan.0;
+        let prev_seen = self.record_scan.1;
+        let mut seen = 0usize;
+        let mut failed = None;
+        if let Some(recorder) = self.recorder.as_mut() {
+            for item in self.transcript.items() {
+                let crate::transcript::Item::Assistant(text) = item else {
+                    continue;
+                };
+                seen += 1;
+                if !same_revision || seen <= prev_seen {
+                    continue;
+                }
+                if let Err(error) = recorder.push(&Event::Assistant(text.clone())) {
+                    let path = recorder.path().display().to_string();
+                    let events = recorder.events();
+                    failed = Some((path, events, error));
+                    break;
+                }
+            }
         }
-        if revision != self.record_scan.0 || published <= self.record_scan.1 {
-            self.record_scan = (revision, published);
-            return;
-        }
-        let fresh: Vec<String> = self
-            .transcript
-            .items()
-            .iter()
-            .filter_map(|item| match item {
-                crate::transcript::Item::Assistant(text) => Some(text.clone()),
-                _ => None,
-            })
-            .skip(self.record_scan.1)
-            .collect();
-        self.record_scan = (revision, published);
-        for text in fresh {
-            self.record_event(Event::Assistant(text));
+        self.record_scan = (revision, seen);
+        if let Some((path, events, error)) = failed {
+            self.recorder = None;
+            self.warn(format!("recording stopped at {path} ({events} events): {error}"));
+            self.record_generation = self.transcript.items_generation();
         }
     }
 

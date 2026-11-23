@@ -414,6 +414,36 @@ fn export_session_markdown_sends_the_request_and_returns_the_transcript() {
 }
 
 #[test]
+fn export_session_html_sends_the_request_and_returns_the_report() {
+    let client = fake_harness(CAPABILITIES.to_vec(), |frame, writer| match frame.request {
+        ApiRequest::ExportSessionHtml { ref session_id } => {
+            assert_eq!(session_id, "s1");
+            reply(
+                frame,
+                ApiEvent::SessionHtml {
+                    session_id: "s1".into(),
+                    html: "<!DOCTYPE html>\n<html lang=\"en\"><body><h2>User</h2></body></html>\n".into(),
+                },
+                writer,
+            )
+        }
+        _ => reply(
+            frame,
+            ApiEvent::Error {
+                code: ErrorCode::UnknownRequest,
+                message: "unexpected request".into(),
+                details: None,
+            },
+            writer,
+        ),
+    });
+
+    let html = client.export_session_html("s1").expect("export");
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(html.contains("<h2>User</h2>"));
+}
+
+#[test]
 fn export_session_markdown_refuses_a_server_without_session_replication() {
     let client = fake_harness(vec!["sessions"], |frame, writer| {
         reply(

@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 /// parse cache. Other tools' files live under `<home>/external`, which is where
 /// `user_home_path` resolves `~` while `HORON_HOME` is set.
 struct Sandbox {
+    // Dropped first, while the lock is still held, so the pin never outlives
+    // the home it points into.
+    _trust_file: crate::workspace_trust::TrustFileGuard,
     _guard: std::sync::MutexGuard<'static, ()>,
     home: tempfile::TempDir,
     previous_home: Option<std::ffi::OsString>,
@@ -25,9 +28,10 @@ impl Sandbox {
             std::fs::write(home.path().join("config.toml"), config).expect("config");
         }
         crate::config::Config::invalidate_cache();
-        crate::workspace_trust::set_trust_file_for_tests(home.path().join("workspace-trust.json"));
+        let trust_file = crate::workspace_trust::set_trust_file_for_tests(home.path().join("workspace-trust.json"));
         super::clear_cache_for_tests();
         Self {
+            _trust_file: trust_file,
             _guard: guard,
             home,
             previous_home,

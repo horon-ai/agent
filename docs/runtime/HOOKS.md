@@ -140,6 +140,58 @@ Fires after every tool call. Extra fields are below.
 paths the tool was told to read or write. Files a `bash` command happens to change
 are not tracked.
 
+## Package observation hooks
+
+A user-installed package observes the same moments without a command line of its
+own. An extension or plugin declares `events` in its declaration, and a plugin may
+also bundle hook files that subscribe its binary to more of them:
+
+```toml
+# extension.toml
+events = ["turn.start", "turn.end"]
+```
+
+```json
+// resources/hooks/tools.json, named in [resources] hooks of plugin.toml
+{"events": ["tool.after"]}
+```
+
+The declaration and the bundled hook files form one subscription set. One event
+named twice (in the declaration and a hook file, or by two hook files) fails
+installation instead of being delivered twice.
+
+A child built with the author SDK answers the handshake from `extension.toml`
+alone, so an event that only a hook file names is offered by the host but not
+accepted by an SDK child. List an SDK package's events in its declaration; a hook
+file is for a binary that handles the extra events itself.
+
+The six events are `session.start`, `session.end`, `turn.start`, `turn.end`,
+`tool.before` and `tool.after`. Each travels as one `observer/notify` notification
+on the package's own supervised child, the same connection its tool and command
+calls use, and only a package whose subscription set names the event receives it.
+
+| Event | Metadata |
+| --- | --- |
+| `session.start`, `session.end`, `turn.start` | `seq`, `source` |
+| `turn.end` | `seq`, `status` (`ok`/`error`), `duration_ms` |
+| `tool.before` | `seq`, `tool`, `call_id`, `origin` (`package`/`mcp`/`builtin`) |
+| `tool.after` | `seq`, `outcome` (`ok`/`error`), `duration_ms` |
+
+`seq` is one monotonic sequence per session, in delivery order. `session.start` is
+delivered once per session even when a client reconnects and a new agent object
+serves the same session, and the sequence keeps advancing across that reconnect.
+`tool.before` is published only after the approval mode and the `pre_tool` gate
+allowed the call, and `tool.after` only for a call that ran. No prompt text, tool
+input or tool result appears in a notice.
+
+Package observation is fire-and-forget: the event goes into a bounded per-session
+queue, so a slow, stuck or crashed package delays only its own delivery. A full
+queue drops the event, counts it and lets the turn continue, and a disable or
+removal stops delivery at once. An observer can never allow, deny or modify a
+call; the `pre_tool` gate below keeps its exit-code contract, and no package
+observation is consulted for any decision. Plan mode is read-only, so an
+observation never starts a package child on its own while a session is planning.
+
 ## Feedback hook: `post_tool_feedback`
 
 `post_tool_feedback` runs **synchronously after every successful tool call** and
@@ -234,8 +286,9 @@ pre_tool_transform_timeout_ms = 500
 ```
 
 This hook starts a program configured under `[hooks]` and exchanges data over
-standard input and output. The planned Rust package system gives package hooks
-observation-only events. Input transformers use the explicit `[hooks]` setting.
+standard input and output. The Rust package system gives package observers
+observation-only events, so a package can never rewrite a call; input
+transformers use the explicit `[hooks]` setting.
 
 Each transformer receives the current full tool input JSON on standard input and
 `HORON_AGENT_HOOK_TOOL_NAME`, `HORON_AGENT_HOOK_SESSION_ID`, and

@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 25
+API_VERSION_MINOR = 27
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -35,6 +35,11 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("background_output_v1", ("background_output",)),
     ("live_todo_v1", ("todo_changed",)),
     ("effective_settings_v1", ("get_effective_settings",)),
+    ("package_control_v1", ("package_control",)),
+    (
+        "package_commands_v1",
+        ("runtime_command.package_commands", "runtime_command.package_command"),
+    ),
 )
 
 """Additive capabilities this protocol version defines, with the surfaces each
@@ -56,7 +61,9 @@ RuntimeCommand: TypeAlias = Literal[
     "memory",
     "swarm",
     "agents",
+    "modelpreset",
     "subagent_model",
+    "trim",
     "autoreview",
     "autojudge",
     "transport",
@@ -76,8 +83,178 @@ RuntimeCommand: TypeAlias = Literal[
     "logout",
     "plan",
     "observations",
+    "goal",
+    "advisor",
+    "dirs",
     "mcp",
+    "package_commands",
+    "package_command",
 ]
+
+PackageCommandKind: TypeAlias = Literal["template", "executable"]
+
+"""How one package command runs: a Markdown template or a child process."""
+
+
+class PackageCommandInfo(TypedDict, total=False):
+    """One slash command an installed package supplies.
+
+    ``name`` is what a user types after the slash, ``<package id>:<command>``,
+    and the entries belong to the package generation the session observes.
+    """
+
+    name: str
+    package_id: str
+    command: str
+    kind: PackageCommandKind
+    description: str
+    argument_hint: str
+
+
+class PackageCommandList(TypedDict, total=False):
+    """The reply to a ``package_commands`` runtime command."""
+
+    # The package catalog generation the entries were read at; 0 for none.
+    generation: int
+    commands: list[PackageCommandInfo]
+
+
+class PackageCommandOutcome(TypedDict, total=False):
+    """The reply to a ``package_command`` runtime command.
+
+    A template sets ``text``, the user message it expands to; an executable
+    command sets ``output`` and the child's ``data`` after the tool policy
+    allowed the call.
+    """
+
+    name: str
+    package_id: str
+    command: str
+    kind: PackageCommandKind
+    text: str
+    output: str
+    data: Any
+
+
+PackageKind: TypeAlias = Literal["extension", "plugin"]
+
+
+class PackageControlGlobalScope(TypedDict):
+    """Package installed in the user's shared catalog."""
+
+    kind: Literal["global"]
+
+
+class PackageControlProjectScope(TypedDict):
+    """Package installed for one canonical project root."""
+
+    kind: Literal["project"]
+    root: str
+
+
+PackageControlScope: TypeAlias = PackageControlGlobalScope | PackageControlProjectScope
+
+
+class _PackageControlInstallRequired(TypedDict):
+    kind: Literal["install"]
+    directory: str
+    scope: PackageControlScope
+
+
+class PackageControlInstallOperation(_PackageControlInstallRequired, total=False):
+    """Install one package directory into ``scope``."""
+
+    replace: bool
+
+
+class PackageControlDisableOperation(TypedDict):
+    """Disable an installed package without removing its files."""
+
+    kind: Literal["disable"]
+    id: str
+
+
+class PackageControlEnableOperation(TypedDict):
+    """Re-enable a disabled package."""
+
+    kind: Literal["enable"]
+    id: str
+
+
+class PackageControlRemoveOperation(TypedDict):
+    """Remove an installed package while reserving its id tombstone."""
+
+    kind: Literal["remove"]
+    id: str
+
+
+class PackageControlSyncInboxOperation(TypedDict):
+    """Install every complete directory under ``inbox/``."""
+
+    kind: Literal["sync_inbox"]
+
+
+class PackageControlStatusOperation(TypedDict):
+    """Read the published catalog without changing it."""
+
+    kind: Literal["status"]
+
+
+PackageControlOperation: TypeAlias = (
+    PackageControlInstallOperation
+    | PackageControlDisableOperation
+    | PackageControlEnableOperation
+    | PackageControlRemoveOperation
+    | PackageControlSyncInboxOperation
+    | PackageControlStatusOperation
+)
+
+
+class PackageControlRequest(TypedDict):
+    """One catalog request, identified by a caller-chosen operation id."""
+
+    operation_id: str
+    operation: PackageControlOperation
+
+
+PackageControlState: TypeAlias = Literal["installed", "disabled", "revoked"]
+
+
+class PackageSummary(TypedDict):
+    """One catalog record as a management client sees it."""
+
+    kind: PackageKind
+    id: str
+    version: str
+    name: str
+    scope: PackageControlScope
+    state: PackageControlState
+    generation: int
+
+
+class PackageInboxSkip(TypedDict):
+    """One inbox entry a pass left in place, with the reason."""
+
+    name: str
+    reason: str
+
+
+class _PackageControlReceiptRequired(TypedDict):
+    operation_id: str
+    generation: int
+    catalog: list[PackageSummary]
+
+
+class PackageControlReceipt(_PackageControlReceiptRequired, total=False):
+    """The authoritative answer to one ``package_control`` request.
+
+    ``operation_id``, ``generation``, and ``catalog`` are always present.
+    """
+
+    replayed: bool
+    changed: list[str]
+    skipped: list[PackageInboxSkip]
+
 
 PermissionDecision: TypeAlias = Literal["allow", "allow_always", "deny"]
 
@@ -494,6 +671,15 @@ class SessionMarkdown(TypedDict, total=False):
     markdown: str
 
 
+class SessionHtml(TypedDict, total=False):
+    """Reply to ``export_session_html``."""
+
+    session_id: str
+    # Standalone HTML report: every transcript character escaped, the stylesheet
+    # inline, and nothing loaded from the network.
+    html: str
+
+
 class SessionEventPage(TypedDict, total=False):
     """Reply to ``export_session_events``."""
 
@@ -724,6 +910,7 @@ ServerFrame: TypeAlias = dict[str, Any]
 #: Every event tag the SDK knows about, for drift checks and routing.
 KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "runtime_command_result",
+    "package_control",
     "hello_ok",
     "ok",
     "error",
@@ -788,6 +975,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "session_heads",
     "session_history_page",
     "session_markdown",
+    "session_html",
     "session_event_page",
     "session_import_result",
     "session_blob_chunk",
@@ -866,6 +1054,8 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "export_session_record_blob",
     "import_session_record_blob",
     "export_session_markdown",
+    "export_session_html",
+    "package_control",
     "get_session_record_blob_status",
     "get_runtime_state",
     "apply_control",

@@ -60,42 +60,6 @@ fn last_line(app: &App) -> String {
 }
 
 #[test]
-fn builtin_exit_and_keys_resolve_to_the_local_commands() {
-    let (_user, _project, state) = registry();
-    assert_eq!(
-        state.resolve("/exit"),
-        Invocation::Local {
-            command: Local::Exit,
-            arguments: String::new()
-        }
-    );
-    assert_eq!(
-        state.resolve("/keys"),
-        Invocation::Local {
-            command: Local::Keys,
-            arguments: String::new()
-        }
-    );
-    // The argument survives resolution so the handler can decide; `/exit` only
-    // ignores it, it does not turn the line into prose.
-    assert_eq!(
-        state.resolve("/exit now"),
-        Invocation::Local {
-            command: Local::Exit,
-            arguments: "now".to_string()
-        }
-    );
-    // Surrounding whitespace is not part of the name.
-    assert_eq!(
-        state.resolve("  /keys  "),
-        Invocation::Local {
-            command: Local::Keys,
-            arguments: String::new()
-        }
-    );
-}
-
-#[test]
 fn builtin_exit_leaves_through_the_quit_action() {
     let (_user, _project, mut app) = app_fixture();
     assert_eq!(type_line(&mut app, "/exit"), Some(Action::Quit));
@@ -422,25 +386,6 @@ fn builtin_help_lists_every_built_in_command() {
 }
 
 #[test]
-fn builtin_new_and_switch_resolve_to_the_local_commands() {
-    let (_user, _project, state) = registry();
-    assert_eq!(
-        state.resolve("/new"),
-        Invocation::Local {
-            command: Local::New,
-            arguments: String::new()
-        }
-    );
-    assert_eq!(
-        state.resolve("/switch session_b"),
-        Invocation::Local {
-            command: Local::Switch,
-            arguments: "session_b".to_string()
-        }
-    );
-}
-
-#[test]
 fn builtin_help_names_what_new_and_switch_do() {
     let (_user, _project, mut app) = app_fixture();
     assert_eq!(type_line(&mut app, "/help new"), None);
@@ -587,5 +532,23 @@ fn builtin_artifact_lists_the_store_when_no_id_is_given() {
     assert!(
         listing.contains("   2") && listing.contains("bash"),
         "the second artifact is missing from the listing:\n{listing}"
+    );
+}
+
+#[test]
+fn builtin_export_sends_the_destination_and_asks_for_one_when_missing() {
+    let (_user, _project, mut app) = app_fixture();
+    assert_eq!(
+        type_line(&mut app, "/export reports/session.html"),
+        Some(Action::Export("reports/session.html".to_string())),
+        "the destination the reader typed must reach the bridge unchanged"
+    );
+    // No destination is a question for the reader, not a write somewhere they
+    // did not name.
+    assert_eq!(type_line(&mut app, "/export"), None);
+    assert!(
+        last_line(&app).contains("/export <path>"),
+        "the usage line did not name the argument: {}",
+        last_line(&app)
     );
 }

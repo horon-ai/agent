@@ -74,6 +74,11 @@ pub struct LaunchOptions {
     /// State directory for the instance. A temporary, drop-cleaned directory is
     /// used when omitted; an explicit directory is persistent.
     pub horon_agent_home: Option<PathBuf>,
+    /// Runtime directory for both daemon sockets. Defaults to `<home>/run`.
+    ///
+    /// A hosted instance overrides it so sockets stay off the home volume and
+    /// on a short path under the platform's Unix-socket limit.
+    pub runtime_dir: Option<PathBuf>,
     /// Working directory inherited by sessions created in the instance.
     pub working_dir: Option<PathBuf>,
     /// Share the user's provider login files. Enabled by default.
@@ -115,6 +120,7 @@ impl Default for LaunchOptions {
     fn default() -> Self {
         Self {
             horon_agent_home: None,
+            runtime_dir: None,
             working_dir: None,
             inherit_logins: true,
             binary: None,
@@ -185,7 +191,13 @@ pub fn launch_instance(options: &LaunchOptions) -> Result<LaunchedInstance> {
     };
     set_owner_only_dir(&horon_agent_home)?;
 
-    let runtime_dir = horon_agent_home.join("run");
+    let runtime_dir = match &options.runtime_dir {
+        Some(path) => {
+            fs::create_dir_all(path).map_err(launch_io)?;
+            path.clone()
+        }
+        None => horon_agent_home.join("run"),
+    };
     fs::create_dir_all(&runtime_dir).map_err(launch_io)?;
     set_owner_only_dir(&runtime_dir)?;
     let socket_path = runtime_dir.join("horon-agent-api.sock");
@@ -642,7 +654,7 @@ fn read_daemon_pid(home: &Path, runtime_dir: &Path) -> Option<i32> {
     })
 }
 
-fn stop_instance_daemon(home: &Path, runtime_dir: &Path) {
+pub(crate) fn stop_instance_daemon(home: &Path, runtime_dir: &Path) {
     if let Some(pid) = read_daemon_pid(home, runtime_dir) {
         stop_daemon_pid(pid);
     }

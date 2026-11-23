@@ -163,26 +163,21 @@ impl Suggestions {
                 .is_some_and(|offer| offer.generation == self.generation)
     }
 
-    /// The suffix, when the answer was made for exactly `text`.
-    ///
-    /// The text comparison is the whole point: a generation that matches but a
-    /// draft that does not is still a stale answer, and the editor must never
-    /// draw or accept one.
-    pub fn visible(&self, text: &str) -> Option<&str> {
+    /// Like `visible`, checking the offered draft through a predicate so the
+    /// caller does not have to materialize a `String` for the check.
+    pub(crate) fn visible_if(&self, matches: impl FnOnce(&str) -> bool) -> Option<&str> {
         let offer = self.offer.as_ref()?;
-        if !self.enabled || offer.generation != self.generation || offer.text != text {
+        if !self.enabled || offer.generation != self.generation || !matches(&offer.text) {
             return None;
         }
         Some(offer.suffix.as_str())
     }
 
-    /// Accept the answer for `text`: the whole draft including the suffix.
-    ///
-    /// The editor changes only here; until this call the draft is untouched.
-    pub fn accept(&mut self, text: &str) -> Option<String> {
-        let suffix = self.visible(text)?.to_string();
+    /// Accept the offered suffix when `matches` confirms the draft text.
+    pub(crate) fn accept_suffix(&mut self, matches: impl FnOnce(&str) -> bool) -> Option<String> {
+        let suffix = self.visible_if(matches)?.to_string();
         self.offer = None;
-        Some(format!("{text}{suffix}"))
+        Some(suffix)
     }
 
     /// Put the answer away without changing the draft; `false` when none was on
@@ -230,17 +225,27 @@ mod tests {
         state.begin(1, text).expect("an eligible draft")
     }
 
+    fn visible_for<'a>(state: &'a Suggestions, text: &str) -> Option<&'a str> {
+        state.visible_if(|expected| expected == text)
+    }
+
+    fn accept_for(state: &mut Suggestions, text: &str) -> Option<String> {
+        state
+            .accept_suffix(|expected| expected == text)
+            .map(|suffix| format!("{text}{suffix}"))
+    }
+
     #[test]
     fn an_answer_is_shown_and_accepted_only_for_its_own_text() {
         let mut state = Suggestions::new();
         let request = request(&mut state, "hel");
         assert!(state.finish(&request, "lo", Duration::ZERO));
-        assert_eq!(state.visible("hel"), Some("lo"));
+        assert_eq!(visible_for(&state, "hel"), Some("lo"));
         // The same generation with different text is still a stale answer.
-        assert_eq!(state.visible("hell"), None);
-        assert_eq!(state.accept("hell"), None);
-        assert_eq!(state.accept("hel").as_deref(), Some("hello"));
-        assert_eq!(state.visible("hel"), None, "an accepted answer is spent");
+        assert_eq!(visible_for(&state, "hell"), None);
+        assert_eq!(accept_for(&mut state, "hell"), None);
+        assert_eq!(accept_for(&mut state, "hel").as_deref(), Some("hello"));
+        assert_eq!(visible_for(&state, "hel"), None, "an accepted answer is spent");
     }
 
     #[test]
@@ -249,9 +254,9 @@ mod tests {
         let stale = request(&mut state, "hel");
         let current = request(&mut state, "hello");
         assert!(!state.finish(&stale, " world", Duration::ZERO));
-        assert_eq!(state.visible("hello"), None);
+        assert_eq!(visible_for(&state, "hello"), None);
         assert!(state.finish(&current, " world", Duration::ZERO));
-        assert_eq!(state.visible("hello"), Some(" world"));
+        assert_eq!(visible_for(&state, "hello"), Some(" world"));
     }
 
     #[test]
@@ -260,7 +265,7 @@ mod tests {
         let request = request(&mut state, "hel");
         assert!(!state.finish(&request, "lo", BUDGET + Duration::from_millis(1)));
         assert!(!state.pending());
-        assert_eq!(state.visible("hel"), None);
+        assert_eq!(visible_for(&state, "hel"), None);
     }
 
     #[test]
@@ -269,9 +274,9 @@ mod tests {
         let request = request(&mut state, "hel");
         let suffix = "x".repeat(MAX_SUGGESTION_CHARS + 1);
         assert!(!state.finish(&request, &suffix, Duration::ZERO));
-        assert_eq!(state.visible("hel"), None);
+        assert_eq!(visible_for(&state, "hel"), None);
         assert!(!state.finish(&request, "two\nlines", Duration::ZERO));
-        assert_eq!(state.visible("hel"), None);
+        assert_eq!(visible_for(&state, "hel"), None);
     }
 
     #[test]
@@ -291,8 +296,8 @@ mod tests {
         assert!(state.finish(&request, "lo", Duration::ZERO));
         assert!(state.dismiss());
         assert!(!state.dismiss());
-        assert_eq!(state.visible("hel"), None);
-        assert_eq!(state.accept("hel"), None);
+        assert_eq!(visible_for(&state, "hel"), None);
+        assert_eq!(accept_for(&mut state, "hel"), None);
     }
 
     #[test]
@@ -303,7 +308,7 @@ mod tests {
         state.skip(7);
         assert!(state.is_synced(7));
         assert!(!state.pending());
-        assert_eq!(state.visible("he"), None);
+        assert_eq!(visible_for(&state, "he"), None);
     }
 
     #[test]

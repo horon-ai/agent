@@ -521,7 +521,13 @@ fn schema_only_advertises_common_public_fields() {
     assert!(props.contains_key("paths_only"));
     assert_eq!(
         mode_enum,
-        &vec![json!("grep"), json!("find"), json!("outline"), json!("trace")]
+        &vec![
+            json!("grep"),
+            json!("find"),
+            json!("outline"),
+            json!("trace"),
+            json!("locate")
+        ]
     );
     assert!(!props.contains_key("hidden"));
     assert!(!props.contains_key("no_ignore"));

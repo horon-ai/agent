@@ -20,6 +20,7 @@ this file, this file wins.
 |`@horon-ai/horon` and six platform packages|`packages/npm`, `scripts/npm`|both binaries through one launcher|`publish-npm.yml`; publishes on each `main` release once `NPM_PUBLISH` is `true` (and again on `release: published`, which heals a run that arrived while the release was a draft), and fails the run with the recovery command instead of dry-running silently when the switch is off|
 |SDKs|`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`|headless mode from code|TypeScript: `publish-typescript-sdk.yml`, gated by its own `SDK_NPM_PUBLISH`; Python: `publish-python-sdk.yml`, manual dispatch into the `pypi` environment; neither published yet|
 |Container image|`scripts/release/Containerfile`|the daemon in headless mode|`ghcr.io/horon-ai/agent`, pushed by `release-tag.yml`|
+|Hosted per-tenant image|`scripts/hosting/Containerfile`|one customer per container with a `/data` home volume|built from the same release archives; not published, started by the control plane (`docs/architecture/HOSTING.md`)|
 
 - **One release.** Both binaries are built by the same `release.yml` run from
   the same tagged commit (`vMAJOR.MINOR.PATCH`), and `install-release` stages
@@ -142,8 +143,10 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
 - Two binaries. The agent binary, `horon-agent`, has these working
   subcommands: `serve` (agent daemon), `run` (send one message and exit),
   `repl` (plain line prompt, no full-screen UI), `api-bridge` (alias `api`;
-  harness API on a local socket, a Unix socket or a Windows named pipe), `acp`
-  (ACP adapter on stdio), and
+  harness API on a local socket, a Unix socket or a Windows named pipe, plus an
+  optional authenticated TCP listener with `--api-bind`), `api-credentials`
+  (issue, rotate, revoke and list the bearer tokens that listener accepts),
+  `acp` (ACP adapter on stdio), and
   `rpc` (stdio JSONL RPC adapter; `--mode rpc` selects the same adapter), plus
   maintenance commands such as `update` and `install-release`. The TUI binary,
   `horon-tui`, is a separate package and binary on `horon-agent-sdk`; it is
@@ -185,6 +188,22 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   packages only from the user's catalog. Run executable calls in a separate
   child under the user's OS account and through the existing tool policy. Keep
   in-process plugin loading prohibited and preserve the fixed requirements.
+- Hosting is opt-in through `HORON_AGENT_HOSTING_MODE` (`per-user-container`
+  or `shared-worker`; absent means the operator's own home, and any other value
+  is a startup error naming both). A hosted process carries
+  `HORON_AGENT_TENANT_ID` as a validated audit label and directory name, never
+  a session lookup key. A per-user container refuses to start unless
+  `HORON_HOME` is an owner-only directory that is not `~/.horon`, the runtime
+  directory is absolute, owner-only and outside the home, the TCP gateway is
+  off and the tenant id is valid. A shared worker starts, but
+  `HostingPolicy::allows_shared_children()` is false. A per-user container
+  keeps its own MCP stdio servers and package children; a shared worker refuses
+  every MCP stdio server, editor-supplied server, pool connection and remote
+  connection through one gate (`crates/base/src/mcp/hosted.rs`), with one
+  `HOSTED_POLICY` audit record per refusal. `[hosting]` in `config.toml` may
+  only narrow the policy (`allow_shared_children`, `allowed_mcp_servers`), and a
+  `mode` key there is ignored with one warning, because a tenant can write its
+  own config (`docs/architecture/HOSTING.md`, `docs/safety/SECURITY.md`).
 - Core tool profile, the default when a launch selects none (18 tools): `bash`, `read`, `write`,
   `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
   `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`.
@@ -244,12 +263,18 @@ Boundaries, each with the gate that enforces it:
 |`[tools] eval`|`false`|`true` with Python 3.10+, a profile that permits `eval`, and explicit cell approval|
 |`[features] crash_bundles`|`true`|`false`|
 |`[features] turn_recovery`|`conservative`|`aggressive`, `off`|
-|`[features] foreign_rules`, `stream_rules`|`false`|`true`|
+|`[features] foreign_rules`, `stream_rules`, `repeat_guard`|`false`|`true`|
 |`[features] effort_keywords`|`true`|`false`|
 |`[prewalk] enabled`|`false`|`true`, which then requires `into` (a model id or `role:<name>`) that passes config validation|
 |`[storage] sync`|`full`|`fast`; `HORON_AGENT_STORAGE_SYNC` overrides it for one process, and an unknown value falls back to `full` with one warning|
 |`[features] pricing_refresh`|`false`|`true`; `HORON_AGENT_PRICING_REFRESH=1` or `0` overrides it for one process|
 |`[server] idle_hibernation_secs`|`1800`|`0` disables the sweep; `HORON_AGENT_IDLE_HIBERNATION_SECS` overrides it for one process|
+|`HORON_AGENT_HOSTING_MODE`|unset (no hosting)|`per-user-container`, `shared-worker`; any other value is a startup error|
+|`HORON_AGENT_TENANT_ID`|unset|1 to 63 lowercase ASCII letters, digits and hyphens, starting and ending with a letter or digit; required by every hosted mode and used only as an audit label|
+|`[hosting] allow_shared_children`|per mode (true only in a per-user container)|`false` narrows; `true` never widens; `[hosting] mode` is ignored with one warning|
+|`[hosting] allowed_mcp_servers`|unset (every server reachable)|a list of exact MCP server names for a hosted process; an empty list refuses every server; narrowing only, never widens a mode, and a process without hosting is unchanged|
+|`HORON_AGENT_API_BIND`, `[harness_api] bind`, `--api-bind`|unset (local socket only)|`IP:PORT` for the authenticated TCP harness API listener; the flag wins over the environment and both win over the file|
+|`HORON_AGENT_API_INSECURE_BEHIND_PROXY`, `[harness_api] insecure_behind_proxy`, `--api-insecure-behind-proxy`|`false`|`true` only when a TLS-terminating proxy fronts a non-loopback bind, which also needs an issued credential (`horon-agent api-credentials issue`)|
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
 
 `[storage] sync` names a durability level, not a syscall: `full` is
@@ -266,6 +291,13 @@ read. The next Python cell starts with fresh state. `docs/performance/MEMORY.md`
 what is released and what stays.
 `0` disables the sweep, and the daemon checks every ten seconds, so
 the release lands up to one tick after the threshold passes.
+
+Memory is stored in the per-user markdown wiki under `$HORON_HOME/memory` — one
+markdown page per memory plus a SQLite index rebuilt from those pages — and the
+pre-wiki `memory/*.json` files are a migration source only
+(`docs/runtime/MEMORY.md`). Project memory is keyed by the canonical project
+directory, not by the caller's path spelling, and every `memory` action and the
+prompt-injection path read and write that store.
 
 Tools outside the core set (memory, irc) stay in the tree but off.
 `irc` is agent-to-agent messaging inside one daemon; `[tools] irc = true` adds
@@ -545,10 +577,12 @@ still states the old behaviour. To find the pages:
 |`src/cli/tui_handoff.rs`, `crates/tui/`|`docs/runtime/TUI.md`, `docs/diagram/02-run-modes`|
 |`src/cli/acp/`, `src/cli/acp.rs`|`docs/protocol/ACP.md`, `docs/diagram/05-acp-negotiation`|
 |`src/cli/rpc/`|`docs/protocol/RPC.md`|
-|`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`|`docs/protocol/HARNESS_API.md`|
+|`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`, `src/cli/api_credentials.rs`, `crates/base/src/harness_api.rs`, `crates/config-types/src/harness_api.rs`|`docs/protocol/HARNESS_API.md`|
 |`crates/app-core/src/server/`|`docs/architecture/SERVER.md`, `docs/runtime/TURNS.md`, `docs/diagram/03-turn-lifecycle`|
+|`crates/base/src/hosting.rs`, `crates/config-types/src/hosting.rs`, `crates/app-core/src/server/hosted_tenant.rs`, `crates/agent-sdk/src/launch_hosted.rs`, `scripts/hosting/`|`docs/architecture/HOSTING.md`|
 |`crates/session-store/`, `crates/storage/`, `[storage] sync`|`docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/diagram/06-session-storage`|
 |`crates/app-core/src/tool/`, `crates/tool-*`, `crates/edit-safety/`, tool profiles|`docs/runtime/TOOLS.md`, `docs/runtime/TOOL_SCHEDULING.md`, `docs/diagram/07-tool-loading`, "What this build is" above|
+|`crates/base/src/memory*`, `crates/memory-types/`, `horon memory migrate`, `horon volume`, `src/cli/volume.rs`|`docs/runtime/MEMORY.md`, `docs/runtime/TOOLS.md`, `docs/architecture/CRATES.md`, `docs/architecture/HOSTING.md`|
 |`crates/provider-*`, `crates/base/src/provider*`, `crates/config-types/`|`docs/provider/MODEL.md`, `docs/diagram/04-provider-wires`, "What this build is" above|
 |`crates/irc-core/`, `crates/app-core/src/server/irc/`|`docs/runtime/IRC.md`|
 |`crates/plan/`, `crates/swarm-core/`|`docs/runtime/SWARM_TASK_GRAPH.md`|

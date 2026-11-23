@@ -54,7 +54,12 @@
     {
       "package": "horon-agent",
       "target": "harness_roundtrip",
-      "min_passed": 2
+      "min_passed": 7
+    },
+    {
+      "package": "horon-agent",
+      "target": "hosted_tenant",
+      "min_passed": 3
     },
     {
       "package": "horon-agent",
@@ -63,8 +68,38 @@
     },
     {
       "package": "horon-agent",
+      "target": "launch_overrides_cli",
+      "min_passed": 9
+    },
+    {
+      "package": "horon-agent",
+      "target": "memory_volume",
+      "min_passed": 7
+    },
+    {
+      "package": "horon-agent",
       "target": "openai_compatible_cli",
-      "min_passed": 8
+      "min_passed": 14
+    },
+    {
+      "package": "horon-agent",
+      "target": "config_plan_cli",
+      "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
+      "target": "run_config_overlay_cli",
+      "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
+      "target": "run_system_prompt_cli",
+      "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
+      "target": "run_approval_cli",
+      "min_passed": 1
     },
     {
       "package": "horon-agent",
@@ -84,7 +119,17 @@
     {
       "package": "horon-agent",
       "target": "session_commands",
-      "min_passed": 13
+      "min_passed": 23
+    },
+    {
+      "package": "horon-agent",
+      "target": "session_move_cli",
+      "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
+      "target": "spend_cap_cli",
+      "min_passed": 3
     },
     {
       "package": "horon-agent",
@@ -113,13 +158,33 @@
     },
     {
       "package": "horon-agent-app-core",
+      "target": "package_commands",
+      "min_passed": 5
+    },
+    {
+      "package": "horon-agent-app-core",
+      "target": "package_cost",
+      "min_passed": 1
+    },
+    {
+      "package": "horon-agent-app-core",
+      "target": "package_session",
+      "min_passed": 10
+    },
+    {
+      "package": "horon-agent-app-core",
+      "target": "package_tools",
+      "min_passed": 14
+    },
+    {
+      "package": "horon-agent-app-core",
       "target": "pi_adoption_tier2",
       "min_passed": 19
     },
     {
       "package": "horon-agent-app-core",
       "target": "tool_dispatch_boundaries",
-      "min_passed": 5
+      "min_passed": 12
     },
     {
       "package": "horon-agent-app-core",
@@ -154,24 +219,24 @@
     {
       "package": "horon-agent-base",
       "target": "package_catalog",
-      "min_passed": 8
-    },
-    {
-      "package": "horon-agent-base",
-      "target": "package_manifest",
       "min_passed": 9
     },
     {
       "package": "horon-agent-base",
+      "target": "package_manifest",
+      "min_passed": 13
+    },
+    {
+      "package": "horon-agent-base",
       "target": "package_spawn",
-      "min_passed": 10,
+      "min_passed": 11,
       "skipped": ["package_child_probe"],
       "skip_reason": "The installed executable selects this probe as a child process of the package supervisor tests."
     },
     {
       "package": "horon-agent-base",
       "target": "prompt_guidance_integration",
-      "min_passed": 1
+      "min_passed": 7
     },
     {
       "package": "horon-agent-base",
@@ -241,7 +306,7 @@
     {
       "package": "horon-agent-sdk",
       "target": "session_replication",
-      "min_passed": 5
+      "min_passed": 8
     },
     {
       "package": "horon-agent-sdk",
@@ -277,6 +342,11 @@
       "package": "horon-agent-session-store",
       "target": "cache_batches",
       "min_passed": 5
+    },
+    {
+      "package": "horon-agent-session-store",
+      "target": "cache_reclaim",
+      "min_passed": 1
     },
     {
       "package": "horon-agent-session-store",

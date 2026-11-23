@@ -536,3 +536,51 @@ async fn no_advisor_is_created_while_the_switch_is_off() {
             .any(|request| request.contains("<advisory"))
     );
 }
+
+/// One session turns its advisor off while `[advisor]` is on; a second session
+/// with no choice of its own still follows the configuration.
+#[tokio::test]
+async fn turning_the_advisor_off_for_one_session_leaves_another_on_the_configuration() {
+    let sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let _config = AdvisorConfigFile::write(sandbox.root(), ADVISOR_ON);
+
+    async fn run_session(off: bool) -> (Option<String>, usize) {
+        let advisor_provider = Arc::new(AdvisorProvider::default());
+        let main = Arc::new(MainProvider::new(Arc::clone(&advisor_provider), false));
+        let registry = Registry::empty();
+        registry
+            .register("probe".to_string(), Arc::new(ProbeTool) as Arc<dyn Tool>)
+            .await;
+        let mut agent = Agent::new(Arc::clone(&main) as Arc<dyn Provider>, registry);
+        if off {
+            agent.set_advisor_enabled(false);
+            assert_eq!(agent.advisor_enabled(), Some(false));
+        } else {
+            assert_eq!(agent.advisor_enabled(), None);
+        }
+        let session_id = agent.session.id.clone();
+        main.session_id.lock().unwrap().replace(session_id.clone());
+        agent.add_message(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "fix parse_x".into(),
+                cache_control: None,
+            }],
+        );
+        agent.run_turn(false).await.expect("the main turn completes");
+        let child = advisor::test_child_session_id(&session_id);
+        let calls = advisor_provider.calls.load(Ordering::SeqCst);
+        if let Some(child) = &child {
+            drop(agent);
+            wait_for_advisor_exit(child).await;
+        }
+        (child, calls)
+    }
+
+    let (child, calls) = run_session(true).await;
+    assert!(child.is_none(), "an off session must not start an advisor");
+    assert_eq!(calls, 0, "an off session must make no advisor request");
+
+    let (child, _) = run_session(false).await;
+    assert!(child.is_some(), "a session with no choice follows [advisor] enabled");
+}

@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+pub mod control;
 pub mod wire;
 
 pub const MANIFEST_VERSION: u32 = 1;

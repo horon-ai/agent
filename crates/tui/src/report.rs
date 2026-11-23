@@ -399,7 +399,9 @@ fn title(command: RuntimeCommand) -> &'static str {
         RuntimeCommand::Memory => "memory",
         RuntimeCommand::Swarm => "swarm",
         RuntimeCommand::Agents => "agent models",
+        RuntimeCommand::ModelPreset => "model presets",
         RuntimeCommand::SubagentModel => "subagent model",
+        RuntimeCommand::Trim => "tool result trim",
         RuntimeCommand::Autoreview => "automatic review",
         RuntimeCommand::Autojudge => "automatic judge",
         RuntimeCommand::Transport => "provider transport",
@@ -418,6 +420,11 @@ fn title(command: RuntimeCommand) -> &'static str {
         RuntimeCommand::Logout => "logout",
         RuntimeCommand::Plan => "plan mode",
         RuntimeCommand::Observations => "work observations",
+        RuntimeCommand::Goal => "session goal",
+        RuntimeCommand::Advisor => "advisor",
+        RuntimeCommand::Dirs => "workspace directories",
         RuntimeCommand::Mcp => "MCP servers",
+        RuntimeCommand::PackageCommands => "package commands",
+        RuntimeCommand::PackageCommand => "package command",
     }
 }
