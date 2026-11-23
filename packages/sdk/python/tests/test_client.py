@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# dry-run check
-
 import asyncio
 import os
 import pathlib
@@ -20,6 +18,7 @@ from mock_harness import start_mock_harness, wait_until
 
 
 async def test_handshake_records_server_identity_and_capabilities() -> None:
+    # dry-run check
     server = await start_mock_harness()
     client = await HoronAgentClient.connect(ConnectOptions(socket_path=server.socket_path))
     assert client.server == "mock/0.1"
