@@ -1074,7 +1074,7 @@ def todo_edit_smoke(terminal: Terminal, home: str) -> None:
             chunk = os.read(terminal.master, 65536)
             if not chunk:
                 break
-            terminal.transcript += chunk.decode("utf-8", "replace")
+            terminal.append(chunk.decode("utf-8", "replace"))
     updated = json.loads(todo.read_text(encoding="utf-8"))[0]
     if updated["status"] != "completed" or updated["content"] != "externally updated todo":
         raise Failure(f"the refreshed edit did not preserve the updated todo: {updated!r}")
@@ -1485,7 +1485,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             observations_start = len(terminal.transcript)
             terminal.send("/observations\r")
             terminal.read_until("turn_end", STEP_TIMEOUT, "the current session reports its turn-end hook", since=observations_start)
-            terminal.read_until("idle", STEP_TIMEOUT, "turn ended before seeding the todo list", since=reply_start)
+            terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before seeding the todo list", since=reply_start)
             todo_edit_smoke(terminal, home)
             # The swarm smoke finds the parent by the approved tool call, so it
             # runs before the fork below: a branch inherits that call, and two
