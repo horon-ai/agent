@@ -118,7 +118,8 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon run "<message>"` | Sends one message, runs tools until the turn ends, then exits. Use `--thinking` and `--service-tier` to set [model options](docs/provider/MODEL.md#configuration), `--no-pty` to run shell tools through pipes, `--no-session` to keep the run in memory, `--add-dir <path>` (repeatable) to list extra workspace directories in the session context, [`--max-time`](docs/runtime/TURNS.md#run-deadline) to limit the run, and `--warn-cost` or `--max-cost` to watch its estimated spend. |
 | `horon repl` | One line at a time in the terminal, without the full-screen client. |
 | `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
-| `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. |
+| `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. `--api-bind IP:PORT` also serves it on TCP with a bearer credential. |
+| `horon api-credentials issue|rotate|revoke|list` | Issue, rotate, revoke or list the bearer tokens a TCP-exposed harness API accepts; the token is printed once ([docs](docs/protocol/HARNESS_API.md)). |
 | `horon acp` | ACP v1 and v2 adapter on stdio, for editors. |
 | `horon stats --from 2026-11-01 --through 2026-11-21` | Report stored token usage by UTC date, provider, and model. Add `--json` for structured output. In the terminal client, `/stats` reports the attached session. |
 | `horon config show` / `horon config check` | Read-only. `show` lists the effective settings with the layer behind each (default, file, env, cli) and never prints credentials; `--json` for structured output. `check` validates `config.toml` with the startup loader, names the invalid section, and exits 1 when it is invalid. |

@@ -4,6 +4,7 @@ mod autojudge;
 mod display;
 mod feature;
 mod gateway;
+mod harness_api;
 pub mod hosting;
 mod irc;
 pub mod model_roles;
@@ -19,6 +20,7 @@ pub use {
     display::DisplayConfig,
     feature::FeatureConfig,
     gateway::GatewayConfig,
+    harness_api::HarnessApiConfig,
     hosting::{HostingConfigError, HostingMode, HostingPolicy, HostingSection, MAX_TENANT_ID_LEN, TenantId},
     irc::IrcConfig,
     named_provider::{NamedProviderAuth, NamedProviderConfig, NamedProviderModelConfig, NamedProviderType},

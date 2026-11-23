@@ -118,7 +118,8 @@ horon run "summarize this repo"
 | `horon run "<메시지>"` | 메시지 하나를 보내고, 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. `--thinking`과 `--service-tier`로 [모델 옵션](docs/provider/MODEL.ko.md#설정)을 지정한다. `--no-pty`로 셸 도구에 파이프를 쓰며 `--no-session`으로 실행을 메모리에만 두고 [`--max-time`](docs/runtime/TURNS.ko.md#실행-시간-제한)으로 실행 시간을 제한하며 `--warn-cost`와 `--max-cost`로 추정 비용을 감시한다. |
 | `horon repl` | 전체 화면 클라이언트 없이 터미널에서 한 줄씩 입력한다. |
 | `horon serve` | 유닉스 소켓(`HORON_AGENT_SOCKET`)에서 도는 백그라운드 에이전트 데몬. |
-| `horon api-bridge` | SDK 클라이언트용 하네스 API 로컬 소켓(`HORON_AGENT_API_SOCKET`). Unix 소켓이거나 Windows의 네임드 파이프다. |
+| `horon api-bridge` | SDK 클라이언트용 하네스 API 로컬 소켓(`HORON_AGENT_API_SOCKET`). Unix 소켓이거나 Windows의 네임드 파이프다. `--api-bind IP:PORT`를 주면 베어러 자격 증명을 요구하는 TCP 리스너도 함께 연다. |
+| `horon api-credentials issue|rotate|revoke|list` | TCP로 노출한 하네스 API가 받는 베어러 토큰을 발급·회전·폐기·목록한다. 토큰은 한 번만 출력된다([문서](docs/protocol/HARNESS_API.ko.md)). |
 | `horon acp` | 에디터용 표준 입출력 ACP v1·v2 어댑터. |
 | `horon stats --from 2026-11-01 --through 2026-11-21` | 저장한 토큰 사용량을 UTC 날짜, 제공자와 모델별로 표시합니다. `--json`으로 구조화된 결과를 받고, 터미널 클라이언트에서는 `/stats`로 연결된 세션의 사용량을 봅니다. |
 | `horon config show` / `horon config check` | 읽기 전용입니다. `show`는 유효 설정과 각 값의 출처(default, file, env, cli)를 표시하며 자격 증명은 표시하지 않습니다. `--json`으로 구조화된 결과를 받습니다. `check`는 시작 때 쓰는 로더로 `config.toml`을 검증하고, 잘못된 섹션을 알리며 종료 코드 1을 돌려줍니다. |

@@ -2,6 +2,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use super::provider_init::ProviderChoice;
 
+mod api_credentials;
+pub(crate) use api_credentials::{ApiCredentialsAction, ApiCredentialsArgs};
 mod approval_grants;
 pub(crate) use approval_grants::{GrantsAction, GrantsArgs};
 mod mcp;
@@ -588,7 +590,20 @@ pub(crate) enum Command {
         /// Starts the shared daemon if needed; does not create an API socket. Unix only.
         #[arg(long, conflicts_with = "api_socket")]
         stdio: bool,
+
+        /// Also serve the API on a TCP address (`IP:PORT`); every TCP connection
+        /// must present a bearer token from `api-credentials`
+        #[arg(long = "api-bind", value_name = "ADDR", conflicts_with = "stdio")]
+        api_bind: Option<String>,
+
+        /// Acknowledge that a TLS-terminating proxy fronts `--api-bind`; required
+        /// for a non-loopback address because the bearer token is cleartext
+        #[arg(long = "api-insecure-behind-proxy", requires = "api_bind")]
+        api_insecure_behind_proxy: bool,
     },
+
+    /// Manage the bearer tokens a TCP-exposed harness API accepts
+    ApiCredentials(ApiCredentialsArgs),
 }
 
 #[derive(clap::Args, Debug)]

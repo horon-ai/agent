@@ -60,7 +60,28 @@ The control plane owns the mapping from a customer to an instance and its volume
 3. It forwards the customer's request to that instance's socket. The socket never leaves the container, and no agent endpoint is exposed on a network address.
 4. Requests from two customers never reach one process. There is no per-session tenant check, because there is no shared process to check against.
 
-Exposing the harness API beyond the container requires authentication, which is a separate change and is not part of this contract. Hosted images keep the gateway off and publish no port.
+Hosted images keep the gateway off. A container that must serve the harness API outside itself starts
+`horon-agent api-bridge --api-bind` (or sets `HORON_AGENT_API_BIND`), issues a credential inside that
+tenant's home, and acknowledges the TLS-terminating proxy in front; the listener then authenticates
+every TCP connection while the local socket keeps its handshake (`docs/protocol/HARNESS_API.md`).
+Because the credential file lives in the tenant's `HORON_HOME`, credentials are per customer by
+construction.
+
+Deployment target: Fly Machines, one Machine plus one Fly Volume mounted as `/data` per customer. That
+gives two ways to reach a tenant, and the contract above covers both.
+
+| Path | How it is reached | Authentication |
+|---|---|---|
+| Public port | A `services` entry whose `internal_port` is the `--api-bind` port; Fly Proxy terminates TLS on 443 and forwards plaintext over the WireGuard mesh, so the operator passes `--api-insecure-behind-proxy` | The tenant's bearer token |
+| Private 6PN | Another Machine or the control plane dials the tenant's 6PN address or `<machine>.vm.<app>.internal`; the listener binds `[::]:PORT` or `fly-local-6pn` | The tenant's bearer token |
+
+The 6PN is private to the organization, not to a user, so it does not replace the token. `fly-local-6pn`
+and `[::]` are IPv6 addresses, so they are non-loopback binds and take the same acknowledgement. A
+stopped or suspended Machine has no process and therefore no listener; the credential file stays on the
+volume, and the listener never exits on idleness, so autostop is the only thing that ends it. These
+platform statements follow Fly.io's own documentation (`docs.fly.io/networking/tls-termination`,
+`docs.fly.io/networking/app-services`, `docs.fly.io/networking/private-networking`); this repository
+implements no Fly API call and no proxy-header trust.
 
 ## Suspend, wake and restore
 

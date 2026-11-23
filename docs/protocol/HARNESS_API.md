@@ -15,6 +15,56 @@ This build has no interactive login flow. The SDK exposes two things about crede
 
 The SDK neither issues nor refreshes OAuth tokens. The launch option `inherit_logins` (on by default) links the user's existing CLI credential files into the instance, and model requests use those files as they are (`crates/agent-sdk/src/launch.rs`). Model calls go only through the OpenAI-compatible profile in `[providers.<name>]`, so this build has no model runtime that authenticates with OAuth. The `openai-oauth:` prefix still exists, but with that runtime gone it fails before the call (`docs/provider/MODEL.md`).
 
+## Serving the API beyond the local socket
+
+The default endpoint stays local: a Unix socket, a named pipe on Windows, or one stdio connection. A bridge can additionally serve the same frames on TCP, which is how a TLS-terminating proxy, an SSH forward or another machine reaches it. The local socket keeps its handshake byte for byte, so existing clients are unaffected.
+
+| Switch | Where | Meaning |
+| --- | --- | --- |
+| `--api-bind IP:PORT` | `horon-agent api-bridge` | Serve the API on that TCP address beside the local socket |
+| `HORON_AGENT_API_BIND` | environment | The same address, for a container entrypoint or a supervisor |
+| `[harness_api] bind` | `config.toml` | The same address, for an installation that always exposes one |
+| `--api-insecure-behind-proxy` | `horon-agent api-bridge` | Acknowledge that a TLS-terminating proxy fronts the address |
+| `HORON_AGENT_API_INSECURE_BEHIND_PROXY` | environment | The same acknowledgement, `1` or `true` |
+| `[harness_api] insecure_behind_proxy` | `config.toml` | The same acknowledgement |
+
+The flag wins over the environment, and both win over the file. A bind value is a literal `IP:PORT` such as `127.0.0.1:7946` or `[::1]:7946`; a host name is refused, because resolving one at bind time must not decide whether the listener is loopback.
+
+Two rules decide whether an address is allowed.
+
+- **Every TCP connection authenticates.** Its first line must be `Authorization: Bearer <token>`, and the ordinary `hello` and every later frame follow unchanged. A missing, malformed, oversized (over 1 KiB), late (over 10 seconds), wrong or revoked token closes the connection before the daemon is dialled and before any request is read, and the bridge writes nothing back.
+- **A non-loopback address also needs the proxy acknowledgement.** Built-in TLS is not implemented, so a non-loopback bind refuses to start unless the operator confirms that TLS terminates in front of it and at least one credential exists. A loopback TCP bind needs the credential but not the acknowledgement.
+
+A bridge started with `--api-bind` is not terminal-owned: it does not exit when its parent process ends or when it has been idle, because an exposed endpoint has no terminal to belong to. Stop it with its supervisor, `docker stop`, or SIGTERM.
+
+The bind value is parsed as a literal address, never resolved. Only `127.0.0.0/8` and `::1` are loopback; `0.0.0.0`, `[::]` and any other literal, including a private IPv6 address such as a Fly 6PN `fdaa::/16` one, are non-loopback and need both the credential and the proxy acknowledgement. A dual-stack listener binds `[::]:PORT`; a platform that routes to the process over IPv4 needs `0.0.0.0:PORT` instead. A host name such as `localhost:7946` is refused so that name resolution cannot decide which rule applies.
+
+### Two network paths, two different guarantees
+
+A listener on a network address is reached one of two ways, and they are not equivalent.
+
+| Path | TLS | Who can reach it | What it proves |
+| --- | --- | --- | --- |
+| Public port through the platform proxy | Terminated by the proxy, which forwards plaintext to the process over the provider's private mesh | Anyone the proxy routes; the port is public unless the app has no public IP | The bearer token alone |
+| Provider private network | None, by design | Anything on the organization's private network, by internal address | The bearer token alone |
+
+Neither path authenticates a *user*: the private network keeps other organizations out, but every process on it is equally trusted, and a public port is public. That is why every TCP connection presents the token on both paths, and why the proxy acknowledgement exists only to state where TLS ends — never to stand in for authentication. The listener trusts no forwarded header, so `Fly-Client-IP` or any other proxy header never affects who is accepted.
+
+On Fly.io, which is the hosting target for `docs/architecture/HOSTING.md`: the public path is a `services` entry in `fly.toml` (or the Machine config) whose `internal_port` matches `--api-bind`, with Fly Proxy terminating TLS on port 443 and forwarding plaintext to the process over the WireGuard mesh — so that path passes `--api-insecure-behind-proxy`. The private path is the organization's 6PN: a service is reachable there when it binds the IPv6 wildcard (`[::]:PORT`) or `fly-local-6pn`, and needs no `services` entry and no app IP. 6PN addresses are IPv6 literals in an `fdaa::/16` ULA, so `[fdaa:…]:PORT` and `[::]:PORT` are both non-loopback binds that need the proxy acknowledgement and a credential. A Fly Machine that is stopped or suspended has no running process, so its listener, its sockets and any in-memory session are gone; the credential file stays on the volume and keeps working after the next start. The listener therefore does not exit on idleness or when the starting process goes away (see above), and the control plane's autostop policy is what ends it. Those platform details are documented by Fly.io (`docs.fly.io/networking/tls-termination`, `docs.fly.io/networking/app-services`); this repository implements no Fly API call, no proxy-header handling and no autostop.
+
+### Issuing, rotating and revoking credentials
+
+| Command | Effect |
+| --- | --- |
+| `horon-agent api-credentials issue --label NAME` | Create one credential and print its token once |
+| `horon-agent api-credentials rotate ID` | Replace one credential's token and print the new token once |
+| `horon-agent api-credentials revoke ID` | Delete one credential; the next connection with its token is refused |
+| `horon-agent api-credentials list` | Print id, label and timestamps, never a token |
+
+The store is `$HORON_HOME/harness-api/credentials.json`, mode `0600` inside a `0700` directory, and it holds only `sha256:<hex>` digests: a token exists in the clear only in the output of `issue` and `rotate`. The bridge re-reads the file for every connection, so revoke and rotate apply without restarting it. A store that became a symlink, changed owner or lost its owner-only mode refuses every authentication instead of trusting it. In a per-user container the file lives in that tenant's `HORON_HOME`, so credentials are per user by construction and `list` names the tenant as their namespace.
+
+A client on another machine supplies its own transport: terminate TLS at the proxy in front, forward plaintext to the `--api-bind` address, and send the authorization line before `hello`. Neither SDK has a built-in TCP transport and this build adds none, so SSH forwarding to the local socket or the proxy in front of `--api-bind` is the supported path. Client certificates at that proxy are the supported mutual-authentication path; built-in mTLS is a deliberate follow-up, not a silently dropped feature.
+
 ## Session goals
 
 Send `runtime_command` with the command `goal` and arguments `["1200", "Ship a fix"]` to attach a goal to the selected session. The first argument is a positive token ceiling. The response contains the saved goal and a display message. The command leaves an existing active goal in place and returns an error if another is requested.

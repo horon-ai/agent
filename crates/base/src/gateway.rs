@@ -27,8 +27,12 @@ mod auth;
 pub mod control;
 mod registry;
 use auth::{AuthorizedDevice, WsAuth, WsAuthSource, authorize_ws_device, extract_ws_auth, ws_error_response};
+// The harness API's TCP exposure (crates/harness-api-server) parses the same
+// `Authorization: Bearer <token>` shape, so both transports share one parser
+// rather than growing a second, subtly different one.
 #[cfg(test)]
-pub(crate) use auth::{is_valid_hex_token, parse_bearer_token, parse_query_token};
+pub(crate) use auth::parse_query_token;
+pub use auth::{is_valid_hex_token, parse_bearer_token};
 pub use control::{
     PairingInvite, RemoteCommand, RemoteStatus, ToggleOutcome, create_pairing_invite, parse_remote_command,
     revoke_device, set_gateway_enabled,

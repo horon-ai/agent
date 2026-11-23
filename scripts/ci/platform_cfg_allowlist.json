@@ -230,7 +230,7 @@
     },
     "crates/base/src/import_takeover_tests.rs": {
       "count": 4,
-      "reason": "the takeover guard's two directions are cfg-gated because they assert opposite outcomes: off Linux the call must be refused before staging, on Linux it must be allowed. The condition is the feature under test, not an OS primitive — `live_takeover_supported()` is the product surface and its Linux-only backing (`/proc/<pid>/stat`, pidfd) lives behind it."
+      "reason": "the takeover guard's two directions are cfg-gated because they assert opposite outcomes: off Linux the call must be refused before staging, on Linux it must be allowed. The condition is the feature under test, not an OS primitive \u2014 `live_takeover_supported()` is the product surface and its Linux-only backing (`/proc/<pid>/stat`, pidfd) lives behind it."
     },
     "crates/base/src/import_tests.rs": {
       "count": 7,
@@ -364,6 +364,10 @@
       "count": 1,
       "reason": "the parent-death half of the bridge lifecycle test: `parent_pid` is deliberately None on Windows (the platform exposes no parent there), so only the idle window can end a bridge on that platform and there is no parent-gone behaviour to assert."
     },
+    "crates/harness-api-server/src/credential_tests.rs": {
+      "count": 2,
+      "reason": "two Unix-only store tests: a symlinked credential file and a 0644 file exist only where a mode and a symbolic link can be created, and both must prove the store refuses them."
+    },
     "crates/harness-api-server/src/lib.rs": {
       "count": 1,
       "reason": "the `server --stdio` bridge entry point exists only on Unix: it connects to the daemon's Unix socket and has no Windows transport."
@@ -408,6 +412,10 @@
       "count": 7,
       "reason": "the release asset name and SHA-256 pin for each supported target triple (linux/macos/windows/freebsd x x86_64/aarch64); the mapping is the product of the updater."
     },
+    "src/cli/api_bridge.rs": {
+      "count": 2,
+      "reason": "the Unix-only `api-bridge --stdio` transport and the Windows arm that refuses it by name (a named pipe has no stdin/stdout pairing); no OS primitive is used directly."
+    },
     "src/cli/args.rs": {
       "count": 1,
       "reason": "the hidden `server stdio` subcommand exists only on Unix: it pairs the native protocol with an in-process Unix socket, and the bridge itself moved to a named pipe on Windows instead."
@@ -421,8 +429,8 @@
       "reason": "two `#[cfg(unix)]` test items: a fixture that writes an executable `/bin/sh` script standing in for the remote horon-agent, and the test that runs it. Windows has no `sh` or executable bit to stand in for the cloud host."
     },
     "src/cli/dispatch.rs": {
-      "count": 3,
-      "reason": "the Unix-only `server stdio` arm, the Unix-only `api-bridge --stdio` transport, and the Windows arm that refuses it by name; no OS primitive is left in the file."
+      "count": 1,
+      "reason": "the Unix-only `server stdio` arm; the api-bridge stdio transport moved to `src/cli/api_bridge.rs` with its Windows refusal."
     },
     "src/cli/mod.rs": {
       "count": 1,

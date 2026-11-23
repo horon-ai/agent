@@ -838,7 +838,7 @@ jobs:
         # green `0 passed`.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-config-types --min-passed 64 --timeout 600
+            --package horon-agent-config-types --min-passed 68 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-import-core --min-passed 23 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -908,12 +908,13 @@ jobs:
         # bring that floor to 1611. The three ignored benchmarks are separate.
         # It moved 1611 -> 1597 when prune-tests (#419) removed fourteen tests
         # that guarded no behavior, and the hosting boundary (#663) brought it
-        # to 1612. The fifty memory wiki store cases (#664) bring it to 1662,
-        # and the thirteen hosted MCP and child-process gate tests (#668) are
-        # the next step.
+        # to 1612. The fifty memory wiki store cases (#664) bring it to 1662, the
+        # thirteen hosted MCP and child-process gate tests (#668) bring it to
+        # 1675, and the fifteen harness API exposure cases (fourteen resolution
+        # tests plus the config-template documentation test) bring it to 1690.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1675 --timeout 1200
+            --package horon-agent-base --min-passed 1690 --timeout 1200
 
       - name: Run horon-agent-base lib tests (macOS)
         if: runner.os == 'macOS'
@@ -922,12 +923,12 @@ jobs:
         # staged-import regressions in the minimum for the complete suite.
         # It moved 1597 -> 1583 when prune-tests (#419) removed fourteen tests
         # that guarded no behavior, and the hosting boundary (#663) brought it
-        # to 1598. The fifty memory wiki store cases (#664) bring it to 1648,
-        # and the thirteen hosted MCP and child-process gate tests (#668) are
-        # the next step.
+        # to 1598. The fifty memory wiki store cases (#664) bring it to 1648, the
+        # thirteen hosted MCP and child-process gate tests (#668) bring it to
+        # 1661, and the fifteen harness API exposure cases bring it to 1676.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1661 --timeout 1200
+            --package horon-agent-base --min-passed 1676 --timeout 1200
 
       - name: Remove the reflink filesystem (Linux)
         if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''
@@ -2076,6 +2077,29 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
             --timeout 600 --min-passed 1 \
             -- single_instance_tests:: --nocapture
+
+      - name: Run harness API exposure auth cohort
+        shell: bash
+        # The opt-in TCP listener is the only harness transport that
+        # authenticates, and both suites run only through filters, so without
+        # this step they would compile and never execute
+        # (scripts/ci/check_lib_test_coverage.py). `tcp::tests` proves a
+        # missing, wrong, oversized, late, revoked or rotated token closes the
+        # connection before the daemon is dialled while a valid one reaches
+        # hello and a ping; `credentials::tests` proves the store keeps only a
+        # digest, prints the token once, and refuses a symlinked or loose file.
+        # `--min-passed` is the number of tests the filter matches on a platform
+        # without the two Unix-only permission tests, so a renamed module fails
+        # here instead of passing over an empty subset.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 8 \
+            -- tcp::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 10 \
+            -- credentials::tests:: --nocapture
 
       - name: Run stored message content cohort
         shell: bash
