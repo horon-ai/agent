@@ -80,7 +80,7 @@ pub(super) fn reply(state: &mut BridgeState, event: &Value) -> Vec<ServerFrame> 
             },
         )];
     };
-    match serde_json::from_value::<Vec<EffectiveSetting>>(event["settings"].clone()) {
+    match <Vec<EffectiveSetting> as serde::Deserialize>::deserialize(&event["settings"]) {
         Ok(settings) => vec![ServerFrame::reply(
             api_id,
             ApiEvent::EffectiveSettings { session_id, settings },

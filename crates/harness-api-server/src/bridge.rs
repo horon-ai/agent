@@ -462,5 +462,11 @@ fn current_tenant_label() -> Option<String> {
 
 async fn handle_api_client(stream: Stream, legacy_socket: PathBuf, write_deadline: std::time::Duration) -> Result<()> {
     let (read_half, write_half) = stream.into_split();
-    run_bridge_stream_with_deadline(read_half, write_half, legacy_socket, write_deadline).await
+    run_bridge_stream_with_deadline(
+        tokio::io::BufReader::new(read_half),
+        write_half,
+        legacy_socket,
+        write_deadline,
+    )
+    .await
 }
