@@ -5,6 +5,10 @@ edition = "2024"
 publish = false
 description = "Rust SDK for the horon-agent harness API: connect, drive sessions, stream events"
 
+[[bench]]
+name = "opt_r3_sdk"
+harness = false
+
 [dependencies]
 anyhow = "1"
 horon-agent-base = { path = "../base", default-features = false }
