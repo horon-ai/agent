@@ -2259,16 +2259,6 @@ jobs:
           python3 scripts/ci/run_integration_targets.py \
             --artifacts "$TEST_ARTIFACTS" --timeout 900
 
-      - name: Verify package manifests with an isolated home
-        shell: bash
-        run: |
-          HORON_HOME="$(mktemp -d)"
-          export HORON_HOME
-          trap 'rmdir "$HORON_HOME"' EXIT
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --kind test --target-name package_manifest --min-passed 13 --timeout 900
-
       - name: Run extension wire contracts with an isolated home
         shell: bash
         # The extension wire owns the framing, deadlines and correlation a

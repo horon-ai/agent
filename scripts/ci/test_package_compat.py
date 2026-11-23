@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import package_compat as gate
 
 
-def report_steps(*, cross_compiled: bool = False, plugin_resource: bool = True) -> list[dict]:
+def report_steps(*, plugin_resource: bool = True) -> list[dict]:
     steps: list[dict] = []
     for kind in gate.KINDS:
         for step in gate.STEP_ORDER:
