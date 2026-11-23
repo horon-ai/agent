@@ -143,6 +143,7 @@ fn subscribe_request(id: u64, cwd: Option<&std::path::Path>, resume: Option<&str
         terminal_env: crate::terminal_launch::snapshot_client_terminal_env(),
         acp: None,
         history_message_ids: false,
+        a2ui: None,
     }
 }
 

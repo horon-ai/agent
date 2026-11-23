@@ -68,6 +68,7 @@ mod session_replication;
 mod stable_hash;
 pub(crate) use stable_hash::{stable_hash_json, stable_hash_str, stable_json_len};
 pub(crate) use turn_failover::active_profile_fallback_models;
+mod a2ui;
 #[cfg(test)]
 #[path = "agent/soft_interrupt_commit_tests.rs"]
 mod soft_interrupt_commit_tests;
@@ -96,6 +97,9 @@ mod turn_start_tests;
 mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
 pub use turn_streaming_mpsc::prose_repeat;
+#[cfg(test)]
+#[path = "agent/a2ui_tests.rs"]
+mod a2ui_tests;
 mod usage;
 mod utils;
 #[cfg(test)]
@@ -566,6 +570,10 @@ pub struct Agent {
     advisor_blocker_turn: Option<usize>,
     /// This session's `/advisor` or `--advisor` choice; `None` follows `[advisor] enabled`. Not persisted.
     advisor_enabled: Option<bool>,
+    /// Client-negotiated A2UI session capabilities; `None` until enabled for the session.
+    a2ui_capabilities: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities>,
+    /// Per-turn A2UI streaming and deferred block emission state.
+    a2ui_turn: a2ui::TurnA2uiState,
 }
 
 impl Agent {
@@ -693,6 +701,8 @@ impl Agent {
             advisor_cursor: 0,
             advisor_blocker_turn: None,
             advisor_enabled: None,
+            a2ui_capabilities: None,
+            a2ui_turn: a2ui::TurnA2uiState::default(),
         };
         agent.restore_failover_budget();
         agent.refresh_prompt_skills_snapshot();

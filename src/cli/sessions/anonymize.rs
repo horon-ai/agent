@@ -168,6 +168,7 @@ fn block_type_name(content: &ContentBlock) -> &'static str {
         ContentBlock::OpenAICompaction { .. } => "open_a_i_compaction",
         ContentBlock::ToolReference { .. } => "tool_reference",
         ContentBlock::ProviderNative { .. } => "provider_native",
+        ContentBlock::A2ui { .. } => "a2ui",
     }
 }
 

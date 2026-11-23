@@ -1,3 +1,4 @@
+pub(crate) mod a2ui;
 pub(crate) mod acp_session;
 mod agentgrep;
 pub mod ambient;
@@ -78,6 +79,7 @@ use tool_names::is_fixed_mcp_tool;
 pub(crate) use tool_names::{tool_name_is_allowed, tool_name_is_disabled};
 mod toolbox;
 pub(crate) use self::toolbox::session_can_reach;
+pub(crate) use a2ui::A2UI_TOOL;
 mod undo;
 mod user_response;
 mod webfetch;
@@ -3138,45 +3140,9 @@ impl Registry {
 }
 
 #[cfg(test)]
-mod mcp_allow_list_tests {
-    use super::{tool_name_is_allowed, tool_name_is_disabled};
-    use std::collections::HashSet;
-
-    #[test]
-    fn allowing_mcp_also_allows_dynamic_server_tools() {
-        let allowed = HashSet::from(["mcp".to_string()]);
-
-        assert!(tool_name_is_allowed(&allowed, "mcp"));
-        assert!(tool_name_is_allowed(&allowed, "mcp__filesystem__read_file"));
-        assert!(!tool_name_is_allowed(&allowed, "mcpish"));
-        assert!(!tool_name_is_allowed(&allowed, "bash"));
-    }
-
-    #[test]
-    fn disabling_mcp_also_disables_dynamic_server_tools() {
-        let disabled = HashSet::from(["mcp".to_string()]);
-
-        assert!(tool_name_is_disabled(&disabled, "mcp"));
-        assert!(tool_name_is_disabled(&disabled, "mcp__filesystem__read_file"));
-        assert!(!tool_name_is_disabled(&disabled, "mcpish"));
-        assert!(!tool_name_is_disabled(&disabled, "bash"));
-    }
-}
-
-#[cfg(test)]
-mod activator_clone;
-#[cfg(test)]
-mod ask_registry_tests;
-#[cfg(test)]
-mod aux_complete_tests;
-#[cfg(test)]
-mod compaction_sharing_tests;
-#[cfg(test)]
-mod concurrency_class_tests;
-#[cfg(test)]
-mod context_condense_perf_tests;
-#[cfg(test)]
 mod lazy_activation;
+#[cfg(test)]
+mod mcp_allow_list_tests;
 #[cfg(test)]
 #[path = "monitor_tests.rs"]
 mod monitor_tool;

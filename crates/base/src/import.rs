@@ -476,6 +476,10 @@ fn imported_message_text(blocks: &[ContentBlock], truncate_blocks: bool) -> (Str
                 changed = true;
                 format!("[Imported audio: {format}]")
             }
+            a2ui @ ContentBlock::A2ui { .. } => {
+                changed = true;
+                a2ui.a2ui_text_card().unwrap_or_else(|| "[Imported A2UI]".to_string())
+            }
         };
 
         let text = if truncate_blocks {

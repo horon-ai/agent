@@ -716,6 +716,8 @@ impl Agent {
             HashSet::new()
         };
         let mut tools = self.registry.definitions_filtered(allowed, &disabled).await;
+        self.include_negotiated_a2ui_tool_def(&mut tools, allowed, &disabled)
+            .await;
         self.apply_builtin_load_tiers(&mut tools);
         if apply_mcp_exposure {
             self.apply_mcp_tool_exposure(&mut tools);
@@ -761,7 +763,12 @@ impl Agent {
             return;
         }
         for tool in tools.iter_mut() {
-            if self.load_tiers.tier(&tool.name) == crate::config::LoadMode::Discoverable {
+            let defer = if tool.name == crate::tool::A2UI_TOOL {
+                self.load_tiers.explicit_tier(&tool.name) == Some(crate::config::LoadMode::Discoverable)
+            } else {
+                self.load_tiers.tier(&tool.name) == crate::config::LoadMode::Discoverable
+            };
+            if defer {
                 tool.defer_loading = true;
             }
         }
@@ -1264,6 +1271,9 @@ impl Agent {
                 return Ok(());
             }
             if let Some(enabled) = config.enabled {
+                if !enabled.is_empty() && self.a2ui_tool_explicitly_allowed(name) {
+                    return Ok(());
+                }
                 let allowed = enabled.into_iter().collect();
                 anyhow::ensure!(
                     self.registry.tool_is_allowed(&allowed, name),
@@ -1276,6 +1286,10 @@ impl Agent {
         if sdk_enabled {
             return Ok(());
         }
+        if self.a2ui_tool_explicitly_allowed(name) {
+            return Ok(());
+        }
+        anyhow::ensure!(name != crate::tool::A2UI_TOOL, "Tool '{}' is not allowed", name);
         if let Some(allowed) = self.allowed_tools.as_ref()
             && !self.registry.tool_is_allowed(allowed, name)
         {
@@ -1687,6 +1701,12 @@ impl Agent {
                     ContentBlock::Audio { .. } => transcript.push_str("[audio]\n"),
                     ContentBlock::OpenAICompaction { .. } => {
                         transcript.push_str("[OpenAI native compaction]\n");
+                    }
+                    a2ui @ ContentBlock::A2ui { .. } => {
+                        if let Some(card) = a2ui.a2ui_text_card() {
+                            transcript.push_str(&card);
+                            transcript.push('\n');
+                        }
                     }
                 }
             }

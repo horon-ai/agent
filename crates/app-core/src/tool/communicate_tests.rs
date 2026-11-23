@@ -1417,11 +1417,12 @@ impl RawClient {
             terminal_env: Vec::new(),
             acp: None,
             history_message_ids: false,
+            a2ui: None,
         })
         .await?;
         self.read_until(
             Duration::from_secs(5),
-            |event| matches!(event, ServerEvent::Done { id: done_id } if *done_id == id),
+            |e| matches!(e, ServerEvent::Done { id: d } if *d == id),
         )
         .await?;
         Ok(())
@@ -1594,24 +1595,6 @@ async fn wait_for_member_status(
                     .map(|member| (member.session_id.clone(), member.status.clone()))
                     .collect::<Vec<_>>()
             );
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-}
-
-async fn wait_for_member_presence(
-    client: &mut RawClient,
-    requester_session: &str,
-    target_session: &str,
-) -> Result<Vec<AgentInfo>> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let members = client.comm_list(requester_session).await?;
-        if members.iter().any(|member| member.session_id == target_session) {
-            return Ok(members);
-        }
-        if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!("timed out waiting for member {} to appear", target_session);
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }

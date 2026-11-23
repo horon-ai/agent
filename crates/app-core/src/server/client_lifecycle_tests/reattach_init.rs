@@ -354,6 +354,7 @@ async fn target_aware_reattach_serves_history_without_a_placeholder_prewarm() {
             terminal_env: Vec::new(),
             acp: None,
             history_message_ids: false,
+            a2ui: None,
         },
     )
     .await;

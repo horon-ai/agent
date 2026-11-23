@@ -351,6 +351,7 @@ pub(super) fn subscribe_request(
         // The adapter reads the ids a v2 connection already carries; the
         // independent opt-in is the TUI bridge's, not this one's.
         history_message_ids: false,
+        a2ui: None,
     }
 }
 

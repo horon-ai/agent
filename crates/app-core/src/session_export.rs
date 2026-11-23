@@ -190,6 +190,11 @@ pub(crate) fn stream_export(messages: &[StoredMessage], sink: &mut impl ExportSi
                 ContentBlock::Audio { .. } => sink.placeholder("audio"),
                 ContentBlock::OpenAICompaction { .. } => sink.placeholder("OpenAI native compaction"),
                 ContentBlock::ToolReference { .. } | ContentBlock::ProviderNative { .. } => {}
+                a2ui @ ContentBlock::A2ui { .. } => {
+                    if let Some(card) = a2ui.a2ui_text_card() {
+                        sink.text(&crate::message::redact_secrets(&card));
+                    }
+                }
             }
         }
         sink.end_message();

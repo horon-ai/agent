@@ -1,3 +1,21 @@
+async fn wait_for_member_presence(
+    client: &mut RawClient,
+    requester_session: &str,
+    target_session: &str,
+) -> Result<Vec<AgentInfo>> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let members = client.comm_list(requester_session).await?;
+        if members.iter().any(|member| member.session_id == target_session) {
+            return Ok(members);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for member {} to appear", target_session);
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 #[tokio::test]
 async fn communicate_list_and_await_members_work_end_to_end() {
     let _env_lock = crate::storage::lock_test_env();

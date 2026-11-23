@@ -140,6 +140,14 @@ impl ContentBlockMemoryStats {
                 self.max_tool_result_bytes = self.max_tool_result_bytes.max(bytes);
                 self.record_bytes(bytes);
             }
+            ContentBlock::A2ui {
+                envelopes,
+                fallback_text,
+            } => {
+                let env_bytes: usize = envelopes.iter().map(estimate_json_bytes).sum();
+                let fallback_bytes = fallback_text.as_deref().map_or(0, str::len);
+                self.record_bytes(env_bytes + fallback_bytes);
+            }
         }
     }
 

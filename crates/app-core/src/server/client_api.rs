@@ -94,6 +94,7 @@ impl Client {
             terminal_env: crate::terminal_launch::snapshot_client_terminal_env(),
             acp: None,
             history_message_ids: false,
+            a2ui: None,
         };
         let json = serde_json::to_string(&request)? + "\n";
         self.writer.write_all(json.as_bytes()).await?;

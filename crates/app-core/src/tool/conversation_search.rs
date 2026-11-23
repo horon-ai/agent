@@ -214,6 +214,12 @@ impl Tool for ConversationSearchTool {
                             crate::message::ContentBlock::OpenAICompaction { .. } => {
                                 output.push_str("[OpenAI native compaction]\n");
                             }
+                            a2ui @ crate::message::ContentBlock::A2ui { .. } => {
+                                if let Some(card) = a2ui.a2ui_text_card() {
+                                    output.push_str(&card);
+                                    output.push('\n');
+                                }
+                            }
                         }
                     }
                     output.push('\n');

@@ -1582,7 +1582,7 @@ jobs:
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-tool-types \
-            --timeout 600 --min-passed 9
+            --timeout 600 --min-passed 14
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 21 \
@@ -1971,6 +1971,26 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 3 \
             -- agent::verdict_store_tests:: --nocapture
+
+      - name: Run A2UI core cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-message-types \
+            --timeout 600 --min-passed 2 \
+            -- a2ui_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-protocol \
+            --timeout 600 --min-passed 3 \
+            -- a2ui_wire_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 3 \
+            -- agent::a2ui_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- server::client_lifecycle::a2ui_tests:: --nocapture
 
       - name: Run provider wire cohorts
         shell: bash

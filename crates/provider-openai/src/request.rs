@@ -488,6 +488,15 @@ pub fn build_responses_input_with_logger(
                                 "content": [{ "type": "output_text", "text": text }]
                             }));
                         }
+                        a2ui @ ContentBlock::A2ui { .. } => {
+                            if let Some(summary) = a2ui.a2ui_model_summary() {
+                                items.push(serde_json::json!({
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": [{ "type": "output_text", "text": summary }]
+                                }));
+                            }
+                        }
                         ContentBlock::OpenAIReasoning {
                             id,
                             summary,

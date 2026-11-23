@@ -39,7 +39,7 @@ fn cancel_soft_interrupts_by_id_reports_each_requested_id_exactly_once() {
         .lock()
         .expect("queue lock")
         .iter()
-        .map(|message| message.content.clone())
+        .map(|m| m.content.clone())
         .collect();
     assert_eq!(remaining, vec!["b".to_string(), "c".to_string()]);
 
@@ -1084,6 +1084,7 @@ fn subscribe_request(working_dir: Option<&str>) -> Request {
         terminal_env: Vec::new(),
         acp: None,
         history_message_ids: false,
+        a2ui: None,
     }
 }
 
@@ -2353,20 +2354,14 @@ async fn acp_session_bridge_round_trip_and_desktop_turn_uses_local_fs() {
 
     drop(bridge);
     sessions.write().await.clear();
-    drop(client_writer);
-    drop(client_reader);
-    tokio::time::timeout(Duration::from_secs(10), server_task)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    drop(observer_writer);
-    drop(observer_reader);
-    tokio::time::timeout(Duration::from_secs(10), observer_task)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
+    drop((client_writer, client_reader, observer_writer, observer_reader));
+    for task in [server_task, observer_task] {
+        tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
 }
 
 #[path = "client_lifecycle_tests/acp_background_work.rs"]

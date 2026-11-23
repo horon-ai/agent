@@ -334,6 +334,10 @@ pub enum Request {
         /// every other client, so their history rows keep the bytes they had.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         history_message_ids: bool,
+        /// A2UI v1.0 renderer capabilities negotiated by this client. Absent for
+        /// non-A2UI clients so existing Subscribe wire bytes remain unchanged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        a2ui: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities>,
     },
 
     /// Declare that this client is intentionally detaching before its transport
@@ -641,6 +645,24 @@ pub enum Request {
         id: u64,
         #[serde(default)]
         mode: Option<String>,
+    },
+
+    /// Configure or disable A2UI renderer capabilities for this connection/session.
+    #[serde(rename = "configure_a2ui")]
+    ConfigureA2ui {
+        id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities>,
+    },
+
+    /// Inbound A2UI `renderer_to_agent` event (`action`, `callAgentFunction`,
+    /// `rendererFunctionResponse`, or `error`) plus optional synchronized `data_model`.
+    #[serde(rename = "a2ui_event")]
+    A2uiEvent {
+        id: u64,
+        envelope: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data_model: Option<serde_json::Value>,
     },
 
     /// Send a message to other agents
