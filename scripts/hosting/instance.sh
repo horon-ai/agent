@@ -95,8 +95,18 @@ case "$RUNTIME_BASE" in
     /*) ;;
     *) die "--runtime-dir must be an absolute path, got '${RUNTIME_BASE}'" ;;
 esac
+while [ "$ROOT" != "/" ] && [ "${ROOT%/}" != "$ROOT" ]; do
+    ROOT=${ROOT%/}
+done
+while [ "$RUNTIME_BASE" != "/" ] && [ "${RUNTIME_BASE%/}" != "$RUNTIME_BASE" ]; do
+    RUNTIME_BASE=${RUNTIME_BASE%/}
+done
 
-instance="$ROOT/$tenant"
+if [ "$ROOT" = "/" ]; then
+    instance="/$tenant"
+else
+    instance="$ROOT/$tenant"
+fi
 home="$instance/home"
 # A short digest keeps the API socket path under the Unix socket limit, the same
 # derivation horon-agent-sdk uses for a hosted launch.
@@ -109,7 +119,11 @@ short_digest() {
         die "need shasum or sha256sum to derive the runtime directory"
     fi
 }
-runtime="$RUNTIME_BASE/horon-tenant-$(printf '%s' "$home" | short_digest)"
+if [ "$RUNTIME_BASE" = "/" ]; then
+    runtime="/horon-tenant-$(printf '%s' "$home" | short_digest)"
+else
+    runtime="$RUNTIME_BASE/horon-tenant-$(printf '%s' "$home" | short_digest)"
+fi
 legacy_socket="$runtime/horon-agent.sock"
 container="horon-tenant-$tenant"
 

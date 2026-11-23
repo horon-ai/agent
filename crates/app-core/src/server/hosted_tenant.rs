@@ -10,23 +10,18 @@
 //! child-process gate is what refuses the operations it must not run, and that
 //! gate reads [`crate::hosting::HostingPolicy::allows_shared_children`].
 
-use crate::hosting::{self, HostingInputs, HostingPaths, HostingPolicy};
+use crate::hosting::{self, HostingPaths, HostingPolicy};
 
-/// Resolve the hosting policy and, for a per-user container, confirm its boundary.
-///
-/// Inputs are arguments rather than globals so a test drives the whole decision
-/// without an environment lock; [`enforce_at_startup`] is the production caller.
-pub fn enforce_startup(inputs: &HostingInputs, paths: &HostingPaths) -> anyhow::Result<HostingPolicy> {
-    let policy = hosting::resolve(inputs)?;
-    hosting::confirm_container_boundary(&policy, paths)?;
-    Ok(policy)
-}
-
-/// The daemon startup hook: enforce the boundary or report why it was refused.
-pub fn enforce_at_startup() -> anyhow::Result<()> {
-    let inputs = HostingInputs::from_environment();
-    let paths = hosting::boundary_paths(crate::config::config().gateway.enabled);
-    let policy = enforce_startup(&inputs, &paths)?;
+/// Confirm the resolved hosting policy against container paths when needed and
+/// record the active hosting audit notice.
+pub(crate) fn enforce_policy_with_paths(
+    policy: &HostingPolicy,
+    paths: impl FnOnce() -> HostingPaths,
+) -> anyhow::Result<()> {
+    if policy.is_per_user_container() {
+        let paths = paths();
+        hosting::confirm_container_boundary(policy, &paths)?;
+    }
     if policy.is_hosted() {
         crate::logging::info(&format!(
             "Hosting boundary confirmed: mode={} tenant={}",
@@ -40,4 +35,12 @@ pub fn enforce_at_startup() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// The daemon startup hook: enforce the boundary or report why it was refused.
+pub fn enforce_at_startup() -> anyhow::Result<()> {
+    let policy = hosting::current()?;
+    enforce_policy_with_paths(policy, || {
+        hosting::boundary_paths(crate::config::config().gateway.enabled)
+    })
 }

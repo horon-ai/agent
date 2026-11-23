@@ -276,3 +276,51 @@ fn a_shared_worker_skips_the_container_boundary() {
     confirm_container_boundary(&policy(HostingMode::SharedWorker, Some(tenant("alice"))), &paths)
         .expect("a shared worker starts and leaves the refusal to its own gate");
 }
+
+#[test]
+fn a_runtime_directory_reaching_home_through_a_parent_symlink_is_refused_before_creation() {
+    let boundary = Boundary::new();
+    let real_parent = boundary.root().join("real-parent");
+    let alias_parent = boundary.root().join("alias-parent");
+    let home = real_parent.join("home");
+    std::fs::create_dir_all(&home).expect("real home");
+    mode(&home, 0o700);
+    std::os::unix::fs::symlink(&real_parent, &alias_parent).expect("parent symlink");
+
+    // Case 1: `home` passes through `alias_parent`, while `runtime_dir` names the
+    // canonical target inside `home` and does not exist yet.
+    let mut paths = boundary.paths();
+    paths.home = Some(alias_parent.join("home"));
+    let canonical_nested = std::fs::canonicalize(&home).expect("canonical home").join("run");
+    paths.runtime_dir = Some(canonical_nested.clone());
+    let error = confirm_container_boundary(&policy(HostingMode::PerUserContainer, Some(tenant("alice"))), &paths)
+        .expect_err("canonical runtime inside symlinked-parent home must be refused");
+    assert!(
+        matches!(error, HostingBoundaryError::RuntimeInsideHome(_)),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !canonical_nested.exists(),
+        "confirm_container_boundary must not create runtime_dir inside home"
+    );
+
+    // Case 2: `home` is canonical and `runtime_dir` reaches inside it via `alias_parent`.
+    let mut reverse = boundary.paths();
+    reverse.home = Some(home.clone());
+    reverse.runtime_dir = Some(alias_parent.join("home/nested-via-link"));
+    let error = confirm_container_boundary(&policy(HostingMode::PerUserContainer, Some(tenant("alice"))), &reverse)
+        .expect_err("symlinked-parent runtime inside home must be refused");
+    assert!(
+        matches!(error, HostingBoundaryError::RuntimeInsideHome(_)),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !home.join("nested-via-link").exists(),
+        "confirm_container_boundary must not create directories inside home"
+    );
+}
+
+#[test]
+fn tenant_runtime_digest_matches_sha256_prefix() {
+    assert_eq!(tenant_runtime_digest(Path::new("/data/alice/home")), "f1d25fc17edb");
+}

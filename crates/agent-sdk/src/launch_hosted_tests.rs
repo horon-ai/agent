@@ -214,3 +214,84 @@ fn stop_is_idempotent_when_nothing_runs() {
     let runtime_base = short_runtime_base();
     stop_hosted_instance(&root, "alice", runtime_base.path()).expect("nothing to stop");
 }
+
+#[test]
+fn sdk_and_instance_script_derive_identical_tenant_paths() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/hosting/instance.sh");
+    let sandbox = scratch();
+    let runtime_base = short_runtime_base();
+
+    for (label, use_trailing_slash, tenant) in [("plain", false, "alice"), ("slash", true, "bob-42")] {
+        let root = sandbox.path().join(label);
+        let root_arg = if use_trailing_slash {
+            format!("{}/", root.display())
+        } else {
+            root.display().to_string()
+        };
+        let runtime_arg = if use_trailing_slash {
+            format!("{}/", runtime_base.path().display())
+        } else {
+            runtime_base.path().display().to_string()
+        };
+        let sdk_paths = tenant_paths(Path::new(&root_arg), tenant, Path::new(&runtime_arg)).expect("sdk paths");
+        let output = std::process::Command::new(&script)
+            .args(["create", tenant, "--root", &root_arg, "--runtime-dir", &runtime_arg])
+            .output()
+            .expect("run instance.sh create");
+        assert!(
+            output.status.success(),
+            "instance.sh create failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).expect("utf-8 output");
+        let reported_home = stdout
+            .lines()
+            .find_map(|line| line.trim_start().strip_prefix("home: "))
+            .expect("home line");
+        let reported_runtime = stdout
+            .lines()
+            .find_map(|line| line.trim_start().strip_prefix("runtime: "))
+            .expect("runtime line");
+        assert_eq!(Path::new(reported_home), sdk_paths.home);
+        assert_eq!(Path::new(reported_runtime), sdk_paths.runtime_dir);
+    }
+}
+
+#[test]
+fn hosted_launch_strips_gateway_and_api_bind_overrides() {
+    let sandbox = scratch();
+    let root = sandbox.path().join("data");
+    let runtime_base = short_runtime_base();
+    let capture = sandbox.path().join("captured-env.txt");
+    let script = sandbox.path().join("capture-reserved");
+    fs::write(
+        &script,
+        "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$HORON_AGENT_GATEWAY_ENABLED\" \"${HORON_AGENT_API_BIND:-unset}\" \"${HORON_AGENT_CONFIG:-unset}\" > \"$CAPTURE_PATH\"\nexit 1\n",
+    )
+    .expect("write capture");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).expect("chmod");
+
+    let mut options = HostedLaunchOptions::new(&root, MAX_TENANT_ID);
+    options.binary = Some(script);
+    options.runtime_base = Some(runtime_base.path().to_path_buf());
+    options.startup_timeout = Duration::from_secs(5);
+    options
+        .env
+        .insert(OsString::from("CAPTURE_PATH"), capture.clone().into_os_string());
+    options
+        .env
+        .insert(OsString::from("HORON_AGENT_GATEWAY_ENABLED"), OsString::from("1"));
+    options
+        .env
+        .insert(OsString::from("HORON_AGENT_API_BIND"), OsString::from("0.0.0.0:7946"));
+    options.env.insert(
+        OsString::from("HORON_AGENT_CONFIG"),
+        OsString::from("/etc/override.toml"),
+    );
+
+    let Err(_) = launch_hosted_instance(&options) else {
+        panic!("capture script exits non-zero");
+    };
+    let captured = fs::read_to_string(&capture).expect("captured");
+    assert_eq!(captured.trim(), "0|unset|unset");
+}

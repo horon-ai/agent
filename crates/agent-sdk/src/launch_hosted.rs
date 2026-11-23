@@ -13,7 +13,9 @@
 
 use crate::errors::{Error, ErrorKind, Result};
 use crate::launch::{LaunchOptions, LaunchedInstance, launch_instance, socket_accepts, stop_instance_daemon};
-use horon_agent_base::hosting::{HOSTING_MODE_ENV, HostingMode, MAX_TENANT_ID_LEN, TENANT_ID_ENV, TenantId};
+use horon_agent_base::hosting::{
+    HOSTING_MODE_ENV, HostingMode, MAX_TENANT_ID_LEN, TENANT_ID_ENV, TenantId, tenant_runtime_digest,
+};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
@@ -43,6 +45,12 @@ const RESERVED_ENV: &[&str] = &[
     "HORON_AGENT_SOCKET",
     "HORON_AGENT_NO_AUTO_UPDATE",
     "HORON_PROFILE",
+    "HORON_AGENT_CONFIG",
+    "HORON_AGENT_GATEWAY_ENABLED",
+    "HORON_AGENT_GATEWAY_BIND_ADDR",
+    "HORON_AGENT_GATEWAY_PORT",
+    "HORON_AGENT_API_BIND",
+    "HORON_AGENT_API_INSECURE_BEHIND_PROXY",
     HOSTING_MODE_ENV,
     TENANT_ID_ENV,
 ];
@@ -169,6 +177,7 @@ pub fn launch_hosted_instance(options: &HostedLaunchOptions) -> Result<LaunchedI
         OsString::from(HostingMode::PerUserContainer.as_str()),
     );
     env.insert(OsString::from(TENANT_ID_ENV), OsString::from(options.tenant.as_str()));
+    env.insert(OsString::from("HORON_AGENT_GATEWAY_ENABLED"), OsString::from("0"));
 
     let launch = LaunchOptions {
         horon_agent_home: Some(paths.home.clone()),
@@ -296,16 +305,11 @@ fn refuse_symlinked_instance(instance: &Path) -> Result<()> {
 
 /// A 12-hex-digit digest of the home path.
 ///
-/// FNV-1a is enough here: the value only has to be stable, short and distinct
-/// per tenant on one host, and a collision costs a refused socket rather than a
-/// boundary bypass because the directory is still derived from one home.
+/// Shares the SHA-256 prefix derivation in [`horon_agent_base::hosting::tenant_runtime_digest`]
+/// so `scripts/hosting/instance.sh` and `horon-agent-sdk` always land on the
+/// exact same `horon-tenant-<12hex>` runtime directory.
 fn tenant_digest(home: &Path) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in home.to_string_lossy().as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{:012x}", hash & 0x0000_ffff_ffff_ffff)
+    tenant_runtime_digest(home)
 }
 
 fn launch_io(error: std::io::Error) -> Error {
