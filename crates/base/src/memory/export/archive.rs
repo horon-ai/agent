@@ -105,7 +105,11 @@ pub fn export(layout: &VolumeLayout, destination: &Path) -> Result<ExportReport>
         };
         let bytes =
             std::fs::read(&absolute).with_context(|| format!("cannot read the page file {}", absolute.display()))?;
-        let Some(relative) = store::relative_page_path(&store_root, &absolute) else {
+        // The page path is relative to the wiki root (`<store>/wiki`), which is
+        // the `wiki/` prefix the tar carries; joining it onto the store root
+        // would double that prefix.
+        let wiki_root = wiki.wiki_root();
+        let Some(relative) = store::relative_page_path(&wiki_root, &absolute) else {
             bail!("the page file {} is not inside the wiki root", absolute.display());
         };
         let path = format!("{WIKI_PREFIX}{relative}");

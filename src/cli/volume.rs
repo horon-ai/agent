@@ -41,7 +41,7 @@ pub(crate) fn run(command: &VolumeCommand) -> Result<()> {
             token_file,
             status,
             json,
-        } => delete_user(&layout, user_id, endpoint, token_env, token_file, *status, *json),
+        } => delete_user_via_blocking(layout, user_id, endpoint, token_env, token_file, *status, *json),
         VolumeCommand::DeletionStatus { json } => deletion_status(&layout, *json),
     }
 }
@@ -125,6 +125,33 @@ fn key_command(layout: &VolumeLayout, action: &VolumeKeyCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Run `delete_user` off the async runtime.
+///
+/// The control-plane client is `reqwest::blocking`, which panics when it is
+/// dropped inside a tokio runtime; the CLI dispatches on a runtime thread, so the
+/// blocking work runs on a dedicated blocking thread. Outside a runtime (a plain
+/// synchronous caller or a test) it runs inline.
+#[allow(clippy::too_many_arguments)]
+fn delete_user_via_blocking(
+    layout: VolumeLayout,
+    user_id: &str,
+    endpoint: &Option<String>,
+    token_env: &Option<String>,
+    token_file: &Option<std::path::PathBuf>,
+    status: bool,
+    json: bool,
+) -> Result<()> {
+    let user_id = user_id.to_string();
+    let endpoint = endpoint.clone();
+    let token_env = token_env.clone();
+    let token_file = token_file.clone();
+    let run = move || delete_user(&layout, &user_id, &endpoint, &token_env, &token_file, status, json);
+    match tokio::runtime::Handle::try_current() {
+        Ok(_) => tokio::task::block_in_place(run),
+        Err(_) => run(),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

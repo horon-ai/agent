@@ -78,43 +78,25 @@ fn assert_success(label: &str, output: &Output) -> String {
     stdout
 }
 
-/// Write one page directly into a volume's store, so a test starts with data.
-fn seed_page(home: &Path, file: &Path, text: &str) {
-    let target = home.join("memory").join("wiki").join(file);
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).expect("create the page directory");
-    }
-    std::fs::write(&target, text).expect("write the page");
-}
-
-/// A page document with the fields the store requires.
-fn page_document(id: &str, title: &str, body: &str) -> String {
-    format!(
-        "---\n\
-schema: 1\n\
-id: {id}\n\
-title: {title}\n\
-kind: fact\n\
-category: fact\n\
-project: null\n\
-tags: []\n\
-entities: []\n\
-links: []\n\
-valid_from: null\n\
-valid_to: null\n\
-confidence: 1.0\n\
-source: null\n\
-created_at: \"2026-11-01T00:00:00Z\"\n\
-updated_at: \"2026-11-01T00:00:00Z\"\n\
-access_count: 0\n\
-trust: medium\n\
-strength: 1\n\
-active: true\n\
-superseded_by: null\n\
-reinforcements: []\n\
----\n\
-{body}"
-    )
+/// Write one page into a volume's store through the store API.
+///
+/// Driving the real store means the page is indexed by the same code the binary
+/// uses, so `volume export` reads it from the index and the assertion is about
+/// the command, not about a hand-written markdown dialect.
+fn seed_page(home: &Path, id: &str, title: &str, body: &str) {
+    use horon_agent::memory::store::MemoryWiki;
+    use horon_agent::memory_types::MemoryCategory;
+    use horon_agent::memory_types::page::{MemoryPage, PageId, PageKind};
+    let mut wiki = MemoryWiki::open(home.join("memory")).expect("open the volume store");
+    let page = MemoryPage::draft(
+        PageId::parse(id).expect("valid page id"),
+        PageKind::Fact,
+        MemoryCategory::Fact,
+        title,
+        body,
+        horon_agent_time::Timestamp::UNIX_EPOCH,
+    );
+    wiki.write_page(&page).expect("write the page");
 }
 
 // ---------------------------------------------------------------------------
@@ -199,11 +181,7 @@ impl MockControlPlane {
 fn export_import_round_trip_keeps_search_working() {
     let source = Fixture::new();
     let home = source.home();
-    seed_page(
-        &home,
-        Path::new("facts/mem_volume_1.md"),
-        &page_document("mem_volume_1", "아침 회의", "아침 9시 이전 회의를 선호한다."),
-    );
+    seed_page(&home, "mem_volume_1", "아침 회의", "아침 9시 이전 회의를 선호한다.");
     let archive = source.root.path().join("memory-export.tar");
     let archive_arg = archive.to_string_lossy().into_owned();
 
@@ -240,11 +218,7 @@ fn export_import_round_trip_keeps_search_working() {
 fn an_import_into_a_used_home_is_refused() {
     let source = Fixture::new();
     let home = source.home();
-    seed_page(
-        &home,
-        Path::new("facts/mem_a.md"),
-        &page_document("mem_a", "A", "first body"),
-    );
+    seed_page(&home, "mem_a", "A", "first body");
     let archive = source.root.path().join("export.tar");
     let archive_arg = archive.to_string_lossy().into_owned();
     assert_success("volume export", &source.run(&["volume", "export", &archive_arg]));
@@ -264,11 +238,7 @@ fn an_import_into_a_used_home_is_refused() {
 fn quiesce_fences_writes_and_resume_lifts_the_fence() {
     let fixture = Fixture::new();
     let home = fixture.home();
-    seed_page(
-        &home,
-        Path::new("facts/mem_q.md"),
-        &page_document("mem_q", "Q", "quiesce body"),
-    );
+    seed_page(&home, "mem_q", "Q", "quiesce body");
     // Open the store once so the index exists.
     assert_success("memory list", &fixture.run(&["memory", "list", "--scope", "all"]));
 
@@ -318,11 +288,7 @@ fn delete_user_finishes_every_step_before_reporting_deleted() {
     let control = MockControlPlane::start();
     let fixture = Fixture::new();
     let home = fixture.home();
-    seed_page(
-        &home,
-        Path::new("facts/mem_d.md"),
-        &page_document("mem_d", "D", "delete body marker ZZ-none-should-leak"),
-    );
+    seed_page(&home, "mem_d", "D", "delete body marker ZZ-none-should-leak");
     assert_success(
         "volume key create",
         &fixture.run(&["volume", "key", "create", "key-del-1"]),
@@ -374,11 +340,7 @@ fn delete_user_finishes_every_step_before_reporting_deleted() {
 fn a_retried_delete_user_reports_the_failed_step_and_stays_retryable() {
     let fixture = Fixture::new();
     let home = fixture.home();
-    seed_page(
-        &home,
-        Path::new("facts/mem_r.md"),
-        &page_document("mem_r", "R", "retry body"),
-    );
+    seed_page(&home, "mem_r", "R", "retry body");
     assert_success(
         "volume key create",
         &fixture.run(&["volume", "key", "create", "key-retry-1"]),
@@ -412,16 +374,8 @@ fn a_retried_delete_user_reports_the_failed_step_and_stays_retryable() {
 fn a_partially_deleted_page_is_absent_from_the_export() {
     let fixture = Fixture::new();
     let home = fixture.home();
-    seed_page(
-        &home,
-        Path::new("facts/mem_keep.md"),
-        &page_document("mem_keep", "Keep", "kept body"),
-    );
-    seed_page(
-        &home,
-        Path::new("facts/mem_drop.md"),
-        &page_document("mem_drop", "Drop", "dropped body"),
-    );
+    seed_page(&home, "mem_keep", "Keep", "kept body");
+    seed_page(&home, "mem_drop", "Drop", "dropped body");
     // Opening the store indexes both pages.
     assert_success("memory list", &fixture.run(&["memory", "list", "--scope", "all"]));
 

@@ -330,7 +330,9 @@ pub fn delete_user(layout: &VolumeLayout, control: &dyn ControlPlane, user_id: &
                 record_step_centrally(control, &job, step, StepState::Done, None);
             }
             Err(error) => {
-                let reason = error.to_string();
+                // The whole chain, so a step wrapped with its own context still
+                // reports the underlying cause the operator has to act on.
+                let reason = format!("{error:#}");
                 job.record_failed(step, &reason);
                 save_job(layout, &job)?;
                 record_step_centrally(control, &job, step, StepState::Failed, Some(&reason));

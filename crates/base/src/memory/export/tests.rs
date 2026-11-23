@@ -70,7 +70,7 @@ fn page(
 
 /// Write one preference page into the store of `layout`.
 fn seed(layout: &VolumeLayout, id: &str, title: &str, body: &str, seconds: i64) {
-    let mut wiki = MemoryWiki::open(&layout.store_root()).expect("open the wiki");
+    let mut wiki = MemoryWiki::open(layout.store_root()).expect("open the wiki");
     let mut page = page(
         id,
         PageKind::Preference,
@@ -84,7 +84,7 @@ fn seed(layout: &VolumeLayout, id: &str, title: &str, body: &str, seconds: i64) 
 }
 
 fn search_ids(layout: &VolumeLayout, text: &str) -> Vec<String> {
-    let wiki = MemoryWiki::open(&layout.store_root()).expect("open the wiki");
+    let wiki = MemoryWiki::open(layout.store_root()).expect("open the wiki");
     wiki.search(&SearchQuery {
         text: text.to_string(),
         limit: Some(10),
@@ -95,6 +95,18 @@ fn search_ids(layout: &VolumeLayout, text: &str) -> Vec<String> {
     .into_iter()
     .map(|hit| hit.page.id)
     .collect()
+}
+
+/// Every entry path in the tar, for a failure message.
+fn tar_paths(archive: &Path) -> Vec<String> {
+    let file = std::fs::File::open(archive).expect("open the archive");
+    let mut reader = tar::Archive::new(std::io::BufReader::new(file));
+    reader
+        .entries()
+        .expect("entries")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path().map(|path| path.display().to_string()).unwrap_or_default())
+        .collect()
 }
 
 fn read_tar_entry(archive: &Path, name: &str) -> Option<Vec<u8>> {
@@ -127,6 +139,32 @@ fn build_tar(rows: &[(&str, &[u8])]) -> Vec<u8> {
             .expect("append the tar entry");
     }
     builder.into_inner().expect("finish the tar")
+}
+
+/// Build a one-entry tar whose name the `tar` crate's builder would refuse.
+///
+/// The builder rejects `..` and absolute names at write time, so a test that
+/// wants the *importer* to be the thing that refuses needs a header written
+/// directly. The name goes into the 100-byte `name` field, the size is zero and
+/// the checksum is recomputed over the changed bytes.
+fn build_raw_name_tar(name: &str) -> Vec<u8> {
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Regular);
+    header.set_size(0);
+    header.set_mode(0o600);
+    header.set_mtime(0);
+    assert!(name.len() <= 100, "the raw name fits the header field");
+    {
+        let bytes = header.as_mut_bytes();
+        bytes[..100].fill(0);
+        bytes[..name.len()].copy_from_slice(name.as_bytes());
+    }
+    header.set_cksum();
+    let mut out = Vec::new();
+    out.extend_from_slice(header.as_bytes());
+    // Two zero blocks end the archive.
+    out.extend(std::iter::repeat_n(0u8, 1024));
+    out
 }
 
 /// Build a tar with one hostile entry type.
@@ -210,7 +248,7 @@ fn an_exported_volume_imports_into_a_new_home_and_search_works() {
     // Search works against the rebuilt index.
     assert_eq!(search_ids(&target_layout, "아침 회의"), vec!["mem_1"]);
     assert_eq!(search_ids(&target_layout, "빌드 잠금"), vec!["mem_2"]);
-    let body = MemoryWiki::open(&target_layout.store_root())
+    let body = MemoryWiki::open(target_layout.store_root())
         .expect("open the imported wiki")
         .stored_body(&horon_agent_memory_types::page::PageId::parse("mem_2").expect("valid id"))
         .expect("read the body")
@@ -244,7 +282,7 @@ fn a_deleted_page_is_in_no_later_export() {
     seed(&layout, "mem_1", "Kept", "kept body", 1_700_000_000);
     seed(&layout, "mem_2", "Gone", "gone body", 1_700_000_100);
     let id = horon_agent_memory_types::page::PageId::parse("mem_2").expect("valid id");
-    MemoryWiki::open(&layout.store_root())
+    MemoryWiki::open(layout.store_root())
         .expect("open")
         .delete_page(&id)
         .expect("delete");
@@ -281,7 +319,7 @@ fn an_import_refuses_a_target_that_already_holds_anything() {
 fn an_import_refuses_a_traversal_path() {
     let volume = TempVolume::new("import-traversal");
     let layout = volume.layout();
-    let tar = build_tar(&[("../../../etc/passwd", b"x")]);
+    let tar = build_raw_name_tar("../../../etc/passwd");
     let archive_path = write_archive(&volume.path, "evil.tar", &tar);
     let error = archive::import(&layout, &archive_path).expect_err("a traversal path is refused");
     assert!(
@@ -294,7 +332,7 @@ fn an_import_refuses_a_traversal_path() {
 fn an_import_refuses_an_absolute_path() {
     let volume = TempVolume::new("import-absolute");
     let layout = volume.layout();
-    let tar = build_tar(&[("/etc/passwd", b"x")]);
+    let tar = build_raw_name_tar("/etc/passwd");
     let archive_path = write_archive(&volume.path, "evil.tar", &tar);
     let error = archive::import(&layout, &archive_path).expect_err("an absolute path is refused");
     assert!(error.to_string().contains("is not a page file"), "{error}");
@@ -331,11 +369,14 @@ fn an_import_refuses_a_page_whose_bytes_do_not_match_the_manifest() {
     // Rebuild the tar with the page replaced and the manifest untouched.
     let manifest_bytes = read_tar_entry(&archive_path, MANIFEST_FILE).expect("manifest");
     let metadata_bytes = read_tar_entry(&archive_path, METADATA_FILE).expect("metadata");
-    let page_bytes = read_tar_entry(&archive_path, "wiki/preferences/mem_1.md").expect("page");
+    let page_bytes = read_tar_entry(&archive_path, "wiki/preferences/mem_1.md")
+        .unwrap_or_else(|| panic!("page path missing; tar holds {}", tar_paths(&archive_path).join(", ")));
     let mut tampered = String::from_utf8(page_bytes).expect("UTF-8");
     // Same length, so the size check passes and the digest check is what
     // refuses the file.
-    tampered = tampered.replace("original body", "tampered body");
+    // Same byte length as the original, so the size check cannot be what
+    // refuses the file: the digest must.
+    tampered = tampered.replace("original body", "tampered b0dy");
     let tar = build_tar(&[
         ("wiki/preferences/mem_1.md", tampered.as_bytes()),
         (METADATA_FILE, &metadata_bytes),
@@ -365,15 +406,30 @@ fn an_import_refuses_an_archive_that_is_not_a_memory_export() {
 fn an_import_refuses_an_encrypted_manifest_it_cannot_open() {
     let volume = TempVolume::new("import-encrypted");
     let layout = volume.layout();
-    let tar = build_tar(&[("manifest.json", b"{\"version\":1}")]);
+    // A complete-shaped manifest whose encryption field names an algorithm this
+    // build cannot open, with a metadata file so the manifest is what the
+    // importer reads and refuses.
+    let manifest = serde_json::json!({
+        "version": manifest::FORMAT_VERSION,
+        "exported_at": "2026-11-23T00:00:00Z",
+        "store_revision": 1,
+        "encryption": "aes-256-gcm",
+        "pages": 0,
+        "files": [],
+        "total_bytes": 0,
+    });
+    let tar = build_tar(&[
+        (METADATA_FILE, b""),
+        (
+            MANIFEST_FILE,
+            serde_json::to_vec(&manifest).expect("manifest").as_slice(),
+        ),
+    ]);
     let archive_path = write_archive(&volume.path, "enc.tar", &tar);
-    // A manifest missing its required fields is refused as a malformed
-    // manifest, which is the shape an encrypted tar takes when the reader
-    // cannot decrypt it.
-    let error = archive::import(&layout, &archive_path).expect_err("a malformed manifest is refused");
+    let error = archive::import(&layout, &archive_path).expect_err("an encrypted manifest is refused");
     assert!(
-        error.to_string().contains("not a valid manifest"),
-        "the refusal names the manifest: {error}"
+        error.to_string().contains("encrypted with"),
+        "the refusal names the encryption: {error}"
     );
 }
 
@@ -424,7 +480,7 @@ fn a_quiesced_store_refuses_writes_until_resume() {
     assert!(fence::is_fenced(&layout.store_root()).expect("read the fence"));
 
     // A write now refuses, and the refusal names the checkpoint.
-    let mut wiki = MemoryWiki::open(&layout.store_root()).expect("open");
+    let mut wiki = MemoryWiki::open(layout.store_root()).expect("open");
     let mut next = page(
         "mem_2",
         PageKind::Fact,
@@ -447,7 +503,7 @@ fn a_quiesced_store_refuses_writes_until_resume() {
     // Resume lifts it and the write succeeds.
     assert!(fence::resume(&layout).expect("resume"));
     assert!(!fence::is_fenced(&layout.store_root()).expect("read the fence"));
-    let mut wiki = MemoryWiki::open(&layout.store_root()).expect("open");
+    let mut wiki = MemoryWiki::open(layout.store_root()).expect("open");
     wiki.write_page(&next).expect("a resumed store accepts a write");
     assert!(!fence::resume(&layout).expect("second resume"));
 }
@@ -587,10 +643,10 @@ impl RecordingControlPlane {
             .first()
             .filter(|armed| armed.starts_with("__armed__"))
             .map(|armed| armed.trim_start_matches("__armed__").to_string());
-        if let Some(marker) = marker {
-            if json.contains(&marker) {
-                self.body_marker_hits.borrow_mut().push(format!("{operation}:{json}"));
-            }
+        if let Some(marker) = marker
+            && json.contains(&marker)
+        {
+            self.body_marker_hits.borrow_mut().push(format!("{operation}:{json}"));
         }
         self.calls.borrow_mut().push((operation.to_string(), json));
     }
@@ -764,8 +820,10 @@ fn a_mock_control_plane_server_receives_a_deletion_and_carries_no_body() {
     let requests: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>> =
         std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let recorded = requests.clone();
-    let handle = std::thread::spawn(move || {
-        for stream in listener.incoming().take(16) {
+    // The server thread serves until the test process exits; the test does not
+    // join it, because the loop only ends when the listener is dropped at exit.
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let mut reader = std::io::BufReader::new(stream.try_clone().expect("clone the stream"));
             let mut request_line = String::new();
@@ -819,7 +877,6 @@ fn a_mock_control_plane_server_receives_a_deletion_and_carries_no_body() {
         .expect("build the client");
     let report = delete::delete_user(&layout, &plane, "user-mock").expect("delete_user runs against the mock");
     assert!(report.is_deleted(), "the mock answers every step: {report:?}");
-    handle.join().expect("the mock server thread ends");
 
     let requests = requests.lock().expect("lock").clone();
     assert!(!requests.is_empty(), "the client reached the mock server");
@@ -1047,24 +1104,32 @@ fn the_volume_deletion_asks_for_the_machine_first() {
 fn a_partially_deleted_page_is_absent_from_reindex_search_and_export() {
     let volume = TempVolume::new("partial-delete");
     let layout = volume.layout();
+    // A token unique to the page being deleted, so a match can only come from
+    // that page and its absence from a query proves the deletion reached the
+    // index, not just the file.
     seed(&layout, "mem_1", "Kept", "kept body", 1_700_000_000);
-    seed(&layout, "mem_2", "Gone", "gone body", 1_700_000_100);
-    // A body the search would find by full text, so its absence is real.
+    seed(
+        &layout,
+        "mem_2",
+        "Gone",
+        "zebracorn memory of the deleted page",
+        1_700_000_100,
+    );
     seed(&layout, "mem_3", "Also kept", "also kept body", 1_700_000_200);
 
     // Delete one page and then rebuild the index from the markdown.
     let id = horon_agent_memory_types::page::PageId::parse("mem_2").expect("valid id");
-    MemoryWiki::open(&layout.store_root())
+    MemoryWiki::open(layout.store_root())
         .expect("open")
         .delete_page(&id)
         .expect("delete");
-    MemoryWiki::open(&layout.store_root())
+    MemoryWiki::open(layout.store_root())
         .expect("open")
         .reindex()
         .expect("rebuild the index");
 
     // Reindex: the page is not a row.
-    let wiki = MemoryWiki::open(&layout.store_root()).expect("open");
+    let wiki = MemoryWiki::open(layout.store_root()).expect("open");
     let ids: Vec<String> = wiki
         .list(&ListFilter {
             include_inactive: true,
@@ -1074,13 +1139,15 @@ fn a_partially_deleted_page_is_absent_from_reindex_search_and_export() {
         .into_iter()
         .map(|row| row.id)
         .collect();
+    let mut ids = ids;
+    ids.sort();
     assert_eq!(ids, vec!["mem_1", "mem_3"], "only the kept pages remain");
     assert!(wiki.page(&id).expect("read").is_none());
 
-    // Search: no hit for the deleted body.
+    // Search: no hit for the deleted page's unique token.
     assert!(
-        search_ids(&layout, "gone body").is_empty(),
-        "the deleted body is not searchable"
+        search_ids(&layout, "zebracorn").is_empty(),
+        "the deleted page's token is not searchable"
     );
     assert_eq!(search_ids(&layout, "kept body").len(), 2);
 
@@ -1092,12 +1159,11 @@ fn a_partially_deleted_page_is_absent_from_reindex_search_and_export() {
     let text = String::from_utf8(metadata).expect("UTF-8");
     assert!(!text.contains("mem_2"), "the deleted page has no metadata line");
     assert!(
-        !text.contains("gone body"),
+        !text.contains("zebracorn"),
         "the deleted body is not in the export metadata"
     );
     assert!(
-        read_tar_entry(&archive_path, "wiki/facts/mem_2.md").is_none()
-            && read_tar_entry(&archive_path, "wiki/preferences/mem_2.md").is_none(),
+        read_tar_entry(&archive_path, "wiki/preferences/mem_2.md").is_none(),
         "the deleted page file is not in the tar"
     );
 }
