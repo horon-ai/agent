@@ -3140,6 +3140,18 @@ impl Registry {
 }
 
 #[cfg(test)]
+mod activator_clone;
+#[cfg(test)]
+mod ask_registry_tests;
+#[cfg(test)]
+mod aux_complete_tests;
+#[cfg(test)]
+mod compaction_sharing_tests;
+#[cfg(test)]
+mod concurrency_class_tests;
+#[cfg(test)]
+mod context_condense_perf_tests;
+#[cfg(test)]
 mod lazy_activation;
 #[cfg(test)]
 mod mcp_allow_list_tests;
