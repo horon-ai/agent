@@ -945,6 +945,13 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
             terminal.send(f"{name}\r")
             terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before listing tools")
+        terminal.send("/tools\r")
+        terminal.read_until("Session tools", STEP_TIMEOUT, "tool picker")
+        terminal.read_until("tier unknown", STEP_TIMEOUT, "unreported loading tier")
+        terminal.send("bash\r")
+        if contains(terminal.transcript, APPROVAL_PROMPT) or os.path.exists(os.path.join(case_root, TOOL_FILE)):
+            raise Failure(f"browsing tools started a call\n--- transcript ---\n{terminal.transcript}")
         if POSIX:
             staged_review_smoke(terminal, case_root, env)
         else:
@@ -1410,6 +1417,29 @@ def selected_cases(requested: str | None) -> set[int]:
     return set(DEFAULT_CASES["posix" if POSIX else "windows"])
 
 
+def empty_tool_picker(launch: Launch, root: str, base_url: str) -> str:
+    home = write_config(os.path.join(root, "home"), base_url)
+    with open(os.path.join(home, "config.toml"), "a", encoding="utf-8") as handle:
+        handle.write('profile = "none"\n')
+    env = horon_env(root, home)
+    env.pop("HORON_AGENT_TOOL_PROFILE", None)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal(launch.client_argv(root), cwd=root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "empty-profile session ready")
+        terminal.send("/tools\r")
+        terminal.read_until("are enabled for this session", STEP_TIMEOUT, "empty tool picker")
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        terminal.send("/quit\r")
+        code = terminal.wait(STEP_TIMEOUT)
+        if code != 0:
+            raise Failure(f"empty tool picker exited {code}\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def background_jobs_case(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url, "yolo")
     env = horon_env(case_root, home)
@@ -1473,6 +1503,7 @@ def run_build_layout(
                 source = "--no-title" if from_flag else "title.enabled=false"
                 text += f"\n--- {source} ---\n" + title_disabled_case(launch, os.path.join(root, "happy"), from_flag)
                 log(f"{source}: no title or title stack sequences")
+            text += "\n--- empty tool profile ---\n" + empty_tool_picker(launch, os.path.join(root, "empty-tools"), base_url)
             jobs_root = os.path.join(root, "jobs")
             jobs_launch = build_launch(jobs_root, agent, tui)
             text += "\n--- background jobs ---\n" + background_jobs_case(jobs_launch, jobs_root, base_url)
