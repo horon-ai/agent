@@ -106,21 +106,6 @@ impl Document {
         }
     }
 
-    /// Render the document in canonical form.
-    pub fn render(&self) -> String {
-        let mut out = String::with_capacity(256 + self.body.len());
-        out.push_str("---\n");
-        for (key, value) in &self.fields {
-            out.push_str(key);
-            out.push_str(": ");
-            render_value(&mut out, value);
-            out.push('\n');
-        }
-        out.push_str("---\n");
-        out.push_str(&self.body);
-        out
-    }
-
     /// Parse `text` in the dialect described by the module documentation.
     pub fn parse(text: &str) -> Result<Self> {
         let Some(mut rest) = text.strip_prefix("---\n") else {
@@ -366,11 +351,35 @@ fn parse_unicode_escape(cursor: &mut Cursor<'_>) -> Result<char> {
 
 fn parse_list(cursor: &mut Cursor<'_>, depth: usize) -> Result<Value> {
     cursor.take('[')?;
-    let mut items = Vec::new();
     if cursor.peek() == Some(']') {
         cursor.next();
-        return Ok(Value::List(items));
+        return Ok(Value::List(Vec::new()));
     }
+    if cursor.peek() == Some('{') {
+        let mut maps: Vec<Vec<(String, Value)>> = Vec::new();
+        loop {
+            if maps.len() >= MAX_LIST_ITEMS {
+                bail!("frontmatter list has more than {MAX_LIST_ITEMS} items");
+            }
+            if cursor.peek() == Some('{') {
+                maps.push(parse_map_entries(cursor, depth + 1)?);
+                cursor.skip_optional_space();
+                match cursor.next() {
+                    Some(',') => cursor.skip_optional_space(),
+                    Some(']') => return Ok(Value::MapList(maps)),
+                    _ => bail!("frontmatter list is not closed with `]`"),
+                }
+            } else {
+                let mut items: Vec<Value> = maps.into_iter().map(|entries| Value::MapList(vec![entries])).collect();
+                return parse_scalar_list_rest(cursor, depth, &mut items);
+            }
+        }
+    }
+    let mut items = Vec::new();
+    parse_scalar_list_rest(cursor, depth, &mut items)
+}
+
+fn parse_scalar_list_rest(cursor: &mut Cursor<'_>, depth: usize, items: &mut Vec<Value>) -> Result<Value> {
     loop {
         if items.len() >= MAX_LIST_ITEMS {
             bail!("frontmatter list has more than {MAX_LIST_ITEMS} items");
@@ -379,40 +388,22 @@ fn parse_list(cursor: &mut Cursor<'_>, depth: usize) -> Result<Value> {
         cursor.skip_optional_space();
         match cursor.next() {
             Some(',') => cursor.skip_optional_space(),
-            Some(']') => return Ok(flatten_map_list(items)),
+            Some(']') => return Ok(Value::List(std::mem::take(items))),
             _ => bail!("frontmatter list is not closed with `]`"),
         }
     }
 }
 
-/// A list whose items are all single maps is a map list. This keeps
-/// `render(parse(text)) == text` for `links: [{...}, {...}]`, which would
-/// otherwise parse as a list of one-map lists.
-fn flatten_map_list(items: Vec<Value>) -> Value {
-    if items.is_empty()
-        || !items
-            .iter()
-            .all(|item| matches!(item, Value::MapList(entries) if entries.len() == 1))
-    {
-        return Value::List(items);
-    }
-    let mut flattened = Vec::with_capacity(items.len());
-    for item in items {
-        if let Value::MapList(mut entries) = item
-            && let Some(first) = entries.pop()
-        {
-            flattened.push(first);
-        }
-    }
-    Value::MapList(flattened)
+fn parse_map(cursor: &mut Cursor<'_>, depth: usize) -> Result<Value> {
+    Ok(Value::MapList(vec![parse_map_entries(cursor, depth)?]))
 }
 
-fn parse_map(cursor: &mut Cursor<'_>, depth: usize) -> Result<Value> {
+fn parse_map_entries(cursor: &mut Cursor<'_>, depth: usize) -> Result<Vec<(String, Value)>> {
     cursor.take('{')?;
     let mut entries: Vec<(String, Value)> = Vec::new();
     if cursor.peek() == Some('}') {
         cursor.next();
-        return Ok(Value::MapList(vec![entries]));
+        return Ok(entries);
     }
     loop {
         if entries.len() >= MAX_MAP_KEYS {
@@ -437,52 +428,14 @@ fn parse_map(cursor: &mut Cursor<'_>, depth: usize) -> Result<Value> {
         cursor.skip_optional_space();
         match cursor.next() {
             Some(',') => cursor.skip_optional_space(),
-            Some('}') => return Ok(Value::MapList(vec![entries])),
+            Some('}') => return Ok(entries),
             _ => bail!("frontmatter map is not closed with `}}`"),
         }
     }
 }
 
-fn render_value(out: &mut String, value: &Value) {
-    match value {
-        Value::Str(text) => render_string(out, text),
-        Value::Int(number) => out.push_str(&number.to_string()),
-        Value::Float(number) => out.push_str(&format_float(*number)),
-        Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
-        Value::Null => out.push_str("null"),
-        Value::List(items) => {
-            out.push('[');
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    out.push_str(", ");
-                }
-                render_value(out, item);
-            }
-            out.push(']');
-        }
-        Value::MapList(entries_list) => {
-            out.push('[');
-            for (index, entries) in entries_list.iter().enumerate() {
-                if index > 0 {
-                    out.push_str(", ");
-                }
-                out.push('{');
-                for (entry_index, (key, entry_value)) in entries.iter().enumerate() {
-                    if entry_index > 0 {
-                        out.push_str(", ");
-                    }
-                    out.push_str(key);
-                    out.push_str(": ");
-                    render_value(out, entry_value);
-                }
-                out.push('}');
-            }
-            out.push(']');
-        }
-    }
-}
-
-fn render_string(out: &mut String, text: &str) {
+pub(super) fn render_string(out: &mut String, text: &str) {
+    use std::fmt::Write;
     out.push('"');
     for ch in text.chars() {
         match ch {
@@ -491,23 +444,41 @@ fn render_string(out: &mut String, text: &str) {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            ch if is_forbidden_raw(ch) => out.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch if is_forbidden_raw(ch) => {
+                let _written = write!(out, "\\u{:04x}", ch as u32);
+            }
             ch => out.push(ch),
         }
     }
     out.push('"');
 }
 
-/// Render a page float in its shortest exact form (`0.8`, `0.25`, `1`).
-///
-/// A whole value is written as `1`, which parses back as an integer, so the
-/// caller that expects a float reads through [`Value::Int`] as well.
-fn format_float(number: f32) -> String {
-    let mut text = format!("{number}");
-    if !text.contains('.') && !text.contains('e') {
-        text.push_str(".0");
+/// Render a page float in its shortest exact form (`0.8`, `0.25`, `1.0`).
+pub(super) fn write_float(out: &mut String, number: f32) {
+    use std::fmt::Write;
+    let start = out.len();
+    let _written = write!(out, "{number}");
+    let written = &out[start..];
+    if !written.contains('.') && !written.contains('e') {
+        out.push_str(".0");
     }
-    text
+}
+
+/// Parse just the `id` field value when `line` is `id: "..."`.
+pub(super) fn parse_id_field_value(line: &str) -> Option<String> {
+    let raw = line.strip_prefix("id:")?;
+    let raw = raw.strip_prefix(' ').unwrap_or(raw);
+    if raw.is_empty() {
+        return None;
+    }
+    let mut cursor = Cursor::new(raw);
+    let Ok(Value::Str(id)) = parse_string(&mut cursor) else {
+        return None;
+    };
+    if !cursor.at_end() {
+        return None;
+    }
+    Some(id)
 }
 
 fn is_forbidden_raw(ch: char) -> bool {

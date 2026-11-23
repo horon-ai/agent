@@ -4,7 +4,6 @@
 use super::tests_support::{TempRoot, at, fact, page, preference};
 use super::{MemoryWiki, SearchQuery, document};
 use horon_agent_memory_types::MemoryCategory;
-use horon_agent_memory_types::MemoryPage;
 use horon_agent_memory_types::page::{PageId, PageKind};
 
 fn open(root: &TempRoot) -> MemoryWiki {
@@ -486,22 +485,15 @@ fn listing_filters_by_kind_project_tag_active_and_limit() {
 }
 
 #[test]
-fn a_page_round_trips_through_entry_and_back() {
-    use horon_agent_memory_types::MemoryEntry;
-
-    let mut entry = MemoryEntry::new(MemoryCategory::Custom("idea".to_string()), "아이디어 메모");
-    entry.id = "skill:deploy checklist".to_string();
-    entry.tags = vec!["release".to_string()];
-    entry.access_count = 3;
-    let page = MemoryPage::from_entry(&entry, None).expect("page");
-    let root = TempRoot::new("entry");
+fn max_length_encoded_page_id_writes_and_reads_without_enametoolong() {
+    let root = TempRoot::new("max-encoded-id");
     let mut wiki = open(&root);
-    wiki.write_page(&page).expect("write");
-    let read_back = wiki.page(&page.id).expect("page").expect("present");
-    let entry_again = read_back.to_entry();
-    assert_eq!(entry_again.id, entry.id);
-    assert_eq!(entry_again.category, MemoryCategory::Custom("idea".to_string()));
-    assert_eq!(entry_again.content, entry.content);
-    assert_eq!(entry_again.tags, entry.tags);
-    assert_eq!(entry_again.access_count, 3);
+    let max_ascii = "A".repeat(horon_agent_memory_types::page::PAGE_ID_MAX_BYTES);
+    let korean = "가".repeat(horon_agent_memory_types::page::PAGE_ID_MAX_BYTES / 3);
+    for raw_id in [max_ascii, korean] {
+        let page = fact(&raw_id, "긴 아이디", "본문", 1_700_000_000);
+        wiki.write_page(&page).expect("write max-length encoded id");
+        let read_back = wiki.page(&id(&raw_id)).expect("read").expect("present");
+        assert_eq!(read_back.id.as_str(), raw_id);
+    }
 }

@@ -237,45 +237,13 @@ impl MemoryWiki {
 
     /// Pages matching `filter`, newest first, with the id as the final tie-break.
     pub fn list(&self, filter: &ListFilter) -> Result<Vec<PageRow>> {
-        let mut rows = self.index.rows()?;
-        rows.retain(|row| {
-            if !filter.kinds.is_empty() {
-                let kind = PageKind::parse(&row.kind);
-                if !kind.is_some_and(|kind| filter.kinds.contains(&kind)) {
-                    return false;
-                }
-            }
-            if let Some(project) = &filter.project
-                && row.project.as_deref() != Some(project.as_str())
-            {
-                return false;
-            }
-            if !filter.include_inactive && !row.active {
-                return false;
-            }
-            true
-        });
-        if !filter.tags.is_empty() {
-            let pairs = self.index.all_tags()?;
-            rows.retain(|row| {
-                filter.tags.iter().all(|tag| {
-                    pairs
-                        .iter()
-                        .any(|(page_id, stored)| page_id == &row.id && stored == tag)
-                })
-            });
-        }
-        rows.sort_by(|left, right| {
-            right
-                .updated_ms
-                .cmp(&left.updated_ms)
-                .then_with(|| right.created_ms.cmp(&left.created_ms))
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        if let Some(limit) = filter.limit {
-            rows.truncate(limit);
-        }
-        Ok(rows)
+        self.index.list_rows(
+            &filter.kinds,
+            filter.project.as_deref(),
+            &filter.tags,
+            filter.include_inactive,
+            filter.limit,
+        )
     }
 
     /// Search the index.
@@ -340,12 +308,13 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         return Err(anyhow!("page path {} has no parent directory", path.display()));
     };
     ensure_private_dir(parent)?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| anyhow!("page path {} has no UTF-8 file name", path.display()))?;
+    if path.file_name().and_then(|name| name.to_str()).is_none() {
+        return Err(anyhow!("page path {} has no UTF-8 file name", path.display()));
+    }
     let nonce: u64 = rand::random();
-    let temp = parent.join(format!(".{file_name}.tmp.{}.{nonce}", std::process::id()));
+    // Keep the temp name bounded independent of `file_name` so a max-length
+    // encoded page id (`254` bytes) still writes atomically within POSIX `NAME_MAX`.
+    let temp = parent.join(format!(".tmp.{}.{nonce:016x}", std::process::id()));
     let result = (|| -> Result<()> {
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
