@@ -27,6 +27,11 @@ pub fn set_floor(session_id: &str, mode: ApprovalMode) {
         .insert(session_id.to_owned(), mode);
 }
 
+/// Drop any per-session approval floor recorded for `session_id`.
+pub fn clear_floor(session_id: &str) {
+    FLOORS.lock().unwrap_or_else(PoisonError::into_inner).remove(session_id);
+}
+
 /// The stricter of `current` and this session's floor, if it has one.
 pub(crate) fn stricter(session_id: &str, current: ApprovalMode) -> ApprovalMode {
     let floor = FLOORS
