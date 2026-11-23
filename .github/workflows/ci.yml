@@ -199,19 +199,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-      - name: Run clippy on horon-tui
-        # A separate `-p` selection, not `--workspace`: this is the one package
-        # the guardrail job would otherwise miss, because a bare `cargo clippy`
-        # at the root selects only the root package. It also keeps the terminal
-        # stack out of the root package's all-features build.
+      - name: Run clippy on workspace targets
+        # Bare `cargo clippy` above selects only the root package, so member
+        # crates' test, bench, and example targets (along with standalone
+        # members like `horon-tui`, `horon-agent-extension-sdk`, and
+        # `horon-package-example`) are not linted there. Running `--workspace
+        # --all-targets` with default features covers every member target while
+        # keeping the terminal stack out of the root `--all-features` build.
         if: ${{ !cancelled() }}
-        run: cargo clippy --locked --all-targets --all-features -p horon-tui -- -D warnings
-
-      - name: Run clippy on the author SDK and example
-        # Same reason as horon-tui above: these are workspace members the root
-        # package's clippy selection never reaches.
-        if: ${{ !cancelled() }}
-        run: cargo clippy --locked --all-targets --all-features -p horon-agent-extension-sdk -p horon-package-example -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Run the author SDK issue verification commands
         if: ${{ !cancelled() }}

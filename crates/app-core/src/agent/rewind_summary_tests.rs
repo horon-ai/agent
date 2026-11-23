@@ -422,7 +422,7 @@ async fn rewind_to_a_checkpoint_folds_the_branch_into_the_report() {
     assert_eq!(before, 6, "four messages, the marker, and the two-message branch");
 
     crate::tool::checkpoint::request_rewind(
-        &agent.session_id(),
+        agent.session_id(),
         "the generator needs a grammar the parser lacks".to_string(),
     );
     agent.apply_pending_checkpoint_rewind();
@@ -470,7 +470,7 @@ async fn undoing_a_checkpoint_rewind_restores_the_branch_and_drops_the_report() 
     let before = stored_texts(&agent);
 
     crate::tool::checkpoint::request_rewind(
-        &agent.session_id(),
+        agent.session_id(),
         "the generator needs a grammar the parser lacks".to_string(),
     );
     agent.apply_pending_checkpoint_rewind();
@@ -503,13 +503,13 @@ async fn rewind_without_a_committed_checkpoint_is_dropped() {
     let (_sandbox, mut agent) = summary_fixture().await;
     let before = stored_texts(&agent);
 
-    crate::tool::checkpoint::request_rewind(&agent.session_id(), "nothing to fold".to_string());
+    crate::tool::checkpoint::request_rewind(agent.session_id(), "nothing to fold".to_string());
     agent.apply_pending_checkpoint_rewind();
 
     assert_eq!(stored_texts(&agent), before, "the transcript is untouched");
     assert_eq!(visible_count(&agent), 4);
     assert_eq!(
-        crate::tool::checkpoint::take_pending(&agent.session_id()),
+        crate::tool::checkpoint::take_pending(agent.session_id()),
         None,
         "the request is applied or dropped exactly once"
     );

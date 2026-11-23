@@ -1,8 +1,3 @@
-#![expect(
-    clippy::await_holding_lock,
-    reason = "the auth sandbox serializes process-global configuration"
-)]
-
 use super::*;
 use crate::auth::test_sandbox::AuthTestSandbox;
 use crate::message::{Message, StreamEvent, ToolDefinition};

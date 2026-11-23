@@ -269,11 +269,7 @@ async fn prewalk_unknown_into_keeps_the_model_and_records_one_refusal() {
 #[tokio::test]
 async fn prewalk_validation_requires_into_when_enabled() {
     let sandbox = AuthTestSandbox::new().expect("isolated home");
-    std::fs::write(
-        sandbox.root().join("config.toml"),
-        "[prewalk]\nenabled = true\n".to_string(),
-    )
-    .expect("write config file");
+    std::fs::write(sandbox.root().join("config.toml"), "[prewalk]\nenabled = true\n").expect("write config file");
     crate::config::Config::invalidate_cache();
 
     let error = crate::config::Config::load_strict().expect_err("enabling without `into` fails");
@@ -283,11 +279,7 @@ async fn prewalk_validation_requires_into_when_enabled() {
         "the message names the missing key: {message}"
     );
 
-    std::fs::write(
-        sandbox.root().join("config.toml"),
-        "[prewalk]\nenabled = false\n".to_string(),
-    )
-    .expect("write config file");
+    std::fs::write(sandbox.root().join("config.toml"), "[prewalk]\nenabled = false\n").expect("write config file");
     crate::config::Config::invalidate_cache();
     crate::config::Config::load_strict().expect("an off section needs no model");
 }

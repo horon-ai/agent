@@ -99,12 +99,11 @@ impl Provider for EffortLadderProvider {
     }
 
     fn fork(&self) -> Arc<dyn Provider> {
-        let forked = Arc::new(Self {
+        Arc::new(Self {
             ladder: self.ladder.clone(),
             stored: Mutex::new(self.stored.lock().unwrap().clone()),
             seen: Mutex::new(Vec::new()),
-        });
-        forked
+        })
     }
 }
 
