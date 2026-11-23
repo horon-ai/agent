@@ -76,3 +76,4 @@ include!("resume/different_client_attach.rs");
 include!("resume/live_events_before_history.rs");
 include!("resume/same_client_takeover.rs");
 include!("resume/same_id_resubscribe.rs");
+include!("resume/shared_source_cold_restore.rs");
