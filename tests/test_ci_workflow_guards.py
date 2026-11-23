@@ -220,7 +220,7 @@ class WorkflowGuardTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         for action in ('actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7',
                        'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7',
-                       'astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3',
+                       'astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0',
                        'mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11'):
             with self.subTest(action=action):
                 self.assertIn(action, workflow)
