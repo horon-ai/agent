@@ -32,6 +32,20 @@ pub struct FileDiffWire {
     pub created: bool,
 }
 
+/// Body of a `todo_edit_result` push.
+///
+/// `applied` says whether the stored list was written. A refusal leaves it
+/// untouched and names why in `refusal`; `revision` names the list after the
+/// attempt either way, so the client can refresh from it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoEditResultEvent {
+    pub id: u64,
+    pub applied: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
+    pub revision: String,
+}
+
 #[cfg(test)]
 mod approval_failover_wire_tests {
     use super::*;

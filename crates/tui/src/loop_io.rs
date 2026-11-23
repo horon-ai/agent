@@ -81,14 +81,27 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             Incoming::Info(message) => app.transcript.push_notice(message),
             Incoming::Context(report) => app.transcript.push_context(*report),
             Incoming::Report(report) => app.transcript.push_report(*report),
-            Incoming::Todos { session_id, items } => {
+            Incoming::Todos {
+                session_id,
+                items,
+                revision,
+            } => {
                 changed = previously_changed;
-                if app.session_id.as_deref().is_none_or(|current| current == session_id) {
-                    let panel = crate::todo_panel::TodoPanel::from_items(&items);
-                    if app.todos != panel {
-                        app.todos = panel;
-                        changed = Redraw::Immediate;
-                    }
+                if app.set_todos(&session_id, items, revision) {
+                    changed = Redraw::Immediate;
+                }
+            }
+            Incoming::TodoEdit {
+                session_id,
+                applied,
+                refusal,
+                items,
+                revision,
+                id,
+                status,
+            } => {
+                if app.todo_edit_reply(&session_id, applied, refusal, items, revision, (&id, &status)) {
+                    changed = Redraw::Immediate;
                 }
             }
             Incoming::Models { models, current } => app.show_models(models, current),
@@ -102,6 +115,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             } => app.runtime_info(provider, model, effort, level),
             Incoming::DaemonSettings(settings) => app.show_daemon_settings(settings),
             Incoming::Sessions(rows) => app.show_sessions(rows),
+            Incoming::Forks(rows) => app.show_forks(rows),
             Incoming::Swarm(rows) => app.show_swarm(rows),
             Incoming::ArchivedSessions(rows) => app.show_archived_sessions(rows),
             Incoming::SessionsChecked { gone, unverified } => app.sessions_checked(&gone, unverified),
@@ -123,7 +137,15 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 // Read before the attach so the notice names what happened: the
                 // same answer covers a resumed session and one just created.
                 let started = app.take_pending_new_session();
+                // Read before the session moves: the origin is the session the
+                // fork was asked from, and the answer is the branch to record
+                // it against.
+                let origin = app.take_pending_fork();
+                let branch = session.session_id.clone();
                 app.attach_session(*session, started);
+                if let Some(origin) = origin {
+                    app.forked_from(origin, &branch);
+                }
                 // The directory travels with the answer: the session's own
                 // folder becomes the completion root, and an answer that names
                 // none turns path completion off rather than keeping the
@@ -161,6 +183,12 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         },
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
         Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
+        Action::TodoStatus(request) => Command::SetTodoStatus {
+            session_id: request.session_id,
+            expected_revision: request.revision,
+            id: request.id,
+            status: request.status,
+        },
         Action::PackageCommand {
             package_id,
             command,
@@ -203,6 +231,8 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         },
         Action::Attach(session_id) => Command::Attach(session_id),
         Action::SideQuestion { id, question, boundary } => Command::SideQuestion { id, question, boundary },
+        Action::Forks => Command::Forks,
+        Action::Fork(boundary) => Command::Fork(boundary),
         Action::Rename(title) => Command::Rename(title),
         Action::CheckSessions(sessions) => Command::CheckSessions(sessions),
         // The user opened the list, so a failure is theirs to see and the

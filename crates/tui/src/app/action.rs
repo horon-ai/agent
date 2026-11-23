@@ -1,9 +1,8 @@
-//! What the UI asks the bridge to do after a keystroke.
+//! What a keystroke asks the bridge to do.
 //!
-//! Kept beside `app` rather than inside it because the enum is read by the
-//! frame loop and every command handler, while `app.rs` is the state those
-//! handlers change and has a size budget of its own.
-
+//! The list lives apart from [`super::App`] so the action boundary — the one
+//! shape every key, command and picker produces — stays readable on its own.
+//! It is re-exported from `crate::app`, so callers keep naming `Action` there.
 use horon_agent_sdk::api::AskSelection;
 
 /// One request for the bridge thread: the client's half of a command.
@@ -74,6 +73,10 @@ pub enum Action {
     Archive(String),
     /// Restore the archived session named.
     Restore(String),
+    /// Ask for the recorded message boundaries this session can fork from.
+    Forks,
+    /// Fork a new session from the named stored message and follow it.
+    Fork(String),
     /// Start a new session in this working directory and follow it.
     NewSession,
     /// Attach to another session and replay its stored conversation.
@@ -106,6 +109,8 @@ pub enum Action {
     Export(String),
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
+    /// Commit one revision-checked todo status change for the attached session.
+    TodoStatus(crate::todo_panel::TodoStatusRequest),
     /// Leave.
     Quit,
 }

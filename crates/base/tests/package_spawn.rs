@@ -81,18 +81,22 @@ fn package_child_probe() {
     fs::write(state.join(CWD_MARKER), cwd.to_string_lossy().as_bytes()).expect("write the working directory");
 
     let mode = fs::read_to_string(state.join(MODE_MARKER)).expect("read the scenario mode");
-    if mode.trim() == "descendant" {
+    let descendant = if mode.trim() == "descendant" {
         let heartbeat = state.join(HEARTBEAT_MARKER);
-        Command::new("/bin/sh")
-            .arg("-c")
-            .arg("trap '' TERM; while :; do printf . >> \"$HORON_PACKAGE_PROBE_HEARTBEAT\"; sleep 0.05; done")
-            .env("HORON_PACKAGE_PROBE_HEARTBEAT", &heartbeat)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("start the descendant");
-    }
+        Some(
+            Command::new("/bin/sh")
+                .arg("-c")
+                .arg("trap '' TERM; while :; do printf . >> \"$HORON_PACKAGE_PROBE_HEARTBEAT\"; sleep 0.05; done")
+                .env("HORON_PACKAGE_PROBE_HEARTBEAT", &heartbeat)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("start the descendant"),
+        )
+    } else {
+        None
+    };
 
     println!("{STDOUT_TOKEN}");
     eprintln!("{STDERR_TOKEN}");
@@ -104,6 +108,9 @@ fn package_child_probe() {
     std::io::stdin()
         .read_to_end(&mut discarded)
         .expect("read standard input until the host closes it");
+    if let Some(mut child) = descendant {
+        let _ = child.try_wait();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -349,11 +356,11 @@ fn thaw(path: &Path) {
     if make_owner_writable(path, writable).is_err() {
         return;
     }
-    if metadata.is_dir() {
-        if let Ok(entries) = fs::read_dir(path) {
-            for entry in entries.flatten() {
-                thaw(&entry.path());
-            }
+    if metadata.is_dir()
+        && let Ok(entries) = fs::read_dir(path)
+    {
+        for entry in entries.flatten() {
+            thaw(&entry.path());
         }
     }
 }

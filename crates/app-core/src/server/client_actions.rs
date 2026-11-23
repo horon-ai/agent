@@ -7,9 +7,8 @@ use super::{
     remove_session_from_swarm, swarm_id_for_session,
 };
 use crate::agent::Agent;
-use crate::protocol::{FeatureToggle, NotificationType, ServerEvent};
+use crate::protocol::{FeatureToggle, NotificationType, Request, ServerEvent};
 use crate::session::Session;
-use anyhow::Context;
 use horon_agent_agent_runtime::SoftInterruptSource;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -294,6 +293,52 @@ pub(super) async fn handle_set_session_saved(
     let _ = client_event_tx.send(ServerEvent::Done { id });
 }
 
+/// Apply one revision-checked todo status change and publish it.
+///
+/// The write goes through the shared todo lock and the same store as the todo
+/// tool, so the two cannot both validate one list and then overwrite each
+/// other. Publishing `TodoUpdated` is what turns a local edit into the
+/// `TodoChanged` every attached client already listens for; without it another
+/// client would keep showing the list it had before this edit.
+///
+/// A refusal is not an error: the stored list stands, and the reply carries the
+/// refusal and the revision it stands at so the caller refreshes. Nothing here
+/// starts a turn or sends a prompt, and no Agent lock is taken: the todo lock
+/// alone orders the edit with a tool write, so an edit during a turn is safe.
+pub(super) fn handle_set_todo_status(
+    id: u64,
+    expected_revision: String,
+    todo_id: String,
+    status: String,
+    client_session_id: &str,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+) {
+    let outcome = match crate::todo::apply_todo_status_edit(client_session_id, &expected_revision, &todo_id, &status) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            drop(client_event_tx.send(ServerEvent::Error {
+                id,
+                message: crate::util::format_error_chain(&error),
+                retry_after_secs: None,
+            }));
+            return;
+        }
+    };
+    if outcome.applied {
+        crate::bus::Bus::global().publish(crate::bus::BusEvent::TodoUpdated(crate::bus::TodoEvent {
+            session_id: client_session_id.to_string(),
+            todos: outcome.todos.clone(),
+        }));
+    }
+    let event = crate::protocol::TodoEditResultEvent {
+        id,
+        applied: outcome.applied,
+        refusal: outcome.refusal.map(|refusal| refusal.as_str().to_string()),
+        revision: outcome.revision,
+    };
+    drop(client_event_tx.send(ServerEvent::TodoEditResult(event)));
+}
+
 async fn broadcast_session_renamed(
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
     client_session_id: &str,
@@ -470,17 +515,12 @@ fn send_owed_commit_error(id: u64, error: &anyhow::Error, client_event_tx: &mpsc
     });
 }
 
-fn clone_split_session(
-    parent_session_id: &str,
-    live_parent: Option<&Session>,
-    consult: bool,
-    boundary: Option<&str>,
-) -> anyhow::Result<(String, String)> {
+fn load_split_parent(parent_session_id: &str, live_parent: Option<&Session>) -> anyhow::Result<Session> {
     // Keep the persisted snapshot authoritative, including while the parent is
     // busy. A brand-new Agent may not have saved anything yet, however. Only a
     // missing snapshot permits an in-memory fallback, never corrupt/unreadable
     // history or a session belonging to a different client.
-    let parent = Session::load(parent_session_id).or_else(|error| {
+    Session::load(parent_session_id).or_else(|error| {
         let missing = error
             .downcast_ref::<std::io::Error>()
             .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound);
@@ -488,42 +528,30 @@ fn clone_split_session(
             Some(parent) => Ok(parent.clone()),
             None => Err(error),
         }
-    })?;
+    })
+}
 
-    // Resolve a recorded boundary against the parent's own history before a
-    // child exists. The boundary is the first message the child does not get,
-    // so the child receives the exact prefix before the chosen turn; an id the
-    // parent no longer records forks nothing. This is the same rule #506's
-    // `Session::inherit_history_before` applies; when that lands here first,
-    // this block becomes that call.
-    let kept = match boundary {
-        Some(boundary) => {
-            let boundary = boundary.trim();
-            anyhow::ensure!(!boundary.is_empty(), "fork requires a recorded boundary");
-            let history = parent.history_messages()?;
-            let index = history
-                .iter()
-                .position(|message| message.id == boundary)
-                .with_context(|| {
-                    format!("boundary {boundary} is not in session {parent_session_id} at its selected head")
-                })?;
-            Some(index)
-        }
-        None => None,
-    };
+fn clone_split_session(
+    parent_session_id: &str,
+    live_parent: Option<&Session>,
+    consult: bool,
+    boundary: Option<&str>,
+) -> anyhow::Result<(String, String)> {
+    let parent = load_split_parent(parent_session_id, live_parent)?;
+
     let mut child = Session::create(Some(parent_session_id.to_string()), None);
-    child.inherit_history(&parent)?;
-    if let Some(kept) = kept {
-        child.truncate_messages(kept);
-    }
-    child.inherit_cache_root(&parent);
     // A summary covers a window the boundary may have cut, so a boundary fork
     // starts uncompacted; the full fork keeps the parent's compaction.
-    child.compaction = if kept.is_none() {
-        parent.compaction.clone()
+    if let Some(boundary) = boundary {
+        let boundary = boundary.trim();
+        anyhow::ensure!(!boundary.is_empty(), "fork requires a recorded boundary");
+        child.inherit_history_before(&parent, boundary)?;
+        child.compaction = None;
     } else {
-        None
-    };
+        child.inherit_history(&parent)?;
+        child.compaction = parent.compaction.clone();
+    }
+    child.inherit_cache_root(&parent);
     child.system_prompt = parent.system_prompt.clone();
     child.working_dir = parent.working_dir.clone();
     child.model = parent.model.clone();
@@ -543,6 +571,22 @@ fn clone_split_session(
 
     let name = child.display_name().to_string();
     Ok((child.id.clone(), name))
+}
+
+/// Clone the parent's messages that came before `boundary_message_id`.
+///
+/// Unlike a whole-session split, the boundary resolves against the parent's
+/// selected head inside [`Session::inherit_history_before`], so a stale id
+/// fails before the child is saved and the parent keeps every message. The
+/// compaction boundary is deliberately not copied: it covered a window that
+/// may reach past the fork, and the child replays its own prefix from the
+/// original messages instead.
+fn clone_split_session_at(
+    parent_session_id: &str,
+    boundary_message_id: &str,
+    live_parent: Option<&Session>,
+) -> anyhow::Result<(String, String)> {
+    clone_split_session(parent_session_id, live_parent, false, Some(boundary_message_id))
 }
 
 fn transfer_active_messages(session: &Session) -> Vec<crate::message::Message> {
@@ -585,6 +629,31 @@ fn create_transfer_child_session(
     Ok((child.id.clone(), child.display_name().to_string()))
 }
 
+/// Dispatch the two split requests that share one runner.
+///
+/// The match in `client_lifecycle` names both variants once and hands the
+/// request here, so the lifecycle loop stays a router and the fork-specific
+/// argument extraction lives beside the handlers it feeds.
+pub(super) async fn dispatch_split(
+    request: Request,
+    client_session_id: &str,
+    agent: &Arc<Mutex<Agent>>,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+) {
+    match request {
+        Request::Split { id, consult, boundary } => {
+            handle_split(id, client_session_id, agent, client_event_tx, consult, boundary).await
+        }
+        Request::SplitAt {
+            id,
+            boundary_message_id,
+        } => {
+            handle_split_at(id, &boundary_message_id, client_session_id, agent, client_event_tx).await;
+        }
+        _ => unreachable!("dispatch_split is reached only for split requests"),
+    }
+}
+
 pub(super) async fn handle_split(
     id: u64,
     client_session_id: &str,
@@ -593,11 +662,58 @@ pub(super) async fn handle_split(
     consult: bool,
     boundary: Option<String>,
 ) {
+    run_split_request(
+        id,
+        client_session_id,
+        agent,
+        client_event_tx,
+        "split",
+        "Failed to save split session",
+        |live_parent| clone_split_session(client_session_id, live_parent, consult, boundary.as_deref()),
+    )
+    .await;
+}
+
+/// Fork the attached session from a recorded boundary.
+///
+/// The clone resolves the boundary against the parent's persisted head, so a
+/// stale picker is refused here and the response carries no new session: the
+/// connection stays on the parent it was already attached to.
+pub(super) async fn handle_split_at(
+    id: u64,
+    boundary_message_id: &str,
+    client_session_id: &str,
+    agent: &Arc<Mutex<Agent>>,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+) {
+    run_split_request(
+        id,
+        client_session_id,
+        agent,
+        client_event_tx,
+        "split_at",
+        "Failed to fork the session from the recorded boundary",
+        |live_parent| clone_split_session_at(client_session_id, boundary_message_id, live_parent),
+    )
+    .await;
+}
+
+/// The work both split requests share: settle what is owed, clone off the
+/// persisted snapshot without awaiting a busy agent, and answer once.
+async fn run_split_request(
+    id: u64,
+    client_session_id: &str,
+    agent: &Arc<Mutex<Agent>>,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+    kind: &'static str,
+    failure: &'static str,
+    clone: impl FnOnce(Option<&Session>) -> anyhow::Result<(String, String)>,
+) {
     let started = Instant::now();
     crate::logging::event_info(
         "SESSION_LIFECYCLE",
         vec![
-            ("phase", "split_start".to_string()),
+            ("phase", format!("{kind}_start")),
             ("request_id", id.to_string()),
             ("session_id", client_session_id.to_string()),
         ],
@@ -610,12 +726,7 @@ pub(super) async fn handle_split(
     // Agent lock: busy sessions can still fork their last persisted snapshot.
     let result = {
         let idle_agent = agent.try_lock().ok();
-        clone_split_session(
-            client_session_id,
-            idle_agent.as_ref().map(|agent| agent.session_for_split()),
-            consult,
-            boundary.as_deref(),
-        )
+        clone(idle_agent.as_ref().map(|agent| agent.session_for_split()))
     };
     let (new_session_id, new_session_name) = match result {
         Ok(result) => result,
@@ -623,7 +734,7 @@ pub(super) async fn handle_split(
             crate::logging::event_warn(
                 "SESSION_LIFECYCLE",
                 vec![
-                    ("phase", "split_error".to_string()),
+                    ("phase", format!("{kind}_error")),
                     ("request_id", id.to_string()),
                     ("session_id", client_session_id.to_string()),
                     ("error", crate::util::format_error_chain(&e)),
@@ -632,7 +743,7 @@ pub(super) async fn handle_split(
             );
             let _ = client_event_tx.send(ServerEvent::Error {
                 id,
-                message: format!("Failed to save split session: {e}"),
+                message: format!("{failure}: {e}"),
                 retry_after_secs: None,
             });
             return;
@@ -641,7 +752,7 @@ pub(super) async fn handle_split(
     crate::logging::event_info(
         "SESSION_LIFECYCLE",
         vec![
-            ("phase", "split_done".to_string()),
+            ("phase", format!("{kind}_done")),
             ("request_id", id.to_string()),
             ("session_id", client_session_id.to_string()),
             ("new_session_id", new_session_id.clone()),

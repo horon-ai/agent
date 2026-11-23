@@ -122,6 +122,7 @@ Commands:
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
   /export <path> write this session's transcript as a standalone offline HTML report
+  /fork          start a separate session from a saved history point
   /jobs          list this session's background work, and cancel a terminal
                  with Delete
   /keys          list the keys in force and what each does
@@ -304,6 +305,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
         "export" => "write this session's transcript as a standalone offline HTML report (/export <path>)",
+        "fork" => "start a separate session from a saved history point",
         "help" => "list the commands and the keys in force",
         "jobs" => "list the background work this session is running, and cancel a terminal",
         "stats" => "show the attached session's recorded token usage",
@@ -316,6 +318,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "pin" => "keep a session at the top of the list, or pin the attached one",
         "unpin" => "take a session out of the pinned group",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
+        "todo" => "show every todo in the session and mark one done, open or cancelled",
         "quit" => "leave",
         "record" => "record the conversation to a local file, or stop (stop, status)",
         "rename" => "save a title for the current session",

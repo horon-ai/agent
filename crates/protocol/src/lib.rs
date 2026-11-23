@@ -198,7 +198,7 @@ pub use horon_agent_extension_types::control::{
 pub use wire::{
     AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BackgroundWorkEvent, BackgroundWorkItem, ClientRpcError,
     CompactMethod, FileDiffWire, HandoffCompactionReport, PermissionDecision, PlanEntryWire, Request,
-    RuntimeModelIdentity, ServerEvent, SessionMcpServer,
+    RuntimeModelIdentity, ServerEvent, SessionMcpServer, TodoEditResultEvent,
 };
 pub use wire::{SessionToolConfig, SessionToolDefinition, TaskGraphNodeSpec};
 
@@ -629,7 +629,9 @@ impl Request {
             Request::ArchiveSession { id, .. } => *id,
             Request::DeleteSession { id, .. } => *id,
             Request::SetSessionSaved { id, .. } => *id,
+            Request::SetTodoStatus { id, .. } => *id,
             Request::Split { id, .. } => *id,
+            Request::SplitAt { id, .. } => *id,
             Request::Transfer { id } => *id,
             Request::Compact { id, .. } => *id,
             Request::NotifyAuthChanged { id, .. } => *id,

@@ -181,12 +181,17 @@ fn clone_split_session_uses_persisted_session_state() {
 #[test]
 fn a_consult_fork_stores_the_flag_and_no_fork_can_widen_it() {
     let _guard = crate::storage::lock_test_env();
-    let temp = tempfile::tempdir().expect("tempdir");
-    let prev_home = std::env::var_os("HORON_HOME");
-    crate::env::set_var("HORON_HOME", temp.path());
+    let _home = SplitTestHome::new();
 
     let mut parent = crate::session::Session::create_with_id("session_consult_parent".to_string(), None, None);
     parent.working_dir = Some("/tmp/horon-agent-consult-test".to_string());
+    parent.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "parent turn".into(),
+            cache_control: None,
+        }],
+    );
     parent.save().expect("save parent");
 
     let (consult_id, _) = clone_split_session(&parent.id, None, true, None).expect("consult split");
@@ -206,12 +211,6 @@ fn a_consult_fork_stores_the_flag_and_no_fork_can_widen_it() {
     let (plain_id, _) = clone_split_session(&parent.id, None, false, None).expect("normal split");
     let plain = crate::session::Session::load(&plain_id).expect("load normal");
     assert!(!plain.consult, "a normal fork inherited the consult classification");
-
-    if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_HOME", prev_home);
-    } else {
-        crate::env::remove_var("HORON_HOME");
-    }
 }
 
 struct SplitTestHome {

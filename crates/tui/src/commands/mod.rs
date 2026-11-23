@@ -5,8 +5,8 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
-//!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/pin`,
-//!    `/rename`, `/settings`, `/side`, `/resume`, `/skills`, `/stats`, `/switch`,
+//!    `/compact`, `/jobs`, `/model`, `/effort`, `/fork`, `/mcp`, `/new`, `/note`, `/pin`,
+//!    `/rename`, `/settings`, `/side`, `/resume`, `/skills`, `/stats`, `/switch`, `/todo`,
 //!    `/tools`, `/unpin`, `/links`, `/queue`, `/record`, `/replay`, `/diff`,
 //!    `/commit`, `/swarm` and `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
@@ -106,6 +106,8 @@ pub enum Local {
     Effort,
     /// Start a new session in this working directory.
     New,
+    /// Fork a new session from a recorded message boundary.
+    Fork,
     /// Open the settings screen.
     Settings,
     /// Ask a read-only child of this conversation a side question.
@@ -148,6 +150,8 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// Show the attached session's todo list and change an item's status.
+    Todo,
     /// Show the staged and unstaged changes in the session's workspace.
     Diff,
     /// Review the staged set, and commit exactly it after a second line.
@@ -180,6 +184,7 @@ impl Local {
             "model" => Some(Self::Model),
             "effort" => Some(Self::Effort),
             "new" => Some(Self::New),
+            "fork" | "branch" => Some(Self::Fork),
             "settings" => Some(Self::Settings),
             // `/btw` is the name the workflow is known by elsewhere; both ask
             // the same question and open the same screen.
@@ -201,6 +206,7 @@ impl Local {
             "export" => Some(Self::Export),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "todo" | "todos" => Some(Self::Todo),
             "diff" => Some(Self::Diff),
             "commit" => Some(Self::Commit),
             "swarm" => Some(Self::Swarm),
@@ -223,6 +229,7 @@ impl Local {
             Self::Model => "model",
             Self::Effort => "effort",
             Self::New => "new",
+            Self::Fork => "fork",
             Self::Settings => "settings",
             Self::Side => "side",
             Self::Rename => "rename",
@@ -247,6 +254,7 @@ impl Local {
             Self::Export => "export",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Todo => "todo",
             Self::Diff => "diff",
             Self::Commit => "commit",
             Self::Swarm => "swarm",
@@ -826,6 +834,7 @@ const LOCAL_NAMES: &[&str] = &[
     "effort",
     "exit",
     "export",
+    "fork",
     "help",
     "jobs",
     "keys",
@@ -847,6 +856,7 @@ const LOCAL_NAMES: &[&str] = &[
     "stats",
     "swarm",
     "switch",
+    "todo",
     "tools",
     "unpin",
     "voice",

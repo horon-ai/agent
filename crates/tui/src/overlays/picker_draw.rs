@@ -228,6 +228,14 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Them
             picker.selection() + 1,
             picker.visible_indices().len()
         )
+    } else if picker.kind() == Kind::Todos {
+        // Same rule for the todo list: its rows are changed in place, and the
+        // keys that do it are the ones the footer names.
+        format!(
+            " {}/{} · enter done/reopen · delete cancel · esc close · type to filter",
+            picker.selection() + 1,
+            picker.visible_indices().len()
+        )
     } else if picker.kind() == Kind::Sessions {
         // A session row is pinned where it is read, so the key belongs beside
         // the one that would attach: no id has to be remembered to keep a

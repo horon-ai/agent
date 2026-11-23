@@ -44,7 +44,7 @@ mod suggestions;
 mod terminal;
 pub mod theme;
 mod title;
-mod todo_panel;
+pub mod todo_panel;
 mod tool_expand;
 pub mod tool_line;
 pub mod transcript;
@@ -81,6 +81,10 @@ mod turn_state_tests;
 #[cfg(test)]
 #[path = "prompt_queue_tests.rs"]
 mod prompt_queue_tests;
+
+#[cfg(test)]
+#[path = "todo_editor_tests.rs"]
+mod todo_editor_tests;
 
 #[cfg(test)]
 #[path = "input_tests.rs"]

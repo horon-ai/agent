@@ -145,6 +145,10 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // Listed so an SDK capability gate finds it; `hello_ok` drops it when the
     // daemon did not report `runtime_commands`.
     horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1,
+    // Forwarded to daemon; unsupported or non-advertising daemons are filtered or return `unsupported`.
+    horon_agent_harness_api::CAPABILITY_SESSION_FORK_AT_V1,
+    horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1,
+    horon_agent_harness_api::CAPABILITY_CONSULT_FORK_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -383,6 +387,7 @@ where
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
     let effective_settings_api_supported = daemon_caps.iter().any(|cap| cap == "effective_settings_api");
+    let session_fork_at_supported = daemon_caps.iter().any(|cap| cap == "session_fork_at_api");
     // The daemon owns the package catalog. The bridge advertises the matching
     // API capability only when the daemon can serve it, and forwards nothing
     // when it cannot: an older daemon answers an unknown frame with an
@@ -405,17 +410,14 @@ where
                 .iter()
                 .copied()
                 .filter(|cap| !OPT_IN_EVENT_CAPABILITIES.contains(cap) || event_capabilities.contains(&Some(*cap)))
-                // The package commands ride the runtime-command request, so a
-                // daemon without that surface cannot answer them at all. The
-                // bridge cannot see which variants a daemon's enum holds; the
-                // release keeps them in step, and an older daemon answers the
-                // unknown value with an error the client shows.
+                // Package commands ride `runtime_command` and consult forks require daemon
+                // `consult_fork_v1`; drop them when the connected daemon lacks support.
                 .filter(|cap| *cap != horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1 || runtime_commands_supported)
+                .filter(|cap| *cap != horon_agent_harness_api::CAPABILITY_CONSULT_FORK_V1 || consult_fork_supported)
                 .map(str::to_string)
                 .chain(user_connections_supported.then(|| "session_connections".to_string()))
                 .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))
                 .chain(session_tools_supported.then(|| "session_tools".to_string()))
-                .chain(consult_fork_supported.then(|| "consult_fork_v1".to_string()))
                 .chain(
                     ["soft_interrupt_ids", "background_tool_result"]
                         .into_iter()
@@ -439,6 +441,7 @@ where
     state.soft_interrupt_ids_supported = soft_interrupt_ids_supported;
     state.durable_runtime_api_supported = durable_runtime_api_supported;
     state.cancellable_work_api_supported = cancellable_work_api_supported;
+    state.session_fork_at_supported = session_fork_at_supported;
     // The daemon, and therefore this capability, is one per bridge process, so
     // the forwarding module records it instead of every `BridgeState` site.
     translate::effective_settings::set_supported(effective_settings_api_supported);

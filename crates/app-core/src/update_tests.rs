@@ -604,3 +604,324 @@ fn release_url_override_requires_sandboxed_home() {
     assert_eq!(release_url_override_with(Some("  ".to_string()), true), None);
     assert_eq!(release_url_override_with(None, true), None);
 }
+
+#[test]
+fn request_latest_release_retries_unauthenticated_when_token_is_rejected() {
+    use std::io::{BufRead, BufReader, Write};
+
+    let _guard = crate::storage::lock_test_env();
+    let prev_gh = std::env::var_os("GH_TOKEN");
+    let prev_github = std::env::var_os("GITHUB_TOKEN");
+    horon_agent_base::env::set_var("GH_TOKEN", "ghp_invalid_token_for_test");
+    horon_agent_base::env::remove_var("GITHUB_TOKEN");
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let url = format!(
+        "http://{}/repos/horon-ai/agent/releases/latest",
+        listener.local_addr().unwrap()
+    );
+    let saw_auth = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let saw_unauth = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let saw_auth_srv = std::sync::Arc::clone(&saw_auth);
+    let saw_unauth_srv = std::sync::Arc::clone(&saw_unauth);
+
+    let server = std::thread::spawn(move || {
+        listener.set_nonblocking(false).unwrap();
+        for _ in 0..2 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut has_auth = false;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if line.to_ascii_lowercase().starts_with("authorization:") {
+                    has_auth = true;
+                }
+            }
+            let response = if has_auth {
+                saw_auth_srv.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = r#"{"message":"Bad credentials"}"#;
+                format!(
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            } else {
+                saw_unauth_srv.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = r#"{"tag_name":"v9.9.9","name":"v9.9.9","html_url":"https://github.com/horon-ai/agent/releases/tag/v9.9.9","published_at":null,"assets":[]}"#;
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            };
+            let _ = stream.write_all(response.as_bytes());
+            if !has_auth {
+                break;
+            }
+        }
+    });
+
+    let client = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+    let result = request_latest_release(&client, &url, true, None);
+
+    match prev_gh {
+        Some(value) => horon_agent_base::env::set_var("GH_TOKEN", value),
+        None => horon_agent_base::env::remove_var("GH_TOKEN"),
+    }
+    match prev_github {
+        Some(value) => horon_agent_base::env::set_var("GITHUB_TOKEN", value),
+        None => horon_agent_base::env::remove_var("GITHUB_TOKEN"),
+    }
+
+    // Wake the listener thread if the unfixed code returned early after the 401.
+    if result.is_err() {
+        let _ = std::net::TcpStream::connect(url.trim_start_matches("http://").split('/').next().unwrap());
+    }
+    server.join().unwrap();
+
+    let (release, _) = result.expect("rejected token on public repo must retry unauthenticated");
+    assert_eq!(release.tag_name, "v9.9.9");
+    assert_eq!(saw_auth.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(saw_unauth.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
+fn activate_prepared_version_recovers_from_corrupt_update_metadata() {
+    let _guard = crate::storage::lock_test_env();
+    let prev_home = std::env::var_os("HORON_HOME");
+    let prev_install = std::env::var_os("HORON_AGENT_INSTALL_DIR");
+    let temp = tempfile::tempdir().expect("temp home");
+    horon_agent_base::env::set_var("HORON_HOME", temp.path());
+    horon_agent_base::env::remove_var("HORON_AGENT_INSTALL_DIR");
+
+    let version_bin = build::version_binary_path("9.9.9").unwrap();
+    fs::create_dir_all(version_bin.parent().unwrap()).unwrap();
+    fs::write(&version_bin, b"new-agent-binary").unwrap();
+    fs::write(temp.path().join("update_metadata.json"), b"{corrupt json").unwrap();
+
+    let result = activate_prepared_version("9.9.9", "v9.9.9", "https://example.invalid/asset");
+    let installed_current = build::read_current_version().ok().flatten();
+    let saved_meta = UpdateMetadata::load().ok();
+
+    match prev_home {
+        Some(value) => horon_agent_base::env::set_var("HORON_HOME", value),
+        None => horon_agent_base::env::remove_var("HORON_HOME"),
+    }
+    match prev_install {
+        Some(value) => horon_agent_base::env::set_var("HORON_AGENT_INSTALL_DIR", value),
+        None => horon_agent_base::env::remove_var("HORON_AGENT_INSTALL_DIR"),
+    }
+
+    result.expect("corrupt update_metadata.json must not block activation");
+    assert_eq!(installed_current.as_deref(), Some("9.9.9"));
+    assert_eq!(
+        saved_meta.and_then(|meta| meta.installed_version).as_deref(),
+        Some("v9.9.9")
+    );
+}
+
+#[test]
+fn activate_prepared_version_rolls_back_launcher_aliases_on_failure() {
+    let _guard = crate::storage::lock_test_env();
+    let prev_home = std::env::var_os("HORON_HOME");
+    let prev_install = std::env::var_os("HORON_AGENT_INSTALL_DIR");
+    let temp = tempfile::tempdir().expect("temp home");
+    horon_agent_base::env::set_var("HORON_HOME", temp.path());
+    horon_agent_base::env::remove_var("HORON_AGENT_INSTALL_DIR");
+
+    let v1_bin = build::version_binary_path("1.0.0").unwrap();
+    fs::create_dir_all(v1_bin.parent().unwrap()).unwrap();
+    fs::write(&v1_bin, b"agent-v1").unwrap();
+    activate_prepared_version("1.0.0", "v1.0.0", "https://example.invalid/v1").unwrap();
+
+    let v2_bin = build::version_binary_path("2.0.0").unwrap();
+    fs::create_dir_all(v2_bin.parent().unwrap()).unwrap();
+    fs::write(&v2_bin, b"agent-v2").unwrap();
+
+    // Point update_metadata.json through a symlink to valid JSON: load succeeds,
+    // all channel and launcher swaps succeed, then save() refuses the symlink
+    // and triggers rollback after the aliases were moved to v2.
+    let meta_path = temp.path().join("update_metadata.json");
+    let meta_target = temp.path().join("metadata-target.json");
+    fs::rename(&meta_path, &meta_target).unwrap();
+    if horon_agent_platform::fs::symlink_file(&meta_target, &meta_path).is_err() {
+        match prev_home {
+            Some(value) => horon_agent_base::env::set_var("HORON_HOME", value),
+            None => horon_agent_base::env::remove_var("HORON_HOME"),
+        }
+        match prev_install {
+            Some(value) => horon_agent_base::env::set_var("HORON_AGENT_INSTALL_DIR", value),
+            None => horon_agent_base::env::remove_var("HORON_AGENT_INSTALL_DIR"),
+        }
+        return;
+    }
+
+    // Also remove one alias before the failing activation so rollback must
+    // remove newly created aliases as well as restoring existing ones.
+    let aliases = horon_agent_build_support::launcher_alias_paths().unwrap();
+    fs::remove_file(&aliases[0]).unwrap();
+
+    let result = activate_prepared_version("2.0.0", "v2.0.0", "https://example.invalid/v2");
+
+    let launcher_bytes = fs::read(build::launcher_binary_path().unwrap()).unwrap();
+    let first_alias_exists = aliases[0].symlink_metadata().is_ok();
+    let remaining_alias_bytes: Vec<Vec<u8>> = aliases[1..].iter().map(|alias| fs::read(alias).unwrap()).collect();
+
+    match prev_home {
+        Some(value) => horon_agent_base::env::set_var("HORON_HOME", value),
+        None => horon_agent_base::env::remove_var("HORON_HOME"),
+    }
+    match prev_install {
+        Some(value) => horon_agent_base::env::set_var("HORON_AGENT_INSTALL_DIR", value),
+        None => horon_agent_base::env::remove_var("HORON_AGENT_INSTALL_DIR"),
+    }
+
+    assert!(result.is_err(), "symlinked metadata path must trigger rollback");
+    assert_eq!(launcher_bytes, b"agent-v1");
+    assert!(
+        !first_alias_exists,
+        "an alias created during a failed activation must be removed on rollback"
+    );
+    for bytes in remaining_alias_bytes {
+        assert_eq!(
+            bytes, b"agent-v1",
+            "launcher alias must roll back alongside horon-agent"
+        );
+    }
+}
+
+#[test]
+fn download_asset_falls_back_from_rejected_api_url_to_browser_download_url() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let payload = b"verified-release-archive-bytes".to_vec();
+    let payload_for_server = payload.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let api_hits = Arc::new(AtomicUsize::new(0));
+    let browser_hits = Arc::new(AtomicUsize::new(0));
+    let api_hits_srv = Arc::clone(&api_hits);
+    let browser_hits_srv = Arc::clone(&browser_hits);
+
+    let server = std::thread::spawn(move || {
+        for _ in 0..4 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            let path = request_line.split_whitespace().nth(1).unwrap_or("").to_owned();
+            let mut has_auth = false;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if line.to_ascii_lowercase().starts_with("authorization:") {
+                    has_auth = true;
+                }
+            }
+            if path == "/api/asset" {
+                api_hits_srv.fetch_add(1, Ordering::SeqCst);
+                assert!(has_auth, "API route must carry the bearer token");
+                stream
+                    .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .unwrap();
+            } else if path == "/browser/asset" {
+                browser_hits_srv.fetch_add(1, Ordering::SeqCst);
+                assert!(!has_auth, "browser fallback URL must never carry credentials");
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload_for_server.len()
+                );
+                stream.write_all(header.as_bytes()).unwrap();
+                stream.write_all(&payload_for_server).unwrap();
+            } else {
+                panic!("unexpected path: {path}");
+            }
+        }
+    });
+
+    let client = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+    let api_url = format!("{base}/api/asset");
+    let browser_url = format!("{base}/browser/asset");
+
+    let (resumed_bytes, _) = download_asset_with_routes(
+        &client,
+        &api_url,
+        Some("ghp_invalid"),
+        Some(&browser_url),
+        Some(payload.len() as u64),
+        &mut |_| {},
+    )
+    .expect("resumable asset download must fall back to browser URL on 401");
+    assert_eq!(resumed_bytes, payload);
+
+    let small_bytes =
+        github_fetch::download_small_asset_with_routes(&client, &api_url, Some("ghp_invalid"), Some(&browser_url))
+            .expect("checksum/TUI download must fall back to browser URL on 401");
+    assert_eq!(small_bytes, payload);
+
+    server.join().unwrap();
+    assert_eq!(api_hits.load(Ordering::SeqCst), 2);
+    assert_eq!(browser_hits.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn explicit_stable_check_reports_error_when_newer_release_lacks_platform_asset() {
+    let release = GitHubRelease {
+        tag_name: "v9.9.9".to_owned(),
+        _name: Some("v9.9.9".to_owned()),
+        _html_url: "https://github.com/horon-ai/agent/releases/tag/v9.9.9".to_owned(),
+        _published_at: None,
+        assets: Vec::new(),
+        _target_commitish: String::new(),
+    };
+    let error = check_for_stable_update_explicit_with(
+        release,
+        "0.1.0",
+        true,
+        |_| Ok(true),
+        |release| release_asset::binary_asset(release).map(|_| ()),
+    )
+    .err()
+    .expect("missing platform asset must error instead of reporting up to date")
+    .to_string();
+    assert!(error.contains("v9.9.9"), "{error}");
+    assert!(error.contains("no prebuilt binary for this platform"), "{error}");
+    assert!(
+        error.contains("https://github.com/horon-ai/agent/releases/tag/v9.9.9"),
+        "{error}"
+    );
+}
+
+#[test]
+fn explicit_stable_check_distinguishes_dev_build_ahead_of_release() {
+    let release = GitHubRelease {
+        tag_name: "v0.1.22".to_owned(),
+        _name: Some("v0.1.22".to_owned()),
+        _html_url: "https://github.com/horon-ai/agent/releases/tag/v0.1.22".to_owned(),
+        _published_at: None,
+        assets: Vec::new(),
+        _target_commitish: String::new(),
+    };
+    let check = check_for_stable_update_explicit_with(release, "0.1.0", false, |_| Ok(false), |_| Ok(()))
+        .expect("dev build ahead of release must succeed");
+    match check {
+        ExplicitUpdateCheck::UpToDate {
+            latest_tag,
+            kept_dev_build,
+        } => {
+            assert_eq!(latest_tag.as_deref(), Some("v0.1.22"));
+            assert!(kept_dev_build);
+        }
+        ExplicitUpdateCheck::Available(_) => panic!("dev build ahead must not offer downgrade"),
+    }
+}

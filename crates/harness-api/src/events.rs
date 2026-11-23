@@ -554,6 +554,27 @@ pub enum ApiEvent {
     TodoState {
         session_id: String,
         state: horon_agent_todo_policy::TodoSnapshot,
+        /// Digest of the stored todo list this snapshot's `todos` were read
+        /// from, or absent when the server predates revisions. An edit sends
+        /// it back so the write only lands on the list the client showed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        revision: Option<String>,
+    },
+
+    /// Reply to `SetTodoStatus`.
+    ///
+    /// `applied` says whether the list was written. A refusal leaves it
+    /// untouched, names why in `refusal`, and still carries the current `state`
+    /// and `revision`, so a stale editor can refresh from this one frame
+    /// instead of asking again. `revision` is always the one the state was read
+    /// at.
+    TodoEditResult {
+        session_id: String,
+        applied: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refusal: Option<horon_agent_todo_policy::TodoEditRefusal>,
+        state: horon_agent_todo_policy::TodoSnapshot,
+        revision: String,
     },
 
     /// The session's committed todo list changed. Read its current snapshot

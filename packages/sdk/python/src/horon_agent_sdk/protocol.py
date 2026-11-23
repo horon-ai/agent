@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 27
+API_VERSION_MINOR = 30
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -40,6 +40,8 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "package_commands_v1",
         ("runtime_command.package_commands", "runtime_command.package_command"),
     ),
+    ("session_fork_at_v1", ("fork_session_at",)),
+    ("todo_edit_v1", ("set_todo_status",)),
     ("consult_fork_v1", ("fork_session.consult", "fork_session.boundary")),
 )
 
@@ -393,6 +395,11 @@ class TodoEffects(TypedDict, total=False):
 
     clear_gate_observations: bool
     mark_long_session_review_delivered: bool
+
+
+TodoEditRefusal: TypeAlias = Literal["stale_revision", "unknown_item", "invalid_status", "invalid_blocker"]
+"""Why a revision-checked todo status edit was refused. The reply still carries
+the current list and revision, so the client refreshes from it."""
 
 
 class ResponseStats(TypedDict, total=False):
@@ -966,6 +973,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "text_matches",
     "file_status",
     "todo_state",
+    "todo_edit_result",
     "background_output",
     "todo_changed",
     "session_search_results",
@@ -1003,6 +1011,7 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "create_session",
     "attach_session",
     "fork_session",
+    "fork_session_at",
     "transfer_session",
     "detach_session",
     "configure_tools",
@@ -1036,6 +1045,7 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "list_artifacts",
     "get_todo_state",
     "ack_todo_follow_up",
+    "set_todo_status",
     "set_model",
     "set_reasoning_effort",
     "compact",

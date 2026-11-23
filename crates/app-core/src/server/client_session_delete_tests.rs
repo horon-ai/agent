@@ -13,15 +13,19 @@ use crate::server::*;
 use crate::tool::Registry;
 
 /// A sandboxed home plus runtime dir, so no test reads or writes the real store.
+/// Holds the process-global test env lock inside the struct until `Drop` finishes
+/// restoring both environment variables and removes the temp dirs.
 struct Sandbox {
     prev_home: Option<std::ffi::OsString>,
     prev_runtime: Option<std::ffi::OsString>,
     _home: tempfile::TempDir,
     _runtime: tempfile::TempDir,
+    _lock: std::sync::MutexGuard<'static, ()>,
 }
 
 impl Sandbox {
     fn new() -> Self {
+        let lock = crate::storage::lock_test_env();
         let home = tempfile::TempDir::new().expect("home");
         let runtime = tempfile::TempDir::new().expect("runtime");
         let prev_home = std::env::var_os("HORON_HOME");
@@ -33,6 +37,7 @@ impl Sandbox {
             prev_runtime,
             _home: home,
             _runtime: runtime,
+            _lock: lock,
         }
     }
 }
@@ -105,7 +110,6 @@ fn drain_events(rx: &mut mpsc::UnboundedReceiver<ServerEvent>) -> Vec<ServerEven
 
 #[tokio::test]
 async fn an_unconfirmed_delete_is_refused_and_touches_nothing() {
-    let _lock = crate::storage::lock_test_env();
     let _sandbox = Sandbox::new();
     let session_id = "delete_refuses_unconfirmed";
     let seeded = seed_session(session_id);
@@ -126,7 +130,6 @@ async fn an_unconfirmed_delete_is_refused_and_touches_nothing() {
 
 #[tokio::test]
 async fn an_invalid_session_id_is_refused() {
-    let _lock = crate::storage::lock_test_env();
     let _sandbox = Sandbox::new();
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -140,7 +143,6 @@ async fn an_invalid_session_id_is_refused() {
 
 #[tokio::test]
 async fn a_session_with_a_running_turn_is_refused() {
-    let _lock = crate::storage::lock_test_env();
     let _sandbox = Sandbox::new();
     let session_id = "delete_refuses_running_turn";
     let seeded = seed_session(session_id);
@@ -163,7 +165,6 @@ async fn a_session_with_a_running_turn_is_refused() {
 
 #[tokio::test]
 async fn a_session_attached_to_a_client_is_refused() {
-    let _lock = crate::storage::lock_test_env();
     let _sandbox = Sandbox::new();
     let session_id = "delete_refuses_attached";
     let seeded = seed_session(session_id);
@@ -187,7 +188,6 @@ async fn a_session_attached_to_a_client_is_refused() {
 
 #[tokio::test]
 async fn a_confirmed_delete_removes_the_session_and_answers_done() {
-    let _lock = crate::storage::lock_test_env();
     let _sandbox = Sandbox::new();
     let session_id = "delete_removes_confirmed";
     let seeded = seed_session(session_id);
@@ -207,7 +207,6 @@ async fn a_confirmed_delete_removes_the_session_and_answers_done() {
 
 #[tokio::test]
 async fn a_delete_also_removes_the_daemon_only_reload_state() {
-    let _lock = crate::storage::lock_test_env();
     let _sandbox = Sandbox::new();
     let session_id = "delete_removes_reload_state";
     seed_session(session_id);
@@ -244,7 +243,6 @@ async fn a_delete_also_removes_the_daemon_only_reload_state() {
 /// delete-then-load test lost it in round 3 of 20.
 #[tokio::test]
 async fn prepare_disconnect_releases_the_attachment_before_it_answers() {
-    let _lock = crate::storage::lock_test_env();
     let _sandbox = Sandbox::new();
     let session_id = "delete_after_prepare_disconnect";
     let seeded = seed_session(session_id);
@@ -279,7 +277,6 @@ async fn prepare_disconnect_releases_the_attachment_before_it_answers() {
 
 #[tokio::test]
 async fn an_idle_resident_agent_is_closed_and_deleted() {
-    let _lock = crate::storage::lock_test_env();
     let _sandbox = Sandbox::new();
     let session_id = "delete_evicts_idle_resident";
     let seeded = seed_session(session_id);

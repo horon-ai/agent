@@ -429,6 +429,22 @@ pub enum Request {
         label: Option<String>,
     },
 
+    /// Change one todo item's status in the attached session, only if the
+    /// stored list is still `expected_revision`.
+    ///
+    /// Routed through the daemon so the write shares the todo tool's lock and
+    /// the resulting `TodoUpdated` bus event reaches every attached client.
+    /// Unlike a message, it starts no turn and injects no prompt. A stale
+    /// revision answers `TodoEditResult` with `applied: false` and leaves the
+    /// list untouched.
+    #[serde(rename = "set_todo_status")]
+    SetTodoStatus {
+        id: u64,
+        expected_revision: String,
+        todo_id: String,
+        status: String,
+    },
+
     /// Hide or restore the attached session by appending an ArchiveChanged
     /// record. Routed through the daemon because its in-memory session owns the
     /// writer lock and later writes; nothing is deleted either way.
@@ -465,6 +481,16 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         boundary: Option<String>,
     },
+
+    /// Fork the current session from a recorded boundary.
+    ///
+    /// The child holds every message the parent recorded before
+    /// `boundary_message_id` and none of the boundary or what follows, so one
+    /// past turn can be continued differently while the parent keeps its
+    /// complete transcript. A boundary the parent no longer records is refused
+    /// without creating a session.
+    #[serde(rename = "split_at")]
+    SplitAt { id: u64, boundary_message_id: String },
 
     /// Transfer the current session into a compacted handoff session
     #[serde(rename = "transfer")]
@@ -1014,7 +1040,7 @@ pub mod event_types;
 mod events;
 mod model_identity;
 pub use acp_v2_events::{BackgroundWorkEvent, BackgroundWorkItem};
-pub use event_types::{FileDiffWire, PlanEntryWire};
+pub use event_types::{FileDiffWire, PlanEntryWire, TodoEditResultEvent};
 pub use events::ServerEvent;
 pub use model_identity::RuntimeModelIdentity;
 

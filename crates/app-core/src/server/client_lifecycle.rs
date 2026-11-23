@@ -1,6 +1,6 @@
 use super::client_actions::{
-    NotifySessionContext, handle_archive_session, handle_compact, handle_notify_session, handle_rename_session,
-    handle_set_feature, handle_set_session_saved, handle_split, handle_transfer,
+    NotifySessionContext, dispatch_split, handle_archive_session, handle_compact, handle_notify_session,
+    handle_rename_session, handle_set_feature, handle_set_session_saved, handle_set_todo_status, handle_transfer,
 };
 use super::client_ask::{
     handle_ask_response, handle_ask_response_with_receipt, handle_permission_decision, spawn_ask_forwarder,
@@ -2239,8 +2239,7 @@ pub(super) async fn handle_client(
                 if let Some(target_session_id) = target_session_id {
                     let target_agent = { sessions.read().await.get(&target_session_id).cloned() };
                     if let Some(target_agent) = target_agent {
-                        handle_set_reasoning_effort(id, effort, &target_agent, &client_event_tx)
-                            .await;
+                        handle_set_reasoning_effort(id, effort, &target_agent, &client_event_tx).await;
                     } else {
                         let _ = client_event_tx.send(ServerEvent::ReasoningEffortChanged {
                             id,
@@ -2274,6 +2273,10 @@ pub(super) async fn handle_client(
                     &client_event_tx,
                 )
                 .await;
+            }
+
+            Request::SetTodoStatus { id, expected_revision, todo_id, status } => {
+                handle_set_todo_status(id, expected_revision, todo_id, status, &client_session_id, &client_event_tx);
             }
 
             Request::ArchiveSession {
@@ -2349,8 +2352,8 @@ pub(super) async fn handle_client(
                 handle_invalidate_openai_usage(id, account_label, &client_event_tx).await;
             }
 
-            Request::Split { id, consult, boundary } => {
-                handle_split(id, &client_session_id, &agent, &client_event_tx, consult, boundary).await;
+            Request::Split { .. } | Request::SplitAt { .. } => {
+                dispatch_split(request, &client_session_id, &agent, &client_event_tx).await;
             }
 
             Request::Transfer { id } => {
