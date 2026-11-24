@@ -6,13 +6,15 @@
 use serde::Deserialize;
 use serde_json::Value;
 
+use horon_agent_base::message::ContentBlock;
 use horon_agent_harness_api::{HistoryMessage, ResponseStats};
 
 /// Flatten a stored message's `content` to plain text.
 ///
 /// The daemon writes content either as a bare string or as an array of typed
-/// blocks, so both shapes are accepted; anything without text (a tool call, an
-/// image) contributes nothing rather than a placeholder.
+/// blocks, so both shapes are accepted; anything without visible output (a tool
+/// call, an image) contributes nothing, while stored A2UI blocks render through
+/// [`ContentBlock::a2ui_text_card`] so history readers and replay see the card.
 pub(crate) fn flatten_content(content: &Value) -> String {
     if let Some(text) = content.as_str() {
         return text.to_string();
@@ -20,11 +22,27 @@ pub(crate) fn flatten_content(content: &Value) -> String {
     let Some(blocks) = content.as_array() else {
         return String::new();
     };
-    blocks
-        .iter()
-        .filter_map(|block| block["text"].as_str())
-        .collect::<Vec<_>>()
-        .join("")
+    let mut out = String::new();
+    let mut prev_was_a2ui = false;
+    for block in blocks {
+        if let Some(text) = block["text"].as_str() {
+            if prev_was_a2ui && !text.is_empty() && !text.starts_with('\n') && !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str(text);
+            prev_was_a2ui = false;
+        } else if block["type"].as_str() == Some("a2ui")
+            && let Ok(parsed) = serde_json::from_value::<ContentBlock>(block.clone())
+            && let Some(card) = parsed.a2ui_text_card()
+        {
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str(&card);
+            prev_was_a2ui = true;
+        }
+    }
+    out
 }
 
 /// The visible answer of a stored assistant row that also carries reasoning.
@@ -58,11 +76,33 @@ pub(crate) fn answer_without_reasoning(content: &Value) -> Option<String> {
     {
         return None;
     }
-    let answer = blocks
-        .iter()
-        .filter(|block| block["type"] == "text")
-        .filter_map(|block| block["text"].as_str())
-        .collect();
+    let mut answer = String::new();
+    let mut prev_was_a2ui = false;
+    for block in blocks {
+        if block["type"] == "text" {
+            if let Some(text) = block["text"].as_str() {
+                if prev_was_a2ui
+                    && !text.is_empty()
+                    && !text.starts_with('\n')
+                    && !answer.is_empty()
+                    && !answer.ends_with('\n')
+                {
+                    answer.push('\n');
+                }
+                answer.push_str(text);
+                prev_was_a2ui = false;
+            }
+        } else if block["type"].as_str() == Some("a2ui")
+            && let Ok(parsed) = serde_json::from_value::<ContentBlock>(block.clone())
+            && let Some(card) = parsed.a2ui_text_card()
+        {
+            if !answer.is_empty() && !answer.ends_with('\n') {
+                answer.push('\n');
+            }
+            answer.push_str(&card);
+            prev_was_a2ui = true;
+        }
+    }
     Some(answer)
 }
 
@@ -156,5 +196,32 @@ mod tests {
         let content = json!([{"type": "text", "text": "the answer"}]);
         assert_eq!(answer_without_reasoning(&content), None);
         assert_eq!(answer_without_reasoning(&json!("plain string")), None);
+    }
+
+    #[test]
+    fn a2ui_blocks_appear_in_flattened_history_and_answers_without_reasoning() {
+        let a2ui_block = serde_json::to_value(ContentBlock::A2ui {
+            envelopes: vec![json!({
+                "version": horon_agent_harness_api::a2ui::A2UI_VERSION_V1_0,
+                "createSurface": {
+                    "surfaceId": "main",
+                    "catalogId": horon_agent_harness_api::a2ui::A2UI_BASIC_CATALOG_V1_0,
+                }
+            })],
+            fallback_text: Some("Deployment form".to_string()),
+        })
+        .expect("serialize a2ui block");
+
+        let only_a2ui = json!([a2ui_block.clone()]);
+        assert_eq!(flatten_content(&only_a2ui), "[A2UI surface: main]\nDeployment form");
+
+        let with_reasoning = json!([
+            {"type": "reasoning", "text": "thinking"},
+            a2ui_block,
+        ]);
+        assert_eq!(
+            answer_without_reasoning(&with_reasoning),
+            Some("[A2UI surface: main]\nDeployment form".to_string())
+        );
     }
 }

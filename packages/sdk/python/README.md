@@ -334,7 +334,7 @@ turn = await client.run(session["session_id"], "Show a confirmation card")
 print(turn.a2ui_envelopes)
 await client.send_a2ui_event(
     session["session_id"],
-    {"version": "1.0", "action": {"name": "confirm", "surfaceId": "main"}},
+    {"version": "1.0", "action": {"name": "confirm", "surfaceId": "main", "sourceComponentId": "confirm_btn"}},
 )
 ```
 
