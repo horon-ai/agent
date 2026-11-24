@@ -490,22 +490,25 @@ fn render_grep_context(
     before: usize,
     after: usize,
 ) -> Result<String> {
-    use std::collections::BTreeMap;
     use std::fmt::Write as _;
     use std::io::Read as _;
 
     const FILE_BYTES: usize = 2 * 1024 * 1024;
     const OMITTED: &str = "\n[More grep results omitted: output limit reached.]";
     let mut read_bytes_left = FILE_BYTES * 4;
-    let mut out = format!(
+    let mut out = String::with_capacity((result.total_matches.min(64) * 96).saturating_add(128));
+    write!(
+        out,
         "query: {}\nmatches: {} in {} files",
         util::truncate_str(&result.query, 1024),
         result.total_matches,
         result.total_files
-    );
+    )?;
     let mut displayed = 0;
     // Leave room for the regex fallback note and a truncation notice.
     let out_limit = super::artifacts::GENERIC_CONDENSE_BUDGET_BYTES - 513 - OMITTED.len();
+    let mut file_bytes = Vec::new();
+    let mut selected: Vec<(usize, Option<&str>)> = Vec::new();
     for file in &result.files {
         let count = file
             .matches
@@ -522,38 +525,49 @@ fn render_grep_context(
 
         // The join allocates, so it is built only on the route that reads the
         // file; a match already carrying its own line text needs no path at all.
-        let text = if file.path_bytes.is_none() && read_bytes_left != 0 {
+        let has_text = if file.path_bytes.is_none() && read_bytes_left != 0 {
             let path = root.join(&file.path);
-            if path.is_file() {
-                let mut bytes = Vec::new();
-                let bytes_limit = read_bytes_left.min(FILE_BYTES);
-                let read =
-                    std::fs::File::open(&path).and_then(|file| file.take(bytes_limit as u64).read_to_end(&mut bytes));
-                read_bytes_left -= bytes.len();
-                if read.is_ok() && bytes.len() < bytes_limit && !bytes.contains(&0) {
-                    Some(bytes)
-                } else {
-                    None
-                }
+            let bytes_limit = read_bytes_left.min(FILE_BYTES);
+            file_bytes.clear();
+            if let Ok(opened) = std::fs::File::open(&path)
+                && let Ok(meta) = opened.metadata()
+                && meta.is_file()
+            {
+                let reserve = (meta.len().min(bytes_limit as u64) as usize).saturating_add(1);
+                file_bytes.reserve(reserve);
+                let read = opened.take(bytes_limit as u64).read_to_end(&mut file_bytes);
+                read_bytes_left -= file_bytes.len();
+                read.is_ok() && file_bytes.len() < bytes_limit && !file_bytes.contains(&0)
             } else {
-                None
+                false
             }
         } else {
-            None
+            false
         };
-        let mut selected = BTreeMap::new();
+        selected.clear();
         for matched in &file.matches[..count] {
-            if text.is_some() {
+            if has_text {
                 let first = matched.line_number.saturating_sub(before).max(1);
                 let last = matched.line_number.saturating_add(after);
                 for line in first..=last {
-                    selected.entry(line).or_insert(None);
+                    selected.push((line, None));
                 }
             }
-            selected.insert(matched.line_number, Some(matched.line_text.as_str()));
+            selected.push((matched.line_number, Some(matched.line_text.as_str())));
         }
+        selected.sort_by_key(|&(line, _)| line);
+        selected.dedup_by(|later, earlier| {
+            if later.0 == earlier.0 {
+                if later.1.is_some() {
+                    earlier.1 = later.1;
+                }
+                true
+            } else {
+                false
+            }
+        });
 
-        let source = text.as_deref().map(String::from_utf8_lossy);
+        let source = has_text.then(|| String::from_utf8_lossy(&file_bytes));
         let mut lines = source.as_deref().unwrap_or("").lines();
         let mut previous = 0;
         out.push_str("\n\n");
@@ -561,7 +575,7 @@ fn render_grep_context(
         if source.is_none() {
             out.push_str("\n  [Context unavailable within the file-read budget.]");
         }
-        for (line, matched_text) in selected {
+        for &(line, matched_text) in &selected {
             let source_line = lines.nth(line - previous - 1);
             previous = line;
             let (marker, text) = match (matched_text, source_line) {

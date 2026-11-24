@@ -68,16 +68,13 @@ fn preview(
         kib.clamp(1, 64).saturating_mul(1024).min(budget_bytes)
     });
     let mut over_budget = text.len() > threshold;
-    if (columns != 0 || (over_budget && text.len() <= budget_bytes))
-        && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok()
-    {
+    let may_raise_budget = over_budget && text.len() <= budget_bytes;
+    if columns != 0 && (!has_wide_line(text, columns) || text.contains(ARTIFACT_SCHEME)) {
+        columns = 0;
+    }
+    if (columns != 0 || may_raise_budget) && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok() {
         columns = 0;
         over_budget = text.len() > budget_bytes;
-    }
-    if columns != 0
-        && (text.contains(ARTIFACT_SCHEME) || !text.lines().any(|line| line.char_indices().nth(columns).is_some()))
-    {
-        columns = 0;
     }
     if !over_budget && columns == 0 {
         return None;
@@ -94,7 +91,7 @@ fn preview(
         Ok(id) if !over_budget => {
             let pointer =
                 format!("\n[horon: output lines shortened. Full output: read file_path=\"{ARTIFACT_SCHEME}{id}\".]");
-            let mut clipped = String::new();
+            let mut clipped = String::with_capacity(text.len().min(budget_bytes).saturating_add(pointer.len()));
             push_preview_lines(&mut clipped, text, columns);
             if clipped.len() + pointer.len() > budget_bytes {
                 clipped.truncate(head_end(&clipped, budget_bytes.saturating_sub(pointer.len())));
@@ -125,6 +122,11 @@ fn preview(
     Some(condensed)
 }
 
+fn has_wide_line(text: &str, columns: usize) -> bool {
+    text.lines()
+        .any(|line| line.len() > columns && (line.is_ascii() || line.chars().nth(columns).is_some()))
+}
+
 fn push_preview_lines(out: &mut String, text: &str, columns: usize) {
     if columns == 0 {
         out.push_str(text);
@@ -135,10 +137,20 @@ fn push_preview_lines(out: &mut String, text: &str, columns: usize) {
             .strip_suffix("\r\n")
             .or_else(|| line.strip_suffix('\n'))
             .unwrap_or(line);
-        let mut chars = body.char_indices();
-        if let Some((end, _)) = chars.nth(columns - 1)
-            && chars.next().is_some()
-        {
+        if body.len() <= columns {
+            out.push_str(line);
+            continue;
+        }
+        let cut = if body.is_ascii() {
+            Some(columns - 1)
+        } else {
+            let mut chars = body.char_indices();
+            match chars.nth(columns - 1) {
+                Some((end, _)) if chars.next().is_some() => Some(end),
+                _ => None,
+            }
+        };
+        if let Some(end) = cut {
             let marker = if body.len() - end >= '…'.len_utf8() {
                 '…'
             } else {
