@@ -28,8 +28,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use horon_agent_extension_types::wire::{
-    Capability, CapabilitySet, CommandInvokeParams, HOST_PROTOCOL_RANGE, HostExpectation, InitializeParams,
-    ObserverParams, ToolCallParams, WireMethod,
+    Capability, CapabilitySet, HOST_PROTOCOL_RANGE, HostExpectation, InitializeParams, ObserverParams, WireMethod,
 };
 use horon_agent_extension_types::{ExtensionManifest, ObserverEvent};
 use serde_json::Value;
@@ -53,8 +52,8 @@ static HOST_CAPABILITIES: LazyLock<CapabilitySet> = LazyLock::new(|| {
     ])
 });
 
-/// Children alive in this process, one per session and package.
-type ChildMap = HashMap<(String, String), Arc<Child>>;
+/// Children alive in this process, grouped by session ID then package ID.
+type ChildMap = HashMap<String, HashMap<String, Arc<Child>>>;
 static CHILDREN: LazyLock<Mutex<ChildMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Serializes child starts so two calls for one package cannot both launch it.
@@ -184,7 +183,7 @@ fn lock_declarations() -> MutexGuard<'static, DeclarationMap> {
 pub(crate) async fn declarations_for(store: &PackageStore, record: &PackageRecord) -> Result<Arc<Declarations>> {
     let copy = record
         .digest
-        .clone()
+        .as_deref()
         .with_context(|| format!("package {} has no published copy", record.id))?;
     if let Some(cached) = lock_declarations()
         .get(&record.id)
@@ -193,6 +192,7 @@ pub(crate) async fn declarations_for(store: &PackageStore, record: &PackageRecor
     {
         return Ok(cached);
     }
+    let copy = copy.to_owned();
     let root = store.store_dir().join(&copy);
     let prepared = record.clone();
     let read = tokio::task::spawn_blocking(move || -> Result<Declarations> {
@@ -219,8 +219,10 @@ pub(crate) async fn declarations_for(store: &PackageStore, record: &PackageRecor
 
 /// Call one tool a package declares and render its answer for the model.
 pub(crate) async fn call_tool(session_id: &str, package_id: &str, tool: &str, arguments: Value) -> Result<String> {
-    let value = dispatch(session_id, package_id, Surface::Tool(tool), arguments).await?;
-    Ok(render(value))
+    match dispatch(session_id, package_id, Surface::Tool(tool), arguments).await? {
+        Value::String(text) => Ok(text),
+        other => Ok(render_value(&other)),
+    }
 }
 
 /// Invoke one executable command a package declares.
@@ -246,18 +248,15 @@ impl Surface<'_> {
         }
     }
 
-    fn params(self, arguments: Value) -> Result<Value> {
-        match self {
-            Self::Tool(tool) => serde_json::to_value(ToolCallParams {
-                tool: tool.to_owned(),
-                arguments,
-            }),
-            Self::Command(command) => serde_json::to_value(CommandInvokeParams {
-                command: command.to_owned(),
-                arguments,
-            }),
-        }
-        .context("encode the package call")
+    fn params(self, arguments: Value) -> Value {
+        let (key, name) = match self {
+            Self::Tool(tool) => ("tool", tool),
+            Self::Command(command) => ("command", command),
+        };
+        let mut map = serde_json::Map::with_capacity(2);
+        map.insert(key.to_owned(), Value::String(name.to_owned()));
+        map.insert("arguments".to_owned(), arguments);
+        Value::Object(map)
     }
 }
 
@@ -271,9 +270,8 @@ async fn dispatch(session_id: &str, package_id: &str, surface: Surface<'_>, argu
     let generation = handle.generation();
     let record = handle
         .record()
-        .with_context(|| format!("package {package_id} has no installed record"))?
-        .clone();
-    let declarations = declarations_for(session.store(), &record).await?;
+        .with_context(|| format!("package {package_id} has no installed record"))?;
+    let declarations = declarations_for(session.store(), record).await?;
     match surface {
         Surface::Tool(tool) => ensure!(
             declarations.manifest.tools.iter().any(|declared| declared.name == tool),
@@ -288,9 +286,9 @@ async fn dispatch(session_id: &str, package_id: &str, surface: Surface<'_>, argu
             "package {package_id} does not declare the command {command}"
         ),
     }
-    refuse_secret_bearing(session_id, &arguments)?;
-    let child = child_for(session_id, generation, session.store(), &record, &declarations).await?;
-    let params = surface.params(arguments)?;
+    refuse_secret_bearing(&arguments)?;
+    let child = child_for(session_id, generation, session.store(), record, &declarations).await?;
+    let params = surface.params(arguments);
     child
         .wire
         .request_value(surface.method(), Some(params))
@@ -305,20 +303,23 @@ async fn dispatch(session_id: &str, package_id: &str, surface: Surface<'_>, argu
 /// travel. A value the vault already knows is refused too: the child runs with
 /// the user's permissions, so a credential the masker recognised is exactly
 /// what a package must not receive.
-fn refuse_secret_bearing(session_id: &str, arguments: &Value) -> Result<()> {
+fn refuse_secret_bearing(arguments: &Value) -> Result<()> {
     let payload = serde_json::to_string(arguments).context("encode the package call arguments")?;
     if payload.contains("«SECRET:") {
         bail!("the package call arguments hold an unresolved secret placeholder");
     }
-    let masked = secrets::session_vault_with(session_id, |vault| secrets::obfuscate(&payload, vault, &[]))
-        .unwrap_or_else(|| {
-            let mut vault = secrets::SecretVault::new();
-            secrets::obfuscate(&payload, &mut vault, &[])
-        });
-    if masked != payload {
+    if !secrets::detect(&payload).is_empty() {
         bail!("the package call arguments carry a known secret value");
     }
     Ok(())
+}
+
+fn live_child(session_id: &str, package_id: &str, copy: &str) -> Option<Arc<Child>> {
+    lock_children()
+        .get(session_id)?
+        .get(package_id)
+        .filter(|child| !child.closed.load(Ordering::SeqCst) && child.copy == copy)
+        .cloned()
 }
 
 /// The child for this session's package, started now if none is live.
@@ -329,23 +330,28 @@ async fn child_for(
     record: &PackageRecord,
     declarations: &Declarations,
 ) -> Result<Arc<Child>> {
-    let key = (session_id.to_owned(), record.id.clone());
     let copy = record
         .digest
-        .clone()
+        .as_deref()
         .with_context(|| format!("package {} names no copy", record.id))?;
-    let _start = START.lock().await;
-    if let Some(existing) = lock_children().get(&key).cloned() {
-        if !existing.closed.load(Ordering::SeqCst) && existing.copy == copy {
-            return Ok(existing);
-        }
-        existing.revoke();
-        let removed = lock_children().remove(&key);
-        drop(removed);
+    if let Some(existing) = live_child(session_id, &record.id, copy) {
+        return Ok(existing);
     }
-    let child = start(session_id, generation, store, record, declarations, copy).await?;
-    let replaced = lock_children().insert(key, Arc::clone(&child));
-    drop(replaced);
+    let _start = START.lock().await;
+    if let Some(existing) = live_child(session_id, &record.id, copy) {
+        return Ok(existing);
+    }
+    let stale = lock_children()
+        .get_mut(session_id)
+        .and_then(|children| children.remove(&record.id));
+    if let Some(stale) = stale {
+        stale.revoke();
+    }
+    let child = start(session_id, generation, store, record, declarations, copy.to_owned()).await?;
+    lock_children()
+        .entry(session_id.to_owned())
+        .or_default()
+        .insert(record.id.clone(), Arc::clone(&child));
     Ok(child)
 }
 
@@ -597,14 +603,9 @@ pub(crate) async fn deliver_observation(
     let copy = target
         .record
         .digest
-        .clone()
+        .as_deref()
         .with_context(|| format!("package {package_id} has no published copy"))?;
-    let key = (session_id.to_owned(), package_id.to_owned());
-    let live = lock_children()
-        .get(&key)
-        .filter(|child| !child.closed.load(Ordering::SeqCst) && child.copy == copy)
-        .cloned();
-    let child = match live {
+    let child = match live_child(session_id, package_id, copy) {
         Some(child) => child,
         None => {
             // Planning is read-only: an observation is never a reason to create
@@ -641,10 +642,10 @@ struct Started {
 }
 
 /// Render a child's result as the tool text the model reads.
-fn render(value: Value) -> String {
+pub(crate) fn render_value(value: &Value) -> String {
     match value {
-        Value::String(text) => text,
-        other => serde_json::to_string_pretty(&other).unwrap_or_else(|_| other.to_string()),
+        Value::String(text) => text.clone(),
+        other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
     }
 }
 
@@ -654,16 +655,9 @@ fn render(value: Value) -> String {
 /// child is revoked: a request waiting on it fails as the connection closes and
 /// the process tree is reaped off this thread.
 pub(crate) fn forget_session(session_id: &str) {
-    let removed: Vec<Arc<Child>> = {
-        let mut children = lock_children();
-        let keys: Vec<(String, String)> = children
-            .keys()
-            .filter(|(session, _)| session == session_id)
-            .cloned()
-            .collect();
-        keys.into_iter().filter_map(|key| children.remove(&key)).collect()
-    };
-    for child in removed {
-        child.revoke();
+    if let Some(children) = lock_children().remove(session_id) {
+        for child in children.into_values() {
+            child.revoke();
+        }
     }
 }

@@ -61,21 +61,48 @@ pub fn group(found: Vec<(String, Vec<Diagnostic>)>) -> Vec<FileReport> {
 }
 
 fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut out = String::new();
+    for word in text.split_whitespace() {
+        if out.is_empty() {
+            out.reserve(text.len());
+        } else {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    out
 }
 
 pub fn render(reports: &[FileReport]) -> String {
-    let mut out = String::new();
+    use std::fmt::Write as _;
+
+    let total_bytes: usize = reports
+        .iter()
+        .map(|report| {
+            let header = report.path.len() + report.note.as_ref().map_or(8, |note| note.len() + 4);
+            let items: usize = report.diagnostics.iter().map(|item| item.message.len() + 28).sum();
+            header + items
+        })
+        .sum();
+    let mut out = String::with_capacity(total_bytes);
     for report in reports {
-        match &report.note {
-            Some(note) => out.push_str(&format!("{}: {note}\n", report.path)),
-            None => out.push_str(&format!("{} ({})\n", report.path, report.diagnostics.len())),
+        let wrote = match &report.note {
+            Some(note) => writeln!(out, "{}: {note}", report.path),
+            None => writeln!(out, "{} ({})", report.path, report.diagnostics.len()),
+        };
+        if wrote.is_err() {
+            return out;
         }
         for item in &report.diagnostics {
-            out.push_str(&format!(
-                "  [{}] {} {}:{} {}\n",
+            if writeln!(
+                out,
+                "  [{}] {} {}:{} {}",
                 item.index, item.severity, item.line, item.column, item.message
-            ));
+            )
+            .is_err()
+            {
+                return out;
+            }
         }
     }
     if reports.iter().all(|r| r.diagnostics.is_empty() && r.note.is_none()) {
@@ -88,7 +115,8 @@ pub fn render(reports: &[FileReport]) -> String {
 pub fn handoff(reports: &[FileReport], selected: &[usize]) -> anyhow::Result<(Vec<String>, String)> {
     anyhow::ensure!(!selected.is_empty(), "select at least one diagnostic");
     let mut paths: Vec<String> = Vec::new();
-    let mut brief = String::from("Fix these language-server diagnostics. Change only what each one needs.\n");
+    let mut brief = String::with_capacity(64 + selected.len() * 64);
+    brief.push_str("Fix these language-server diagnostics. Change only what each one needs.\n");
     for &wanted in selected {
         let (report, item) = reports
             .iter()
@@ -98,10 +126,17 @@ pub fn handoff(reports: &[FileReport], selected: &[usize]) -> anyhow::Result<(Ve
         if !paths.contains(&report.path) {
             paths.push(report.path.clone());
         }
-        brief.push_str(&format!(
-            "- {}:{}:{} {}: {}\n",
-            report.path, item.line, item.column, item.severity, item.message
-        ));
+        if std::fmt::Write::write_fmt(
+            &mut brief,
+            format_args!(
+                "- {}:{}:{} {}: {}\n",
+                report.path, item.line, item.column, item.severity, item.message
+            ),
+        )
+        .is_err()
+        {
+            return Ok((paths, brief));
+        }
     }
     Ok((paths, brief))
 }

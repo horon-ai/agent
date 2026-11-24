@@ -5,8 +5,7 @@
 //! MCP sources were merged:
 //!
 //! - every name carries the `plugin_<id>_` prefix, and a name the user sources
-//!   already define keeps the user's connection ([`sources::merge_package_lower`]
-//!   has no stdio exception);
+//!   already define keeps the user's connection (without a stdio exception);
 //! - a `stdio` entry becomes a config whose command is the package's installed
 //!   executable, which the host starts through package supervision instead of
 //!   `Command`;
@@ -21,7 +20,6 @@
 use std::collections::HashMap;
 
 use super::protocol::McpServerConfig;
-use super::sources::{self, Servers};
 use crate::packages::{PackageMcpKind, PackageMcpServer};
 
 /// One package server as the session will register it.
@@ -42,24 +40,24 @@ pub fn package_servers(
     merged: &HashMap<String, McpServerConfig>,
     servers: &[PackageMcpServer],
 ) -> Vec<PackageServerRegistration> {
-    let mut candidates = Servers::new();
+    let mut out = Vec::with_capacity(servers.len());
     for server in servers {
-        if let Some(config) = config_for(server, merged) {
-            candidates.insert(server.public_name.clone(), config);
+        let Some(config) = config_for(server, merged) else {
+            continue;
+        };
+        if merged.contains_key(&server.public_name) {
+            crate::logging::info(&format!(
+                "MCP: Keeping the user definition of '{}'; the package definition of that name is not registered",
+                server.public_name
+            ));
+            continue;
         }
+        out.push(PackageServerRegistration {
+            server: server.clone(),
+            config,
+        });
     }
-    let mut after = merged.clone();
-    sources::merge_package_lower(&mut after, candidates);
-    servers
-        .iter()
-        .filter(|server| !merged.contains_key(&server.public_name))
-        .filter_map(|server| {
-            after.get(&server.public_name).map(|config| PackageServerRegistration {
-                server: server.clone(),
-                config: config.clone(),
-            })
-        })
-        .collect()
+    out
 }
 
 /// The config one declared server is connected with, or `None` when the

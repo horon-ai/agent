@@ -173,6 +173,7 @@ impl<'a> ConceptIndex<'a> {
 struct FileLines {
     path: String,
     path_mask: u32,
+    file_union: u32,
     masks: Vec<u32>,
 }
 
@@ -181,7 +182,7 @@ struct Hit {
     start: usize,
     end: usize,
     score: f64,
-    matched: Vec<String>,
+    matched_mask: u32,
 }
 
 #[inline]
@@ -247,15 +248,17 @@ fn mask_of_with_scratch(text: &str, index: &ConceptIndex<'_>, scratch: &mut Stri
 
 fn scan(root: &Path, index: &ConceptIndex<'_>, max_files: usize) -> (Vec<FileLines>, usize) {
     let mut files = Vec::new();
+    let mut scanned = 0usize;
     let mut total_lines = 0usize;
     let mut bytes = Vec::with_capacity(64 * 1024);
     let mut scratch = String::with_capacity(64);
+    let mut line_masks = Vec::with_capacity(512);
     let walker = WalkBuilder::new(root)
         .follow_links(false)
         .sort_by_file_path(|a, b| a.cmp(b))
         .build();
     for entry in walker.flatten() {
-        if files.len() >= max_files || total_lines >= MAX_TOTAL_LINES {
+        if scanned >= max_files || total_lines >= MAX_TOTAL_LINES {
             break;
         }
         if !entry.file_type().is_some_and(|kind| kind.is_file()) {
@@ -279,19 +282,26 @@ fn scan(root: &Path, index: &ConceptIndex<'_>, max_files: usize) -> (Vec<FileLin
             continue;
         }
         let text = String::from_utf8_lossy(&bytes);
-        let relative = path.strip_prefix(root).unwrap_or(path).display().to_string();
-        let mut masks = Vec::with_capacity(bytes.len() / 48 + 1);
+        line_masks.clear();
+        let mut file_union = 0u32;
         for line in text.lines() {
-            masks.push(mask_of_with_scratch(line, index, &mut scratch));
+            let mask = mask_of_with_scratch(line, index, &mut scratch);
+            file_union |= mask;
+            line_masks.push(mask);
         }
-        total_lines += masks.len();
+        total_lines += line_masks.len();
+        scanned += 1;
+        if file_union == 0 {
+            continue;
+        }
+        let relative = path.strip_prefix(root).unwrap_or(path).display().to_string();
         files.push(FileLines {
             path_mask: mask_of_with_scratch(&relative, index, &mut scratch),
             path: relative,
-            masks,
+            file_union,
+            masks: line_masks.clone(),
         });
     }
-    let scanned = files.len();
     (files, scanned)
 }
 
@@ -320,21 +330,26 @@ fn best_window(file: &FileLines, idf: &[f64]) -> Option<(usize, usize, f64, u32)
     best
 }
 
-fn rank(files: &[FileLines], concepts: &[Concept], limit: usize) -> Vec<Hit> {
-    let total = files.len().max(1) as f64;
-    let idf: Vec<f64> = (0..concepts.len())
-        .map(|index| {
-            let df = files
-                .iter()
-                .filter(|file| file.masks.iter().any(|mask| mask & (1 << index) != 0))
-                .count() as f64;
-            (1.0 + total / (1.0 + df)).ln()
-        })
-        .collect();
+fn rank(files: &[FileLines], scanned: usize, concepts: &[Concept], limit: usize) -> Vec<Hit> {
+    let mut df_counts = [0usize; MAX_CONCEPTS];
+    for file in files {
+        let mut union = file.file_union;
+        while union != 0 {
+            let bit = union.trailing_zeros() as usize;
+            df_counts[bit] += 1;
+            union &= union - 1;
+        }
+    }
+    let total = scanned.max(1) as f64;
+    let mut idf = [0.0f64; MAX_CONCEPTS];
+    for (index, slot) in idf[..concepts.len()].iter_mut().enumerate() {
+        *slot = (1.0 + total / (1.0 + df_counts[index] as f64)).ln();
+    }
+    let idf = &idf[..concepts.len()];
     let mut hits: Vec<Hit> = files
         .iter()
         .filter_map(|file| {
-            let (start, end, score, union) = best_window(file, &idf)?;
+            let (start, end, score, union) = best_window(file, idf)?;
             let hit_lines = || (start..end).filter(|line| file.masks[*line] != 0);
             let first = hit_lines().next()?;
             let last = hit_lines().next_back()?;
@@ -343,18 +358,22 @@ fn rank(files: &[FileLines], concepts: &[Concept], limit: usize) -> Vec<Hit> {
                 start: first + 1,
                 end: last + 1,
                 score,
-                matched: concepts
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| union & (1 << index) != 0)
-                    .map(|(_, concept)| concept.label.clone())
-                    .collect(),
+                matched_mask: union,
             })
         })
         .collect();
     hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
     hits.truncate(limit);
     hits
+}
+
+fn matched_labels(mask: u32, concepts: &[Concept]) -> Vec<&str> {
+    concepts
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| mask & (1 << index) != 0)
+        .map(|(_, concept)| concept.label.as_str())
+        .collect()
 }
 
 fn evidence(root: &Path, hit: &Hit, index: &ConceptIndex<'_>) -> Vec<String> {
@@ -400,7 +419,12 @@ pub(super) fn run_locate(
     concepts.truncate(MAX_CONCEPTS);
     let index = ConceptIndex::new(&concepts);
     let (files, scanned) = scan(root, &index, max_files.unwrap_or(DEFAULT_MAX_FILES));
-    let hits = rank(&files, &concepts, max_results.unwrap_or(DEFAULT_RESULTS).max(1));
+    let hits = rank(
+        &files,
+        scanned,
+        &concepts,
+        max_results.unwrap_or(DEFAULT_RESULTS).max(1),
+    );
 
     let mut out = format!("locate: {}\n", crate::util::truncate_str(query, 200));
     let Some(best) = hits.first() else {
@@ -411,12 +435,13 @@ pub(super) fn run_locate(
         ));
         return Ok(out);
     };
-    let found = best.matched.len();
+    let best_matched = matched_labels(best.matched_mask, &concepts);
+    let found = best_matched.len();
     let confidence = if found * 2 < concepts.len() { "low" } else { "ok" };
     out.push_str(&format!(
         "confidence: {confidence}. The best location matches {found} of {} query terms ({}).",
         concepts.len(),
-        best.matched.join(", ")
+        best_matched.join(", ")
     ));
     if confidence == "low" {
         out.push_str(" Treat these as weak leads and try a more specific description.");
@@ -433,7 +458,7 @@ pub(super) fn run_locate(
             hit.start,
             hit.end,
             hit.score,
-            hit.matched.join(", ")
+            matched_labels(hit.matched_mask, &concepts).join(", ")
         ));
         for line in evidence(root, hit, &index) {
             out.push_str(&format!("     {line}\n"));

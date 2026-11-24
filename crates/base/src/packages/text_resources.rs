@@ -417,16 +417,18 @@ fn load_installed(store: &PackageStore, record: &PackageRecord, digest: &str) ->
 /// The bundled `plugin.toml` of the installed copy, checked against the record.
 fn read_plugin_resources(root: &Path, record: &PackageRecord) -> Result<PackageResources> {
     let path = Path::new("plugin.toml");
-    let file = open_package_file(root, path)?;
-    let mut text = String::new();
-    file.take(MAX_PLUGIN_MANIFEST_BYTES + 1)
-        .read_to_string(&mut text)
-        .with_context(|| format!("read plugin.toml of package {}", record.id))?;
+    let mut file = open_package_file(root, path)?;
+    let bytes = read_capped_prefix(
+        &mut file,
+        MAX_PLUGIN_MANIFEST_BYTES,
+        &format!("plugin.toml of package {}", record.id),
+    )?;
     ensure!(
-        text.len() as u64 <= MAX_PLUGIN_MANIFEST_BYTES,
+        bytes.len() as u64 <= MAX_PLUGIN_MANIFEST_BYTES,
         "plugin.toml of package {} is too large",
         record.id
     );
+    let text = String::from_utf8(bytes).with_context(|| format!("read plugin.toml of package {}", record.id))?;
     // The declarations are only trustworthy while the manifest bytes are the
     // ones the catalog recorded, so the manifest is hash-checked like every
     // resource it names.
@@ -440,10 +442,9 @@ fn read_plugin_resources(root: &Path, record: &PackageRecord) -> Result<PackageR
         "plugin.toml of package {} no longer matches the recorded length",
         record.id
     );
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
+    let hex_buf = sha256_hex_buf(text.as_bytes());
     ensure!(
-        hex::encode(hasher.finalize()) == stored.sha256,
+        hex_buf.as_slice() == stored.sha256.as_bytes(),
         "plugin.toml of package {} no longer matches the recorded SHA-256",
         record.id
     );
@@ -463,14 +464,47 @@ fn read_plugin_resources(root: &Path, record: &PackageRecord) -> Result<PackageR
     Ok(manifest.resources)
 }
 
-/// One resource file read from inside a package root.
-struct ResourceFile {
-    relative: String,
-    path: PathBuf,
-    text: String,
+/// Lowercase hex encoding of a SHA-256 digest in a stack buffer.
+pub(super) fn format_sha256_hex(digest: [u8; 32]) -> [u8; 64] {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut hex_buf = [0u8; 64];
+    for (i, &byte) in digest.iter().enumerate() {
+        hex_buf[i * 2] = HEX[(byte >> 4) as usize];
+        hex_buf[i * 2 + 1] = HEX[(byte & 0x0f) as usize];
+    }
+    hex_buf
 }
 
-fn read_verified(root: &Path, record: &PackageRecord, declared: &str, cap: u64) -> Result<ResourceFile> {
+pub(super) fn sha256_hex_buf(bytes: &[u8]) -> [u8; 64] {
+    format_sha256_hex(Sha256::digest(bytes).into())
+}
+
+pub(super) fn read_capped_prefix(file: &mut std::fs::File, limit: u64, label: &str) -> Result<Vec<u8>> {
+    let cap = match file.metadata() {
+        Ok(meta) => usize::try_from(meta.len().min(limit)).unwrap_or(0).saturating_add(1),
+        Err(_) => 0,
+    };
+    let mut bytes = Vec::with_capacity(cap);
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read {label}"))?;
+    Ok(bytes)
+}
+
+pub(super) fn read_capped_file(mut file: std::fs::File, limit: u64, label: &str) -> Result<Vec<u8>> {
+    let bytes = read_capped_prefix(&mut file, limit, label)?;
+    ensure!(bytes.len() as u64 <= limit, "{label} exceeds {limit} bytes");
+    Ok(bytes)
+}
+
+/// One resource file read from inside a package root.
+pub(super) struct ResourceFile {
+    pub(super) relative: String,
+    pub(super) path: PathBuf,
+    pub(super) text: String,
+}
+
+pub(super) fn read_verified(root: &Path, record: &PackageRecord, declared: &str, cap: u64) -> Result<ResourceFile> {
     let stored = record
         .files
         .iter()
@@ -481,10 +515,9 @@ fn read_verified(root: &Path, record: &PackageRecord, declared: &str, cap: u64) 
         bytes.len() as u64 == stored.len,
         "package file {declared} no longer matches the recorded length"
     );
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    let hex_buf = sha256_hex_buf(&bytes);
     ensure!(
-        hex::encode(hasher.finalize()) == stored.sha256,
+        hex_buf.as_slice() == stored.sha256.as_bytes(),
         "package file {declared} no longer matches the recorded SHA-256"
     );
     let text = String::from_utf8(bytes).with_context(|| format!("package file {declared} is not UTF-8"))?;
@@ -495,11 +528,7 @@ fn read_verified(root: &Path, record: &PackageRecord, declared: &str, cap: u64) 
 fn read_bytes(root: &Path, declared: &str, cap: u64) -> Result<(String, PathBuf, Vec<u8>)> {
     let relative = relative_path(declared)?;
     let file = open_package_file(root, &relative)?;
-    let mut bytes = Vec::new();
-    file.take(cap + 1)
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("read {declared}"))?;
-    ensure!(bytes.len() as u64 <= cap, "{declared} exceeds {cap} bytes");
+    let bytes = read_capped_file(file, cap, declared)?;
     Ok((declared.to_owned(), root.join(&relative), bytes))
 }
 
@@ -538,19 +567,24 @@ fn parse_skill(file: &ResourceFile, package_id: &str) -> Result<PackageSkill> {
     })
 }
 
-/// `<package id>--<file stem>` for a prompt file.
-fn public_prompt_name(package_id: &str, declared: &str) -> Result<String> {
+pub(super) fn resource_stem<'a>(declared: &'a str, kind: &str) -> Result<&'a str> {
     let stem = Path::new(declared)
         .file_stem()
         .and_then(|stem| stem.to_str())
-        .with_context(|| format!("prompt resource needs a name: {declared}"))?;
-    ensure!(is_resource_name(stem), "invalid package prompt name: {declared}");
+        .with_context(|| format!("{kind} resource needs a name: {declared}"))?;
+    ensure!(is_resource_name(stem), "invalid package {kind} name: {declared}");
+    Ok(stem)
+}
+
+/// `<package id>--<file stem>` for a prompt file.
+fn public_prompt_name(package_id: &str, declared: &str) -> Result<String> {
+    let stem = resource_stem(declared, "prompt")?;
     let name = format!("{package_id}--{stem}");
     ensure!(name.len() <= MAX_PUBLIC_NAME, "package prompt name is too long: {name}");
     Ok(name)
 }
 
-fn is_resource_name(name: &str) -> bool {
+pub(super) fn is_resource_name(name: &str) -> bool {
     !name.is_empty()
         && name
             .bytes()
@@ -627,11 +661,7 @@ pub fn validate_resources(root: &Path, resources: &PackageResources) -> Result<(
     for declared in &resources.prompts {
         let (_, _, text) = read_text(root, declared, MAX_PROMPT_BYTES)?;
         ensure!(!text.trim().is_empty(), "package prompt is empty: {declared}");
-        let stem = Path::new(declared)
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .with_context(|| format!("prompt resource needs a name: {declared}"))?;
-        ensure!(is_resource_name(stem), "invalid package prompt name: {declared}");
+        let stem = resource_stem(declared, "prompt")?;
         ensure!(
             prompt_names.insert(stem.to_owned()),
             "duplicate package prompt name: {declared}"

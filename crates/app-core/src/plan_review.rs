@@ -43,12 +43,14 @@ pub fn revision(plan: &SubmittedPlan) -> String {
         hasher.update([0u8]);
         hasher.update(file.as_bytes());
     }
-    hasher
-        .finalize()
-        .iter()
-        .take(6)
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(12);
+    for &byte in &digest[..6] {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 pub fn review(plan: &SubmittedPlan) -> PlanReview {
@@ -104,7 +106,12 @@ pub fn review(plan: &SubmittedPlan) -> PlanReview {
 }
 
 pub fn render(review: &PlanReview) -> String {
-    let mut text = format!("Review of plan revision {}.\n", review.revision);
+    use std::fmt::Write as _;
+
+    let mut text = String::with_capacity(160 + review.findings.len() * 80);
+    if writeln!(text, "Review of plan revision {}.", review.revision).is_err() {
+        return text;
+    }
     if review.findings.is_empty() {
         text.push_str("No findings.\n");
     }
@@ -113,7 +120,9 @@ pub fn render(review: &PlanReview) -> String {
             Severity::Concern => "concern ",
             Severity::Advisory => "advisory",
         };
-        text.push_str(&format!("- [{label}] {}: {}\n", finding.code, finding.detail));
+        if writeln!(text, "- [{label}] {}: {}", finding.code, finding.detail).is_err() {
+            return text;
+        }
     }
     text.push_str(
         "\nThis review decided nothing. The plan is still waiting: use `/plan approve` or `/plan reject` once you have read it.",

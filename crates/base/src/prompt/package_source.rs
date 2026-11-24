@@ -28,25 +28,52 @@ const RULES_HEADER: &str = "# Package Rules\n\n\
 /// path, so the same resources render the same bytes on every request.
 pub fn render_rules(resources: &PackageTextResources) -> Option<String> {
     resources.rules().next()?;
-    let mut section = String::from(RULES_HEADER);
+    let mut total_len = RULES_HEADER.len();
     let mut omitted = 0usize;
     for rule in resources.rules() {
-        let block = format!(
-            "\n\n## Package {} ({})\n\n{}",
-            rule.package_id,
-            rule.relative_path,
-            rule.text.trim()
-        );
-        if section.len() + block.len() > MAX_RULES_SECTION_BYTES {
+        let block_len = "\n\n## Package ".len()
+            + rule.package_id.len()
+            + " (".len()
+            + rule.relative_path.len()
+            + ")\n\n".len()
+            + rule.text.trim().len();
+        if total_len + block_len > MAX_RULES_SECTION_BYTES {
             omitted += 1;
             continue;
         }
-        section.push_str(&block);
+        total_len += block_len;
     }
-    if omitted > 0 {
-        section.push_str(&format!(
-            "\n\n({omitted} package rule file(s) omitted to keep this block within {MAX_RULES_SECTION_BYTES} bytes.)"
-        ));
+    let capacity = if omitted > 0 { total_len + 96 } else { total_len };
+    let mut section = String::with_capacity(capacity);
+    section.push_str(RULES_HEADER);
+    for rule in resources.rules() {
+        let body = rule.text.trim();
+        let block_len = "\n\n## Package ".len()
+            + rule.package_id.len()
+            + " (".len()
+            + rule.relative_path.len()
+            + ")\n\n".len()
+            + body.len();
+        if section.len() + block_len > MAX_RULES_SECTION_BYTES {
+            continue;
+        }
+        section.push_str("\n\n## Package ");
+        section.push_str(&rule.package_id);
+        section.push_str(" (");
+        section.push_str(&rule.relative_path);
+        section.push_str(")\n\n");
+        section.push_str(body);
+    }
+    if omitted > 0
+        && std::fmt::Write::write_fmt(
+            &mut section,
+            format_args!(
+                "\n\n({omitted} package rule file(s) omitted to keep this block within {MAX_RULES_SECTION_BYTES} bytes.)"
+            ),
+        )
+        .is_err()
+    {
+        return Some(section);
     }
     Some(section)
 }
