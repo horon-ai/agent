@@ -19,7 +19,7 @@ use super::shapes::{
 };
 use crate::protocol::{FileDiffWire, ServerEvent};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// The only tool shown as a terminal.
@@ -63,6 +63,10 @@ pub(crate) struct V2Mapper {
     round_pending: bool,
     /// The text of the current agent message, which a correction rewrites.
     agent_text: String,
+    /// Non-text blocks (e.g., A2UI EmbeddedResource) streamed in the current agent message.
+    agent_blocks: Vec<Value>,
+    a2ui_enabled: bool,
+    suppressed_tools: HashSet<String>,
     compactions: u64,
     current_tool: Option<String>,
     tools: HashMap<String, Tool>,
@@ -87,11 +91,19 @@ impl V2Mapper {
             ids: message_ids(start),
             round_pending: false,
             agent_text: String::new(),
+            agent_blocks: Vec::new(),
+            a2ui_enabled: false,
+            suppressed_tools: HashSet::new(),
             compactions: 0,
             current_tool: None,
             tools: HashMap::new(),
             order: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_a2ui(mut self, enabled: bool) -> Self {
+        self.a2ui_enabled = enabled;
+        self
     }
 
     /// The mapper of a run attached part-way: its ids continue from where the
@@ -136,17 +148,30 @@ impl V2Mapper {
                 vec![message_chunk(ChunkKind::AgentThought, &self.ids.thought(), &text)]
             }
             ServerEvent::ToolStart { id, name } => {
+                if self.a2ui_enabled && super::super::a2ui::is_a2ui_tool_name(&name) {
+                    self.current_tool = Some(id.clone());
+                    self.suppressed_tools.insert(id);
+                    return Vec::new();
+                }
                 self.round_pending = true;
                 self.current_tool = Some(id.clone());
                 self.ensure_created(&id, &name)
             }
             ServerEvent::ToolInput { id, delta } => {
                 if let Some(id) = id.or_else(|| self.current_tool.clone()) {
+                    if self.suppressed_tools.contains(&id) {
+                        return Vec::new();
+                    }
                     self.tool(&id).input.push_str(&delta);
                 }
                 Vec::new()
             }
             ServerEvent::ToolExec { id, name } => {
+                if self.a2ui_enabled && super::super::a2ui::is_a2ui_tool_name(&name) {
+                    self.current_tool = Some(id.clone());
+                    self.suppressed_tools.insert(id);
+                    return Vec::new();
+                }
                 self.round_pending = true;
                 self.current_tool = Some(id.clone());
                 let mut updates = self.ensure_created(&id, &name);
@@ -184,6 +209,9 @@ impl V2Mapper {
             // `cancelled`, and the `ToolDone` that follows with the result the
             // model sees produces no second one.
             ServerEvent::ToolCancelled { id } => {
+                if self.suppressed_tools.remove(&id) {
+                    return Vec::new();
+                }
                 self.round_pending = true;
                 let name = self.tool(&id).name.clone().unwrap_or_else(|| "tool".to_string());
                 let mut updates = self.ensure_created(&id, &name);
@@ -201,6 +229,11 @@ impl V2Mapper {
                 error,
                 verdict,
             } => {
+                if self.suppressed_tools.remove(&id)
+                    || (self.a2ui_enabled && super::super::a2ui::is_a2ui_tool_name(&name))
+                {
+                    return Vec::new();
+                }
                 self.round_pending = true;
                 self.tool_done(&id, &name, output, error.as_deref(), verdict)
             }
@@ -262,6 +295,21 @@ impl V2Mapper {
                 &message_id,
                 &[json!({ "type": "text", "text": content })],
             )],
+            ServerEvent::A2uiEnvelope {
+                tool_call_id,
+                sequence,
+                envelope,
+                ..
+            } if self.a2ui_enabled => {
+                self.open_message();
+                let resource = super::super::a2ui::a2ui_embedded_resource(&envelope, &tool_call_id, sequence);
+                self.agent_blocks.push(resource.clone());
+                vec![shapes::message_content_chunk(
+                    ChunkKind::AgentMessage,
+                    &self.ids.agent(),
+                    resource,
+                )]
+            }
             _ => Vec::new(),
         }
     }
@@ -317,15 +365,17 @@ impl V2Mapper {
             self.round_pending = false;
             self.ids.advance_after_tool_round();
             self.agent_text.clear();
+            self.agent_blocks.clear();
         }
     }
 
     fn agent_message(&self) -> Value {
-        whole_message(
-            MessageKind::AgentMessage,
-            &self.ids.agent(),
-            &[json!({ "type": "text", "text": self.agent_text })],
-        )
+        let mut content = Vec::new();
+        if !self.agent_text.is_empty() || self.agent_blocks.is_empty() {
+            content.push(json!({ "type": "text", "text": self.agent_text }));
+        }
+        content.extend(self.agent_blocks.iter().cloned());
+        whole_message(MessageKind::AgentMessage, &self.ids.agent(), &content)
     }
 
     fn tool(&mut self, id: &str) -> &mut Tool {

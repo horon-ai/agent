@@ -37,6 +37,7 @@ pub(super) struct ConnectionState {
     pub(super) initialized: bool,
     pub(super) client_capabilities: Value,
     pub(super) client_info: Option<Value>,
+    pub(super) a2ui_capabilities: Option<crate::protocol::a2ui::A2uiSessionCapabilities>,
     /// Answer ACP v2 to a client that asks for it (IS-1). Off is a true
     /// rollback: every request is answered exactly as version 1 answers it.
     pub(super) protocol_v2: bool,
@@ -57,6 +58,7 @@ impl Default for ConnectionState {
             initialized: false,
             client_capabilities: Value::Null,
             client_info: None,
+            a2ui_capabilities: None,
             protocol_v2: true,
             version: None,
             other_request_seen: false,
@@ -750,16 +752,23 @@ impl AcpRuntime {
             AcpVersion::V2 => ("capabilities", "info"),
         };
         let capabilities = params.get(capabilities_key).cloned().unwrap_or_else(|| json!({}));
-        let result = match version {
+        let a2ui_capabilities = a2ui::parse_initialize_a2ui_capabilities(params, &capabilities);
+        let mut result = match version {
             AcpVersion::V1 => initialize_result(self.profile),
             AcpVersion::V2 => v2::shapes::initialize_response(self.profile, MCP_REMOTE_TRANSPORTS.http),
         };
+        let out_capabilities_key = match version {
+            AcpVersion::V1 => "agentCapabilities",
+            AcpVersion::V2 => "capabilities",
+        };
+        a2ui::attach_initialize_a2ui_capability(&mut result, out_capabilities_key, a2ui_capabilities.as_ref());
         {
             let mut connection = self.lock_connection();
             connection.initialized = true;
             connection.version = Some(version);
             connection.client_capabilities = capabilities;
             connection.client_info = params.get(info_key).cloned();
+            connection.a2ui_capabilities = a2ui_capabilities;
         }
         self.peer
             .write_value(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
@@ -995,6 +1004,14 @@ impl AcpRuntime {
 
     pub(super) fn client_capabilities(&self) -> Value {
         self.lock_connection().client_capabilities.clone()
+    }
+
+    pub(super) fn a2ui_capabilities(&self) -> Option<crate::protocol::a2ui::A2uiSessionCapabilities> {
+        self.lock_connection().a2ui_capabilities.clone()
+    }
+
+    pub(super) fn is_a2ui_negotiated(&self) -> bool {
+        self.lock_connection().a2ui_capabilities.is_some()
     }
 
     fn lock_prompts(&self) -> std::sync::MutexGuard<'_, UnansweredPrompts> {

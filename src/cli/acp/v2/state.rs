@@ -606,9 +606,10 @@ impl V2Stream {
                 .unwrap_or_else(|| snapshot.run_id.clone());
             if snapshot.running && !snapshot.run_id.is_empty() {
                 let cwd = self.cwd().await;
+                let a2ui_enabled = self.runtime.is_a2ui_negotiated();
                 self.run = Some(match position.filter(|position| position.start == start) {
-                    Some(position) => V2Mapper::resumed(position, cwd),
-                    None => V2Mapper::new(&start, cwd),
+                    Some(position) => V2Mapper::resumed(position, cwd).with_a2ui(a2ui_enabled),
+                    None => V2Mapper::new(&start, cwd).with_a2ui(a2ui_enabled),
                 });
             }
             self.v2
@@ -682,6 +683,7 @@ impl V2Stream {
         }
         match event {
             ServerEvent::UserMessageInserted { id, message_id } => self.inserted(id, message_id).await,
+            ServerEvent::ContextMessageAdded { id } => self.context_message_added(id).await,
             ServerEvent::Error { id, message, .. } => {
                 if let Some(withdraw) = self.v2.take_withdraw(id) {
                     self.withdraw_refused(withdraw, &message);
@@ -878,7 +880,7 @@ impl V2Stream {
     }
 
     async fn mapper_for(&self, start: &str) -> V2Mapper {
-        V2Mapper::new(start, self.cwd().await)
+        V2Mapper::new(start, self.cwd().await).with_a2ui(self.runtime.is_a2ui_negotiated())
     }
 
     async fn cwd(&self) -> Option<PathBuf> {
@@ -912,6 +914,30 @@ impl V2Stream {
         self.write_all(vec![shapes::user_message(&message_id, &prompt.content)])
             .await;
         let _ = prompt.outcome.send(PromptOutcome::Inserted);
+    }
+
+    /// Context-only inbound A2UI events (`rendererFunctionResponse`, `error`) append to history
+    /// without starting a turn, so release the prompt slot and acknowledge the ACP request.
+    async fn context_message_added(&self, daemon_id: u64) {
+        let Some(prompt) = self.v2.take_pending(daemon_id) else {
+            return;
+        };
+        let message_id = format!("ctx-{daemon_id}");
+        self.release_prompt();
+        if let Err(err) = self
+            .runtime
+            .write_result(prompt.rpc_id, json!({ "messageId": message_id }))
+            .await
+        {
+            crate::logging::warn(&format!("ACP: failed to answer a v2 prompt: {err:#}"));
+        }
+        if !prompt.content.is_empty() {
+            self.write_all(vec![shapes::user_message(&message_id, &prompt.content)])
+                .await;
+        }
+        if prompt.outcome.send(PromptOutcome::Inserted).is_err() {
+            crate::logging::warn("ACP: v2 context prompt receiver dropped before completion");
+        }
     }
 
     /// The daemon refused a withdrawal. A refusal read while the prompt is
