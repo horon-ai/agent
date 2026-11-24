@@ -128,9 +128,15 @@ class WorkflowGuardTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('workflow_dispatch:', workflow)
         # One group per ref: a shared group would let a `dev` run cancel `main`.
+        # `dev` queues instead of cancelling too: a cancelled `dev` run leaves no
+        # green head, so the next push is compared with an older one and runs
+        # every gate again.
+        for name in ('ci.yml', 'structural-perf.yml'):
+            text = (ROOT / f'.github/workflows/{name}').read_text()
+            with self.subTest(workflow=name):
+                self.assertIn("cancel-in-progress: ${{ github.ref != 'refs/heads/main' && "
+                              "github.ref != 'refs/heads/dev' }}", text)
         self.assertIn('group: ci-${{ github.workflow }}-${{ github.ref }}', workflow)
-        self.assertIn("cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}",
-                      workflow)
         self.assertNotIn('cancel-in-progress: true', workflow)
         self.assertNotIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
                          workflow)
