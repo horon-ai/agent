@@ -93,7 +93,7 @@ The Windows install locations and signing procedure are in [`WINDOWS.md`](/refer
 - The cache is used only when the directory that holds the cache root, the cache root itself and the directories created under it are all real directories owned by the current user with neither the group nor the world write bit set. A shared location such as `/tmp`, a symbolic link, an unreadable mode or an owner other than the current user disables the cache for that run instead of being written to.
 - After `install-release` succeeds, the installer moves each verified download to a temporary name in the cache and sets the entry's final name with a rename. A move on the same filesystem reuses the downloaded file. Across filesystems the move copies the bytes before the rename. Concurrent installs see only complete entries.
 - A damaged entry, an entry this release does not list, or a cache that cannot be written falls back to the download path. The cache never fails an install.
-- `HORON_AGENT_NO_DOWNLOAD_CACHE=1` disables the cache for one run. `rm -rf <cache root>/horon-agent` removes it; the immutable version store, the launcher and uninstall do not depend on it.
+- `HORON_AGENT_NO_DOWNLOAD_CACHE=1` disables the cache for one run. `rm -rf <cache root>/horon-agent` removes it; the immutable version store, the launcher and uninstall do not depend on it. Note that disabling the cache leaves existing versioned directories untouched.
 
 ## Installing from npm (not published yet)
 
