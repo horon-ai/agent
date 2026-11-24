@@ -741,17 +741,51 @@ class AllCompetitorGuardAndSummary(unittest.TestCase):
 
             full_dir = root / "full"
             full_dir.mkdir()
-            job_dir(full_dir, "benchmark-linux-1", "linux", files={
-                "runner.txt": "ubuntu-24.04\n",
-                "compare.json": compare_json(*eight_tool_results()),
-                "jcode-release.json": json.dumps(RELEASE),
-            })
+            for idx, key in enumerate(("linux", "macos", "windows"), start=1):
+                runner = {"linux": "ubuntu-24.04\n", "macos": "macos-latest\n", "windows": "windows-latest\n"}[key]
+                asset = {
+                    "linux": "jcode-linux-x86_64.tar.gz",
+                    "macos": "jcode-macos-aarch64.tar.gz",
+                    "windows": "jcode-windows-x86_64.exe",
+                }[key]
+                job_dir(full_dir, f"benchmark-{key}-{idx}", key, files={
+                    "runner.txt": runner,
+                    "compare.json": compare_json(*eight_tool_results()),
+                    "jcode-release.json": json.dumps({**RELEASE, "asset": asset}),
+                })
             code = bench_docs.main([
                 "render", "--doc", str(doc), "--results", str(full_dir),
                 "--commit", "abc1234", "--require-all-competitors",
             ])
             self.assertEqual(code, 0)
             self.assertIn("oh-my-openagent (omo)", doc.read_text(encoding="utf-8"))
+
+    def test_require_all_competitors_rejects_missing_or_failed_os_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            partial_os = root / "partial-os"
+            partial_os.mkdir()
+            job_dir(partial_os, "benchmark-linux-1", "linux", files={
+                "runner.txt": "ubuntu-24.04\n",
+                "compare.json": compare_json(*eight_tool_results()),
+                "jcode-release.json": json.dumps(RELEASE),
+            })
+            job_dir(partial_os, "benchmark-macos-2", "macos", status="failure", files={
+                "runner.txt": "macos-latest\n",
+            })
+            readme = root / "README.md"
+            readme.write_text(README_DOC, encoding="utf-8")
+            results_doc = root / "RESULTS.md"
+            results_doc.write_text(CHART_DOC, encoding="utf-8")
+
+            for doc in (readme, results_doc):
+                original = doc.read_text(encoding="utf-8")
+                code = bench_docs.main([
+                    "render", "--doc", str(doc), "--results", str(partial_os),
+                    "--commit", "abc1234", "--require-all-competitors",
+                ])
+                self.assertEqual(code, 1)
+                self.assertEqual(doc.read_text(encoding="utf-8"), original)
 
 
 if __name__ == "__main__":

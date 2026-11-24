@@ -106,10 +106,25 @@ have() {
 npm_install_into() {
   # npm_install_into <package@version> <prefix>
   local spec="$1" prefix="$2"
+  local attempts="${NPM_INSTALL_RETRIES:-3}" delay="${NPM_INSTALL_RETRY_DELAY:-3}" attempt=1
   if ! have npm; then
     return 1
   fi
-  env -u GH_TOKEN -u GITHUB_TOKEN npm install --prefix "$prefix" --no-audit --no-fund --loglevel=error "$spec" >&2
+  while [ "$attempt" -le "$attempts" ]; do
+    if env -u GH_TOKEN -u GITHUB_TOKEN npm install --prefix "$prefix" \
+        --no-audit --no-fund --loglevel=error \
+        --fetch-retries=4 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000 \
+        "$spec" >&2; then
+      return 0
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      echo "install_competitors: npm install $spec attempt $attempt/$attempts failed; retrying in ${delay}s" >&2
+      rm -rf "$prefix/node_modules" "$prefix/package-lock.json"
+      [ "$delay" = "0" ] || sleep "$delay"
+    fi
+    attempt=$((attempt + 1))
+  done
+  return 1
 }
 
 record_bin() {

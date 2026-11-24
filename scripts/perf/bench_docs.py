@@ -393,10 +393,16 @@ def missing_suite_groups(dirs: dict[str, Path]) -> list[str]:
     return missing
 
 
+def missing_comparison_platforms(dirs: dict[str, Path]) -> list[str]:
+    """OS platforms missing a readable compare.json."""
+    compare = bench_charts.load_compare(dirs)
+    return [key for key, _ in PLATFORMS if key not in compare]
+
+
 def missing_competitors(dirs: dict[str, Path]) -> list[str]:
     """Competitors absent from an OS comparison or unmeasured on every OS."""
     compare = bench_charts.load_compare(dirs)
-    if not compare:
+    if not compare or any(key not in compare for key in dirs):
         return list(EXPECTED_COMPETITORS)
     measured_anywhere = {
         result.get("name")
@@ -726,6 +732,13 @@ def main(argv: list[str]) -> int:
             raise DocError(f"results directory not found: {args.results}")
         dirs = find_platform_dirs(args.results)
         if args.require_all_competitors:
+            missing_os = missing_comparison_platforms(dirs)
+            if missing_os:
+                raise DocError(
+                    "the comparison is missing platform result(s): "
+                    + ", ".join(missing_os)
+                    + "; refusing to overwrite published comparison tables"
+                )
             lacking = missing_competitors(dirs)
             if lacking:
                 raise DocError(

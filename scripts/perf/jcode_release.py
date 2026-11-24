@@ -11,9 +11,12 @@ Resolution:
 
 The tag must be a stable `vX.Y.Z`; a draft, a prerelease or a tag without
 release assets is refused rather than replaced by an older release or a source
-build. The tag is peeled to its commit through the git refs API (an annotated
-tag is followed to the commit it points at), so the record names a commit even
-when the tag is moved later.
+build. When `resolve` receives `--platforms` without a pin and `/releases/latest`
+omits a requested platform asset, it falls back across `/releases?per_page=30` to
+the newest stable `vX.Y.Z` release that ships every requested asset plus
+`SHA256SUMS`. The tag is peeled to its commit through the git refs API (an
+annotated tag is followed to the commit it points at), so the record names a
+commit even when the tag is moved later.
 
 Verification, in this order, each a hard failure:
 
@@ -33,7 +36,8 @@ that need it.
 
 Subcommands:
 
-    resolve     [--tag TAG] [--metadata PATH] [--github-output PATH]
+    resolve     [--tag TAG] [--platforms LIST] [--install-suite]
+                [--metadata PATH] [--github-output PATH]
     materialize [--tag TAG] [--expected-commit SHA] --dest DIR --metadata PATH
                 [--skip-version-exec]
 
@@ -170,8 +174,65 @@ def fetch_json(url: str) -> dict:
     return data
 
 
-def release_for(tag: str | None) -> tuple[dict, str, str]:
+def fetch_json_list(url: str) -> list[dict]:
+    try:
+        body = _curl([*_api_headers(), url], timeout=120)
+    except ReleaseError as exc:
+        raise ReleaseError(f"could not read GitHub release metadata at {url}: {exc}") from exc
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except ValueError as exc:
+        raise ReleaseError(f"invalid JSON from {url}: {exc}") from exc
+    if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+        raise ReleaseError(f"unexpected JSON from {url}")
+    return data
+
+
+def required_assets(platforms_raw: str | None, install_suite: bool = False) -> list[str]:
+    """Release assets required for this round's target OS list plus SHA256SUMS."""
+    if not platforms_raw or not platforms_raw.strip():
+        return []
+    tokens = [part.strip().lower() for part in platforms_raw.replace(" ", ",").split(",") if part.strip()]
+    if not tokens:
+        return []
+    valid = {"linux", "macos", "windows", "freebsd", "all"}
+    unknown = sorted(set(tokens) - valid)
+    if unknown:
+        raise ReleaseError(
+            f"unknown platform(s): {', '.join(unknown)}; expected linux, macos, windows, freebsd, or all"
+        )
+    chosen = set(tokens)
+    if "all" in chosen:
+        chosen = {"linux", "macos", "windows", "freebsd"} if install_suite else {"linux", "macos", "windows"}
+    per_os = {
+        "linux": ["jcode-linux-x86_64.tar.gz", "jcode-linux-aarch64.tar.gz"]
+        if install_suite else ["jcode-linux-x86_64.tar.gz"],
+        "macos": ["jcode-macos-aarch64.tar.gz", "jcode-macos-x86_64.tar.gz"]
+        if install_suite else ["jcode-macos-aarch64.tar.gz"],
+        "windows": ["jcode-windows-x86_64.exe", "jcode-windows-aarch64.exe"]
+        if install_suite else ["jcode-windows-x86_64.exe"],
+        "freebsd": ["jcode-freebsd-x86_64.tar.gz"],
+    }
+    required: list[str] = []
+    for key in ("linux", "macos", "windows", "freebsd"):
+        if key not in chosen:
+            continue
+        for name in per_os[key]:
+            if name not in required:
+                required.append(name)
+    if SUMS_ASSET not in required:
+        required.append(SUMS_ASSET)
+    return required
+
+
+def missing_assets(release: dict, required: list[str]) -> list[str]:
+    present = {a.get("name") for a in (release.get("assets") or []) if isinstance(a, dict)}
+    return [name for name in required if name not in present]
+
+
+def release_for(tag: str | None, required: list[str] | None = None) -> tuple[dict, str, str]:
     """(release JSON, stable tag, API URL) for the pin or the newest release."""
+    needed = required or []
     if tag:
         tag = validate_tag(tag)
         url = f"{API}/releases/tags/{tag}"
@@ -184,7 +245,27 @@ def release_for(tag: str | None) -> tuple[dict, str, str]:
     resolved = validate_tag(resolved)
     if tag and resolved != tag:
         raise ReleaseError(f"release API returned {resolved!r} for the pinned tag {tag!r}")
-    return release, resolved, url
+    lacking = missing_assets(release, needed)
+    if not lacking:
+        return release, resolved, url
+    if tag:
+        raise ReleaseError(f"pinned release {resolved} has no asset(s): {', '.join(lacking)}")
+    log(
+        f"latest release {resolved} lacks {', '.join(lacking)}; "
+        "searching recent stable releases for full platform coverage"
+    )
+    for cand in fetch_json_list(f"{API}/releases?per_page=30"):
+        if cand.get("draft") or cand.get("prerelease"):
+            continue
+        cand_tag = str(cand.get("tag_name") or "")
+        if not TAG_RE.fullmatch(cand_tag):
+            continue
+        if not missing_assets(cand, needed):
+            return cand, cand_tag, f"{API}/releases/tags/{cand_tag}"
+    raise ReleaseError(
+        f"latest release {resolved} lacks {', '.join(lacking)}, "
+        "and no recent stable release covers all requested platforms"
+    )
 
 
 def peeled_commit(tag: str) -> str:
@@ -346,7 +427,8 @@ def write_github_output(path: str | None, record: dict) -> None:
 def resolve(args: argparse.Namespace) -> int:
     tag = args.tag or os.environ.get("JCODE_VERSION") or None
     selection = selection_of(args)
-    release, tag, api_url = release_for(tag)
+    required = required_assets(getattr(args, "platforms", None), getattr(args, "install_suite", False))
+    release, tag, api_url = release_for(tag, required=required)
     commit = peeled_commit(tag)
     record = metadata_record(tag=tag, commit=commit, selection=selection, api_url=api_url)
     write_metadata(args.metadata, record)
@@ -436,6 +518,11 @@ def main(argv: list[str] | None = None) -> int:
                                   "(default: JCODE_RELEASE_SOURCE, else pin when a tag is given and latest otherwise)")
         command.add_argument("--metadata", type=Path, help="write the release record as JSON here")
         command.add_argument("--github-output", help="append tag/version/commit/selection to this GITHUB_OUTPUT file")
+        if name == "resolve":
+            command.add_argument("--platforms",
+                                 help="comma-separated OSes this round must cover (linux,macos,windows,freebsd,all)")
+            command.add_argument("--install-suite", action="store_true",
+                                 help="require every install-matrix architecture asset too")
         if name == "materialize":
             command.add_argument("--dest", required=True, help="directory that receives the verified binary")
             command.add_argument("--expected-commit", help="refuse a release whose tag no longer points at this commit")
