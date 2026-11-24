@@ -878,6 +878,25 @@ fn fingerprint(text: &str) -> u64 {
     let mut hash = OFFSET;
     let mut pending_space = false;
     let mut started = false;
+    if text.is_ascii() {
+        for &byte in text.as_bytes() {
+            if matches!(byte, b' ' | b'\t'..=b'\r') {
+                if started {
+                    pending_space = true;
+                }
+                continue;
+            }
+            if pending_space {
+                hash ^= u64::from(b' ');
+                hash = hash.wrapping_mul(PRIME);
+                pending_space = false;
+            }
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(PRIME);
+            started = true;
+        }
+        return hash;
+    }
     let mut buffer = [0u8; 4];
     for character in text.chars() {
         if character.is_whitespace() {

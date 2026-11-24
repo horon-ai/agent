@@ -333,9 +333,9 @@ cargo test --locked -p horon-agent --test acp_tck -- --ignored --test-threads=1 
 
 `horon-agent acp`의 A2UI 지원은 프로토콜 v1과 v2 모두에서 **추가형이며 선택 참여**다(`src/cli/acp/a2ui.rs`). 렌더러 기능을 알리지 않은 클라이언트는 `application/a2ui+json` 리소스를 받지 않고 `a2ui` 도구가 열리지 않으며 프레임과 프롬프트 캐시 동작도 이전과 똑같이 유지된다.
 
-- **협상(`initialize`, `session/new`, `session/resume`)**: `initialize`의 `params.capabilities` 아래에 `_meta.a2ui`나 `_meta.a2uiRendererCapabilities`를 보내거나(응답 `result._meta.a2ui`로 회신), `session/new`·`session/resume`의 `_meta.a2ui`로 세션마다 덮어쓴다. 허용 버전은 `"1.0"`(`"v1.0"`)과 `"v0.9"`이며, 생략 시 기본 카탈로그는 `https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json`이다.
+- **협상(`initialize`, `session/new`, `session/resume`)**: `initialize`의 `params.clientCapabilities`(v1), `params.capabilities`(v2) 또는 `params._meta` 아래에 `_meta.a2ui`나 `_meta.a2uiRendererCapabilities`를 보내거나(v1은 `result.agentCapabilities._meta.a2ui`, v2는 `result.capabilities._meta.a2ui`로 회신), `session/new`·`session/resume`의 `_meta.a2ui`로 세션마다 덮어쓴다. 허용 버전은 `"1.0"`(`"v1.0"`)과 `"v0.9"`이며, 생략 시 기본 카탈로그는 `https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json`이다.
 - **아웃바운드 스트리밍과 재생**: 검증된 봉투는 선택적 일반 텍스트 대체 문구와 함께 `agent_message_chunk`(v1) 또는 `agent_message`(v2) 안의 `EmbeddedResource` 블록(`uri: "a2ui://surface/<id>"`, `mimeType: "application/a2ui+json"`, `text: "<json>"`)으로 스트리밍된다. 이력 재생을 켠 `session/resume`도 저장된 `ContentBlock::A2ui`를 일치하는 `EmbeddedResource` 업데이트로 재생하며, 협상된 연결에는 `[A2UI ...]` 텍스트 카드를 노출하지 않는다.
-- **인바운드 사용자 동작(`session/prompt`)**: 에디터는 `mimeType: "application/a2ui+json"`인 `EmbeddedResource` 블록(리소스 또는 블록 `_meta`의 선택적 `a2uiRendererDataModel` 포함)이나 `params._meta.a2uiEvent`로 `action`, `callAgentFunction`, `error` 이벤트를 보낸다. 모든 페이로드는 세션에 들어가기 전에 A2UI v1.0 스키마, 크기·깊이 한도, 식별자 규칙을 검사받으며, 한 프롬프트에 충돌하거나 중복된 A2UI 리소스 블록이 들어 있으면 `-32602`로 거절된다.
+- **인바운드 사용자 동작(`session/prompt`)**: 에디터는 `mimeType: "application/a2ui+json"`인 `EmbeddedResource` 블록(리소스 또는 블록 `_meta`의 선택적 `a2uiRendererDataModel` 포함)이나 `params._meta.a2uiEvent`로 `action`, `callAgentFunction`, `rendererFunctionResponse`, `error` 이벤트를 보낸다. 모든 페이로드는 세션에 들어가기 전에 A2UI v1.0 스키마, 크기·깊이 한도, 식별자 규칙을 검사받으며, 한 프롬프트에 충돌하거나 중복된 A2UI 리소스 블록이 들어 있으면 `-32602`로 거절된다.
 
 ## 설정
 

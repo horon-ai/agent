@@ -351,6 +351,8 @@ pub struct App {
     /// The local draft suggestion: a ghost suffix offered from drafts already
     /// in memory, shown only for the exact text it was computed from.
     pub(crate) suggestions: Suggestions,
+    /// Whether `editor.suggestions` allows local draft suggestions.
+    pub(crate) suggestions_enabled: bool,
     /// The slash commands in force, re-read when a command directory changes.
     pub commands: Registry,
     /// The skills the harness reported for the session in force.
@@ -507,6 +509,7 @@ impl App {
             motion_frame: 0,
             slash: crate::help::SlashPopup::new(),
             suggestions: Suggestions::new(),
+            suggestions_enabled: false,
             commands: Registry::default(),
             skills: Vec::new(),
             package_send: None,
@@ -605,6 +608,7 @@ impl App {
             motion_frame: 0,
             slash: crate::help::SlashPopup::new(),
             suggestions: Suggestions::new(),
+            suggestions_enabled: false,
             commands: Registry::default(),
             skills: Vec::new(),
             package_send: None,

@@ -16,9 +16,14 @@ MAX_TOOL_CALLS = 64
 TEXT_CHUNK = 4096  # At most 12 JSON bytes per character, including surrogate pairs.
 
 
+_ENCODE_FRAME = json.JSONEncoder(ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode
+
+
 def encode_frame(kind, cell_id, **fields):
-    frame = json.dumps({"type": kind, "id": cell_id, **fields}, ensure_ascii=True, allow_nan=False)
-    return frame.encode("ascii") + b"\n"
+    payload = {"type": kind, "id": cell_id}
+    if fields:
+        payload.update(fields)
+    return _ENCODE_FRAME(payload).encode("ascii") + b"\n"
 
 
 class ProtocolError(Exception):
@@ -141,13 +146,16 @@ class ToolProxy:
         if name.startswith("_"):
             raise AttributeError(name)
 
+        channel = self._channel
+
         async def call(args=None, **kwargs):
             if args is None:
                 args = kwargs
             elif not isinstance(args, dict) or kwargs:
                 raise TypeError("Pass one JSON object or keyword arguments to the tool")
-            return self._channel.call_tool(name, args)
+            return channel.call_tool(name, args)
 
+        self.__dict__[name] = call
         return call
 
 
@@ -166,12 +174,23 @@ class CellStream(io.TextIOBase):
     def write(self, text):
         if not isinstance(text, str):
             raise TypeError("write() argument must be str")
-        for start in range(0, len(text), TEXT_CHUNK):
+        length = len(text)
+        write_text = self.channel.write_text
+        kind = self.kind
+        if text.isascii():
+            if length <= TEXT_CHUNK:
+                if length:
+                    write_text(kind, text)
+                return length
+            for start in range(0, length, TEXT_CHUNK):
+                write_text(kind, text[start : start + TEXT_CHUNK])
+            return length
+        for start in range(0, length, TEXT_CHUNK):
             chunk = text[start : start + TEXT_CHUNK]
             # Rust's UTF-8 strings cannot represent lone Python surrogates.
             chunk = chunk.encode("utf-8", "backslashreplace").decode("utf-8")
-            self.channel.write_text(self.kind, chunk)
-        return len(text)
+            write_text(kind, chunk)
+        return length
 
 
 def evaluate(code, namespace, loop):

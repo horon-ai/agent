@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde::de::{Error as DeError, Visitor};
+use serde::de::{Error as DeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
@@ -399,39 +399,349 @@ pub fn parse_frame(frame: &[u8]) -> Result<WireFrame, FrameError> {
     if text.trim().is_empty() {
         return Err(FrameError::Empty);
     }
-    let value: Value = serde_json::from_str(text).map_err(|_| FrameError::Malformed)?;
-    let object = value.as_object().ok_or(FrameError::UnknownShape)?;
-    let has_id = object.contains_key("id");
-    let has_method = object.contains_key("method");
-    match (has_method, has_id) {
-        (true, true) => deserialize::<WireRequest>(value).map(WireFrame::Request),
-        (true, false) => deserialize::<WireNotification>(value).map(WireFrame::Notification),
-        (false, true) => {
-            if object.contains_key("result") == object.contains_key("error") {
-                return Err(FrameError::InvalidResponse);
-            }
-            let response = deserialize::<WireResponse>(value)?;
-            if !response.is_exclusive() {
-                return Err(FrameError::InvalidResponse);
-            }
-            Ok(WireFrame::Response(response))
-        }
-        (false, false) => Err(FrameError::UnknownShape),
+    serde_json::from_str::<ParsedTopLevel>(text)
+        .map_err(|_| FrameError::Malformed)?
+        .0
+}
+
+struct ParsedTopLevel(Result<WireFrame, FrameError>);
+
+impl<'de> Deserialize<'de> for ParsedTopLevel {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(TopLevelVisitor)
     }
 }
 
-fn deserialize<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, FrameError> {
-    serde_json::from_value(value).map_err(|_| FrameError::Malformed)
+struct Maybe<T>(Option<T>);
+
+impl<'de> Deserialize<'de> for Maybe<JsonRpcVersion> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Maybe<JsonRpcVersion>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("jsonrpc version")
+            }
+            fn visit_str<E: DeError>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(Maybe((value == JSON_RPC_VERSION).then_some(JsonRpcVersion::V2)))
+            }
+            fn visit_bool<E: DeError>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_i64<E: DeError>(self, _: i64) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_u64<E: DeError>(self, _: u64) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_f64<E: DeError>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_unit<E: DeError>(self) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(Maybe(None))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                Ok(Maybe(None))
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
+}
+
+impl<'de> Deserialize<'de> for Maybe<u64> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Maybe<u64>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("u64 request id")
+            }
+            fn visit_u64<E: DeError>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(Maybe(Some(value)))
+            }
+            fn visit_i64<E: DeError>(self, value: i64) -> Result<Self::Value, E> {
+                let Ok(value) = u64::try_from(value) else {
+                    return Ok(Maybe(None));
+                };
+                Ok(Maybe(Some(value)))
+            }
+            fn visit_f64<E: DeError>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_bool<E: DeError>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_str<E: DeError>(self, _: &str) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_unit<E: DeError>(self) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(Maybe(None))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                Ok(Maybe(None))
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
+}
+
+impl<'de> Deserialize<'de> for Maybe<WireMethod> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Maybe<WireMethod>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("wire method")
+            }
+            fn visit_str<E: DeError>(self, value: &str) -> Result<Self::Value, E> {
+                let method = match value {
+                    "initialize" => Some(WireMethod::Initialize),
+                    "tool/call" => Some(WireMethod::ToolCall),
+                    "command/invoke" => Some(WireMethod::CommandInvoke),
+                    "observer/notify" => Some(WireMethod::ObserverNotify),
+                    "cancel" => Some(WireMethod::Cancel),
+                    "shutdown" => Some(WireMethod::Shutdown),
+                    _ => None,
+                };
+                Ok(Maybe(method))
+            }
+            fn visit_bool<E: DeError>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_i64<E: DeError>(self, _: i64) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_u64<E: DeError>(self, _: u64) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_f64<E: DeError>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_unit<E: DeError>(self) -> Result<Self::Value, E> {
+                Ok(Maybe(None))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(Maybe(None))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                Ok(Maybe(None))
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
+}
+
+enum KeyKind {
+    JsonRpc,
+    Id,
+    Method,
+    Params,
+    Result,
+    Error,
+    Unknown,
+}
+
+struct KeyVisitor;
+
+impl<'de> Visitor<'de> for KeyVisitor {
+    type Value = KeyKind;
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("frame key")
+    }
+    fn visit_str<E: DeError>(self, value: &str) -> Result<Self::Value, E> {
+        Ok(match value {
+            "jsonrpc" => KeyKind::JsonRpc,
+            "id" => KeyKind::Id,
+            "method" => KeyKind::Method,
+            "params" => KeyKind::Params,
+            "result" => KeyKind::Result,
+            "error" => KeyKind::Error,
+            _ => KeyKind::Unknown,
+        })
+    }
+}
+
+impl<'de> serde::de::DeserializeSeed<'de> for KeyVisitor {
+    type Value = KeyKind;
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_str(self)
+    }
+}
+
+struct TopLevelVisitor;
+
+impl<'de> Visitor<'de> for TopLevelVisitor {
+    type Value = ParsedTopLevel;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("JSON-RPC frame object")
+    }
+
+    fn visit_bool<E: DeError>(self, _: bool) -> Result<Self::Value, E> {
+        Ok(ParsedTopLevel(Err(FrameError::UnknownShape)))
+    }
+    fn visit_i64<E: DeError>(self, _: i64) -> Result<Self::Value, E> {
+        Ok(ParsedTopLevel(Err(FrameError::UnknownShape)))
+    }
+    fn visit_u64<E: DeError>(self, _: u64) -> Result<Self::Value, E> {
+        Ok(ParsedTopLevel(Err(FrameError::UnknownShape)))
+    }
+    fn visit_f64<E: DeError>(self, _: f64) -> Result<Self::Value, E> {
+        Ok(ParsedTopLevel(Err(FrameError::UnknownShape)))
+    }
+    fn visit_str<E: DeError>(self, _: &str) -> Result<Self::Value, E> {
+        Ok(ParsedTopLevel(Err(FrameError::UnknownShape)))
+    }
+    fn visit_unit<E: DeError>(self) -> Result<Self::Value, E> {
+        Ok(ParsedTopLevel(Err(FrameError::UnknownShape)))
+    }
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(ParsedTopLevel(Err(FrameError::UnknownShape)))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut jsonrpc: Option<JsonRpcVersion> = None;
+        let mut bad_jsonrpc = false;
+        let mut has_id = false;
+        let mut id: Option<u64> = None;
+        let mut has_method = false;
+        let mut method: Option<WireMethod> = None;
+        let mut has_params = false;
+        let mut params: Option<Value> = None;
+        let mut has_result = false;
+        let mut result: Option<Value> = None;
+        let mut has_error = false;
+        let mut error_value: Option<Value> = None;
+        let mut has_unknown = false;
+
+        while let Some(key) = map.next_key_seed(KeyVisitor)? {
+            match key {
+                KeyKind::JsonRpc => {
+                    let Maybe(v) = map.next_value()?;
+                    jsonrpc = v;
+                    bad_jsonrpc = v.is_none();
+                }
+                KeyKind::Id => {
+                    has_id = true;
+                    let Maybe(v) = map.next_value()?;
+                    id = v;
+                }
+                KeyKind::Method => {
+                    has_method = true;
+                    let Maybe(v) = map.next_value()?;
+                    method = v;
+                }
+                KeyKind::Params => {
+                    has_params = true;
+                    params = map.next_value()?;
+                }
+                KeyKind::Result => {
+                    has_result = true;
+                    result = Some(map.next_value()?);
+                }
+                KeyKind::Error => {
+                    has_error = true;
+                    error_value = map.next_value()?;
+                }
+                KeyKind::Unknown => {
+                    has_unknown = true;
+                    let _: IgnoredAny = map.next_value()?;
+                }
+            }
+        }
+
+        let outcome = match (has_method, has_id) {
+            (true, true) => {
+                if has_unknown || bad_jsonrpc || has_result || has_error {
+                    Err(FrameError::Malformed)
+                } else if let (Some(jsonrpc), Some(id), Some(method)) = (jsonrpc, id, method) {
+                    Ok(WireFrame::Request(WireRequest {
+                        jsonrpc,
+                        id,
+                        method,
+                        params,
+                    }))
+                } else {
+                    Err(FrameError::Malformed)
+                }
+            }
+            (true, false) => {
+                if has_unknown || bad_jsonrpc || has_result || has_error {
+                    Err(FrameError::Malformed)
+                } else if let (Some(jsonrpc), Some(method)) = (jsonrpc, method) {
+                    Ok(WireFrame::Notification(WireNotification {
+                        jsonrpc,
+                        method,
+                        params,
+                    }))
+                } else {
+                    Err(FrameError::Malformed)
+                }
+            }
+            (false, true) => {
+                if has_result == has_error {
+                    Err(FrameError::InvalidResponse)
+                } else if has_unknown || bad_jsonrpc || has_params {
+                    Err(FrameError::Malformed)
+                } else if let (Some(jsonrpc), Some(id)) = (jsonrpc, id) {
+                    let error = match error_value {
+                        Some(v) => match serde_json::from_value::<RpcError>(v) {
+                            Ok(err) => Some(err),
+                            Err(_) => return Ok(ParsedTopLevel(Err(FrameError::Malformed))),
+                        },
+                        None => None,
+                    };
+                    let response = WireResponse {
+                        jsonrpc,
+                        id,
+                        result,
+                        error,
+                    };
+                    if !response.is_exclusive() {
+                        Err(FrameError::InvalidResponse)
+                    } else {
+                        Ok(WireFrame::Response(response))
+                    }
+                } else {
+                    Err(FrameError::Malformed)
+                }
+            }
+            (false, false) => Err(FrameError::UnknownShape),
+        };
+        Ok(ParsedTopLevel(outcome))
+    }
 }
 
 /// Encode one frame: the JSON object, one trailing newline.
 pub fn encode_frame(frame: &impl Serialize) -> Result<Vec<u8>, FrameError> {
-    let mut bytes = serde_json::to_vec(frame).map_err(|_| FrameError::Malformed)?;
-    if bytes.len() + 1 > MAX_FRAME_BYTES {
+    let mut bytes = Vec::with_capacity(256);
+    encode_frame_into(frame, &mut bytes)?;
+    Ok(bytes)
+}
+
+/// Encode one frame into `out` (cleared first): the JSON object, one trailing newline.
+pub fn encode_frame_into(frame: &impl Serialize, out: &mut Vec<u8>) -> Result<(), FrameError> {
+    out.clear();
+    serde_json::to_writer(&mut *out, frame).map_err(|_| FrameError::Malformed)?;
+    if out.len() + 1 > MAX_FRAME_BYTES {
+        out.clear();
         return Err(FrameError::TooLarge { limit: MAX_FRAME_BYTES });
     }
-    bytes.push(b'\n');
-    Ok(bytes)
+    out.push(b'\n');
+    Ok(())
 }
 
 impl WireRequest {
@@ -448,6 +758,11 @@ impl WireRequest {
     pub fn parse_params<T: for<'de> Deserialize<'de>>(&self) -> Result<T, FrameError> {
         decode_params(self.params.as_ref())
     }
+
+    /// Consume this request and decode its parameters without cloning [`Value`].
+    pub fn into_params<T: for<'de> Deserialize<'de>>(self) -> Result<T, FrameError> {
+        decode_params_owned(self.params)
+    }
 }
 
 impl WireNotification {
@@ -462,6 +777,11 @@ impl WireNotification {
     pub fn parse_params<T: for<'de> Deserialize<'de>>(&self) -> Result<T, FrameError> {
         decode_params(self.params.as_ref())
     }
+
+    /// Consume this notification and decode its parameters without cloning [`Value`].
+    pub fn into_params<T: for<'de> Deserialize<'de>>(self) -> Result<T, FrameError> {
+        decode_params_owned(self.params)
+    }
 }
 
 /// Decode parameters borrowed from the frame.
@@ -470,6 +790,14 @@ impl WireNotification {
 /// as `null` exactly as an explicit one does.
 fn decode_params<T: for<'de> Deserialize<'de>>(params: Option<&Value>) -> Result<T, FrameError> {
     T::deserialize(params.unwrap_or(&ABSENT_PARAMS)).map_err(|_| FrameError::InvalidParams)
+}
+
+fn decode_params_owned<T: for<'de> Deserialize<'de>>(params: Option<Value>) -> Result<T, FrameError> {
+    match params {
+        Some(value) => T::deserialize(value),
+        None => T::deserialize(Value::Null),
+    }
+    .map_err(|_| FrameError::InvalidParams)
 }
 
 /// Payload of `initialize`: what the host offers and which package it expects.

@@ -287,18 +287,19 @@ impl TurnStreamRules {
     /// are resolved deterministically: the earlier entry wins and the later one
     /// is still available on the next attempt.
     pub(super) fn check(&mut self, text: &str) -> Option<StreamRuleAction> {
-        if !self.rules.iter().any(|rule| {
-            rule.text
-                && rule.delivery == crate::config::StreamRuleDelivery::Interrupt
-                && !self.matched.contains(&rule.id)
-        }) {
+        if self.rules.is_empty() {
             return None;
         }
-        let window = lookback_window(text);
+        let mut window: Option<&str> = None;
         let hit = self.rules.iter().find(|rule| {
-            rule.delivery == crate::config::StreamRuleDelivery::Interrupt
-                && !self.matched.contains(&rule.id)
-                && rule.matches_text(window)
+            if !rule.text
+                || rule.delivery != crate::config::StreamRuleDelivery::Interrupt
+                || self.matched.contains(&rule.id)
+            {
+                return false;
+            }
+            let window = *window.get_or_insert_with(|| lookback_window(text));
+            rule.pattern.is_match(window)
         })?;
         let hit = StreamRuleHit {
             id: hit.id.clone(),
@@ -320,21 +321,25 @@ impl TurnStreamRules {
             return Vec::new();
         }
         let window = lookback_window(text);
-        let hits: Vec<StreamRuleHit> = self
-            .rules
-            .iter()
-            .filter(|rule| {
-                rule.delivery == crate::config::StreamRuleDelivery::Passive
-                    && !self.matched.contains(&rule.id)
-                    && rule.matches_text(window)
-            })
-            .map(|rule| StreamRuleHit {
-                id: rule.id.clone(),
-                body: rule.body.clone(),
-            })
-            .collect();
-        for hit in &hits {
-            self.mark_fired(&hit.id);
+        let mut hits = Vec::new();
+        for rule in &self.rules {
+            if rule.delivery == crate::config::StreamRuleDelivery::Passive
+                && !self.matched.contains(&rule.id)
+                && rule.matches_text(window)
+            {
+                let hit = StreamRuleHit {
+                    id: rule.id.clone(),
+                    body: rule.body.clone(),
+                };
+                Self::record_rule_fired(
+                    &mut self.matched,
+                    &mut self.fired,
+                    &hit.id,
+                    rule.tracks_repeat(),
+                    self.current_turn,
+                );
+                hits.push(hit);
+            }
         }
         hits
     }
@@ -360,7 +365,14 @@ impl TurnStreamRules {
             body: rule.body.clone(),
         };
         let delivery = rule.delivery;
-        self.mark_fired(&hit.id);
+        let tracks_repeat = rule.tracks_repeat();
+        Self::record_rule_fired(
+            &mut self.matched,
+            &mut self.fired,
+            &hit.id,
+            tracks_repeat,
+            self.current_turn,
+        );
         Some(match delivery {
             crate::config::StreamRuleDelivery::Interrupt => ToolRuleAction::Block(hit),
             crate::config::StreamRuleDelivery::Passive => ToolRuleAction::Passive(hit),
@@ -383,22 +395,27 @@ impl TurnStreamRules {
 
     /// Record that this rule's body was injected, spending one injection.
     pub(super) fn record_injection(&mut self, hit: &StreamRuleHit) {
-        self.matched.insert(hit.id.clone());
         self.injections += 1;
-        self.mark_fired(&hit.id);
+        let tracked = self
+            .rules
+            .iter()
+            .find(|rule| rule.id == hit.id)
+            .is_some_and(StreamRule::tracks_repeat);
+        Self::record_rule_fired(&mut self.matched, &mut self.fired, &hit.id, tracked, self.current_turn);
     }
 
     /// Mark a rule spent for this turn and remember the ledger write its repeat
     /// policy needs.
-    fn mark_fired(&mut self, id: &str) {
-        self.matched.insert(id.to_string());
-        let tracked = self
-            .rules
-            .iter()
-            .find(|rule| rule.id == id)
-            .is_some_and(StreamRule::tracks_repeat);
-        if tracked {
-            self.fired.push((id.to_string(), self.current_turn));
+    fn record_rule_fired(
+        matched: &mut HashSet<String>,
+        fired: &mut Vec<(String, u32)>,
+        id: &str,
+        tracks_repeat: bool,
+        current_turn: u32,
+    ) {
+        matched.insert(id.to_owned());
+        if tracks_repeat {
+            fired.push((id.to_owned(), current_turn));
         }
     }
 

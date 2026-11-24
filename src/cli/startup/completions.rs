@@ -102,17 +102,17 @@ fn write_fish(command: &clap::Command, context: &mut String, out: &mut impl Writ
     writeln!(out, "        end\n    end\n    test \"$context\" = \"$argv[1]\"\nend")?;
     walk(command, context, &mut |command, context| {
         let mut first = true;
-        for name in out_subcommands(command) {
+        let mut write_choice = |word: &str| -> std::io::Result<()> {
             if first {
                 write!(out, "complete -c horon -n '__horon_at {context}' -f -a '")?;
             }
-            write_space_word(name, &mut first, out)?;
+            write_space_word(word, &mut first, out)
+        };
+        for name in out_subcommands(command) {
+            write_choice(name)?;
         }
         for value in out_possible_values(command) {
-            if first {
-                write!(out, "complete -c horon -n '__horon_at {context}' -f -a '")?;
-            }
-            write_space_word(value.get_name(), &mut first, out)?;
+            write_choice(value.get_name())?;
         }
         if !first {
             writeln!(out, "'")?;

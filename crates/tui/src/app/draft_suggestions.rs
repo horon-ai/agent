@@ -13,7 +13,7 @@ impl App {
     /// drafts this editor already holds, and the answer is dropped unless it
     /// names the generation and the exact text it was asked about.
     pub fn sync_suggestions(&mut self) {
-        if !self.settings.boolean("editor.suggestions").unwrap_or(false) {
+        if !self.suggestions_enabled {
             self.suggestions.withdraw();
             return;
         }

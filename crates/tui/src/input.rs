@@ -21,7 +21,7 @@
 //! rebuilds that one line, and a movement or a frame reads the cached
 //! boundaries instead of collecting the line again.
 
-use std::cell::{RefCell, RefMut};
+use std::cell::{Cell, RefCell, RefMut};
 
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -104,6 +104,8 @@ pub struct Input {
     revision: u64,
     /// The boundaries of the line last measured or drawn.
     boundaries: RefCell<Boundaries>,
+    /// Cached `(revision, hash)` for [`Self::fingerprint`].
+    fingerprint_cache: Cell<Option<(u64, u64)>>,
     /// The pane the last frame drew with, cleared by every edit so a click can
     /// never be read against text the frame did not show.
     drawn: Option<Drawn>,
@@ -128,6 +130,7 @@ impl Default for Input {
             cursor: 0,
             revision: 0,
             boundaries: RefCell::new(Boundaries::default()),
+            fingerprint_cache: Cell::new(None),
             drawn: None,
         }
     }
@@ -175,9 +178,16 @@ impl Input {
     /// hashing it costs one pass and no allocation, where building the string
     /// costs an allocation of the whole message.
     pub fn fingerprint(&self) -> u64 {
+        if let Some((revision, hash)) = self.fingerprint_cache.get()
+            && revision == self.revision
+        {
+            return hash;
+        }
         // `len()` is the constant-time half: the per-frame check reads at most
         // the first word of the draft.
-        fingerprint(self.characters.len(), self.characters.iter().copied())
+        let hash = fingerprint(self.characters.len(), self.characters.iter().copied());
+        self.fingerprint_cache.set(Some((self.revision, hash)));
+        hash
     }
 
     /// Whether the draft starts with the command marker.
@@ -285,16 +295,29 @@ impl Input {
     fn fill(boundaries: &mut Boundaries, input: &Input, line: usize) {
         let line_start = input.line_starts[line];
         let end = input.line_end(line);
+        let chars = &input.characters[line_start..end];
         boundaries.revision = input.revision;
         boundaries.line = line;
         boundaries.line_start = line_start;
         boundaries.text.clear();
-        boundaries
-            .text
-            .extend(input.characters[line_start..end].iter().copied());
         boundaries.chars.clear();
         boundaries.bytes.clear();
         boundaries.cells.clear();
+        if chars.iter().all(|&ch| (' '..='~').contains(&ch)) {
+            let len = chars.len();
+            boundaries.text.reserve(len);
+            for &ch in chars {
+                boundaries.text.push(ch);
+            }
+            boundaries.chars.reserve(len + 1);
+            boundaries.bytes.reserve(len + 1);
+            boundaries.cells.reserve(len + 1);
+            boundaries.chars.extend(0..=len);
+            boundaries.bytes.extend(0..=len);
+            boundaries.cells.extend(0..=len);
+            return;
+        }
+        boundaries.text.extend(chars.iter().copied());
         boundaries.chars.push(0);
         boundaries.bytes.push(0);
         boundaries.cells.push(0);
@@ -465,18 +488,21 @@ impl Input {
                 dropped = boundaries.cells[first];
             }
         }
-        let mut text = String::new();
-        let mut used = 0;
         let mut at = first;
-        while at < count {
-            let cells = boundaries.cells[at + 1] - boundaries.cells[at];
-            if used + cells > room {
-                break;
+        if boundaries.cells[count].saturating_sub(dropped) <= room {
+            at = count;
+        } else {
+            let mut used = 0;
+            while at < count {
+                let cells = boundaries.cells[at + 1] - boundaries.cells[at];
+                if used + cells > room {
+                    break;
+                }
+                used += cells;
+                at += 1;
             }
-            text.push_str(&boundaries.text[boundaries.bytes[at]..boundaries.bytes[at + 1]]);
-            used += cells;
-            at += 1;
         }
+        let text = boundaries.text[boundaries.bytes[first]..boundaries.bytes[at]].to_owned();
         let cell = caret.map_or(0, |offset| {
             let cursor_cells = boundaries.cells[boundaries.cluster(offset)];
             cells_u16(cursor_cells.saturating_sub(dropped)).min(u16::try_from(limit).unwrap_or(u16::MAX))
@@ -795,6 +821,9 @@ fn cells_u16(cells: usize) -> u16 {
 /// The renderer uses it to find the room left on a row after the draft, so a
 /// suffix cannot paint past the pane.
 pub fn text_cells(text: &str) -> u16 {
+    if text.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+        return cells_u16(text.len());
+    }
     cells_u16(text.graphemes(true).map(UnicodeWidthStr::width).sum())
 }
 
@@ -803,6 +832,9 @@ pub fn text_cells(text: &str) -> u16 {
 /// Keep whole graphemes so a wide or joined character never crosses the edge.
 pub(crate) fn clip_cells_str(text: &str, cells: u16) -> &str {
     let room = usize::from(cells);
+    if text.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+        return &text[..text.len().min(room)];
+    }
     let mut used = 0;
     let mut end = 0;
     for grapheme in text.graphemes(true) {

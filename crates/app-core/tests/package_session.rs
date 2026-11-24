@@ -10,7 +10,6 @@
 //! arc back, and a disable or removal refuses a handle from before it while the
 //! callbacks registered for that generation ran.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -181,12 +180,6 @@ fn counting_callback(calls: Arc<AtomicUsize>) -> RevocationCallback {
     })
 }
 
-fn states(package_id: &str, state: PackageState) -> BTreeMap<String, PackageState> {
-    let mut map = BTreeMap::new();
-    map.insert(package_id.to_owned(), state);
-    map
-}
-
 // ---------------------------------------------------------------------------
 // One turn, one generation
 // ---------------------------------------------------------------------------
@@ -305,8 +298,8 @@ async fn a_disabled_package_stops_new_loads_and_runs_cancel_callbacks() {
 
     let disabled_generation = store.disable("disable-alpha").expect("disable");
     let report: RevocationReport = lifecycle.apply_states(
-        &states("disable-alpha", PackageState::Installed),
-        &states("disable-alpha", PackageState::Disabled),
+        |_| Some(PackageState::Installed),
+        [("disable-alpha", PackageState::Disabled)],
         disabled_generation,
     );
     assert_eq!(report, RevocationReport { fired: 1, failed: 0 });
@@ -358,8 +351,8 @@ async fn a_removed_package_refuses_a_stale_handle_even_after_it_is_installed_aga
     let lifecycle = PackageLifecycleRegistry::shared();
     let removed_generation = store.remove("remove-alpha").expect("remove");
     let report = lifecycle.apply_states(
-        &states("remove-alpha", PackageState::Installed),
-        &states("remove-alpha", PackageState::Revoked),
+        |_| Some(PackageState::Installed),
+        [("remove-alpha", PackageState::Revoked)],
         removed_generation,
     );
     assert_eq!(

@@ -206,3 +206,11 @@ fn tab_reads_only_the_sessions_confirmed_local_directory() {
     assert_eq!(app.input.text(), "readme.md");
     assert_eq!(app.input.cursor(), "readme.md".len() - 3);
 }
+
+#[test]
+fn tab_shares_multibyte_utf8_prefix_without_splitting_chars() {
+    let workspace = tempfile::tempdir().expect("a temporary directory");
+    std::fs::write(workspace.path().join("가나다라.txt"), "").expect("a file");
+    std::fs::write(workspace.path().join("가나마바.txt"), "").expect("a file");
+    assert_eq!(fill("가", &workspace).as_deref(), Some("가나"));
+}

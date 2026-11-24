@@ -784,7 +784,7 @@ fn usage_text(usage: Option<UsageTotals>) -> String {
 }
 
 /// Append [`compact`]'s representation directly into `out`.
-fn push_compact(out: &mut String, value: u64) {
+pub(crate) fn push_compact(out: &mut String, value: u64) {
     use std::fmt::Write as _;
     let result = if value >= 1_000_000 {
         write!(out, "{:.1}m", value as f64 / 1_000_000.0)
