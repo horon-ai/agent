@@ -124,7 +124,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             } else {
                 KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
             };
-            let _ = overlay.on_key(key);
+            black_box(overlay.on_key(key));
             term.draw(|frame| draw_side(frame, frame.area(), &mut overlay, &theme, symbols))?;
         }
         black_box(term.backend().buffer().content().len());

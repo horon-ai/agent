@@ -286,8 +286,10 @@ fn stored_digest(token_hash: &str) -> Option<[u8; 32]> {
         return None;
     }
     let mut bytes = [0u8; 32];
-    hex::decode_to_slice(hex_digest, &mut bytes).ok()?;
-    Some(bytes)
+    match hex::decode_to_slice(hex_digest, &mut bytes) {
+        Ok(()) => Some(bytes),
+        Err(_) => None,
+    }
 }
 
 /// Compare two digests without exiting at the first differing byte.

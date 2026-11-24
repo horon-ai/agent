@@ -160,7 +160,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     manager.save_project_graph(&sample_graph("proj", 100))?;
     manager.save_global_graph(&sample_graph("glob", 100))?;
     // Warm up cache once before measuring warm cached reads.
-    let _ = manager.list_all_scoped(MemoryScope::All)?;
+    black_box(manager.list_all_scoped(MemoryScope::All)?);
 
     measure("mem_read_cached_scopes_200", || {
         env::set_var("HORON_HOME", mem_home.path());
@@ -297,7 +297,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Some("end_turn")
             };
             let outcome = outcome_for_stop_reason(reason);
-            let _ = record_stop("bench-session", RunStop::capture(run_id, prov));
+            black_box(record_stop("bench-session", RunStop::capture(run_id, prov)));
             if prov == StopProvenance::Timeout {
                 hits += 1;
             }

@@ -164,6 +164,8 @@ pub struct MemoryManager {
     include_skills: bool,
 }
 
+type ScopedGraphPair = (Option<std::sync::Arc<MemoryGraph>>, Option<std::sync::Arc<MemoryGraph>>);
+
 impl MemoryManager {
     pub fn new() -> Self {
         Self {
@@ -624,10 +626,7 @@ impl MemoryManager {
         self.store()?.read_arc(StoreScope::Global)
     }
 
-    fn scoped_graphs(
-        &self,
-        scope: MemoryScope,
-    ) -> Result<(Option<std::sync::Arc<MemoryGraph>>, Option<std::sync::Arc<MemoryGraph>>)> {
+    fn scoped_graphs(&self, scope: MemoryScope) -> Result<ScopedGraphPair> {
         let store = self.store()?;
         let project = if scope.includes_project() {
             store.read_arc(StoreScope::Project).ok()

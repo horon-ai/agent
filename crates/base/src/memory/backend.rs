@@ -524,8 +524,10 @@ fn mark_reconciled(store: &Store, scope: StoreScope) {
     }
 }
 
-fn reconciled_keys() -> &'static Mutex<Vec<(PathBuf, StoreScope, Option<String>)>> {
-    static KEYS: LazyLock<Mutex<Vec<(PathBuf, StoreScope, Option<String>)>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+type ReconciledKey = (PathBuf, StoreScope, Option<String>);
+
+fn reconciled_keys() -> &'static Mutex<Vec<ReconciledKey>> {
+    static KEYS: LazyLock<Mutex<Vec<ReconciledKey>>> = LazyLock::new(|| Mutex::new(Vec::new()));
     &KEYS
 }
 
