@@ -52,8 +52,6 @@ env:
   # show zero warnings (AGENTS.md, "CI warnings"); this keeps a new one from
   # merging. Warnings in registry dependencies are never reported by cargo.
   CARGO_BUILD_WARNINGS: deny
-  # Keep per-compilation writes on the runner; share Cargo archives between runs.
-  SCCACHE_CACHE_SIZE: "512M"
   # Test and dev builds do not need debug info, and on a hosted runner every byte
   # is disk. The workspace profiles already set debug = 0; these make that hold
   # for member crates that might override the profile.
@@ -120,6 +118,11 @@ jobs:
       pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # Match rust-toolchain.toml for clippy/rustfmt parity while overriding nested
+      # dependency rust-toolchain.toml files (e.g. convert_case 1.83.0) without
+      # installing a second `stable` (1.100.0) toolchain.
+      RUSTUP_TOOLCHAIN: "1.99.1"
     steps:
       # Run after checkout because the cleanup lives in the repository now: the
       # shared script is not on disk until the workspace exists. It renames the
@@ -139,13 +142,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: stable
+          toolchain: "1.99.1"
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
-          key: quality-${{ runner.os }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
+          key: quality-${{ runner.os }}-1.99.1
           cache-all-crates: "true"
 
       - name: Check module declarations resolve
@@ -160,43 +164,6 @@ jobs:
         # Python standard library only; takes well under a second.
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/check_docs_pairs.py
-
-      # sccache is enabled once for the whole job and never for a single step:
-      # a run that wrapped only one cargo invocation produced
-      # `<unknown rustc version>` artifacts that the next unwrapped invocation
-      # rejected with E0514 ("compiled by an incompatible version of rustc",
-      # run 42373575639). One wrapper for every cargo call keeps the
-      # fingerprints equal.
-      #
-      # CARGO_INCREMENTAL=0 is required, not an optimization: sccache cannot
-      # cache incremental units, and the profiles this job builds
-      # ([profile.dev] and [profile.release] in Cargo.toml) set incremental =
-      # true, so with incremental on nothing is ever cached.
-      - name: Setup sccache
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          disable_annotations: true
-
-      - name: Enable sccache
-        # Only a successful `sccache --start-server` writes the wrapper, so a
-        # runner without a usable sccache builds the whole job unwrapped instead
-        # of mixing wrapped and unwrapped cargo calls.
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          if ! command -v sccache >/dev/null 2>&1; then
-            echo "sccache is not available; this job builds without a wrapper"
-            exit 0
-          fi
-          if sccache --start-server; then
-            {
-              echo "RUSTC_WRAPPER=sccache"
-              echo "CARGO_INCREMENTAL=0"
-            } >> "$GITHUB_ENV"
-          else
-            echo "sccache failed to start; this job builds without a wrapper"
-          fi
 
       - name: Check formatting
         # These gates are independent. Report every failure in one run instead
@@ -488,16 +455,6 @@ jobs:
         shell: bash
         run: cargo machete
 
-      - name: sccache stats
-        # Printed only when the wrapper was actually enabled, so a run that
-        # built without sccache does not report misleading numbers. The
-        # condition starts with `!cancelled()` like every other quality step:
-        # a cancelled run should stop, and this is diagnostic output, not a
-        # gate.
-        if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
-        shell: bash
-        run: sccache --show-stats
-
   release-automation:
     name: Release Automation
     needs: changes
@@ -596,59 +553,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
           key: ${{ matrix.os }}-stablepin
 
-      # The wrapper is set once for the whole job, before the first cargo call,
-      # so every compile in this job (release build, test compile, e2e, the
-      # SDK parity test and the macOS warning budget) shares one fingerprint.
-      # A run that wrapped only one step emitted `<unknown rustc version>`
-      # artifacts that the next unwrapped compile rejected with E0514,
-      # "compiled by an incompatible version of rustc" (run 42373575639).
-      #
-      # CARGO_INCREMENTAL=0 is required: sccache cannot cache incremental
-      # units and both profiles this job builds ([profile.dev] and
-      # [profile.release]) set incremental = true in Cargo.toml, so leaving
-      # incremental on would mean zero cache hits.
-      - name: Setup sccache
-        if: runner.environment == 'github-hosted'
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          disable_annotations: true
-        continue-on-error: true
-
-      - name: Enable sccache
-        # Nothing is written unless `sccache --start-server` succeeds, so a
-        # runner without a working sccache builds the entire job without a
-        # wrapper rather than mixing wrapped and unwrapped cargo calls.
-        if: runner.environment == 'github-hosted'
-        shell: bash
-        run: |
-          if ! command -v sccache >/dev/null 2>&1; then
-            echo "sccache is not available; this job builds without a wrapper"
-            exit 0
-          fi
-          if sccache --start-server; then
-            {
-              echo "RUSTC_WRAPPER=sccache"
-              echo "CARGO_INCREMENTAL=0"
-            } >> "$GITHUB_ENV"
-          else
-            echo "sccache failed to start; this job builds without a wrapper"
-          fi
-
-      - name: Install mold linker (Linux)
+      - name: Install mold linker and reflink tools (Linux)
         if: runner.os == 'Linux'
         run: |
-          # clang is the linker driver named in .cargo/config.toml below; the
-          # image ships it, but not as a documented contract, so install it
-          # explicitly rather than depending on an image update's default.
-          # A mirror hiccup is the usual failure here, so retry before failing.
+          # clang and mold link Linux binaries; btrfs-progs is used later for the
+          # clone isolation reflink cohort, avoiding a second apt-get update.
           installed=0
           for attempt in 1 2 3; do
-            if sudo apt-get update -qq && sudo apt-get install -y -qq clang mold; then
+            if sudo apt-get update -qq && sudo apt-get install -y -qq clang mold btrfs-progs; then
               installed=1
               break
             fi
@@ -667,9 +585,8 @@ jobs:
           rustflags = ["-C", "link-arg=-fuse-ld=mold"]
           EOF
           fi
-          # The sccache wrapper is not set here: the job-wide `Enable sccache`
-          # step above sets it for every cargo call, which is what keeps the
-          # artifacts of this build and the later test compiles consistent.
+          # Keep the toolchain and compiler fingerprint consistent across this
+          # release build and later test compiles.
           RUSTC="$(rustup which rustc)"
           export RUSTC
           CARGO_BIN="$(rustup which cargo)"
@@ -1298,6 +1215,13 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- irc --nocapture
 
+      - name: Cache MiniLM embedding model (Linux only)
+        if: runner.os == 'Linux'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.horon/models/all-MiniLM-L6-v2
+          key: minilm-l6-v2-${{ runner.os }}-v1
+
       - name: Run embedding numeric-stability cohort (Linux only)
         if: runner.os == 'Linux'
         shell: bash
@@ -1309,16 +1233,20 @@ jobs:
         #
         # That test skips itself when the model is absent, and horon-agent-embedding
         # tests are not otherwise run here at all, so without this step it would
-        # never execute. Fetch the model first (~87MB) so the cohort is real
-        # rather than a silent skip.
+        # never execute. Fetch the model (~87MB) when not restored from cache so
+        # the cohort is real rather than a silent skip.
         run: |
           set -euo pipefail
           model_dir="$HOME/.horon/models/all-MiniLM-L6-v2"
           mkdir -p "$model_dir"
           base="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main"
-          curl -sSfL --retry 5 --retry-all-errors -o "$model_dir/model.onnx" "$base/onnx/model.onnx"
-          curl -sSfL --retry 5 --retry-all-errors -o "$model_dir/tokenizer.json" "$base/tokenizer.json"
-          # Fail loudly if the fetch produced something unusable, so this cannot
+          if [ ! -s "$model_dir/model.onnx" ]; then
+            curl -sSfL --retry 5 --retry-all-errors -o "$model_dir/model.onnx" "$base/onnx/model.onnx"
+          fi
+          if [ ! -s "$model_dir/tokenizer.json" ]; then
+            curl -sSfL --retry 5 --retry-all-errors -o "$model_dir/tokenizer.json" "$base/tokenizer.json"
+          fi
+          # Fail loudly if cache/fetch produced something unusable, so this cannot
           # degrade back into a silent skip.
           test -s "$model_dir/model.onnx"
           test -s "$model_dir/tokenizer.json"
@@ -1393,14 +1321,27 @@ jobs:
             --timeout 600 \
             -- tool::bash::tests::test_stdin_forwarding --nocapture
 
+      - name: Cache direnv binary (Linux only)
+        if: runner.os == 'Linux'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/horon-direnv-v2.38.2
+          key: direnv-linux-amd64-v2.38.2-148820a187930d36
+
       - name: Run approved direnv shell cohort
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          bin_dir=$(mktemp -d "$RUNNER_TEMP/horon-direnv.XXXXXXXX")
-          curl -fsSL https://github.com/direnv/direnv/releases/download/v2.38.2/direnv.linux-amd64 -o "$bin_dir/direnv"
-          printf '%s  %s\n' 148820a187930d36ca6a204504e5cdb30d8396cd1a97e64c3b3f10d793c11247 "$bin_dir/direnv" | sha256sum --check --status
-          chmod +x "$bin_dir/direnv"
+          bin_dir="$HOME/.cache/horon-direnv-v2.38.2"
+          expected_sha="148820a187930d36ca6a204504e5cdb30d8396cd1a97e64c3b3f10d793c11247"
+          mkdir -p "$bin_dir"
+          if [ ! -x "$bin_dir/direnv" ] || ! printf '%s  %s\n' "$expected_sha" "$bin_dir/direnv" | sha256sum --check --status; then
+            tmp_bin=$(mktemp "$bin_dir/.direnv.XXXXXX")
+            curl -fsSL https://github.com/direnv/direnv/releases/download/v2.38.2/direnv.linux-amd64 -o "$tmp_bin"
+            printf '%s  %s\n' "$expected_sha" "$tmp_bin" | sha256sum --check --status
+            chmod +x "$tmp_bin"
+            mv -f "$tmp_bin" "$bin_dir/direnv"
+          fi
           PATH="$bin_dir:$PATH" direnv version
           PATH="$bin_dir:$PATH" python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
@@ -2442,7 +2383,7 @@ jobs:
           export HORON_HOME
           chmod 700 "$HORON_HOME"
           trap 'rm -rf "$HORON_HOME"' EXIT
-          cargo test --locked -p horon-package-example --test extension_layouts -- --nocapture 2>&1 \
+          cargo test --locked --target ${{ matrix.target }} -p horon-package-example --test extension_layouts -- --nocapture 2>&1 \
             | tee "$RUNNER_TEMP/package-example.log"
           grep -Eq 'test result: ok\. 2 passed' "$RUNNER_TEMP/package-example.log"
 
@@ -2460,7 +2401,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          scripts/ci/check_warnings.sh
+          scripts/ci/check_warnings.sh --target ${{ matrix.target }}
 
       - name: Install cargo-audit
         if: runner.os == 'Linux'
@@ -2476,19 +2417,14 @@ jobs:
         run: |
           scripts/ci/check_security.sh --strict
 
-      - name: sccache stats
-        # Runs even after a failed gate so the cache state is visible in the
-        # log, but only when the wrapper was really enabled.
-        if: ${{ always() && env.RUSTC_WRAPPER == 'sccache' }}
-        shell: bash
-        run: sccache --show-stats
-
   windows-build-test:
     name: Build & Test (windows-latest)
     needs: changes
     runs-on: windows-latest
     if: ${{ needs.changes.outputs.rust == 'true' }}
     timeout-minutes: 75
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - name: Report free disk space
         # D: carries the workspace and target dir on the Windows image. Logged,
@@ -2513,56 +2449,10 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
 
-      # Job-wide, before the first cargo call: a wrapper applied to one step
-      # only left `<unknown rustc version>` artifacts that the next unwrapped
-      # compile rejected with E0514 ("compiled by an incompatible version of
-      # rustc", run 42373575639). Every cargo call in this job must share the
-      # same wrapper.
-      #
-      # CARGO_INCREMENTAL=0 is required, not a speed tweak: sccache cannot
-      # cache incremental units, and both [profile.dev] and [profile.release]
-      # in Cargo.toml set incremental = true, so nothing would be cached.
-      #
-      # This job runs on a GitHub-hosted Windows image only; the guard keeps
-      # the step out of any other environment.
-      - name: Setup sccache
-        if: runner.environment == 'github-hosted'
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          disable_annotations: true
-        continue-on-error: true
-
-      - name: Enable sccache
-        # The wrapper is written only when the server actually starts, so a
-        # runner without a working sccache runs every cargo call unwrapped
-        # instead of mixing wrapped and unwrapped builds.
-        if: runner.environment == 'github-hosted'
-        shell: pwsh
-        run: |
-          if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) {
-            Write-Host 'sccache is not available; this job builds without a wrapper'
-            exit 0
-          }
-          sccache --start-server
-          if ($LASTEXITCODE -eq 0) {
-            "RUSTC_WRAPPER=sccache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            "CARGO_INCREMENTAL=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          } else {
-            Write-Host 'sccache failed to start; this job builds without a wrapper'
-          }
-          # A step is not a script: GitHub appends `exit $LASTEXITCODE` to a
-          # pwsh body, so a failed `sccache --start-server` would fail the whole
-          # job even though the branch above deliberately continues unwrapped.
-          # The bash twin has no such epilogue, which is why only Windows went
-          # red when the cache backend answered 503 ServerBusy ("Egress is over
-          # the account limit", run 43451256902) and every later step, including
-          # the build, was skipped. Ending with an explicit success keeps the
-          # decision here: the wrapper is opt-in, its absence is not a failure.
-          exit 0
-
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           key: windows-latest
           cache-all-crates: "true"
 
@@ -2585,11 +2475,17 @@ jobs:
             throw 'Windows horon-tui build failed'
           }
 
+      - name: Cache pywinpty wheel on Windows
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/pip-cache
+          key: windows-pip-pywinpty-v1
+
       - name: ConPTY smoke (TUI client on Windows)
         shell: bash
         # The client's Windows behaviour used to be covered only by its library
         # tests: nothing drew a screen, read a keystroke or left through a real
-        # console, so a broken render or exit path merged green (#432). The same
+        # console, so a broken render or exit path merged green. The same
         # smoke cases the Unix jobs run (happy path, piped stdin) now drive
         # `horon-agent.exe` -> `horon-tui.exe` through a ConPTY.
         #
@@ -2597,7 +2493,7 @@ jobs:
         # package, and a package that cannot be installed must say so instead of
         # failing the job for an unrelated reason.
         run: |
-          if ! python -m pip install --quiet --disable-pip-version-check pywinpty; then
+          if ! python -m pip install --cache-dir "$RUNNER_TEMP/pip-cache" --quiet --disable-pip-version-check pywinpty; then
             echo "::warning::pywinpty could not be installed; the Windows ConPTY smoke test did not run"
             exit 0
           fi
@@ -2989,13 +2885,6 @@ jobs:
           & ./scripts/install/test_install_windows_launcher.ps1
           & ./scripts/install/test_windows_setup.ps1
 
-      - name: sccache stats
-        # Runs even after a failed test so the cache state is in the log, and
-        # only when the wrapper was enabled for this job.
-        if: ${{ always() && env.RUSTC_WRAPPER == 'sccache' }}
-        shell: pwsh
-        run: sccache --show-stats
-
   typescript-sdk:
     name: TypeScript SDK
     needs: changes
@@ -3015,6 +2904,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.3
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-ts-sdk-${{ hashFiles('packages/sdk/typescript/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-ts-sdk-
 
       # The SDK mirrors crates/harness-api by hand. Without this job the
       # only guard that runs on a change is the Rust-side variant check, and a
@@ -3055,6 +2951,17 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: ${{ matrix.python }}
+          enable-cache: false
+
+      - name: Configure uv cache directory
+        run: echo "UV_CACHE_DIR=$RUNNER_TEMP/setup-uv-cache" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/setup-uv-cache
+          key: uv-${{ runner.os }}-py${{ matrix.python }}-${{ hashFiles('packages/sdk/python/uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-py${{ matrix.python }}-
 
       # Like the TypeScript job: the SDK mirrors crates/harness-api by hand,
       # and the Rust-side parity test only proves the method names exist.
@@ -3104,6 +3011,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.3
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-docs-site-${{ hashFiles('packages/docs-site/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-docs-site-
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -3186,15 +3100,24 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           key: windows-arm64-release-check
           cache-all-crates: "true"
+
+      - name: Cache pinned justrust
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/justrust-bin
+          key: justrust-${{ runner.os }}-${{ hashFiles('scripts/ci/install_justrust.sh') }}
 
       - name: Install pinned justrust
         shell: bash
         env:
           # Only for the release API fallback when the download URL fails.
           GH_TOKEN: ${{ github.token }}
+          JUSTRUST_INSTALL_DIR: ${{ runner.temp }}/justrust-bin
+          JUSTRUST_USE_CACHED: "1"
         run: bash scripts/ci/install_justrust.sh
 
       - name: Check full Windows ARM64 release configuration
@@ -3237,7 +3160,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           key: windows-cross-check
           cache-all-crates: "true"
 
@@ -3382,11 +3306,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Cache actionlint binary
+        id: actionlint-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/actionlint-bin
+          key: actionlint-${{ runner.os }}-v1.7.12
+
       # The image's preinstalled Go can be older than actionlint's go.mod
       # requirement, and the automatic toolchain switch then fails on a
       # toolchain version the module proxy does not serve. Pin Go here and keep
       # it from fetching another toolchain so the job depends only on these pins.
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        if: ${{ steps.actionlint-cache.outputs.cache-hit != 'true' }}
         with:
           go-version: '1.25.x'
           cache: false
@@ -3398,8 +3330,13 @@ jobs:
           GOTOOLCHAIN: local
         run: |
           set -euo pipefail
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-          "$(go env GOPATH)/bin/actionlint" -color
+          bin_dir="${RUNNER_TEMP}/actionlint-bin"
+          mkdir -p "$bin_dir"
+          if [ ! -x "$bin_dir/actionlint" ]; then
+            GOBIN="$bin_dir" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          fi
+          "$bin_dir/actionlint" -version
+          "$bin_dir/actionlint" -color
 
   # The one check a branch rule needs. Gates that a documentation-only pull
   # request or `dev` push skips by design stay "skipped" and would leave a
@@ -3457,8 +3394,8 @@ jobs:
             echo "::error::every downstream gate was skipped; refused empty aggregate pass"
             exit 1
           fi
-          failed="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key')"
-          if [ -n "$failed" ]; then
-            echo "::error::failed or cancelled: $failed"
+          bad="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key):\(.value.result)"')"
+          if [ -n "$bad" ]; then
+            echo "::error::unexpected downstream result(s): $bad"
             exit 1
           fi

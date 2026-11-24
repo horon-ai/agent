@@ -9,9 +9,12 @@ baseline=$(tr -d '[:space:]' < "$repo_root/scripts/ci/warning_budget.txt")
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-# fake cargo: prints $FAKE_OUTPUT to stderr, exits $FAKE_STATUS
+# fake cargo: prints $FAKE_OUTPUT to stderr, logs argv when asked, exits $FAKE_STATUS
 cat > "$tmp/cargo" <<'FAKE'
 #!/usr/bin/env bash
+if [[ -n "${FAKE_ARGS_FILE:-}" ]]; then
+  printf '%s\n' "$*" > "$FAKE_ARGS_FILE"
+fi
 printf '%b' "${FAKE_OUTPUT:-}" >&2
 exit "${FAKE_STATUS:-0}"
 FAKE
@@ -20,8 +23,9 @@ chmod +x "$tmp/cargo"
 failures=0
 run_case() {
   local name=$1 expect_status=$2 expect_text=$3 output=$4 status=$5
+  shift 5
   local actual_status=0 actual_out
-  actual_out=$(CARGO="$tmp/cargo" FAKE_OUTPUT="$output" FAKE_STATUS="$status" bash "$gate" 2>&1) \
+  actual_out=$(CARGO="$tmp/cargo" FAKE_OUTPUT="$output" FAKE_STATUS="$status" bash "$gate" "$@" 2>&1) \
     || actual_status=$?
   if [[ "$actual_status" != "$expect_status" ]] || [[ "$actual_out" != *"$expect_text"* ]]; then
     echo "FAIL: $name (exit $actual_status, want $expect_status)"
@@ -49,6 +53,24 @@ run_case "compiler failure with warnings" 101 "cargo check failed" \
 if (( baseline > 0 )); then
   run_case "warnings below budget" 0 "improved" "$(warnings $((baseline - 1)))" 0
 fi
+
+args_file="$tmp/cargo_args.txt"
+FAKE_ARGS_FILE="$args_file" run_case "explicit --target passes triple and locked" 0 "current=0" "" 0 \
+  --target aarch64-apple-darwin
+observed_args=$(cat "$args_file" 2>/dev/null || true)
+if [[ "$observed_args" != *"--locked"* || "$observed_args" != *"--target aarch64-apple-darwin"* ]]; then
+  echo "FAIL: expected --locked and --target aarch64-apple-darwin in cargo args, got: $observed_args"
+  failures=$((failures + 1))
+else
+  echo "ok: cargo received --locked and --target aarch64-apple-darwin"
+fi
+FAKE_ARGS_FILE="$args_file" run_case "--target= equals syntax" 0 "current=0" "" 0 \
+  --target=x86_64-unknown-linux-gnu
+run_case "invalid target compile failure fails non-zero" 101 "cargo check failed" \
+  "error: failed to load manifest" 101 --target invalid-target
+run_case "missing --target value fails non-zero" 2 "requires a non-empty target triple" "" 0 --target
+run_case "empty --target value fails non-zero" 2 "requires a non-empty target triple" "" 0 --target ""
+run_case "unknown option fails non-zero" 2 "unknown option" "" 0 --bogus
 
 missing_status=0
 CARGO="$tmp/does-not-exist" bash "$gate" > /dev/null 2>&1 || missing_status=$?

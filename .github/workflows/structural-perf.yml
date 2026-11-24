@@ -103,7 +103,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: structural-perf-${{ runner.os }}
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
 
       - name: Contract test the structural gate
         # Fast and compile-free: proves the bounds file, the report template and
@@ -149,5 +150,8 @@ jobs:
             echo "::error::Changed Paths enabled rust=true but structural-perf did not succeed"
             exit 1
           fi
-          [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != failure ]
-          [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != cancelled ]
+          perf_result="$(echo "$NEEDS" | jq -r '.["structural-perf"].result')"
+          if [ "$perf_result" != success ] && [ "$perf_result" != skipped ]; then
+            echo "::error::structural-perf ended with unexpected result='$perf_result'"
+            exit 1
+          fi

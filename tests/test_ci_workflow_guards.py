@@ -221,9 +221,45 @@ class WorkflowGuardTests(unittest.TestCase):
         for action in ('actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7',
                        'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7',
                        'astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0',
-                       'mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11'):
+                       'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6'):
             with self.subTest(action=action):
                 self.assertIn(action, workflow)
+        self.assertNotIn('mozilla-actions/sccache-action', workflow)
+        self.assertNotIn('CARGO_INCREMENTAL=0', workflow)
+        self.assertNotIn('SCCACHE_CACHE_SIZE', workflow)
+
+    def test_stable_toolchain_and_rust_cache_policy_hold(self):
+        toolchain_toml = (ROOT / 'rust-toolchain.toml').read_text()
+        match = re.search(r'^channel\s*=\s*"([^"]+)"', toolchain_toml, re.MULTILINE)
+        self.assertIsNotNone(match, 'rust-toolchain.toml missing channel')
+        pinned_channel = match.group(1)
+        ci_text = (ROOT / '.github/workflows/ci.yml').read_text()
+        quality_block = ci_text.split('\n  quality:\n', 1)[1].split('\n  release-automation:\n', 1)[0]
+        self.assertIn(f'RUSTUP_TOOLCHAIN: "{pinned_channel}"', quality_block)
+        self.assertIn(f'toolchain: "{pinned_channel}"', quality_block)
+        for job, nxt in (('build', 'windows-build-test'),
+                         ('windows-build-test', 'typescript-sdk')):
+            block = ci_text.split(f'\n  {job}:\n', 1)[1].split(f'\n  {nxt}:\n', 1)[0]
+            with self.subTest(job=job):
+                self.assertIn('RUSTUP_TOOLCHAIN: stable', block)
+        soak_text = (ROOT / '.github/workflows/soak.yml').read_text()
+        self.assertIn('RUSTUP_TOOLCHAIN: stable', soak_text)
+        expected_save_if = (
+            "save-if: ${{ github.event_name == 'push' && "
+            "(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') "
+            "&& github.run_attempt == '1' }}"
+        )
+        for wf in ('ci.yml', 'soak.yml', 'package-windows.yml', 'package-compat.yml', 'structural-perf.yml'):
+            text = (ROOT / f'.github/workflows/{wf}').read_text()
+            blocks = text.split('uses: Swatinem/rust-cache@')[1:]
+            self.assertTrue(blocks, wf)
+            for idx, blk in enumerate(blocks):
+                segment = blk.split('\n      -', 1)[0]
+                with self.subTest(workflow=wf, idx=idx):
+                    if 'save-if: false' in segment:
+                        continue
+                    self.assertIn(expected_save_if, segment)
+                    self.assertIn('cache-on-failure: "false"', segment)
 
     def test_documentation_only_changes_never_leave_a_required_check_pending(self):
         # A skipped job reports "skipped", which a branch rule waits on forever.
@@ -258,6 +294,10 @@ class WorkflowGuardTests(unittest.TestCase):
         ci_block = (ROOT / '.github/workflows/ci.yml').read_text().split('\n  ci-required:\n', 1)[1]
         self.assertRegex(ci_block, r'if \[ "\$code" != true \] && \[ "\$docs_only" != true \]; then\n'
                                    r'\s+echo "::error::[^\n]*"\n\s+exit 1\n')
+        self.assertIn('.value.result != "success" and .value.result != "skipped"', ci_block)
+        sp_block = (ROOT / '.github/workflows/structural-perf.yml').read_text().split(
+            '\n  structural-perf-required:\n', 1)[1]
+        self.assertIn('[ "$perf_result" != success ] && [ "$perf_result" != skipped ]', sp_block)
         # A push to main, a tag, a dispatch and a re-run are never classified,
         # because release evidence needs every mandatory job to have run.
         import importlib.util
@@ -288,6 +328,43 @@ class WorkflowGuardTests(unittest.TestCase):
                                     ('push', 'refs/heads/dev', 2)):
             with self.subTest(event=event, ref=ref, attempt=attempt):
                 self.assertEqual(mod.classify(event, ['README.md'], ref=ref, attempt=attempt), full)
+
+    def test_macos_target_reuse_and_cached_tools(self):
+        ci_text = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertIn('scripts/ci/check_warnings.sh --target ${{ matrix.target }}', ci_text)
+        self.assertIn(
+            'cargo test --locked --target ${{ matrix.target }} -p horon-package-example --test extension_layouts',
+            ci_text,
+        )
+        py_block = ci_text.split('\n  python-sdk:\n', 1)[1].split('\n  docs-site:\n', 1)[0]
+        self.assertIn('UV_CACHE_DIR=$RUNNER_TEMP/setup-uv-cache', py_block)
+        self.assertIn('enable-cache: false', py_block)
+        for cache_key in (
+            'actionlint-${{ runner.os }}-v1.7.12',
+            'bun-${{ runner.os }}-ts-sdk-',
+            'bun-${{ runner.os }}-docs-site-',
+            'uv-${{ runner.os }}-py${{ matrix.python }}-',
+            'minilm-l6-v2-${{ runner.os }}-v1',
+            'direnv-linux-amd64-v2.38.2-148820a187930d36',
+            'justrust-${{ runner.os }}-',
+            'windows-pip-pywinpty-v1',
+        ):
+            with self.subTest(cache_key=cache_key):
+                self.assertIn(cache_key, ci_text)
+
+    def test_ci_required_gate_rejects_abandoned_result(self):
+        # Simulate the exact jq filter used by ci-required to ensure queue-evicted
+        # matrix legs (`abandoned`) never count as a green gate.
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        match = re.search(r"bad=\"\$\(echo \"\$NEEDS\" \| jq -r '([^']+)'\)\"", workflow)
+        self.assertIsNotNone(match, 'missing strict allowlist filter in ci-required')
+        jq_filter = match.group(1)
+        out = subprocess.check_output(
+            ['jq', '-r', jq_filter],
+            input='{"changes":{"result":"success"},"build":{"result":"abandoned"},"docs":{"result":"skipped"}}',
+            text=True,
+        ).strip()
+        self.assertEqual(out, 'build:abandoned')
 
     def test_cross_target_jobs_pin_the_toolchain_they_installed_targets_into(self):
         # `dtolnay/rust-toolchain@stable` installs into the `stable` toolchain by
