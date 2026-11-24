@@ -8,56 +8,62 @@
 <text x="46.0" y="136.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Linux</text>
 <line x1="144.2" y1="158.0" x2="144.2" y2="248.0" stroke="#eaeef2"/>
 <text x="144.2" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
-<line x1="307.7" y1="158.0" x2="307.7" y2="248.0" stroke="#eaeef2"/>
-<text x="307.7" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
-<line x1="471.1" y1="158.0" x2="471.1" y2="248.0" stroke="#eaeef2"/>
-<text x="471.1" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
-<line x1="634.6" y1="158.0" x2="634.6" y2="248.0" stroke="#eaeef2"/>
-<text x="634.6" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
+<line x1="275.0" y1="158.0" x2="275.0" y2="248.0" stroke="#eaeef2"/>
+<text x="275.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2.50</text>
+<line x1="405.8" y1="158.0" x2="405.8" y2="248.0" stroke="#eaeef2"/>
+<text x="405.8" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">5</text>
+<line x1="536.5" y1="158.0" x2="536.5" y2="248.0" stroke="#eaeef2"/>
+<text x="536.5" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">7.50</text>
+<line x1="667.2" y1="158.0" x2="667.2" y2="248.0" stroke="#eaeef2"/>
+<text x="667.2" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
 <line x1="798.0" y1="158.0" x2="798.0" y2="248.0" stroke="#eaeef2"/>
-<text x="798.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">8</text>
+<text x="798.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">12.5</text>
 <text x="134.2" y="177.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">idle RSS</text>
-<rect x="144.2" y="164.0" width="504.7" height="18" rx="3" fill="#d3d9e1"/>
-<text x="656.9" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">6.18</text>
+<rect x="144.2" y="164.0" width="408.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="560.6" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.81</text>
 <text x="134.2" y="207.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">post-turn RSS</text>
-<rect x="144.2" y="194.0" width="510.7" height="18" rx="3" fill="#d3d9e1"/>
-<text x="663.0" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">6.25</text>
+<rect x="144.2" y="194.0" width="415.9" height="18" rx="3" fill="#d3d9e1"/>
+<text x="568.2" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.95</text>
 <text x="134.2" y="237.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">install size</text>
-<rect x="144.2" y="224.0" width="525.4" height="18" rx="3" fill="#d3d9e1"/>
-<text x="677.6" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">6.43</text>
+<rect x="144.2" y="224.0" width="528.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="680.7" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.1</text>
 <rect x="32" y="278.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="296.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">macOS</text>
 <line x1="144.2" y1="318.0" x2="144.2" y2="408.0" stroke="#eaeef2"/>
 <text x="144.2" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
 <line x1="275.0" y1="318.0" x2="275.0" y2="408.0" stroke="#eaeef2"/>
-<text x="275.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<text x="275.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2.50</text>
 <line x1="405.8" y1="318.0" x2="405.8" y2="408.0" stroke="#eaeef2"/>
-<text x="405.8" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
+<text x="405.8" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">5</text>
 <line x1="536.5" y1="318.0" x2="536.5" y2="408.0" stroke="#eaeef2"/>
-<text x="536.5" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
+<text x="536.5" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">7.50</text>
 <line x1="667.2" y1="318.0" x2="667.2" y2="408.0" stroke="#eaeef2"/>
-<text x="667.2" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">8</text>
+<text x="667.2" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
 <line x1="798.0" y1="318.0" x2="798.0" y2="408.0" stroke="#eaeef2"/>
-<text x="798.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
+<text x="798.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">12.5</text>
 <text x="134.2" y="337.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">idle RSS</text>
-<rect x="144.2" y="324.0" width="623.1" height="18" rx="3" fill="#d3d9e1"/>
-<text x="775.4" y="337.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">9.53</text>
+<rect x="144.2" y="324.0" width="543.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="695.7" y="337.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.4</text>
 <text x="134.2" y="367.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">post-turn RSS</text>
-<rect x="144.2" y="354.0" width="637.4" height="18" rx="3" fill="#d3d9e1"/>
-<text x="789.7" y="367.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">9.75</text>
+<rect x="144.2" y="354.0" width="558.1" height="18" rx="3" fill="#d3d9e1"/>
+<text x="710.4" y="367.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.7</text>
 <text x="134.2" y="397.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">install size</text>
-<rect x="144.2" y="384.0" width="354.7" height="18" rx="3" fill="#d3d9e1"/>
-<text x="507.0" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.43</text>
+<rect x="144.2" y="384.0" width="386.2" height="18" rx="3" fill="#d3d9e1"/>
+<text x="538.4" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.38</text>
 <rect x="32" y="438.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="456.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Windows</text>
 <line x1="144.2" y1="478.0" x2="144.2" y2="568.0" stroke="#eaeef2"/>
 <text x="144.2" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
-<line x1="362.2" y1="478.0" x2="362.2" y2="568.0" stroke="#eaeef2"/>
-<text x="362.2" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
-<line x1="580.1" y1="478.0" x2="580.1" y2="568.0" stroke="#eaeef2"/>
-<text x="580.1" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
+<line x1="275.0" y1="478.0" x2="275.0" y2="568.0" stroke="#eaeef2"/>
+<text x="275.0" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<line x1="405.8" y1="478.0" x2="405.8" y2="568.0" stroke="#eaeef2"/>
+<text x="405.8" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
+<line x1="536.5" y1="478.0" x2="536.5" y2="568.0" stroke="#eaeef2"/>
+<text x="536.5" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
+<line x1="667.2" y1="478.0" x2="667.2" y2="568.0" stroke="#eaeef2"/>
+<text x="667.2" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">8</text>
 <line x1="798.0" y1="478.0" x2="798.0" y2="568.0" stroke="#eaeef2"/>
-<text x="798.0" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
+<text x="798.0" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
 <text x="134.2" y="497.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">idle RSS</text>
 <rect x="144.2" y="484.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
 <text x="192.2" y="497.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">not measured</text>
@@ -65,8 +71,8 @@
 <rect x="144.2" y="514.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
 <text x="192.2" y="527.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">not measured</text>
 <text x="134.2" y="557.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">install size</text>
-<rect x="144.2" y="544.0" width="589.5" height="18" rx="3" fill="#d3d9e1"/>
-<text x="741.8" y="557.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.41</text>
-<text x="32.0" y="604.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent 50d24d7 · measured 2026-11-20 09:47 UTC · run 44711623550</text>
+<rect x="144.2" y="544.0" width="586.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="738.7" y="557.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">8.97</text>
+<text x="32.0" y="604.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent 6444aa1 · measured 2026-11-24 19:29 UTC · run 45467871587</text>
 <text x="32.0" y="622.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each OS ran on a different GitHub-hosted runner with a mock model: compare tools within one OS, not across OSes.</text>
 </svg>

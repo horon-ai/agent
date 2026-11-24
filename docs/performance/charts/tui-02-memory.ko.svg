@@ -8,56 +8,62 @@
 <text x="46.0" y="136.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Linux</text>
 <line x1="130.0" y1="158.0" x2="130.0" y2="248.0" stroke="#eaeef2"/>
 <text x="130.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
-<line x1="297.0" y1="158.0" x2="297.0" y2="248.0" stroke="#eaeef2"/>
-<text x="297.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
-<line x1="464.0" y1="158.0" x2="464.0" y2="248.0" stroke="#eaeef2"/>
-<text x="464.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
-<line x1="631.0" y1="158.0" x2="631.0" y2="248.0" stroke="#eaeef2"/>
-<text x="631.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
+<line x1="263.6" y1="158.0" x2="263.6" y2="248.0" stroke="#eaeef2"/>
+<text x="263.6" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2.50</text>
+<line x1="397.2" y1="158.0" x2="397.2" y2="248.0" stroke="#eaeef2"/>
+<text x="397.2" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">5</text>
+<line x1="530.8" y1="158.0" x2="530.8" y2="248.0" stroke="#eaeef2"/>
+<text x="530.8" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">7.50</text>
+<line x1="664.4" y1="158.0" x2="664.4" y2="248.0" stroke="#eaeef2"/>
+<text x="664.4" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
 <line x1="798.0" y1="158.0" x2="798.0" y2="248.0" stroke="#eaeef2"/>
-<text x="798.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">8</text>
+<text x="798.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">12.5</text>
 <text x="120.0" y="177.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">유휴 RSS</text>
-<rect x="130.0" y="164.0" width="515.7" height="18" rx="3" fill="#d3d9e1"/>
-<text x="653.7" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">6.18</text>
+<rect x="130.0" y="164.0" width="417.3" height="18" rx="3" fill="#d3d9e1"/>
+<text x="555.3" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.81</text>
 <text x="120.0" y="207.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">턴 후 RSS</text>
-<rect x="130.0" y="194.0" width="521.9" height="18" rx="3" fill="#d3d9e1"/>
-<text x="659.9" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">6.25</text>
+<rect x="130.0" y="194.0" width="425.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="563.0" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.95</text>
 <text x="120.0" y="237.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">설치 크기</text>
-<rect x="130.0" y="224.0" width="536.9" height="18" rx="3" fill="#d3d9e1"/>
-<text x="674.9" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">6.43</text>
+<rect x="130.0" y="224.0" width="540.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="678.0" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.1</text>
 <rect x="32" y="278.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="296.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">macOS</text>
 <line x1="130.0" y1="318.0" x2="130.0" y2="408.0" stroke="#eaeef2"/>
 <text x="130.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
 <line x1="263.6" y1="318.0" x2="263.6" y2="408.0" stroke="#eaeef2"/>
-<text x="263.6" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<text x="263.6" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2.50</text>
 <line x1="397.2" y1="318.0" x2="397.2" y2="408.0" stroke="#eaeef2"/>
-<text x="397.2" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
+<text x="397.2" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">5</text>
 <line x1="530.8" y1="318.0" x2="530.8" y2="408.0" stroke="#eaeef2"/>
-<text x="530.8" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
+<text x="530.8" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">7.50</text>
 <line x1="664.4" y1="318.0" x2="664.4" y2="408.0" stroke="#eaeef2"/>
-<text x="664.4" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">8</text>
+<text x="664.4" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
 <line x1="798.0" y1="318.0" x2="798.0" y2="408.0" stroke="#eaeef2"/>
-<text x="798.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
+<text x="798.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">12.5</text>
 <text x="120.0" y="337.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">유휴 RSS</text>
-<rect x="130.0" y="324.0" width="636.7" height="18" rx="3" fill="#d3d9e1"/>
-<text x="774.7" y="337.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">9.53</text>
+<rect x="130.0" y="324.0" width="555.3" height="18" rx="3" fill="#d3d9e1"/>
+<text x="693.3" y="337.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.4</text>
 <text x="120.0" y="367.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">턴 후 RSS</text>
-<rect x="130.0" y="354.0" width="651.3" height="18" rx="3" fill="#d3d9e1"/>
-<text x="789.3" y="367.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">9.75</text>
+<rect x="130.0" y="354.0" width="570.3" height="18" rx="3" fill="#d3d9e1"/>
+<text x="708.3" y="367.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.7</text>
 <text x="120.0" y="397.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">설치 크기</text>
-<rect x="130.0" y="384.0" width="362.5" height="18" rx="3" fill="#d3d9e1"/>
-<text x="500.5" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.43</text>
+<rect x="130.0" y="384.0" width="394.6" height="18" rx="3" fill="#d3d9e1"/>
+<text x="532.6" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.38</text>
 <rect x="32" y="438.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="456.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Windows</text>
 <line x1="130.0" y1="478.0" x2="130.0" y2="568.0" stroke="#eaeef2"/>
 <text x="130.0" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
-<line x1="352.7" y1="478.0" x2="352.7" y2="568.0" stroke="#eaeef2"/>
-<text x="352.7" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
-<line x1="575.3" y1="478.0" x2="575.3" y2="568.0" stroke="#eaeef2"/>
-<text x="575.3" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
+<line x1="263.6" y1="478.0" x2="263.6" y2="568.0" stroke="#eaeef2"/>
+<text x="263.6" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<line x1="397.2" y1="478.0" x2="397.2" y2="568.0" stroke="#eaeef2"/>
+<text x="397.2" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
+<line x1="530.8" y1="478.0" x2="530.8" y2="568.0" stroke="#eaeef2"/>
+<text x="530.8" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
+<line x1="664.4" y1="478.0" x2="664.4" y2="568.0" stroke="#eaeef2"/>
+<text x="664.4" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">8</text>
 <line x1="798.0" y1="478.0" x2="798.0" y2="568.0" stroke="#eaeef2"/>
-<text x="798.0" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
+<text x="798.0" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
 <text x="120.0" y="497.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">유휴 RSS</text>
 <rect x="130.0" y="484.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
 <text x="178.0" y="497.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">측정 불가</text>
@@ -65,8 +71,8 @@
 <rect x="130.0" y="514.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
 <text x="178.0" y="527.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">측정 불가</text>
 <text x="120.0" y="557.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">설치 크기</text>
-<rect x="130.0" y="544.0" width="602.4" height="18" rx="3" fill="#d3d9e1"/>
-<text x="740.4" y="557.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.41</text>
-<text x="32.0" y="604.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent 50d24d7 · 측정 2026-11-20 09:47 UTC · 실행 44711623550</text>
+<rect x="130.0" y="544.0" width="599.2" height="18" rx="3" fill="#d3d9e1"/>
+<text x="737.2" y="557.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">8.97</text>
+<text x="32.0" y="604.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent 6444aa1 · 측정 2026-11-24 19:29 UTC · 실행 45467871587</text>
 <text x="32.0" y="622.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">OS마다 다른 GitHub 호스티드 러너와 모의 모델로 쟀습니다. 같은 OS 안에서만 비교하고 OS끼리는 비교하지 않습니다.</text>
 </svg>

@@ -238,40 +238,28 @@ Crate boundaries and platform adapters are in [docs/architecture/CRATES.md](docs
 
 `.github/workflows/benchmark-docs.yml` rewrites this summary from the run's own `compare.json`; the version label is the binary each runner installed, not a hand-written constant.
 
-Measured commit `e7b81ddfd166f2609b77ddb0d2080831adab4c34`, 2026-11-20 18:54 UTC. Each OS runs on a different machine, so compare inside a row.
-jcode v1.0.1 (release `v1.0.1`, commit `10114429c8133994861d6c915a2483d397c0f7c2`).
+Measured commit `6444aa1f06be3394ab97583a9555c9cecfaa989a`, 2026-11-24 19:30 UTC. Each OS runs on a different machine, so compare inside a row.
+jcode v1.1.2 (release `v1.1.2`, commit `4f874c9ea6b7c3e228045fa8269e4d84bec66a6b`).
 
 | Linux (`ubuntu-24.04`) | horon | jcode |
 | --- | --- | --- |
-| One-shot prompt time | 45.0 ms | 148.2 ms |
-| Skill invocation time | 37.3 ms | 53.9 ms |
-| MCP tool call time | 64.2 ms | 164.8 ms |
-| One-shot prompt memory | 41.1 MB | 80.1 MB |
-| Memory per additional session | 379.9 KB | 173.4 KB |
-| Install size | 117.7 MB | 191.4 MB |
-| First model request, body / tool catalog bytes | 3,699 / 2,358 | 2,888 / 1,100 |
+| One-shot prompt time | 42.1 ms | 137.4 ms |
+| Skill invocation time | 40.1 ms | 43.0 ms |
+| MCP tool call time | 58.8 ms | 147.2 ms |
+| One-shot prompt memory | 45.0 MB | 54.3 MB |
+| Memory per additional session | 574.5 KB | 166.7 KB |
+| Install size | 131.0 MB | 154.3 MB |
+| First model request, body / tool catalog bytes | 3,746 / 2,358 | 2,935 / 1,100 |
 
 | macOS (`macos-latest`) | horon | jcode |
 | --- | --- | --- |
-| One-shot prompt time | 46.6 ms | 271.6 ms |
-| Skill invocation time | 38.9 ms | 182.4 ms |
-| MCP tool call time | 58.7 ms | 267.9 ms |
-| One-shot prompt memory | 31.6 MB | 37.8 MB |
-| Memory per additional session | 410.9 KB | 333.1 KB |
-| Install size | 99.0 MB | 161.3 MB |
-| First model request, body / tool catalog bytes | 3,587 / 2,358 | 2,776 / 1,100 |
+| — | — | — |
 
 | Windows (`windows-latest`) | horon | jcode |
 | --- | --- | --- |
-| One-shot prompt time | 237.1 ms | 177.3 ms |
-| Skill invocation time | 226.8 ms | 272.0 ms |
-| MCP tool call time | 274.5 ms | 376.4 ms |
-| One-shot prompt memory | 33.1 MB | 30.4 MB |
-| Memory per additional session | 358.3 KB | 304.4 KB |
-| Install size | 100.3 MB | 153.2 MB |
-| First model request, body / tool catalog bytes | 3,654 / 2,358 | 2,878 / 1,111 |
+| — | — | — |
 
-[Run](https://github.com/horon-ai/agent/actions/runs/44792005623)
+[Run](https://github.com/horon-ai/agent/actions/runs/45467871587)
 
 <!-- bench-summary:end -->
 
