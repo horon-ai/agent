@@ -333,14 +333,15 @@ fn import_inner(layout: &VolumeLayout, source: &Path, provider: Option<&dyn KeyP
             let material = provider
                 .key_material(key_id)?
                 .ok_or_else(|| anyhow!("key `{key_id}` is unavailable or revoked; cannot decrypt archive"))?;
-            crypto::open_entries(
+            let opened = crypto::open_entries(
                 material,
                 manifest.version,
                 manifest.store_revision,
                 METADATA_FILE,
                 &metadata_raw,
                 verified_raw,
-            )?
+            )?;
+            (opened.metadata, opened.pages)
         }
         other => bail!("unsupported archive encryption `{other}`"),
     };

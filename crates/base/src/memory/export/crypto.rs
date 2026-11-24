@@ -189,6 +189,12 @@ pub fn seal_entries(
     })
 }
 
+/// Decrypted metadata and page entries returned by [`open_entries`].
+pub struct OpenedEntries {
+    pub metadata: Vec<u8>,
+    pub pages: Vec<(String, Vec<u8>)>,
+}
+
 /// Open `metadata_sealed` and all `pages_sealed` entries with `material`.
 pub fn open_entries(
     material: KeyMaterial,
@@ -197,7 +203,7 @@ pub fn open_entries(
     metadata_path: &str,
     metadata_sealed: &[u8],
     pages_sealed: Vec<(String, Vec<u8>)>,
-) -> Result<(Vec<u8>, Vec<(String, Vec<u8>)>)> {
+) -> Result<OpenedEntries> {
     let key_id = material.key_id().to_string();
     material.consume(|key_bytes| {
         let key = aead_key(key_bytes)?;
@@ -214,7 +220,7 @@ pub fn open_entries(
             let plaintext = open_with_key(&key, format_version, store_revision, &key_id, &entry_path, &ciphertext)?;
             pages.push((entry_path, plaintext));
         }
-        Ok((metadata, pages))
+        Ok(OpenedEntries { metadata, pages })
     })
 }
 

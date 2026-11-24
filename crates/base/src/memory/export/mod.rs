@@ -41,6 +41,10 @@ pub mod manifest;
 #[path = "tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "crypto_tests.rs"]
+mod crypto_tests;
+
 /// Directory under `HORON_HOME` that holds the memory store.
 pub const STORE_DIRNAME: &str = "memory";
 
