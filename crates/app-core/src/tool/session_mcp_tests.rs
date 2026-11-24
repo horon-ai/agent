@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
 use super::*;
+use crate::hosting::{HostingMode, HostingPolicy, HostingSection, TenantId};
 use crate::mcp::RemoteTransport;
 use crate::message::{Message, ToolDefinition};
 use crate::provider::{EventStream, Provider};
@@ -278,6 +279,11 @@ async fn session_registry_with(servers: Vec<(String, McpServerConfig)>) -> (Regi
     (registry, configured)
 }
 
+/// The policy of an ordinary, unhosted process: every server is accepted.
+fn no_hosting() -> HostingPolicy {
+    HostingPolicy::default()
+}
+
 fn ready(registry: &Registry) -> BoxFuture<'static, Registry> {
     let registry = registry.clone();
     Box::pin(async move { registry })
@@ -345,7 +351,8 @@ async fn configure_session_mcp_stdio_connects_and_registers_tools() {
     let env = TestEnv::new();
     let registry = session_registry().await;
     let pid_file = env.path("editor.pid");
-    let configs = server_configs(vec![stdio_server("editor", &pid_file, "serve")]).expect("a valid stdio server");
+    let configs =
+        server_configs(&no_hosting(), vec![stdio_server("editor", &pid_file, "serve")]).expect("a valid stdio server");
     assert!(!configs[0].1.shared, "editor servers are never shared");
     let (events_tx, mut events) = mpsc::unbounded_channel();
     let _owner = acp_owner("session-a");
@@ -404,7 +411,8 @@ fn configure_session_mcp_rejects_missing_command() {
             command,
             ..stdio_server("editor", Path::new("/unused"), "serve")
         };
-        let error = server_configs(vec![server]).expect_err("a stdio server without a command is refused");
+        let error =
+            server_configs(&no_hosting(), vec![server]).expect_err("a stdio server without a command is refused");
         assert!(error.contains("needs a command"), "{error}");
     }
 }
@@ -412,16 +420,19 @@ fn configure_session_mcp_rejects_missing_command() {
 #[test]
 fn configure_session_mcp_rejects_unknown_transport() {
     let server = remote_server("socket", "ws", Some("ws://127.0.0.1:1/mcp"));
-    let error = server_configs(vec![server]).expect_err("an unknown transport is refused");
+    let error = server_configs(&no_hosting(), vec![server]).expect_err("an unknown transport is refused");
     assert!(error.contains("unknown transport \"ws\""), "{error}");
 
     let unnamed = stdio_server(" ", Path::new("/unused"), "serve");
-    assert!(server_configs(vec![unnamed]).is_err(), "an empty name is refused");
+    assert!(
+        server_configs(&no_hosting(), vec![unnamed]).is_err(),
+        "an empty name is refused"
+    );
     let twice = vec![
         stdio_server("editor", Path::new("/unused"), "serve"),
         stdio_server("editor", Path::new("/unused"), "serve"),
     ];
-    let error = server_configs(twice).expect_err("a repeated name is refused");
+    let error = server_configs(&no_hosting(), twice).expect_err("a repeated name is refused");
     assert!(error.contains("more than once"), "{error}");
 }
 
@@ -439,7 +450,7 @@ async fn session_mcp_not_visible_to_other_session() {
     let session = SessionMcp::start(
         "session-owner",
         ACP_CONNECTION,
-        server_configs(vec![stdio_server("editor", &pid_file, "serve")]).unwrap(),
+        server_configs(&no_hosting(), vec![stdio_server("editor", &pid_file, "serve")]).unwrap(),
         None,
         ready(&owner),
         events_tx,
@@ -475,10 +486,13 @@ async fn session_mcp_not_visible_to_other_session() {
 
 #[test]
 fn session_mcp_http_maps_transport() {
-    let configs = server_configs(vec![
-        remote_server("web", "http", Some("http://127.0.0.1:9/mcp")),
-        remote_server("events", "sse", Some("https://example.com/sse")),
-    ])
+    let configs = server_configs(
+        &no_hosting(),
+        vec![
+            remote_server("web", "http", Some("http://127.0.0.1:9/mcp")),
+            remote_server("events", "sse", Some("https://example.com/sse")),
+        ],
+    )
     .expect("valid remote servers");
     let (name, http) = &configs[0];
     assert_eq!(name, "web");
@@ -501,7 +515,7 @@ fn session_mcp_http_maps_transport() {
         Some("http://user:secret@example.com/mcp"),
     ] {
         let server = remote_server("web", "http", url);
-        assert!(server_configs(vec![server]).is_err(), "accepted {url:?}");
+        assert!(server_configs(&no_hosting(), vec![server]).is_err(), "accepted {url:?}");
     }
 }
 
@@ -679,7 +693,7 @@ async fn assert_remote_stub_connects(transport: &str, legacy: bool) {
     let session = SessionMcp::start(
         "session-remote",
         ACP_CONNECTION,
-        server_configs(vec![remote_server("web", transport, Some(&stub.url))]).unwrap(),
+        server_configs(&no_hosting(), vec![remote_server("web", transport, Some(&stub.url))]).unwrap(),
         None,
         ready(&registry),
         events_tx,
@@ -726,10 +740,13 @@ async fn session_mcp_hung_server_does_not_hold_back_others_and_is_stopped() {
     let session = SessionMcp::start(
         "session-hung",
         ACP_CONNECTION,
-        server_configs(vec![
-            stdio_server("hung", &hung_pid_file, "hang"),
-            stdio_server("good", &good_pid_file, "serve"),
-        ])
+        server_configs(
+            &no_hosting(),
+            vec![
+                stdio_server("hung", &hung_pid_file, "hang"),
+                stdio_server("good", &good_pid_file, "serve"),
+            ],
+        )
         .unwrap(),
         None,
         ready(&registry),
@@ -800,12 +817,15 @@ async fn session_mcp_shadows_configured_server_and_restores_it() {
     let session_id = "session-shadow";
     let configured_pid_file = env.path("configured.pid");
     let (registry, configured) = session_registry_with(
-        server_configs(vec![labelled_stdio_server(
-            "dup",
-            "configured",
-            &configured_pid_file,
-            "serve",
-        )])
+        server_configs(
+            &no_hosting(),
+            vec![labelled_stdio_server(
+                "dup",
+                "configured",
+                &configured_pid_file,
+                "serve",
+            )],
+        )
         .unwrap(),
     )
     .await;
@@ -823,7 +843,11 @@ async fn session_mcp_shadows_configured_server_and_restores_it() {
     let session = SessionMcp::start(
         session_id,
         ACP_CONNECTION,
-        server_configs(vec![labelled_stdio_server("dup", "editor", &editor_pid_file, "serve")]).unwrap(),
+        server_configs(
+            &no_hosting(),
+            vec![labelled_stdio_server("dup", "editor", &editor_pid_file, "serve")],
+        )
+        .unwrap(),
         None,
         ready(&registry),
         events_tx,
@@ -932,7 +956,11 @@ async fn session_mcp_hidden_from_turns_the_acp_connection_did_not_start() {
     let session = SessionMcp::start(
         session_id,
         ACP_CONNECTION,
-        server_configs(vec![stdio_server("editor", &env.path("editor.pid"), "serve")]).unwrap(),
+        server_configs(
+            &no_hosting(),
+            vec![stdio_server("editor", &env.path("editor.pid"), "serve")],
+        )
+        .unwrap(),
         None,
         ready(&registry),
         events_tx,
@@ -962,3 +990,161 @@ async fn session_mcp_hidden_from_turns_the_acp_connection_did_not_start() {
     }
     session.shutdown().await;
 }
+
+// ---------------------------------------------------------------------------
+// Hosted policy (issue #668)
+// ---------------------------------------------------------------------------
+
+/// A policy that refuses every child process and remote connection.
+fn shared_worker_policy() -> HostingPolicy {
+    let tenant = TenantId::parse("acme").expect("valid tenant id");
+    HostingPolicy::new(HostingMode::SharedWorker, Some(tenant), &HostingSection::default()).expect("policy")
+}
+
+fn per_user_container_policy(section: HostingSection) -> HostingPolicy {
+    let tenant = TenantId::parse("acme").expect("valid tenant id");
+    HostingPolicy::new(HostingMode::PerUserContainer, Some(tenant), &section).expect("policy")
+}
+
+#[test]
+fn a_shared_worker_refuses_the_editors_stdio_server() {
+    let error = server_configs(
+        &shared_worker_policy(),
+        vec![stdio_server("editor", Path::new("/unused"), "serve")],
+    )
+    .expect_err("a shared worker refuses a session child");
+    assert_eq!(
+        error,
+        "hosting policy 'shared-worker' refuses the session MCP stdio server 'editor': a shared worker serves \
+         several customers from one process and never starts a child process for one of them"
+    );
+}
+
+#[test]
+fn a_shared_worker_refuses_the_editors_remote_server() {
+    let error = server_configs(
+        &shared_worker_policy(),
+        vec![remote_server("web", "http", Some("http://127.0.0.1:9/mcp"))],
+    )
+    .expect_err("a shared worker refuses a session remote connection");
+    assert_eq!(
+        error,
+        "hosting policy 'shared-worker' refuses the remote MCP server 'web': a shared worker serves several \
+         customers from one process, so its OAuth token store and ${VAR} environment cannot be proven per user"
+    );
+}
+
+#[test]
+fn a_per_user_container_still_accepts_the_editors_servers() {
+    let policy = per_user_container_policy(HostingSection::default());
+    let configs = server_configs(
+        &policy,
+        vec![
+            stdio_server("editor", Path::new("/unused"), "serve"),
+            remote_server("web", "http", Some("http://127.0.0.1:9/mcp")),
+        ],
+    )
+    .expect("a per-user container keeps the editor's servers");
+    let names: Vec<&str> = configs.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["editor", "web"]);
+    assert!(
+        configs.iter().all(|(_, config)| !config.shared),
+        "editor servers are never shared"
+    );
+}
+
+#[test]
+fn the_server_list_narrows_the_editors_servers() {
+    let policy = per_user_container_policy(HostingSection {
+        allow_shared_children: None,
+        allowed_mcp_servers: Some(vec!["editor".to_string()]),
+        mode: None,
+    });
+    let error = server_configs(&policy, vec![stdio_server("other", Path::new("/unused"), "serve")])
+        .expect_err("a server outside the list is refused");
+    assert_eq!(
+        error,
+        "hosting policy 'per-user-container' refuses the session MCP stdio server 'other': it is not listed in \
+         [hosting] allowed_mcp_servers"
+    );
+    server_configs(&policy, vec![stdio_server("editor", Path::new("/unused"), "serve")])
+        .expect("a listed server stays reachable");
+}
+
+#[test]
+fn a_refused_package_server_is_reported_to_the_session() {
+    let refusal = crate::mcp::hosted::check(
+        &shared_worker_policy(),
+        &crate::mcp::hosted::HostedRequest::server(crate::mcp::hosted::HostedOperation::Stdio, "plugin_demo_echo"),
+    )
+    .expect_err("refused");
+    report_hosted_refusal("session-hosted-refusal", "plugin_demo_echo", &refusal);
+    let reminder = crate::agent::hosted_notice::take("session-hosted-refusal").expect("the refusal is queued");
+    assert!(
+        reminder.contains("MCP server 'plugin_demo_echo' was not started"),
+        "{reminder}"
+    );
+    assert!(reminder.contains("hosting policy 'shared-worker'"), "{reminder}");
+}
+
+#[test]
+fn a_shared_worker_refusal_reaches_the_audit_log() {
+    if std::env::consts::OS == "windows" {
+        eprintln!("SKIP a_shared_worker_refusal_reaches_the_audit_log: the child re-exec needs a Unix shell path");
+        return;
+    }
+    run_isolated_child("tool::session_mcp::tests::a_shared_worker_refusal_reaches_the_audit_log_child");
+}
+
+/// Run one `#[ignore]`d test of this binary as its own process.
+fn run_isolated_child(name: &str) {
+    let output = std::process::Command::new(std::env::current_exe().expect("the test binary path"))
+        .args(["--exact", name, "--ignored", "--nocapture"])
+        .output()
+        .expect("spawn the isolated child");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "the isolated child must pass, got {:?}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status
+    );
+    assert!(
+        stdout.contains("1 passed"),
+        "the child must run exactly one test; a name mismatch reports zero tests\n{stdout}"
+    );
+}
+
+#[test]
+#[ignore = "spawned by a_shared_worker_refusal_reaches_the_audit_log so the process policy and the logger are fresh"]
+fn a_shared_worker_refusal_reaches_the_audit_log_child() {
+    let home = tempfile::tempdir().expect("isolated home");
+    crate::env::set_var("HORON_HOME", home.path());
+    crate::env::set_var("HORON_AGENT_HOSTING_MODE", "shared-worker");
+    crate::env::set_var("HORON_AGENT_TENANT_ID", "acme");
+    crate::logging::init();
+    let log_path = crate::logging::log_path().expect("the sandboxed home resolves a log path");
+
+    let policy = crate::hosting::current().expect("the child process resolved a hosted policy");
+    let error = server_configs(policy, vec![stdio_server("editor", Path::new("/unused"), "serve")])
+        .expect_err("a shared worker refuses the editor's stdio server");
+    assert!(error.contains("hosting policy 'shared-worker'"), "{error}");
+
+    let log = std::fs::read_to_string(&log_path).expect("the audit line is written under the home");
+    let line = log
+        .lines()
+        .find(|line| line.contains("EVENT event=HOSTED_POLICY"))
+        .unwrap_or_else(|| panic!("no HOSTED_POLICY line in {log}"));
+    for field in [
+        "operation=session-mcp-stdio",
+        "policy=shared-worker",
+        "reason=shared-worker",
+        "subject=editor",
+        "tenant=acme",
+    ] {
+        assert!(line.contains(field), "{field} missing from: {line}");
+    }
+}
+
+#[path = "session_mcp_package_tests.rs"]
+mod package_tests;

@@ -3,6 +3,46 @@ use crate::transport::Listener;
 use clap::Parser;
 
 #[test]
+fn continue_selects_latest_unarchived_session_in_workspace() -> Result<()> {
+    use crate::message::{ContentBlock, Role};
+
+    let home = TestHome::new();
+    let workspace = tempfile::tempdir()?;
+    let cwd = workspace.path().canonicalize()?;
+    let other = tempfile::tempdir()?;
+    let home = home._dir.path().canonicalize()?;
+    let baseline = horon_agent_time::Timestamp::now();
+    for (id, path, activity, archived) in [
+        ("session_continue_latest", cwd.as_path(), 2000, false),
+        ("session_continue_older", cwd.as_path(), 1000, false),
+        ("session_continue_archived", cwd.as_path(), 3000, true),
+        ("session_continue_elsewhere", other.path(), 4000, false),
+    ] {
+        let mut session = session::Session::create_with_id(id.to_owned(), None, None);
+        session.working_dir = Some(path.display().to_string());
+        session.add_message(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "saved conversation".to_owned(),
+                cache_control: None,
+            }],
+        );
+        session.last_active_at = Some(baseline + horon_agent_time::Duration::seconds(activity));
+        session.save()?;
+        if archived {
+            session.record_archive(true, "test")?;
+        }
+    }
+    assert_eq!(latest_workspace_session(&home, &cwd)?, "session_continue_latest");
+    let empty = cwd.join("empty");
+    assert_eq!(
+        latest_workspace_session(&home, &empty).unwrap_err().to_string(),
+        format!("No eligible saved session in workspace {}", empty.display())
+    );
+    Ok(())
+}
+
+#[test]
 fn only_file_controlled_debug_clients_need_parent_lifetime_binding() {
     let _lock = crate::storage::lock_test_env();
     let previous = std::env::var_os("HORON_AGENT_DEBUG_CMD_PATH");

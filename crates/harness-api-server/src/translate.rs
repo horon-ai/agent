@@ -1,14 +1,31 @@
 //! Pure JSON-to-JSON translation between the harness API and the legacy
 //! internal protocol. Kept side-effect free so it is trivially unit-testable.
 
+pub(crate) mod a2ui;
 mod cancellable_work;
 mod compact_handoff;
+mod consult;
 mod credentials;
+pub(crate) mod effective_settings;
+pub(crate) mod package_control;
 mod runtime_identity;
 mod search_artifacts;
 mod session_delete;
+mod session_fork;
 mod simple_kind;
+mod support;
+mod todo;
+mod turn_retry;
+#[cfg(test)]
+#[path = "translate/turn_retry_tests.rs"]
+mod turn_retry_tests;
 mod usage_report;
+pub(crate) use turn_retry::refuse_unsupported as refuse_unsupported_retry;
+pub use usage_report::local::{LocalUsage, local_usage};
+
+#[cfg(test)]
+pub(crate) use support::horon_agent_home_test_lock;
+pub use support::legacy_event_may_block;
 
 use crate::background_progress::parse_background_notification;
 use horon_agent_harness_api::{
@@ -24,17 +41,7 @@ use std::sync::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(test)]
-pub(crate) fn horon_agent_home_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// Default number of messages a `peek_session` returns. A preview is a glance,
-/// so this is a tail rather than a transcript: enough to recognise which
-/// conversation it is, few enough that peeking a dozen sessions stays cheap.
+/// A `peek_session` returns a short tail so browsing many sessions stays cheap.
 const PEEK_LIMIT: u64 = 12;
 
 /// Requests the daemon only accepts on an attached (subscribed) connection.
@@ -62,17 +69,24 @@ const REQUIRES_ATTACH: &[&str] = &[
     "compact",
     "rename_session",
     "set_session_saved",
+    "get_effective_settings",
     "get_runtime_info",
     "fork_session",
+    "fork_session_at",
     "transfer_session",
     "read_file",
     "find_files",
     "search_text",
     "file_status",
+    // An operator edit writes the attached session's stored list; a connection
+    // that never attached has no session whose list it could be editing.
+    "set_todo_status",
     "approval_ack",
     "failover_ack",
     "permission_response",
     "ask_response",
+    "configure_a2ui",
+    "a2ui_event",
 ];
 
 const DEFAULT_FILE_BYTES: u64 = 1024 * 1024;
@@ -83,7 +97,7 @@ const MAX_WALK_FILES: usize = 20_000;
 const MAX_WALK_ENTRIES: usize = 50_000;
 const MAX_SEARCH_BYTES: u64 = 64 * 1024 * 1024;
 
-pub(crate) use crate::message_content::flatten_content;
+pub(crate) use crate::message_content::{answer_without_reasoning, flatten_content, history_message};
 use serde_json::{Value, json};
 
 /// Where a translated client request should go.
@@ -104,10 +118,8 @@ pub enum Outbound {
 type SessionFileStatus = (bool, String, Option<u64>, Option<u64>);
 type SessionFileStatusResult = Result<SessionFileStatus, (ErrorCode, String)>;
 
-// Legacy daemon replies are broadcast to every connected client. Request ids
-// must therefore be unique across bridge connections, not merely within one
-// `BridgeState`, or two panels issuing the same numbered request can each
-// mistake the other's reply for their own.
+// Daemon replies reach every connection, so request ids must be unique across
+// bridge connections to keep each reply with the request that caused it.
 static NEXT_LEGACY_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_TEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -119,6 +131,12 @@ pub struct BridgeState {
     pub runtime_commands_supported: bool,
     /// Set only after a safe legacy ping capability probe succeeds.
     pub session_tools_supported: bool,
+    /// The daemon answers `split_at`; used to refuse `fork_session_at` locally.
+    pub session_fork_at_supported: bool,
+    /// The daemon supports `a2ui_v1` capabilities, configuration, and events.
+    pub a2ui_supported: bool,
+    /// Connection-level default A2UI capabilities from `hello.a2ui`.
+    pub default_a2ui: Option<horon_agent_harness_api::A2uiSessionCapabilities>,
     /// The daemon accepts soft interrupt ids and per-id cancellation, and
     /// replies to `background_tool` with a result.
     pub soft_interrupt_ids_supported: bool,
@@ -339,15 +357,6 @@ impl From<&RecentSessionIndexEntry> for PersistedSessionMetadata {
 
 pub(super) use simple_kind::SimpleKind;
 
-/// Whether translating this daemon event may perform synchronous file I/O.
-///
-/// Keep in sync with the arms of [`BridgeState::legacy_event_to_api`] that
-/// read persisted session records or side-panel files. Everything else is
-/// pure in-memory translation and must not pay for `block_in_place`.
-pub fn legacy_event_may_block(event: &Value) -> bool {
-    matches!(event["type"].as_str(), Some("state" | "split_response" | "history"))
-}
-
 impl BridgeState {
     pub(super) fn legacy_id(&mut self) -> u64 {
         NEXT_LEGACY_ID.fetch_add(1, Ordering::Relaxed)
@@ -369,6 +378,7 @@ impl BridgeState {
                     Some(
                         "subscribe"
                             | "clear"
+                            | "configure_a2ui"
                             | "prepare_disconnect"
                             | "notify_auth_changed"
                             | "invalidate_openai_usage"
@@ -408,6 +418,9 @@ impl BridgeState {
     fn translate_request(&mut self, request: &Value) -> Vec<Outbound> {
         let api_id = request["id"].as_u64().unwrap_or(0);
         let req = request["req"].as_str().unwrap_or("");
+        if let Some(reply) = package_control::request(self, request) {
+            return reply;
+        }
         // Stateful requests only mean something once this connection is
         // attached. Forwarding one before then is not merely useless: the
         // daemon answers "Client must Subscribe with a working_dir before
@@ -616,7 +629,19 @@ impl BridgeState {
                     "id": id,
                     "supports_user_response": self.supports_user_response,
                     "supports_ask_requests": self.supports_ask_requests,
+                    // The transcript this bridge serves keys annotations by the
+                    // stored message each row came from. Ask for the ids alone:
+                    // negotiating ACP would also switch on the v2-only event
+                    // surface and the ACP tool bridges, which this client is not.
+                    "history_message_ids": true,
                 });
+                if let Err(reply) = a2ui::attach_subscribe_a2ui(self, &mut subscribe, request, req, api_id) {
+                    self.pending_attach_id = None;
+                    self.pending_attach_subscribe_id = None;
+                    self.pending_model_probe = None;
+                    self.pending_create_dir = None;
+                    return reply;
+                }
                 if self.crash_on_disconnect {
                     subscribe["crash_on_disconnect"] = json!(true);
                 }
@@ -652,11 +677,7 @@ impl BridgeState {
             "send_message" => {
                 let id = self.legacy_id();
                 let no_reply = request["no_reply"].as_bool().unwrap_or(false);
-                if no_reply {
-                    self.pending_no_reply_message_id = Some((id, api_id));
-                } else {
-                    self.pending_message_id = Some(id);
-                }
+                turn_retry::track_send(self, request, id, api_id, no_reply);
                 let mut message = json!({
                     "type": "message",
                     "id": id,
@@ -673,18 +694,13 @@ impl BridgeState {
                 {
                     message["images"] = json!(images);
                 }
+                turn_retry::forward_run_id(&mut message, request);
                 vec![Outbound::Legacy(message)]
             }
-            "fork_session" => {
-                let id = self.legacy_id();
-                self.pending_fork_id = Some((id, api_id));
-                vec![Outbound::Legacy(json!({"type": "split", "id": id}))]
+            "fork_session" | "fork_session_at" | "transfer_session" => {
+                session_fork::request(self, request, api_id, req)
             }
-            "transfer_session" => {
-                let id = self.legacy_id();
-                self.pending_fork_id = Some((id, api_id));
-                vec![Outbound::Legacy(json!({"type": "transfer", "id": id}))]
-            }
+            "configure_a2ui" | "a2ui_event" => a2ui::request(self, request, api_id, req),
             "cancel" => {
                 let id = self.legacy_id();
                 self.pending_simple.push((id, api_id, SimpleKind::Ok));
@@ -747,7 +763,8 @@ impl BridgeState {
             | "export_session_record_blob"
             | "import_session_record_blob"
             | "get_session_record_blob_status"
-            | "export_session_markdown" => crate::replication::handle(request, self.request_envelope_bytes),
+            | "export_session_markdown"
+            | "export_session_html" => crate::replication::handle(request, self.request_envelope_bytes),
             // Answered from the stored record rather than the daemon: the legacy
             // protocol can only speak about the attached session, and attaching
             // merely to read it would disturb the very thing being previewed.
@@ -821,8 +838,7 @@ impl BridgeState {
                 ids.extend(self.user_connected_sessions.iter().cloned());
                 // Titles are deliberately not cached. A rename is persisted
                 // before `SessionRenamed` is broadcast, and every list call
-                // should reflect that newest canonical value even on another
-                // API connection.
+                // should reflect that newest canonical value even on another API connection.
                 let metadata: BTreeMap<String, PersistedSessionMetadata> = ids
                     .iter()
                     .filter_map(|id| {
@@ -1097,41 +1113,9 @@ impl BridgeState {
                     Err((code, message)) => Self::error_reply(api_id, code, &message),
                 }
             }
-            "get_todo_state" => {
-                let session_id = request["session_id"].as_str().unwrap_or_default();
-                match Self::todo_home(session_id) {
-                    Ok(home) => vec![Outbound::Reply(ServerFrame::reply(
-                        api_id,
-                        ApiEvent::TodoState {
-                            session_id: session_id.to_string(),
-                            state: horon_agent_todo_policy::store::load_snapshot(&home, session_id),
-                        },
-                    ))],
-                    Err((code, message)) => Self::error_reply(api_id, code, &message),
-                }
-            }
-            "ack_todo_follow_up" => {
-                let session_id = request["session_id"].as_str().unwrap_or_default();
-                let effects: horon_agent_todo_policy::TodoEffects =
-                    match serde_json::from_value(request["effects"].clone()) {
-                        Ok(effects) => effects,
-                        Err(error) => {
-                            return Self::error_reply(
-                                api_id,
-                                ErrorCode::InvalidRequest,
-                                &format!("invalid effects: {error}"),
-                            );
-                        }
-                    };
-                let result = Self::todo_home(session_id).and_then(|home| {
-                    horon_agent_todo_policy::store::apply_effects(&home, session_id, effects)
-                        .map_err(|error| (ErrorCode::Internal, error.to_string()))
-                });
-                match result {
-                    Ok(()) => vec![Outbound::Reply(ServerFrame::reply(api_id, ApiEvent::Ok))],
-                    Err((code, message)) => Self::error_reply(api_id, code, &message),
-                }
-            }
+            "get_todo_state" => todo::get(api_id, request),
+            "set_todo_status" => todo::set(self, api_id, request),
+            "ack_todo_follow_up" => todo::ack(api_id, request),
             "file_status" => {
                 let session_id = request["session_id"].as_str().unwrap_or_default();
                 let relative = request["path"].as_str().unwrap_or_default();
@@ -1476,6 +1460,7 @@ impl BridgeState {
                     "operation_id": operation_id,
                 }))]
             }
+            "get_effective_settings" => effective_settings::request(self, request, api_id, req),
             "get_snapshot" => {
                 let Some(session_id) = Self::request_session(request, api_id) else {
                     return Self::error_reply(api_id, ErrorCode::InvalidRequest, "session_id must not be empty");
@@ -1649,6 +1634,9 @@ impl BridgeState {
 
     fn translate_legacy_event(&mut self, event: &Value) -> Vec<ServerFrame> {
         let kind = event["type"].as_str().unwrap_or("");
+        if let Some(frames) = package_control::event(self, event) {
+            return frames;
+        }
         if kind == "runtime_command_result" {
             let legacy_id = event["id"].as_u64().unwrap_or(0);
             let Some(api_id) = self.take_simple(legacy_id, SimpleKind::RuntimeCommand) else {
@@ -1978,6 +1966,10 @@ impl BridgeState {
             })],
             "done" => {
                 let id = event["id"].as_u64().unwrap_or(0);
+                if let Some(api_id) = self.take_simple(id, SimpleKind::ConfigureA2ui) {
+                    self.pending_control_done_ids.remove(&id);
+                    return vec![ServerFrame::reply(api_id, ApiEvent::Ok)];
+                }
                 if let Some(api_id) = self.take_simple(id, SimpleKind::Delete) {
                     // A delete is not a turn: answering with `ok` ends the
                     // request, and the transcript is already gone.
@@ -2176,16 +2168,7 @@ impl BridgeState {
                 };
                 let mut messages: Vec<HistoryMessage> = event["messages"]
                     .as_array()
-                    .map(|messages| {
-                        messages
-                            .iter()
-                            .map(|m| HistoryMessage {
-                                response_stats: serde_json::from_value(m["response_stats"].clone()).unwrap_or(None),
-                                role: m["role"].as_str().unwrap_or("").to_string(),
-                                content: m["content"].as_str().unwrap_or("").to_string(),
-                            })
-                            .collect()
-                    })
+                    .map(|messages| messages.iter().map(history_message).collect())
                     .unwrap_or_default();
                 // A stored terminal-looking row can still belong to a running
                 // turn (e.g. an automatic continuation). Do not show a footer yet.
@@ -2358,6 +2341,10 @@ impl BridgeState {
             "todo_changed" => vec![ServerFrame::event(ApiEvent::TodoChanged {
                 session_id: session(self),
             })],
+            "todo_edit_result" => {
+                let attached = session(self);
+                todo::edit_result(self, event, &attached)
+            }
             // Background-task traffic reaches clients as a notification whose
             // body is the markdown the TUI renders. The API refuses to make
             // clients re-derive a progress bar from prose, so the two shapes
@@ -2379,6 +2366,7 @@ impl BridgeState {
                     None => vec![],
                 }
             }
+            "effective_settings" => return effective_settings::reply(self, event),
             "runtime_state" => {
                 let id = event["id"].as_u64().unwrap_or(0);
                 let Some(api_id) = self.take_simple(id, SimpleKind::RuntimeState) else {
@@ -2498,8 +2486,9 @@ impl BridgeState {
                     return vec![];
                 };
                 let (_, api_id, kind) = self.pending_simple.remove(index);
+                self.observed_turn_active |= matches!(kind, SimpleKind::ContinueRun);
                 match kind {
-                    SimpleKind::Ok | SimpleKind::ToolControl => {
+                    SimpleKind::Ok | SimpleKind::ToolControl | SimpleKind::ContinueRun => {
                         vec![ServerFrame::reply(api_id, ApiEvent::Ok)]
                     }
                     SimpleKind::Credential { provider, configured } => vec![ServerFrame::reply(
@@ -2514,12 +2503,13 @@ impl BridgeState {
                 }
             }
             "error" => {
-                // A rejected tool configuration/result is not a failed model
-                // turn. Preserve streaming state and correlate only its request.
+                // Tool and retry refusals leave the current turn untouched.
                 let id = event["id"].as_u64().unwrap_or(0);
-                if let Some(index) = self.pending_simple.iter().position(|(pending_id, _, kind)| {
-                    *pending_id == id && matches!(kind, SimpleKind::Tools | SimpleKind::ToolControl)
-                }) {
+                if let Some(index) = self
+                    .pending_simple
+                    .iter()
+                    .position(|(pending_id, _, kind)| *pending_id == id && kind.error_is_reply_only())
+                {
                     let (_, api_id, _) = self.pending_simple.remove(index);
                     return vec![ServerFrame::reply(
                         api_id,
@@ -2532,7 +2522,6 @@ impl BridgeState {
                 }
                 self.activity_version += 1;
                 self.observed_turn_active = false;
-                let id = event["id"].as_u64().unwrap_or(0);
                 self.pending_control_done_ids.remove(&id);
                 self.pending_activity_snapshots.remove(&id);
                 if let Some((state_id, api_id, target)) = self.pending_attach_id.as_ref()
@@ -2627,6 +2616,9 @@ impl BridgeState {
                     client_ids,
                     point: event["point"].as_str().unwrap_or("").to_string(),
                     tools_skipped: event["tools_skipped"].as_u64().map(|n| n as u32),
+                    notice: (event["point"].as_str() == Some("native_tool_retry"))
+                        .then(|| event["content"].as_str().map(str::to_string))
+                        .flatten(),
                     display_role: event["display_role"].as_str().map(str::to_string),
                 }));
                 frames
@@ -2762,6 +2754,7 @@ impl BridgeState {
                     attempt: event["attempt"].as_u64().map(|n| n as u32).unwrap_or(0),
                 })]
             }
+            "a2ui_envelope" => a2ui::event(self, event),
             // Everything else on the legacy stream is not part of the stable
             // API surface yet; drop it.
             _ => vec![],
@@ -2992,13 +2985,6 @@ impl BridgeState {
     }
 
     /// HoronAgent home for a todo-state request, rejecting ids unsafe for a path.
-    fn todo_home(session_id: &str) -> Result<std::path::PathBuf, (ErrorCode, String)> {
-        if !horon_agent_todo_policy::store::is_safe_session_id(session_id) {
-            return Err((ErrorCode::InvalidRequest, "invalid session_id".to_string()));
-        }
-        Self::horon_agent_home().ok_or_else(|| (ErrorCode::Internal, "no horon-agent home".to_string()))
-    }
-
     pub(crate) fn horon_agent_home() -> Option<std::path::PathBuf> {
         std::env::var_os("HORON_HOME")
             .map(std::path::PathBuf::from)
@@ -3648,6 +3634,8 @@ impl BridgeState {
                     response_stats: None,
                     role: role.to_string(),
                     content,
+                    answer: answer_without_reasoning(&message["content"]),
+                    message_id: message["id"].as_str().map(str::to_string),
                 })
             })
             .take(limit)
@@ -3997,3 +3985,6 @@ mod replication_tests;
 #[cfg(test)]
 #[path = "history_page_perf_tests.rs"]
 mod history_page_perf_tests;
+
+#[cfg(test)]
+mod todo_tests;

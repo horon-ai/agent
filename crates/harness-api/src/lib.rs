@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 mod client;
 mod edit_stats;
+mod effective_settings;
 mod events;
 mod handoff;
 mod message_modes;
@@ -29,15 +30,23 @@ pub use handoff::*;
 pub mod replication;
 mod requests;
 mod runtime_commands;
-pub use runtime_commands::{RuntimeCommand, RuntimeCommandOutput};
+pub use runtime_commands::{
+    PackageCommandInfo, PackageCommandKind, PackageCommandList, PackageCommandOutcome, RuntimeCommand,
+    RuntimeCommandOutput,
+};
 pub mod degradation;
 mod sockets;
 mod swarm_metadata;
 
 pub use client::{FrameError, HarnessClient, MAX_FRAME_BYTES, read_frame, write_frame};
+pub use effective_settings::{EffectiveSetting, SettingSource};
 pub use events::*;
 pub use horon_agent_session_types::TurnStopReason;
 pub use horon_agent_tool_types::ToolVerdict;
+pub use horon_agent_tool_types::a2ui::{
+    A2UI_BASIC_CATALOG_V1_0, A2UI_MIME_TYPE, A2UI_URI_SCHEME, A2UI_VERSION_V0_9, A2UI_VERSION_V1_0,
+    A2uiSessionCapabilities,
+};
 pub use horon_agent_usage_types::{ModelUsage, compare_model_usage};
 pub use message_modes::MessageModes;
 pub use replication::*;
@@ -46,11 +55,18 @@ pub use sockets::{api_socket_path, legacy_socket_path, runtime_dir};
 pub use swarm_metadata::{enrich_sessions_from_local_swarm_state, enrich_sessions_from_swarm_state};
 
 #[cfg(test)]
+#[path = "harness_api_tests/effective_settings_snapshot.rs"]
+mod effective_settings_snapshot_tests;
+#[cfg(test)]
 #[path = "harness_api_tests/message_modes_snapshot.rs"]
 mod message_modes_snapshot_tests;
 #[cfg(test)]
 #[path = "harness_api_tests/schema_snapshot.rs"]
 mod schema_snapshot_tests;
+
+#[cfg(test)]
+#[path = "harness_api_tests/todo_edit_snapshot.rs"]
+mod todo_edit_snapshot_tests;
 
 #[cfg(test)]
 #[path = "harness_api_tests/cancellable_work_snapshot.rs"]
@@ -68,10 +84,22 @@ mod optional_field_tests;
 #[path = "harness_api_tests/tool_done_verdict.rs"]
 mod tool_done_verdict_tests;
 
+#[cfg(test)]
+mod a2ui_tests;
+
+/// The package-management request and receipt a client exchanges with the
+/// daemon's catalog. Defined once, beside the manifest declarations the
+/// installer validates, so the daemon, the bridge, both SDKs and the CLI cannot
+/// drift apart.
+pub use horon_agent_extension_types::control::{
+    PackageControlOperation, PackageControlReceipt, PackageControlRequest, PackageControlScope, PackageControlState,
+    PackageInboxSkip, PackageSummary,
+};
+
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 24;
+pub const API_VERSION_MINOR: u32 = 32;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -109,6 +137,68 @@ pub const CAPABILITY_CANCELLABLE_WORK_V1: &str = "cancellable_work_v1";
 pub const CAPABILITY_BACKGROUND_OUTPUT_V1: &str = "background_output_v1";
 /// Receive invalidations for the attached session's committed todo list.
 pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
+/// A client can read the small allow-list of daemon values a settings screen
+/// displays, each with the layer that supplied it. Gates
+/// `get_effective_settings`.
+///
+/// The bridge advertises this unconditionally and forwards the request to the
+/// daemon, which owns the configuration the session runs with. A daemon that
+/// predates the request is answered `unsupported` with this capability named,
+/// which the client turns into "this daemon does not report its settings" — the
+/// same state an older bridge produces by not advertising the capability at
+/// all. The reply never carries a value outside the allow-list, so no credential
+/// and no raw file text can travel however the config file is written.
+pub const CAPABILITY_EFFECTIVE_SETTINGS_V1: &str = "effective_settings_v1";
+/// `fork_session` accepts `consult` and `boundary`: the daemon stores the
+/// read-only classification and resolves the boundary before answering.
+pub const CAPABILITY_CONSULT_FORK_V1: &str = "consult_fork_v1";
+/// A client can manage the daemon's package catalog: install, disable, enable,
+/// remove, sync the inbox and read the published generation. Gates
+/// `package_control` and the `package_control` reply.
+///
+/// Advertised only when the daemon answered its capability probe with
+/// `package_control`, because the daemon owns the catalog: a bridge alone cannot
+/// serve the request, and forwarding it to a daemon that predates the request
+/// would park the client until its own timeout.
+pub const CAPABILITY_PACKAGE_CONTROL_V1: &str = "package_control_v1";
+/// A client can list and run the slash commands installed packages supply.
+/// Gates `runtime_command` with the `package_commands` and `package_command`
+/// values and the matching `runtime_command_result` payloads.
+///
+/// The commands ride the runtime-command request rather than a request of their
+/// own, so an older client never sends one and keeps its existing surface. The
+/// bridge advertises this only when the daemon reported `runtime_commands`:
+/// without that, the daemon answers the request with an error no client can
+/// correlate, which reads as a timeout.
+pub const CAPABILITY_PACKAGE_COMMANDS_V1: &str = "package_commands_v1";
+/// A client can fork a new idle session from a message boundary the source
+/// session still records. Gates `fork_session_at`.
+///
+/// The daemon resolves the boundary against the source's selected head and
+/// refuses one it no longer records, so a stale picker gets an error and the
+/// attached session is untouched. The bridge advertises the surface
+/// unconditionally; a daemon that cannot serve it is refused with a structured
+/// `unsupported` reply naming this capability.
+pub const CAPABILITY_SESSION_FORK_AT_V1: &str = "session_fork_at_v1";
+/// Change one todo item's status in the attached session's stored list, with
+/// the revision the client last read checked before the write. Gates
+/// `set_todo_status`.
+///
+/// The write is the stored list itself, not a message to the agent: no turn
+/// starts and no model prompt is injected. A server that does not advertise
+/// this leaves the list readable and uneditable, which is what an older bridge
+/// serves.
+pub const CAPABILITY_TODO_EDIT_V1: &str = "todo_edit_v1";
+
+/// A `send_message` carrying `expected_run_id` continues the run it names, and
+/// the daemon decides under the session lock whether that run may still be
+/// continued.
+///
+/// The field is optional on the request, so a daemon without this capability
+/// would ignore it and run an ordinary turn against a stale run: the duplicate
+/// turn the field exists to prevent. A client therefore asks the daemon to
+/// continue a run only when this capability is advertised.
+pub const CAPABILITY_TURN_RETRY_V1: &str = "turn_retry_v1";
 
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
@@ -120,6 +210,10 @@ pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
 ///
 /// An empty surface list is deliberate and not an omission: `monitor_v1`
 /// describes how to read an existing result rather than gating a method.
+/// Client can advertise A2UI v1.0 renderer capabilities and exchange A2UI
+/// configuration, surface envelopes, and user action events (`a2ui_v1`).
+pub const CAPABILITY_A2UI_V1: &str = "a2ui_v1";
+
 pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (
         CAPABILITY_DURABLE_RUNTIME_V1,
@@ -139,6 +233,30 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     ),
     (CAPABILITY_BACKGROUND_OUTPUT_V1, &["background_output"]),
     (CAPABILITY_LIVE_TODO_V1, &["todo_changed"]),
+    (CAPABILITY_EFFECTIVE_SETTINGS_V1, &["get_effective_settings"]),
+    (CAPABILITY_PACKAGE_CONTROL_V1, &["package_control"]),
+    (
+        CAPABILITY_PACKAGE_COMMANDS_V1,
+        &["runtime_command.package_commands", "runtime_command.package_command"],
+    ),
+    (CAPABILITY_SESSION_FORK_AT_V1, &["fork_session_at"]),
+    (CAPABILITY_TODO_EDIT_V1, &["set_todo_status"]),
+    (CAPABILITY_TURN_RETRY_V1, &["send_message.expected_run_id"]),
+    (
+        CAPABILITY_CONSULT_FORK_V1,
+        &["fork_session.consult", "fork_session.boundary"],
+    ),
+    (
+        CAPABILITY_A2UI_V1,
+        &[
+            "hello.a2ui",
+            "create_session.a2ui",
+            "attach_session.a2ui",
+            "configure_a2ui",
+            "a2ui_event",
+            "a2ui_envelope",
+        ],
+    ),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -150,13 +268,25 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_CANCELLABLE_WORK_V1,
     CAPABILITY_BACKGROUND_OUTPUT_V1,
     CAPABILITY_LIVE_TODO_V1,
+    CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    CAPABILITY_PACKAGE_CONTROL_V1,
+    CAPABILITY_PACKAGE_COMMANDS_V1,
+    CAPABILITY_SESSION_FORK_AT_V1,
+    CAPABILITY_TODO_EDIT_V1,
+    CAPABILITY_TURN_RETRY_V1,
+    CAPABILITY_CONSULT_FORK_V1,
+    CAPABILITY_A2UI_V1,
 ];
 
 /// The event capabilities a connection opts into at handshake.
 ///
 /// A client requests these in `hello.event_capabilities`. The bridge echoes
 /// only capabilities that the daemon also supports.
-pub const OPT_IN_EVENT_CAPABILITIES: &[&str] = &[CAPABILITY_BACKGROUND_OUTPUT_V1, CAPABILITY_LIVE_TODO_V1];
+pub const OPT_IN_EVENT_CAPABILITIES: &[&str] = &[
+    CAPABILITY_BACKGROUND_OUTPUT_V1,
+    CAPABILITY_LIVE_TODO_V1,
+    CAPABILITY_A2UI_V1,
+];
 
 /// The structured refusal for a request this server cannot serve.
 ///

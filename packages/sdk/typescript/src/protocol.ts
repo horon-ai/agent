@@ -8,7 +8,19 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 24;
+export const API_VERSION_MINOR = 32;
+
+export const A2UI_VERSION_V1_0 = "1.0" as const;
+export const A2UI_VERSION_V0_9 = "v0.9" as const;
+export const A2UI_BASIC_CATALOG_V1_0 = "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json" as const;
+export const A2UI_MIME_TYPE = "application/a2ui+json" as const;
+export const A2UI_URI_SCHEME = "a2ui" as const;
+
+export interface A2uiSessionCapabilities {
+  version: string;
+  supported_catalog_ids: string[];
+  accepts_inline_catalogs: boolean;
+}
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -23,18 +35,26 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["monitor_v1", []],
   ["snapshot_marker_v1", ["get_snapshot", "snapshot_marker"]],
   ["ask_receipts_v1", ["ask_response.answer_id"]],
-  [
-    "cancellable_work_v1",
-    ["cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"],
-  ],
+  ["cancellable_work_v1", ["cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"]],
   ["background_output_v1", ["background_output"]],
   ["live_todo_v1", ["todo_changed"]],
+  ["effective_settings_v1", ["get_effective_settings"]],
+  ["package_control_v1", ["package_control"]],
+  ["package_commands_v1", ["runtime_command.package_commands", "runtime_command.package_command"]],
+  ["session_fork_at_v1", ["fork_session_at"]],
+  ["todo_edit_v1", ["set_todo_status"]],
+  ["turn_retry_v1", ["send_message.expected_run_id"]],
+  ["consult_fork_v1", ["fork_session.consult", "fork_session.boundary"]],
+  [
+    "a2ui_v1",
+    ["hello.a2ui", "create_session.a2ui", "attach_session.a2ui", "configure_a2ui", "a2ui_event", "a2ui_envelope"],
+  ],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
 export const ADVERTISED_CAPABILITIES: readonly string[] = CAPABILITY_SURFACES.map(([capability]) => capability);
 
-export const EVENT_CAPABILITIES = ["background_output_v1", "live_todo_v1"] as const;
+export const EVENT_CAPABILITIES = ["background_output_v1", "live_todo_v1", "a2ui_v1"] as const;
 
 export type RuntimeCommand =
   | "skills"
@@ -43,7 +63,9 @@ export type RuntimeCommand =
   | "memory"
   | "swarm"
   | "agents"
+  | "modelpreset"
   | "subagent_model"
+  | "trim"
   | "autoreview"
   | "autojudge"
   | "transport"
@@ -61,7 +83,56 @@ export type RuntimeCommand =
   | "subagent"
   | "auth"
   | "logout"
-  | "plan";
+  | "plan"
+  | "observations"
+  | "goal"
+  | "advisor"
+  | "dirs"
+  | "mcp"
+  | "package_commands"
+  | "package_command";
+
+/** How one package command runs: a Markdown template or a child process. */
+export type PackageCommandKind = "template" | "executable";
+
+/**
+ * One slash command an installed package supplies.
+ *
+ * `name` is what a user types after the slash, `<package id>:<command>`, and
+ * the entries belong to the package generation the session observes.
+ */
+export interface PackageCommandInfo {
+  name: string;
+  package_id: string;
+  command: string;
+  kind: PackageCommandKind;
+  description: string;
+  argument_hint?: string;
+}
+
+/** The reply to a `package_commands` runtime command. */
+export interface PackageCommandList {
+  /** The package catalog generation the entries were read at; 0 for none. */
+  generation: number;
+  commands: PackageCommandInfo[];
+}
+
+/**
+ * The reply to a `package_command` runtime command.
+ *
+ * A template sets `text`, the user message it expands to; an executable
+ * command sets `output` and the child's `data` after the tool policy allowed
+ * the call.
+ */
+export interface PackageCommandOutcome {
+  name: string;
+  package_id: string;
+  command: string;
+  kind: PackageCommandKind;
+  text?: string;
+  output?: string;
+  data?: unknown;
+}
 
 export type PermissionDecision = "allow" | "allow_always" | "deny";
 
@@ -90,12 +161,7 @@ export interface AskSelection {
 }
 
 export type ErrorCode =
-  | "unsupported_version"
-  | "unknown_request"
-  | "unknown_session"
-  | "invalid_request"
-  | "internal"
-  | "unsupported";
+  "unsupported_version" | "unknown_request" | "unknown_session" | "invalid_request" | "internal" | "unsupported";
 
 /** Cumulative built-in file-tool changes, not net worktree diff. */
 export interface SessionEditStats {
@@ -184,6 +250,10 @@ export interface TodoEffects {
   mark_long_session_review_delivered?: boolean;
 }
 
+/** Why a revision-checked todo status edit was refused. The reply still
+ * carries the current list and revision, so the client refreshes from it. */
+export type TodoEditRefusal = "stale_revision" | "unknown_item" | "invalid_status" | "invalid_blocker";
+
 /** Durable raw provider counts summed over all assistant rounds in one user turn.
  * Missing metrics are unknown, not zero. Cache accounting differs by provider.
  * Restored duration is currently unavailable. */
@@ -226,6 +296,18 @@ export interface HistoryMessage {
   /** "user" | "assistant" | "tool" */
   role: string;
   content: string;
+  /**
+   * Visible answer of an assistant row that also carries a reasoning trace.
+   * `content` keeps its historical value (every typed block joined);
+   * `answer` joins only `text` blocks and is absent on other rows.
+   */
+  answer?: string;
+  /**
+   * The session's stored id for the message this row shows, when the client
+   * asked for stored message ids and the daemon rendered the row from one.
+   * Absent on rows from a daemon that reports none, and on synthetic rows.
+   */
+  message_id?: string;
 }
 
 /** Durable token usage for one session. A metric no request recorded is `null`. */
@@ -336,6 +418,69 @@ export interface MessageModes {
   steering_mode: string;
   /** Whether a queued message waits for the running tool call or stops it. */
   interrupt_mode: string;
+}
+
+/** Where a package is enabled. */
+export type PackageControlScope = { kind: "global" } | { kind: "project"; root: string };
+
+/** What a management client asks the daemon's package catalog to do. */
+export type PackageControlOperation =
+  | { kind: "install"; directory: string; scope: PackageControlScope; replace?: boolean }
+  | { kind: "disable"; id: string }
+  | { kind: "enable"; id: string }
+  | { kind: "remove"; id: string }
+  | { kind: "sync_inbox" }
+  | { kind: "status" };
+
+export type PackageControlState = "installed" | "disabled" | "revoked";
+
+/** One catalog record as a management client sees it. */
+export interface PackageSummary {
+  kind: "extension" | "plugin";
+  id: string;
+  version: string;
+  name: string;
+  scope: PackageControlScope;
+  state: PackageControlState;
+  generation: number;
+}
+
+/** One inbox entry a pass left in place, with the reason. */
+export interface PackageInboxSkip {
+  name: string;
+  reason: string;
+}
+
+/** The authoritative answer to one `package_control` request. */
+export interface PackageControlReceipt {
+  operation_id: string;
+  generation: number;
+  replayed?: boolean;
+  changed?: string[];
+  skipped?: PackageInboxSkip[];
+  catalog: PackageSummary[];
+}
+
+/**
+ * Where one effective-setting value came from.
+ *
+ * Stable spellings, not prose: a client maps them to its own words and prints
+ * `origin` (a flag, a file path or a variable name) beside them.
+ */
+export type SettingSource = "default" | "cli" | "file" | "env";
+
+/** One daemon value a settings screen may display. */
+export interface EffectiveSetting {
+  /** Dotted config path, e.g. `provider.stream_idle_timeout_secs`. */
+  key: string;
+  /** Human-readable name for the row. */
+  label: string;
+  /** The value in force, as the screen prints it. */
+  value: string;
+  /** The layer that supplied it. */
+  source: SettingSource;
+  /** File path or variable name `source` points at; absent for `default`. */
+  origin?: string;
 }
 
 /** Wire-level session tool policy. Callback functions never cross the wire. */
@@ -529,13 +674,7 @@ export interface RuntimeStopSummary {
 }
 
 /** What is known about one control operation. */
-export type RuntimeControlOutcome =
-  | "applying"
-  | "terminal"
-  | "replay"
-  | "conflict"
-  | "unknown"
-  | "indeterminate";
+export type RuntimeControlOutcome = "applying" | "terminal" | "replay" | "conflict" | "unknown" | "indeterminate";
 
 export interface RuntimeControlReceipt {
   operation_id: string;
@@ -600,20 +739,30 @@ export type ApiRequest =
       supports_user_response?: boolean;
       supports_ask_requests?: boolean;
       event_capabilities?: readonly string[];
+      a2ui?: A2uiSessionCapabilities;
     }
   | { req: "list_sessions"; include_archived?: boolean; limit?: number }
   | { req: "archive_session"; session_id: string }
   | { req: "restore_session"; session_id: string }
   | { req: "delete_session"; session_id: string; confirm?: boolean }
   | { req: "set_retention_policy"; archive_after_days?: number }
-  | { req: "create_session"; working_dir?: string; system_prompt?: string }
-  | { req: "attach_session"; session_id: string }
-  | { req: "fork_session"; session_id: string }
+  | { req: "create_session"; working_dir?: string; system_prompt?: string; a2ui?: A2uiSessionCapabilities }
+  | { req: "attach_session"; session_id: string; a2ui?: A2uiSessionCapabilities }
+  | {
+      req: "fork_session";
+      session_id: string;
+      /** Create a read-only consult child; stored before the reply. */
+      consult?: boolean;
+      /** Stored message id the child stops before; a stale id is refused. */
+      boundary?: string;
+    }
+  | { req: "fork_session_at"; session_id: string; boundary_message_id: string }
   | { req: "transfer_session"; session_id: string }
   | { req: "detach_session"; session_id: string }
   | { req: "configure_tools"; session_id: string; tools: ToolConfiguration }
   | { req: "list_tools"; session_id: string }
   | { req: "get_message_modes"; session_id: string }
+  | { req: "get_effective_settings"; session_id: string }
   | { req: "tool_result"; session_id: string; call_id: string; output: string; error?: string }
   | {
       req: "send_message";
@@ -622,6 +771,7 @@ export type ApiRequest =
       images?: ImageAttachment[];
       no_reply?: boolean;
       system_reminder?: string;
+      expected_run_id?: string;
     }
   | { req: "cancel"; session_id: string }
   | {
@@ -687,6 +837,16 @@ export type ApiRequest =
   | { req: "list_artifacts"; session_id: string }
   | { req: "get_todo_state"; session_id: string }
   | { req: "ack_todo_follow_up"; session_id: string; effects: TodoEffects }
+  /** Change one item's status only if the list is still `expected_revision`.
+   * A stale list answers `todo_edit_result` with `applied: false` and the
+   * current list; nothing is written. */
+  | {
+      req: "set_todo_status";
+      session_id: string;
+      expected_revision: string;
+      todo_id: string;
+      status: string;
+    }
   | { req: "set_model"; session_id: string; model: string }
   | { req: "set_reasoning_effort"; session_id: string; effort: string }
   | { req: "compact"; session_id: string; method?: "handoff" }
@@ -715,6 +875,7 @@ export type ApiRequest =
       cursor?: string;
     }
   | { req: "export_session_markdown"; session_id: string }
+  | { req: "export_session_html"; session_id: string }
   | {
       req: "import_session_events";
       session_id: string;
@@ -785,7 +946,15 @@ export type ApiRequest =
    * connection by the matching `snapshot_marker`.
    */
   | { req: "get_snapshot"; session_id: string; tail?: number; max_bytes?: number }
-  | { req: "ping" };
+  | { req: "ping" }
+  /**
+   * Requires `package_control_v1`. Needs no attached session: the catalog belongs
+   * to the daemon. Reusing `operation_id` reports the recorded result instead of
+   * applying the operation twice.
+   */
+  | { req: "package_control"; operation_id: string; operation: PackageControlOperation }
+  | { req: "configure_a2ui"; session_id: string; capabilities?: A2uiSessionCapabilities | null }
+  | { req: "a2ui_event"; session_id: string; envelope: unknown; data_model?: unknown };
 
 /** What a `compactHandoff` request did. */
 export type CompactHandoffOutcome =
@@ -814,6 +983,16 @@ export type ApiEvent =
   | { ev: "tool_exec"; session_id: string; call_id: string; name: string }
   | { ev: "tools"; session_id: string; tools: SessionToolDefinition[] }
   | { ev: "message_modes"; session_id: string; modes: MessageModes }
+  | { ev: "effective_settings"; session_id: string; settings: EffectiveSetting[] }
+  | { ev: "package_control"; receipt: PackageControlReceipt }
+  | {
+      ev: "a2ui_envelope";
+      session_id: string;
+      tool_call_id: string;
+      sequence: number;
+      envelope: unknown;
+      fallback_text?: string;
+    }
   | { ev: "tool_call"; session_id: string; call_id: string; name: string; input: unknown }
   | {
       ev: "tool_done";
@@ -874,6 +1053,7 @@ export type ApiEvent =
       client_ids: string[];
       point: string;
       tools_skipped?: number;
+      notice?: string;
       display_role?: string;
     }
   /** Reply to a filtered `cancel_soft_interrupts`. Decided atomically against delivery. */
@@ -998,7 +1178,15 @@ export type ApiEvent =
       size?: number;
       modified_ms?: number;
     }
-  | { ev: "todo_state"; session_id: string; state: TodoSnapshot }
+  | { ev: "todo_state"; session_id: string; state: TodoSnapshot; revision?: string }
+  | {
+      ev: "todo_edit_result";
+      session_id: string;
+      applied: boolean;
+      refusal?: TodoEditRefusal;
+      state: TodoSnapshot;
+      revision: string;
+    }
   | { ev: "background_output"; session_id: string; text: string }
   | { ev: "todo_changed"; session_id: string }
   | { ev: "session_search_results"; query: string; results: SessionSearchHit[] }
@@ -1019,6 +1207,7 @@ export type ApiEvent =
     }
   | { ev: "session_heads"; session_id: string; heads: string[]; selected_head?: string }
   | { ev: "session_markdown"; session_id: string; markdown: string }
+  | { ev: "session_html"; session_id: string; html: string }
   | {
       ev: "session_history_page";
       session_id: string;
@@ -1053,7 +1242,14 @@ export type ApiEvent =
       total_size: number;
       complete: boolean;
     }
-  | { ev: "session_blob_status"; session_id: string; sha256: string; received: number; total_size: number; complete: boolean }
+  | {
+      ev: "session_blob_status";
+      session_id: string;
+      sha256: string;
+      received: number;
+      total_size: number;
+      complete: boolean;
+    }
   | {
       ev: "session_record_blob_status";
       session_id: string;
@@ -1133,6 +1329,8 @@ export const KNOWN_EVENT_KINDS = [
   "tool_start",
   "tools",
   "message_modes",
+  "effective_settings",
+  "package_control",
   "tool_call",
   "tool_input_delta",
   "tool_exec",
@@ -1169,6 +1367,7 @@ export const KNOWN_EVENT_KINDS = [
   "text_matches",
   "file_status",
   "todo_state",
+  "todo_edit_result",
   "background_output",
   "todo_changed",
   "session_search_results",
@@ -1179,6 +1378,7 @@ export const KNOWN_EVENT_KINDS = [
   "session_heads",
   "session_history_page",
   "session_markdown",
+  "session_html",
   "session_event_page",
   "session_import_result",
   "session_blob_chunk",
@@ -1191,6 +1391,7 @@ export const KNOWN_EVENT_KINDS = [
   "cancel_turn_result",
   "tool_call_cancel_result",
   "background_work_list",
+  "a2ui_envelope",
 ] as const;
 
 /** Every request tag the SDK can send. */
@@ -1205,11 +1406,13 @@ export const KNOWN_REQUEST_KINDS = [
   "create_session",
   "attach_session",
   "fork_session",
+  "fork_session_at",
   "transfer_session",
   "detach_session",
   "configure_tools",
   "list_tools",
   "get_message_modes",
+  "get_effective_settings",
   "tool_result",
   "send_message",
   "cancel",
@@ -1237,6 +1440,7 @@ export const KNOWN_REQUEST_KINDS = [
   "list_artifacts",
   "get_todo_state",
   "ack_todo_follow_up",
+  "set_todo_status",
   "set_model",
   "set_reasoning_effort",
   "compact",
@@ -1265,7 +1469,11 @@ export const KNOWN_REQUEST_KINDS = [
   "cancel_background_terminal",
   "list_background_work",
   "ping",
+  "package_control",
   "export_session_markdown",
+  "export_session_html",
+  "configure_a2ui",
+  "a2ui_event",
 ] as const;
 
 export function isKnownEvent(frame: AnyApiEvent): frame is ApiEvent {

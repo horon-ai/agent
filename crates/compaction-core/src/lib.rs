@@ -6,7 +6,10 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
 pub mod handoff_frame;
+mod payload_error;
 pub mod pruning;
+use payload_error::contains_independent_status_code;
+pub use payload_error::is_request_payload_too_large_error;
 
 /// Default token budget (200k tokens - matches Claude's actual context limit)
 pub const DEFAULT_TOKEN_BUDGET: usize = 200_000;
@@ -541,6 +544,11 @@ pub fn build_compaction_conversation_text(messages: &[Message], existing_summary
                 ContentBlock::Image { .. } => conversation_text.push_str("[Image]\n"),
                 ContentBlock::Audio { .. } => conversation_text.push_str("[audio]\n"),
                 ContentBlock::OpenAICompaction { .. } => conversation_text.push_str("[OpenAI native compaction]\n"),
+                a2ui @ ContentBlock::A2ui { .. } => {
+                    if let Some(summary) = a2ui.a2ui_model_summary() {
+                        conversation_text.push_str(&format!("{summary}\n"));
+                    }
+                }
             }
         }
         conversation_text.push('\n');
@@ -711,6 +719,10 @@ fn block_token_count(block: &ContentBlock, family: TokenFamily) -> usize {
         }
         ContentBlock::ToolReference { tool_name, .. } => estimate_tokens_for_family(tool_name, family),
         ContentBlock::ProviderNative { item, .. } => estimate_tokens_for_family(&item.to_string(), family),
+        a2ui @ ContentBlock::A2ui { .. } => a2ui
+            .a2ui_model_summary()
+            .as_deref()
+            .map_or(0, |summary| estimate_tokens_for_family(summary, family)),
     }
 }
 
@@ -747,6 +759,10 @@ pub fn content_char_count(content: &[ContentBlock]) -> usize {
             // Search results are billed as input tokens on replay; the raw JSON
             // (mostly encrypted page content) is a reasonable size proxy.
             ContentBlock::ProviderNative { item, .. } => item.to_string().len(),
+            ContentBlock::A2ui {
+                envelopes,
+                fallback_text,
+            } => envelopes.iter().map(json_len).sum::<usize>() + fallback_text.as_deref().map_or(0, str::len),
         })
         .sum()
 }
@@ -1114,37 +1130,6 @@ pub fn strip_all_images_in_contents(contents: &mut [&mut Vec<ContentBlock>]) -> 
         }
     }
     stripped
-}
-
-/// Whether a provider error indicates the *serialized request body* was too
-/// large (HTTP 413), as distinct from exceeding the model's token context
-/// window. Anthropic surfaces this as `request_too_large` / "Request exceeds the
-/// maximum size" / "413 Payload Too Large"; OpenAI and gateways use similar
-/// wording. This failure mode is dominated by inline base64 images, which the
-/// token-budget accounting deliberately undercounts, so it needs a dedicated
-/// byte-size recovery rather than ordinary context compaction.
-pub fn is_request_payload_too_large_error(error: &str) -> bool {
-    let lower = error.to_ascii_lowercase();
-    lower.contains("request_too_large")
-        || lower.contains("request too large")
-        || lower.contains("payload too large")
-        || lower.contains("request entity too large")
-        || lower.contains("request exceeds the maximum size")
-        || lower.contains("exceeds the maximum size")
-        || contains_independent_status_code(&lower, "413")
-}
-
-/// Whether `haystack` contains `code` as a standalone status code rather than as
-/// a fragment of a longer number (so "413" matches but "4130"/"version 4131"
-/// does not). Mirrors the failover classifier's guard.
-fn contains_independent_status_code(haystack: &str, code: &str) -> bool {
-    let bytes = haystack.as_bytes();
-    haystack.match_indices(code).any(|(start, _)| {
-        let before_ok = start == 0 || !bytes[start - 1].is_ascii_digit();
-        let end = start + code.len();
-        let after_ok = end == bytes.len() || !bytes[end].is_ascii_digit();
-        before_ok && after_ok
-    })
 }
 
 /// Strip oversized inline images from `messages`, oldest-first, until the total

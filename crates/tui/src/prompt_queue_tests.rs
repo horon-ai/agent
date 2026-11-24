@@ -14,6 +14,7 @@ use toml::Table;
 
 use crate::app::{Action, App};
 use crate::keys::Bindings;
+use crate::overlays::picker::Kind;
 use crate::prompts::Prompt;
 use crate::sdk_bridge::Incoming;
 use crate::transcript::Item;
@@ -592,16 +593,15 @@ fn an_answer_line_never_claims_the_call_ran() {
 }
 
 #[test]
-fn a_prompt_does_not_swallow_the_key_that_leaves() {
+fn a_parked_prompt_keeps_ctrl_d_and_accepts_ctrl_c() {
     let mut app = app();
     app.apply_event(&approval_pending("r1", "bash"));
-    // The prompt takes every other key, but a client whose only exit is
-    // swallowed is a client the user cannot leave.
+    // The default draft shortcut keeps the parked prompt open.
     assert_eq!(
         app.on_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)),
-        Some(Action::Quit)
+        None
     );
-    assert!(app.prompt.is_some(), "leaving the client answered the prompt");
+    assert!(app.prompt.is_some(), "ctrl-d dismissed the prompt");
 
     app.pending_turn = true;
     assert_eq!(
@@ -854,5 +854,272 @@ fn a_resolved_allow_without_a_local_key_reads_allowed() {
     assert!(
         !text.contains("allowed always"),
         "an event that cannot say `always` claimed it:\n{text}"
+    );
+}
+
+// A typed line into a whole app, for the queue list: `pending_turn` decides
+// whether it is sent or waits, and typing never produces an action of its own.
+fn submit(app: &mut App, text: &str) -> Option<Action> {
+    for character in text.chars() {
+        let pressed = KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE);
+        assert!(app.on_key(pressed).is_none(), "typing `{character}` produced an action");
+    }
+    app.on_key(key(KeyCode::Enter))
+}
+
+fn alt(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::ALT)
+}
+
+/// The queue as the user sees it, in dispatch order.
+fn waiting(app: &App) -> Vec<String> {
+    app.queue.iter().map(|message| message.display.clone()).collect()
+}
+
+/// The rows still claiming that a message waits for the turn to end.
+fn waiting_rows(app: &App) -> Vec<String> {
+    app.transcript
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            Item::Queued(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn open_queue(app: &mut App) {
+    assert_eq!(submit(app, "/queue"), None, "opening the queue sent something");
+    assert_eq!(
+        app.picker.as_ref().map(|picker| picker.kind()),
+        Some(Kind::Queue),
+        "the queue list did not open"
+    );
+}
+
+#[test]
+fn the_queue_command_lists_only_messages_waiting_for_the_turn() {
+    let mut app = app();
+    submit(&mut app, "/queue");
+    assert!(app.picker.is_none(), "an empty queue opened a list");
+    assert!(
+        matches!(app.transcript.items().last(), Some(Item::Notice(text)) if text.contains("no messages")),
+        "nothing said the queue was empty: {:?}",
+        app.transcript.items().last()
+    );
+
+    // One message with the bridge and two behind it: the list is the two.
+    assert_eq!(submit(&mut app, "sending"), Some(Action::Send("sending".to_string())));
+    submit(&mut app, "one");
+    submit(&mut app, "two");
+    open_queue(&mut app);
+    let picker = app.picker.as_ref().expect("the list is open");
+    assert_eq!(picker.len(), 2, "the list offered a message already in flight");
+    assert_eq!(
+        picker
+            .visible()
+            .iter()
+            .map(|row| row.label.as_str())
+            .collect::<Vec<_>>(),
+        ["one", "two"],
+        "the rows are not in dispatch order"
+    );
+}
+
+#[test]
+fn the_queue_list_leaves_the_message_in_flight_and_a_prompt_untouched() {
+    let mut app = app();
+    assert_eq!(submit(&mut app, "sending"), Some(Action::Send("sending".to_string())));
+    submit(&mut app, "one");
+    submit(&mut app, "two");
+    app.apply_event(&approval_pending("r1", "bash"));
+    app.open_queue();
+    assert_eq!(
+        app.picker.as_ref().map(|picker| picker.len()),
+        Some(2),
+        "the list offered the message in flight"
+    );
+
+    app.on_key(key(KeyCode::Delete));
+    assert_eq!(waiting(&app), ["two"]);
+    assert!(app.prompt.is_some(), "editing the queue answered the prompt");
+    assert_eq!(
+        app.in_flight.as_ref().map(|message| message.text.as_str()),
+        Some("sending"),
+        "the queue list touched the message the bridge already has"
+    );
+
+    // Closing the list gives the prompt its keys back, unchanged.
+    app.on_key(esc());
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('y'))),
+        Some(Action::Approval {
+            request_id: "r1".to_string(),
+            approved: true,
+            always: false,
+        }),
+        "the prompt could not be answered after the queue list"
+    );
+}
+
+#[test]
+fn deleting_a_queued_message_takes_back_only_its_row() {
+    let mut app = app();
+    app.pending_turn = true;
+    submit(&mut app, "first");
+    submit(&mut app, "second");
+    submit(&mut app, "third");
+    open_queue(&mut app);
+
+    assert_eq!(app.on_key(key(KeyCode::Delete)), None, "a delete key sent something");
+    assert_eq!(waiting(&app), ["second", "third"]);
+    assert_eq!(waiting_rows(&app), ["second", "third"]);
+    assert_eq!(
+        app.picker.as_ref().and_then(|picker| picker.selected_label()),
+        Some("second"),
+        "the cursor left the row that took the deleted one's place"
+    );
+
+    // Deleting the last remaining row closes the list instead of leaving it
+    // empty and swallowing the next key.
+    app.on_key(key(KeyCode::Delete));
+    app.on_key(key(KeyCode::Delete));
+    assert!(waiting(&app).is_empty());
+    assert!(waiting_rows(&app).is_empty());
+    assert!(app.picker.is_none(), "an emptied queue left its list open");
+    assert_eq!(app.on_key(key(KeyCode::Delete)), None);
+    assert_eq!(app.input.text(), "", "a closed list leaked a key into the draft");
+}
+
+#[test]
+fn one_of_two_identical_messages_can_be_removed_without_touching_the_other() {
+    let mut app = app();
+    app.pending_turn = true;
+    submit(&mut app, "same");
+    submit(&mut app, "other");
+    submit(&mut app, "same");
+    open_queue(&mut app);
+
+    // Select the second `same`, at the end of the list, and delete it.
+    app.on_key(key(KeyCode::Down));
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.on_key(key(KeyCode::Delete)), None);
+    assert_eq!(waiting(&app), ["same", "other"], "the wrong message left the queue");
+    assert_eq!(
+        waiting_rows(&app),
+        ["same", "other"],
+        "the row that went is not the one the user selected"
+    );
+
+    // Editing the remaining `same` takes that one back, and `other` stays.
+    app.on_key(key(KeyCode::Up));
+    assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+    assert_eq!(app.input.text(), "same");
+    assert_eq!(waiting(&app), ["other"]);
+    assert_eq!(waiting_rows(&app), ["other"]);
+    assert!(app.picker.is_none(), "the edit left the list open");
+}
+
+#[test]
+fn editing_a_queued_message_returns_it_to_the_editor_and_sends_nothing() {
+    let mut app = app();
+    app.pending_turn = true;
+    submit(&mut app, "one");
+    submit(&mut app, "two");
+    open_queue(&mut app);
+    app.on_key(key(KeyCode::Down));
+
+    assert_eq!(app.on_key(key(KeyCode::Enter)), None, "an edit sent the message");
+    assert_eq!(app.input.text(), "two");
+    assert_eq!(waiting(&app), ["one"]);
+    assert_eq!(waiting_rows(&app), ["one"]);
+    assert!(app.picker.is_none(), "the edit left the list open");
+    assert!(app.pending_turn, "the running turn was disturbed by an edit");
+}
+
+#[test]
+fn an_edit_never_overwrites_a_draft_the_editor_already_holds() {
+    let mut app = app();
+    app.pending_turn = true;
+    submit(&mut app, "queued");
+    // A refused send can put text in the editor while the list is open (or a
+    // draft can be there when the list opens): the edit must not replace it.
+    app.input.set_text("mine");
+    app.open_queue();
+    assert!(app.picker.is_some(), "the queue list did not open over a draft");
+
+    assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+    assert_eq!(app.input.text(), "mine", "the draft was replaced");
+    assert_eq!(waiting(&app), ["queued"], "an edit it refused still changed the queue");
+    assert!(app.picker.is_none(), "the list stayed over the reason it refused");
+    assert!(
+        matches!(app.transcript.items().last(), Some(Item::Warning(text)) if text.contains("editor")),
+        "the refusal was silent: {:?}",
+        app.transcript.items().last()
+    );
+}
+
+#[test]
+fn a_moved_message_is_sent_in_its_new_place_and_a_cancel_keeps_the_order() {
+    let mut app = app();
+    app.pending_turn = true;
+    submit(&mut app, "a");
+    submit(&mut app, "b");
+    submit(&mut app, "c");
+    open_queue(&mut app);
+
+    // Walk to the last row and move it to the front, one neighbour at a time.
+    app.on_key(key(KeyCode::Down));
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.on_key(alt(KeyCode::Up)), None);
+    assert_eq!(app.on_key(alt(KeyCode::Up)), None);
+    assert_eq!(waiting(&app), ["c", "a", "b"]);
+    assert_eq!(
+        app.picker.as_ref().and_then(|picker| picker.selected_label()),
+        Some("c"),
+        "the cursor left the message it moved"
+    );
+
+    // Cancelling the turn is not a reason to forget the order the user chose.
+    app.apply_event(&stopped("s1"));
+    assert_eq!(waiting(&app), ["c", "a", "b"], "a cancel reordered the queue");
+
+    // The next two turns take the messages in that order, once each.
+    assert_eq!(app.take_queued(), Some(Action::Send("c".to_string())));
+    app.apply_event(&done("s1"));
+    assert_eq!(app.take_queued(), Some(Action::Send("a".to_string())));
+    assert_eq!(waiting(&app), ["b"]);
+}
+
+#[test]
+fn a_refused_send_after_a_move_keeps_one_copy_of_every_message() {
+    let mut app = app();
+    app.pending_turn = true;
+    submit(&mut app, "one");
+    submit(&mut app, "two");
+    submit(&mut app, "three");
+    open_queue(&mut app);
+    app.on_key(key(KeyCode::Down));
+    app.on_key(alt(KeyCode::Up));
+    assert_eq!(waiting(&app), ["two", "one", "three"]);
+    app.on_key(esc());
+
+    // The turn ends, `two` leaves, and the bridge refuses it.
+    app.apply_event(&done("s1"));
+    assert_eq!(app.take_queued(), Some(Action::Send("two".to_string())));
+    app.send_failed("two", "the harness refused the message", false);
+
+    // The text is back in the editor, the messages that never left are still
+    // once each in their order, and the refused line is not drawn as a message.
+    assert_eq!(app.input.text(), "two");
+    assert_eq!(waiting(&app), ["one", "three"]);
+    assert_eq!(waiting_rows(&app), ["one", "three"]);
+    assert!(
+        !app.transcript
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::User(text) if text == "two")),
+        "the refused send stayed in the conversation: {:?}",
+        app.transcript.items()
     );
 }

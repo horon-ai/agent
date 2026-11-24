@@ -11,6 +11,12 @@ on:
   # runs the same gates on any ref for diagnosis, but it is never accepted as that
   # evidence.
   workflow_dispatch:
+    inputs:
+      tui_smoke_repeats:
+        description: Consecutive Linux TUI PTY smoke iterations for flake verification (1 on normal runs)
+        required: false
+        default: "1"
+        type: string
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -46,8 +52,6 @@ env:
   # show zero warnings (AGENTS.md, "CI warnings"); this keeps a new one from
   # merging. Warnings in registry dependencies are never reported by cargo.
   CARGO_BUILD_WARNINGS: deny
-  # Keep per-compilation writes on the runner; share Cargo archives between runs.
-  SCCACHE_CACHE_SIZE: "512M"
   # Test and dev builds do not need debug info, and on a hosted runner every byte
   # is disk. The workspace profiles already set debug = 0; these make that hold
   # for member crates that might override the profile.
@@ -72,6 +76,19 @@ jobs:
       code: ${{ steps.classify.outputs.code }}
       docs: ${{ steps.classify.outputs.docs }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      rust: ${{ steps.classify.outputs.rust }}
+      docs_site: ${{ steps.classify.outputs.docs_site }}
+      ts_sdk: ${{ steps.classify.outputs.ts_sdk }}
+      py_sdk: ${{ steps.classify.outputs.py_sdk }}
+      npm_pkg: ${{ steps.classify.outputs.npm_pkg }}
+      install_scripts: ${{ steps.classify.outputs.install_scripts }}
+      release_scripts: ${{ steps.classify.outputs.release_scripts }}
+      workflows: ${{ steps.classify.outputs.workflows }}
+      tui_only: ${{ steps.classify.outputs.tui_only }}
+      tui_smoke: ${{ steps.classify.outputs.tui_smoke }}
+      platform_windows: ${{ steps.classify.outputs.platform_windows }}
+      platform_macos: ${{ steps.classify.outputs.platform_macos }}
+      full_matrix: ${{ steps.classify.outputs.full_matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -87,11 +104,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: python3 scripts/ci/classify_changes.py --workflow ci.yml --base "$BASE_SHA" --head "$HEAD_SHA"
   quality:
     name: Quality Guardrails
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.ts_sdk == 'true' || needs.changes.outputs.py_sdk == 'true' || needs.changes.outputs.npm_pkg == 'true' }}
     # The issue-reference gate lists this repository's issues to prove the
     # numbers in `.github/` and `scripts/` open. Reading them needs the token
     # scopes below; every other step in this job only reads the checkout.
@@ -101,6 +119,11 @@ jobs:
       pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # Match rust-toolchain.toml for clippy/rustfmt parity while overriding nested
+      # dependency rust-toolchain.toml files (e.g. convert_case 1.83.0) without
+      # installing a second `stable` (1.100.0) toolchain.
+      RUSTUP_TOOLCHAIN: "1.99.1"
     steps:
       # Run after checkout because the cleanup lives in the repository now: the
       # shared script is not on disk until the workspace exists. It renames the
@@ -120,13 +143,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: stable
+          toolchain: "1.99.1"
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
-          key: quality-${{ runner.os }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
+          key: quality-${{ runner.os }}-1.99.1
           cache-all-crates: "true"
 
       - name: Check module declarations resolve
@@ -142,43 +166,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/check_docs_pairs.py
 
-      # sccache is enabled once for the whole job and never for a single step:
-      # a run that wrapped only one cargo invocation produced
-      # `<unknown rustc version>` artifacts that the next unwrapped invocation
-      # rejected with E0514 ("compiled by an incompatible version of rustc",
-      # run 42373575639). One wrapper for every cargo call keeps the
-      # fingerprints equal.
-      #
-      # CARGO_INCREMENTAL=0 is required, not an optimization: sccache cannot
-      # cache incremental units, and the profiles this job builds
-      # ([profile.dev] and [profile.release] in Cargo.toml) set incremental =
-      # true, so with incremental on nothing is ever cached.
-      - name: Setup sccache
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          disable_annotations: true
-
-      - name: Enable sccache
-        # Only a successful `sccache --start-server` writes the wrapper, so a
-        # runner without a usable sccache builds the whole job unwrapped instead
-        # of mixing wrapped and unwrapped cargo calls.
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          if ! command -v sccache >/dev/null 2>&1; then
-            echo "sccache is not available; this job builds without a wrapper"
-            exit 0
-          fi
-          if sccache --start-server; then
-            {
-              echo "RUSTC_WRAPPER=sccache"
-              echo "CARGO_INCREMENTAL=0"
-            } >> "$GITHUB_ENV"
-          else
-            echo "sccache failed to start; this job builds without a wrapper"
-          fi
-
       - name: Check formatting
         # These gates are independent. Report every failure in one run instead
         # of letting a Clippy error hide stale lockfiles or budget violations.
@@ -190,19 +177,30 @@ jobs:
         # Clippy compiles every target and feature that `cargo check` would, so
         # this single step covers both and halves the all-features artifacts a
         # hosted runner has to hold.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-      - name: Run clippy on horon-tui
-        # A separate `-p` selection, not `--workspace`: this is the one package
-        # the guardrail job would otherwise miss, because a bare `cargo clippy`
-        # at the root selects only the root package. It also keeps the terminal
-        # stack out of the root package's all-features build.
-        if: ${{ !cancelled() }}
-        run: cargo clippy --locked --all-targets --all-features -p horon-tui -- -D warnings
+      - name: Run clippy on workspace targets
+        # Bare `cargo clippy` above selects only the root package, so member
+        # crates' test, bench, and example targets (along with standalone
+        # members like `horon-tui`, `horon-agent-extension-sdk`, and
+        # `horon-package-example`) are not linted there. Running `--workspace
+        # --all-targets` with default features covers every member target while
+        # keeping the terminal stack out of the root `--all-features` build.
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Run the author SDK issue verification commands
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
+        shell: bash
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          cargo test --locked -p horon-agent-extension-sdk
 
       - name: Enforce Cargo.lock is up to date
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         # Adding a dependency without regenerating Cargo.lock breaks every
         # `--locked` build. Only the Windows jobs pass `--locked`, so such a
@@ -214,14 +212,14 @@ jobs:
           git diff --exit-code -- Cargo.lock
 
       - name: Warning budget gate contract tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: scripts/ci/test_check_warnings.sh
 
       - name: Benchmark script gate
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
-        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_record_charts.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py scripts/perf/test_bench_report.py
+        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_record_charts.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py scripts/perf/test_bench_report.py scripts/perf/test_package_workloads.py
 
       - name: npm CLI package gate
         # The npm distribution is generated, so its shape is only real when
@@ -249,6 +247,7 @@ jobs:
           python3 -m unittest -v scripts/npm/test_release_npm_version.py
           python3 -m unittest -v scripts/sdk/test_sdk_release.py
           python3 -m unittest -v scripts/sdk/test_python_platform_wheel.py
+          python3 -m unittest -v scripts/test/test_tui_pty_smoke.py
           python3 scripts/sdk/sdk_release.py check-committed
           placeholders="$(mktemp -d)"
           bash scripts/npm/prepare_placeholders.sh "$placeholders" >/dev/null
@@ -282,27 +281,27 @@ jobs:
           python3 scripts/ci/check_issue_refs.py
 
       - name: Enforce warning budget
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: scripts/ci/check_warnings.sh
 
       - name: Enforce oversized-file ratchet
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_code_size.py
 
       - name: Enforce oversized-test ratchet
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_test_size.py
 
       - name: Enforce panic-prone usage ratchet
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_panics.py
 
       - name: Enforce swallowed-error usage ratchet
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_swallowed_errors.py
 
@@ -310,7 +309,7 @@ jobs:
         # The gate discovers its own ceiling files by shape, so a new ratchet
         # (the `Result<_, String>` count of #156, model names) needs no step
         # here. These tests are what keeps that discovery honest.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 -m unittest -v scripts/ci/test_check_growth_ratchets.py
 
@@ -318,31 +317,61 @@ jobs:
         # Cargo.lock package count and internal legacy markers: both may fall
         # but not rise. Ceilings live in `scripts/ci/*.json` objects that
         # declare `counter` and `ceiling`; adding one needs no edit here.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_growth_ratchets.py
 
       - name: Enforce crate dependency boundaries
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_dependency_boundaries.py
 
       - name: Enforce headless dependency graph
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_headless_graph.py
 
       - name: Headless graph gate contract tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 -m unittest -v scripts/ci/test_check_headless_graph.py
+
+      - name: Keep the author SDK out of the agent binary
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
+        shell: bash
+        # `horon-agent-extension-sdk` and its example are workspace members so
+        # `-p` builds reach them; they are never dependencies of `horon-agent`.
+        # `cargo tree -i` names a package the graph does not hold instead of
+        # printing an empty tree, so the absence itself is asserted here.
+        run: |
+          set -euo pipefail
+          for package in horon-agent-extension-sdk horon-package-example; do
+            if tree="$(cargo tree --locked -p horon-agent -e normal,build,dev -i "$package" 2>&1)"; then
+              echo "::error::$package reached the horon-agent graph"
+              echo "$tree"
+              exit 1
+            fi
+            case "$tree" in
+              *"did not match any packages"*) ;;
+              *)
+                echo "::error::cargo tree could not decide for $package"
+                echo "$tree"
+                exit 1
+                ;;
+            esac
+          done
+          sdk="$(cargo tree --locked -p horon-agent-extension-sdk -e normal,build,dev --prefix none)"
+          if printf '%s\n' "$sdk" | grep -Eq '^(horon-agent-(app-core|base)|horon-tui) v'; then
+            echo "::error::the author SDK reaches the agent runtime"
+            exit 1
+          fi
 
       - name: Test runner contract tests
         # The cohort steps trust `run_lib_tests.py` to turn a libtest run that
         # matched nothing into a failure; `--min-passed` is that behaviour, and
         # this is where it is proved rather than assumed. The integration
         # runner's per-target `skipped` rows are proved the same way.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: |
           python3 -m unittest -v \
@@ -354,28 +383,40 @@ jobs:
         # decision they encode is only as good as the code that reads it. These
         # tests prove each rejection path: a target or module that no step runs,
         # a stale entry, an empty reason, and a row that runs but has no count.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: |
           python3 -m unittest -v \
             scripts/ci/test_check_test_targets.py \
             scripts/ci/test_check_lib_test_coverage.py
 
+      - name: Package compat gate contract tests
+        # `scripts/ci/package_compat.py` decides whether a native report proves
+        # its target and whether the install guide may advertise it, so its
+        # rejection paths (cross-compiled evidence, a missing step, a failed
+        # step, an unproven claim) are proved here rather than assumed.
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
+        shell: bash
+        run: python3 -m unittest -v scripts/ci/test_package_compat.py
+
       - name: Enforce every integration target runs
         # #226: the compile step builds every integration target and, before this
         # guard, nothing started most of them. Static check (workflow plus
         # `cargo metadata`), so it costs seconds and needs no build.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_test_targets.py
 
       - name: Enforce Rust and TypeScript SDK surface parity
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ts_sdk == 'true' || needs.changes.outputs.py_sdk == 'true') }}
         shell: bash
-        run: cargo test --locked -p horon-agent-sdk parity -- --nocapture
+        run: |
+          cargo test --locked -p horon-agent-sdk --lib parity -- --nocapture 2>&1 \
+            | tee "$RUNNER_TEMP/sdk-parity.log"
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/sdk-parity.log"
 
       - name: Run Rust SDK tool verdict tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ts_sdk == 'true') }}
         shell: bash
         # The `parity` filter above selects nothing in this integration target,
         # so it is named here. The count is the number of tests in
@@ -386,18 +427,27 @@ jobs:
             | tee "$RUNNER_TEMP/sdk-tool-verdict.log"
           grep -q '^test result: ok\. 4 passed' "$RUNNER_TEMP/sdk-tool-verdict.log"
 
+      - name: Run Rust SDK A2UI tests
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ts_sdk == 'true' || needs.changes.outputs.py_sdk == 'true') }}
+        shell: bash
+        # `crates/agent-sdk/tests/a2ui.rs` is not covered by `--lib parity`.
+        run: |
+          cargo test --locked -p horon-agent-sdk --test a2ui -- --nocapture 2>&1 \
+            | tee "$RUNNER_TEMP/sdk-a2ui.log"
+          grep -q '^test result: ok\. 4 passed' "$RUNNER_TEMP/sdk-a2ui.log"
+
       - name: Enforce wildcard re-export ratchet
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_wildcard_reexports.py
 
       - name: Platform cfg gate contract tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 -m unittest -v scripts/ci/test_check_platform_cfg.py
 
       - name: Enforce platform cfg allowlist
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_platform_cfg.py
 
@@ -405,30 +455,20 @@ jobs:
         # The crate is published as a binary; building it from source on every
         # run costs minutes and hundreds of MB on a job that already has the
         # largest build. install-action downloads the release binary instead.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         uses: taiki-e/install-action@c5695724643db014337e10f479712023ee658d78 # cargo-machete
         with:
           tool: cargo-machete
 
       - name: Enforce no unused dependencies
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: cargo machete
-
-      - name: sccache stats
-        # Printed only when the wrapper was actually enabled, so a run that
-        # built without sccache does not report misleading numbers. The
-        # condition starts with `!cancelled()` like every other quality step:
-        # a cancelled run should stop, and this is diagnostic output, not a
-        # gate.
-        if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
-        shell: bash
-        run: sccache --show-stats
 
   release-automation:
     name: Release Automation
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.release_scripts == 'true' || needs.changes.outputs.workflows == 'true' || needs.changes.outputs.install_scripts == 'true' || needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -449,7 +489,7 @@ jobs:
   build:
     name: Build & Test (${{ matrix.os }})
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ${{ matrix.runner }}
     # 35 minutes covers a normal push (~12 min with a warm Swatinem cache) but
     # not a *rerun*, where the cache is cold: three consecutive reruns of a
@@ -472,15 +512,7 @@ jobs:
       RUSTUP_TOOLCHAIN: stable
     strategy:
       fail-fast: false
-      matrix:
-        # Release verification requires the os labels in the job names.
-        include:
-          - os: ubuntu-latest
-            runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            runner: macos-latest
-            target: aarch64-apple-darwin
+      matrix: ${{ fromJSON((github.event_name != 'pull_request' || needs.changes.outputs.platform_macos == 'true' || needs.changes.outputs.full_matrix == 'true') && '{"include":[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]}' || '{"include":[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"}]}') }}
 
     steps:
       # The Linux cleanup runs after checkout because it is the shared script in
@@ -489,6 +521,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify Python eval runner
+        run: python3 -B -m unittest -v scripts/ci/test_eval_runner.py
 
       - name: Free disk space (Linux)
         # Hosted ubuntu starts with about 14 GB on `/`. One job holds the release
@@ -520,59 +556,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
           key: ${{ matrix.os }}-stablepin
 
-      # The wrapper is set once for the whole job, before the first cargo call,
-      # so every compile in this job (release build, test compile, e2e, the
-      # SDK parity test and the macOS warning budget) shares one fingerprint.
-      # A run that wrapped only one step emitted `<unknown rustc version>`
-      # artifacts that the next unwrapped compile rejected with E0514,
-      # "compiled by an incompatible version of rustc" (run 42373575639).
-      #
-      # CARGO_INCREMENTAL=0 is required: sccache cannot cache incremental
-      # units and both profiles this job builds ([profile.dev] and
-      # [profile.release]) set incremental = true in Cargo.toml, so leaving
-      # incremental on would mean zero cache hits.
-      - name: Setup sccache
-        if: runner.environment == 'github-hosted'
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          disable_annotations: true
-        continue-on-error: true
-
-      - name: Enable sccache
-        # Nothing is written unless `sccache --start-server` succeeds, so a
-        # runner without a working sccache builds the entire job without a
-        # wrapper rather than mixing wrapped and unwrapped cargo calls.
-        if: runner.environment == 'github-hosted'
-        shell: bash
-        run: |
-          if ! command -v sccache >/dev/null 2>&1; then
-            echo "sccache is not available; this job builds without a wrapper"
-            exit 0
-          fi
-          if sccache --start-server; then
-            {
-              echo "RUSTC_WRAPPER=sccache"
-              echo "CARGO_INCREMENTAL=0"
-            } >> "$GITHUB_ENV"
-          else
-            echo "sccache failed to start; this job builds without a wrapper"
-          fi
-
-      - name: Install mold linker (Linux)
+      - name: Install mold linker and reflink tools (Linux)
         if: runner.os == 'Linux'
         run: |
-          # clang is the linker driver named in .cargo/config.toml below; the
-          # image ships it, but not as a documented contract, so install it
-          # explicitly rather than depending on an image update's default.
-          # A mirror hiccup is the usual failure here, so retry before failing.
+          # clang and mold link Linux binaries; btrfs-progs is used later for the
+          # clone isolation reflink cohort, avoiding a second apt-get update.
           installed=0
           for attempt in 1 2 3; do
-            if sudo apt-get update -qq && sudo apt-get install -y -qq clang mold; then
+            if sudo apt-get update -qq && sudo apt-get install -y -qq clang mold btrfs-progs; then
               installed=1
               break
             fi
@@ -591,9 +588,8 @@ jobs:
           rustflags = ["-C", "link-arg=-fuse-ld=mold"]
           EOF
           fi
-          # The sccache wrapper is not set here: the job-wide `Enable sccache`
-          # step above sets it for every cargo call, which is what keeps the
-          # artifacts of this build and the later test compiles consistent.
+          # Keep the toolchain and compiler fingerprint consistent across this
+          # release build and later test compiles.
           RUSTC="$(rustup which rustc)"
           export RUSTC
           CARGO_BIN="$(rustup which cargo)"
@@ -605,6 +601,21 @@ jobs:
           # exercised.
           "$CARGO_BIN" build --locked --target ${{ matrix.target }} -p horon-tui
 
+      - name: Launch profile isolation
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 scripts/test/launch_profile_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
+
+      - name: System template bounds
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 scripts/test/system_template_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
+
+      - name: Skills CLI install gate
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 scripts/test/skills_cli_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
+
       - name: TUI PTY smoke (Linux, macOS)
         # The bare command hands a terminal launch to the sibling `horon-tui`
         # binary, and nothing else in this workflow drives that handoff or the
@@ -614,15 +625,32 @@ jobs:
         # retried tool call, `/quit`, the three headless fallbacks, and a relaunch
         # over the socket file a killed bridge left behind. The client is built
         # without `--release` above, next to the release daemon.
-        if: runner.os != 'Windows'
+        if: ${{ runner.os != 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.tui_smoke == 'true' || needs.changes.outputs.full_matrix == 'true') }}
         shell: bash
+        env:
+          TUI_SMOKE_REPEATS: ${{ github.event_name == 'workflow_dispatch' && runner.os == 'Linux' && inputs.tui_smoke_repeats || '1' }}
         run: |
+          repeats="$TUI_SMOKE_REPEATS"
+          if ! [[ "$repeats" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::tui_smoke_repeats must be a positive integer, got '$repeats'"
+            exit 1
+          fi
           python3 scripts/test/tui_pty_smoke.py \
             --agent target/${{ matrix.target }}/release/horon-agent \
             --tui target/${{ matrix.target }}/debug/horon-tui \
             --transcript "$RUNNER_TEMP/tui-pty-transcript.txt"
           echo "--- transcript ---"
           cat "$RUNNER_TEMP/tui-pty-transcript.txt"
+          if [ "$repeats" -gt 1 ]; then
+            echo "[tui-pty] repeat 1/$repeats passed (all cases)"
+            for i in $(seq 2 "$repeats"); do
+              python3 scripts/test/tui_pty_smoke.py \
+                --cases 1 \
+                --agent target/${{ matrix.target }}/release/horon-agent \
+                --tui target/${{ matrix.target }}/debug/horon-tui
+              echo "[tui-pty] repeat $i/$repeats passed (case 1)"
+            done
+          fi
 
       - name: Installed layout TUI smoke
         # Release packaging runs only in the release workflow, after the change
@@ -631,7 +659,7 @@ jobs:
         # packages the binaries built above under the release asset names for
         # this platform, installs them into a throwaway HORON_HOME, and drives
         # the launcher symlink the terminal client starts from.
-        if: runner.os != 'Windows'
+        if: ${{ runner.os != 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.tui_smoke == 'true' || needs.changes.outputs.full_matrix == 'true') }}
         shell: bash
         run: |
           bash scripts/test/install_release_layout_smoke.sh \
@@ -692,8 +720,42 @@ jobs:
         shell: bash
         run: scripts/ci/check_linux_bare_runtime.sh target/${{ matrix.target }}/release/horon-agent
 
+      - name: Compute workspace crate impact
+        id: impact
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          impact_env="$RUNNER_TEMP/workspace-impact.env"
+          python3 scripts/ci/workspace_impact.py \
+            --event "$GITHUB_EVENT_NAME" \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --runner-os "$RUNNER_OS" \
+            --format env > "$impact_env"
+          cat "$impact_env"
+          scoped=$(sed -n 's/^SCOPED=//p' "$impact_env")
+          scoped_csv=$(sed -n 's/^SCOPED_PACKAGES_CSV=//p' "$impact_env")
+          run_pkg_ex=$(sed -n 's/^RUN_PACKAGE_EXAMPLE=//p' "$impact_env")
+          pkg_flags=$(sed -n 's/^PACKAGES_FLAGS=//p' "$impact_env")
+          {
+            echo "scoped=$scoped"
+            echo "scoped_packages_csv=$scoped_csv"
+            echo "run_package_example=$run_pkg_ex"
+            echo "packages_flags=$pkg_flags"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$scoped" = "true" ] && [ -n "$scoped_csv" ]; then
+            echo "HORON_CI_SCOPED_PACKAGES=$scoped_csv" >> "$GITHUB_ENV"
+          fi
+
       - name: Compile library and binary tests
         shell: bash
+        env:
+          IMPACT_SCOPED: ${{ steps.impact.outputs.scoped }}
+          IMPACT_PACKAGES_FLAGS: ${{ steps.impact.outputs.packages_flags }}
         # One call compiles the lib and bin tests of every package the cohorts
         # below use. Selecting a different `-p` set per cohort unifies features
         # differently, so each of those calls recompiled dozens of workspace
@@ -712,10 +774,20 @@ jobs:
           # Every package that owns a target in
           # `scripts/ci/integration_targets.json` must be built here, or
           # `run_integration_targets.py` finds no executable for it.
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-protocol -p horon-agent-harness-api -p horon-agent-harness-api-server -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-message-types -p horon-agent-productivity-core -p horon-agent-provider-openai -p horon-agent-session-store -p horon-agent-sdk -p horon-tui -p horon-agent-time -p horon-agent-token-estimate -p horon-agent-platform -p horon-agent-import-core -p horon-agent-schema-dialect -p horon-agent-session-types -p horon-agent-logging -p horon-agent-config-types)
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-protocol -p horon-agent-harness-api -p horon-agent-harness-api-server -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-memory-types -p horon-agent-message-types -p horon-agent-productivity-core -p horon-agent-provider-openai -p horon-agent-session-store -p horon-agent-sdk -p horon-tui -p horon-agent-time -p horon-agent-token-estimate -p horon-agent-platform -p horon-agent-import-core -p horon-agent-schema-dialect -p horon-agent-session-types -p horon-agent-logging -p horon-agent-config-types -p horon-agent-extension-sdk)
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi
+          if [ "${IMPACT_SCOPED:-false}" = "true" ] && [ -n "${IMPACT_PACKAGES_FLAGS:-}" ]; then
+            read -r -a packages <<< "$IMPACT_PACKAGES_FLAGS"
+          fi
+          extra_test_targets=()
+          for token in "${packages[@]}"; do
+            if [ "$token" = "horon-agent" ]; then
+              extra_test_targets+=(--test e2e)
+              break
+            fi
+          done
           # `tests` compiles every integration target of those packages, not
           # just `e2e`: sixteen session-store contracts, nine SDK contracts and
           # the app-core and base targets. Each was built and started by no
@@ -725,7 +797,7 @@ jobs:
           # allowlists.
           python3 .github/scripts/run_with_timeout.py 1800 \
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            "${packages[@]}" --lib --bins --tests --test e2e --no-run \
+            "${packages[@]}" --lib --bins --tests ${extra_test_targets[@]+"${extra_test_targets[@]}"} --no-run \
             --message-format=json-render-diagnostics \
             > "$TEST_ARTIFACTS"
 
@@ -760,11 +832,16 @@ jobs:
         # green `0 passed`.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-config-types --min-passed 53 --timeout 600
+            --package horon-agent-config-types --min-passed 65 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-import-core --min-passed 23 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-logging --min-passed 28 --timeout 600
+          # The memory wiki's shared page model and its graph tests existed but
+          # no step named this package, so its lib tests were compiled and never
+          # run (#664). 24 graph cases plus 10 page cases make the measured 34.
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-memory-types --min-passed 34 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-platform --min-passed 11 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -772,7 +849,7 @@ jobs:
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-schema-dialect --min-passed 38 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-sdk --min-passed 51 --timeout 600
+            --package horon-agent-sdk --min-passed 59 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-session-store --min-passed 5 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -783,7 +860,7 @@ jobs:
             --package horon-agent-token-estimate --min-passed 16 --timeout 600
 
       - name: Prepare a reflink filesystem for clone isolation (Linux)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && (steps.impact.outputs.scoped != 'true' || contains(format(',{0},', steps.impact.outputs.scoped_packages_csv), ',horon-agent-base,')) }}
         shell: bash
         # `git_clone_isolation` copies a repository with `cp -a --reflink=always`
         # and refuses when the filesystem cannot reflink. The hosted runner's
@@ -824,10 +901,20 @@ jobs:
         # The five staged-import regressions and the filesystem refusal test
         # bring that floor to 1611. The three ignored benchmarks are separate.
         # It moved 1611 -> 1597 when prune-tests (#419) removed fourteen tests
-        # that guarded no behavior.
+        # that guarded no behavior, and the hosting boundary (#663) brought it
+        # to 1612. The fifty memory wiki store cases (#664) bring it to 1662, the
+        # thirteen hosted MCP and child-process gate tests (#668) bring it to
+        # 1675, and the fifteen harness API exposure cases (fourteen resolution
+        # tests plus the config-template documentation test) bring it to 1690.
+        # The memory integration (#665) adds fifteen: fourteen store-backend
+        # cases and one that keeps the memory event log inside HORON_HOME, for
+        # 1705. The volume lifecycle (#666) adds thirty-one: export and import,
+        # the archive's hostile-entry refusals, the write fence and its
+        # checkpoint, the key contract, the control-plane client with its
+        # no-body property, and the deletion step machine, for 1736.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1597 --timeout 1200
+            --package horon-agent-base --min-passed 1736 --timeout 1200
 
       - name: Run horon-agent-base lib tests (macOS)
         if: runner.os == 'macOS'
@@ -835,10 +922,15 @@ jobs:
         # The previous macOS suite passed 1592 cases. Include the five
         # staged-import regressions in the minimum for the complete suite.
         # It moved 1597 -> 1583 when prune-tests (#419) removed fourteen tests
-        # that guarded no behavior.
+        # that guarded no behavior, and the hosting boundary (#663) brought it
+        # to 1598. The fifty memory wiki store cases (#664) bring it to 1648, the
+        # thirteen hosted MCP and child-process gate tests (#668) bring it to
+        # 1661, and the fifteen harness API exposure cases bring it to 1676.
+        # The memory integration (#665) adds fifteen, for 1691. The volume
+        # lifecycle (#666) adds thirty-one, for 1722.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1583 --timeout 1200
+            --package horon-agent-base --min-passed 1722 --timeout 1200
 
       - name: Remove the reflink filesystem (Linux)
         if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''
@@ -860,6 +952,130 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
             --timeout 600 --min-passed 1 \
             -- tui_handoff --nocapture
+
+      - name: Run CLI continue cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- cli::dispatch::dispatch_tests::continue_ --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- cli::commands::run_jobs::tests::waits_for_two_owned_jobs_without_waiting_for_another_session --nocapture
+
+      - name: Run CLI shell completions cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::startup::completions::tests:: --nocapture
+
+      - name: Run CLI stream rule preview cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::startup::stream_rule_preview::tests:: --nocapture
+
+      - name: Run CLI token estimation cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::startup::tokens::tests:: --nocapture
+
+      - name: Run CLI agent catalog cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- cli::startup::agent_catalog::tests:: --nocapture
+
+      - name: Run CLI launch profile cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 3 \
+            -- cli::launch_profile::tests:: --nocapture
+
+      - name: Run CLI session recovery preview cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 6 \
+            -- cli::sessions::recovery::tests:: --nocapture
+
+      - name: Run CLI provider status cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- cli::startup::provider_status::tests:: --nocapture
+
+      - name: Run CLI provider failover preview cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 3 \
+            -- cli::commands::failover_preview::tests:: --nocapture
+
+      - name: Run CLI changelog cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::startup::changelog::tests:: --nocapture
+
+      - name: Run CLI generated images cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::startup::images::tests:: --nocapture
+
+      - name: Run CLI compact-text cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::dispatch::compact_text::tests:: --nocapture
+
+      - name: Run CLI cloud doctor cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- cli::cloud_doctor::tests:: --nocapture
+
+      - name: Run CLI visible reasoning cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::commands::thoughts::tests:: --nocapture
+
+      - name: Run CLI model catalog cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- cli::commands::model_catalog::tests:: --nocapture
 
       - name: Run ACP cohort
         shell: bash
@@ -904,44 +1120,99 @@ jobs:
             --timeout 600 \
             -- retention_readiness --nocapture
 
-      - name: Run secrets cohort
-        if: runner.os != 'Windows'
+      - name: Run spend cap cohort
         shell: bash
-        # The credential-masking tests live in `crates/base/src/secrets.rs`
-        # `mod tests` (11 tests): placeholder shapes, restore, owner-only key
-        # files, vault persistence across restarts, and the block/off modes.
-        # Nothing else in this workflow runs them on Linux or macOS: the build
-        # step compiles `horon-agent-base` lib tests but every other filtered
-        # step only selects its own prefix, so a real credential reaching the
-        # model or session history had no CI check. The step previously ran a
-        # filter inherited from upstream CI that matched nothing in this tree,
-        # the looks-green-but-never-ran shape the warning budget and the stdin
-        # detector had, so it now requires the measured count (`--min-passed`),
-        # which fails the step when a filter selects no test instead of
-        # reporting a green `0 passed`. `secrets::restore_tests` (7) pins the
-        # in-place restore of a tool input: the same text as replacing every
-        # placeholder longest first, keys untouched, and an input that holds no
-        # placeholder coming back equal. `crash::ring_tests` (7) pins the operation
-        # ring a crash bundle reads: redaction before the cut, the stored
-        # detail when a record's strings are reused, and nothing recorded while
-        # bundles are off. The Windows groups stay out of scope: this step
-        # keeps `runner.os != 'Windows'`.
+        # The spend ledger is process-wide, so its one test owns the process.
         run: |
           python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 18 \
-            -- secrets:: --nocapture
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- spend_cap::tests:: --nocapture
+
+      - name: Run hosted tenant cohort
+        if: runner.os != 'Windows'
+        shell: bash
+        # The hosted startup boundary lives in
+        # `crates/app-core/src/server/hosted_tenant.rs` with tests beside it:
+        # the resolver refusals, the operator-home and gateway refusals, the
+        # shared-worker policy, and the accepted per-user container.
+        run: |
           python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 7 \
-            -- crash::ring_tests:: --nocapture
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- hosted_tenant --nocapture
+
+      - name: Run session MCP cohort
+        if: runner.os != 'Windows'
+        shell: bash
+        # `tool::session_mcp` owns the editor-supplied MCP servers: the request
+        # validation, the overlay that keeps them to the installing connection,
+        # the package MCP servers, and the hosted gate that refuses both in a
+        # shared worker (#668), and the notice queue that carries a refusal into
+        # the next turn (`agent::hosted_notice`). `check_lib_test_coverage.py`
+        # listed `tool::session_mcp` as selected by no cohort before this step
+        # existed. Each `--min-passed` pins the measured count so a rename that
+        # empties a filter fails here instead of reporting a green `0 passed`.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 900 --min-passed 16 \
+            -- tool::session_mcp --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 300 --min-passed 3 \
+            -- agent::hosted_notice::tests:: --nocapture
+
+      - name: Run release notes cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- update::release_notes::tests:: --nocapture
+
+      - name: Run self-update cohorts
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- update::github_fetch::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 31 \
+            -- update::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 3 \
+            -- update::update_metadata::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- update::update_rate_limit::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- update::activation::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 3 \
+            -- cli::hot_exec::tests:: --nocapture
+
+      - name: Run session forget cleanup cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- server::session_forget::tests --nocapture
 
       - name: Run IRC cohorts
         shell: bash
         # Nothing else in this workflow runs `horon-agent-irc-core` tests: the
-        # build step has no `--workspace`, and the `horon-agent-base` /
-        # `horon-agent-app-core` IRC tests sit behind a filter no other step
-        # uses. A filter that matches nothing makes libtest report "0 passed"
+        # build step has no `--workspace`, and `horon-agent-app-core` IRC tests
+        # sit behind a filter no other step uses (`horon-agent-base` runs whole-crate
+        # above). A filter that matches nothing makes libtest report "0 passed"
         # and exit 0, the looks-green-but-never-ran shape the warning budget and
         # the stdin detector both had, so each cohort must report at least one
         # pass (`--min-passed 1`).
@@ -951,16 +1222,19 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- --nocapture
           python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- irc --nocapture
-          python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- irc --nocapture
 
+      - name: Cache MiniLM embedding model (Linux only)
+        if: ${{ runner.os == 'Linux' && (steps.impact.outputs.scoped != 'true' || contains(format(',{0},', steps.impact.outputs.scoped_packages_csv), ',horon-agent-embedding,')) }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.horon/models/all-MiniLM-L6-v2
+          key: minilm-l6-v2-${{ runner.os }}-v1
+
       - name: Run embedding numeric-stability cohort (Linux only)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && (steps.impact.outputs.scoped != 'true' || contains(format(',{0},', steps.impact.outputs.scoped_packages_csv), ',horon-agent-embedding,')) }}
         shell: bash
         # `minilm_embedding_is_numerically_stable_across_inference_engines` pins
         # the model's actual output, which is the only thing that can catch an
@@ -970,16 +1244,20 @@ jobs:
         #
         # That test skips itself when the model is absent, and horon-agent-embedding
         # tests are not otherwise run here at all, so without this step it would
-        # never execute. Fetch the model first (~87MB) so the cohort is real
-        # rather than a silent skip.
+        # never execute. Fetch the model (~87MB) when not restored from cache so
+        # the cohort is real rather than a silent skip.
         run: |
           set -euo pipefail
           model_dir="$HOME/.horon/models/all-MiniLM-L6-v2"
           mkdir -p "$model_dir"
           base="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main"
-          curl -sSfL --retry 5 --retry-all-errors -o "$model_dir/model.onnx" "$base/onnx/model.onnx"
-          curl -sSfL --retry 5 --retry-all-errors -o "$model_dir/tokenizer.json" "$base/tokenizer.json"
-          # Fail loudly if the fetch produced something unusable, so this cannot
+          if [ ! -s "$model_dir/model.onnx" ]; then
+            curl -sSfL --retry 5 --retry-all-errors -o "$model_dir/model.onnx" "$base/onnx/model.onnx"
+          fi
+          if [ ! -s "$model_dir/tokenizer.json" ]; then
+            curl -sSfL --retry 5 --retry-all-errors -o "$model_dir/tokenizer.json" "$base/tokenizer.json"
+          fi
+          # Fail loudly if cache/fetch produced something unusable, so this cannot
           # degrade back into a silent skip.
           test -s "$model_dir/model.onnx"
           test -s "$model_dir/tokenizer.json"
@@ -1002,36 +1280,15 @@ jobs:
       - name: Run Linux process-ownership cohort
         if: runner.os == 'Linux'
         shell: bash
-        # Both modules are `#[cfg(all(test, target_os = "linux"))]`, so they only
-        # exist in this job, and no cohort named them. They drive a real
-        # subprocess each: the notification lifecycle tests read
-        # `/proc/<pid>/stat` to prove a hung `notify-send` is reaped without
-        # blocking the caller, and `claude_live` verifies a process start token
-        # before signalling, so a recycled pid is never signalled.
+        # Notification lifecycle tests are `#[cfg(all(test, target_os = "linux"))]`,
+        # driving a real subprocess and reading `/proc/<pid>/stat` to prove a
+        # hung `notify-send` is reaped without blocking (`claude_live` runs in
+        # the whole-crate `horon-agent-base` Linux step above).
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 2 \
             -- notifications::notification_process_tests:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 5 \
-            -- claude_live::tests:: --nocapture
-
-      - name: Run takeover guard cohort (all platforms)
-        shell: bash
-        # `import::takeover_tests` holds the two directions of the platform
-        # guard: off Linux the takeover is refused before any session is
-        # staged, and the reason names this platform; on Linux the guard lets
-        # the call through. Both compile everywhere, so this runs on every OS
-        # and `--min-passed 1` keeps a filter that silently matches nothing
-        # from passing. The refusal cases are what the `windows-latest` step
-        # below repeats by name.
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- import::takeover_tests:: --nocapture
 
       - name: Run stdin-forwarding cohort (all platforms)
         shell: bash
@@ -1054,6 +1311,33 @@ jobs:
             --timeout 600 \
             -- tool::bash::tests::test_stdin_forwarding --nocapture
 
+      - name: Cache direnv binary (Linux only)
+        if: ${{ runner.os == 'Linux' && (steps.impact.outputs.scoped != 'true' || contains(format(',{0},', steps.impact.outputs.scoped_packages_csv), ',horon-agent-app-core,')) }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/horon-direnv-v2.38.2
+          key: direnv-linux-amd64-v2.38.2-148820a187930d36
+
+      - name: Run approved direnv shell cohort
+        if: ${{ runner.os == 'Linux' && (steps.impact.outputs.scoped != 'true' || contains(format(',{0},', steps.impact.outputs.scoped_packages_csv), ',horon-agent-app-core,')) }}
+        shell: bash
+        run: |
+          bin_dir="$HOME/.cache/horon-direnv-v2.38.2"
+          expected_sha="148820a187930d36ca6a204504e5cdb30d8396cd1a97e64c3b3f10d793c11247"
+          mkdir -p "$bin_dir"
+          if [ ! -x "$bin_dir/direnv" ] || ! printf '%s  %s\n' "$expected_sha" "$bin_dir/direnv" | sha256sum --check --status; then
+            tmp_bin=$(mktemp "$bin_dir/.direnv.XXXXXX")
+            curl -fsSL https://github.com/direnv/direnv/releases/download/v2.38.2/direnv.linux-amd64 -o "$tmp_bin"
+            printf '%s  %s\n' "$expected_sha" "$tmp_bin" | sha256sum --check --status
+            chmod +x "$tmp_bin"
+            mv -f "$tmp_bin" "$bin_dir/direnv"
+          fi
+          PATH="$bin_dir:$PATH" direnv version
+          PATH="$bin_dir:$PATH" python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 1 \
+            -- tool::bash::direnv::tests:: --nocapture
+
       - name: Run background output notice cohort
         shell: bash
         run: |
@@ -1070,6 +1354,17 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- server::background_tasks::tests::live_output_reaches_only_the_owning_session
 
+      - name: Run workspace directories cohort
+        shell: bash
+        # The `/dirs` runtime command keeps its state in the session's extension
+        # map; `server::runtime_commands::tests` has no cohort of its own, so the
+        # add/list/remove case runs here explicitly.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- server::runtime_commands::tests::dirs_command_lists_canonical_roots_and_removes_only_the_list --nocapture
+
       - name: Run skill_manage cohort
         shell: bash
         # The `horon-agent-app-core` lib suite only ever runs through filtered
@@ -1083,21 +1378,6 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- skill_delete --nocapture
-
-      - name: Run context_import cohort
-        shell: bash
-        # `horon-agent-base` lib tests are compiled by the step above but only
-        # executed by filtered cohorts, so the `@path` import expansion would
-        # compile without a single test running. The 14 `context_import_*`
-        # tests are platform-neutral (relative, absolute, `~/`, fenced-code and
-        # hop-limit cases over temp directories), so the floor is the full
-        # count rather than one: a filter that matches nothing would otherwise
-        # report a green `0 passed`.
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 14 \
-            -- context_import --nocapture
 
       - name: Run todo blocked and write shebang cohort (todo blocked)
         shell: bash
@@ -1139,27 +1419,6 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- todo_blocked --nocapture
 
-      - name: Run hooks cohort
-        shell: bash
-        # The `horon-agent-base` and `horon-agent-app-core` lib suites only run
-        # through filtered cohorts here, so a lifecycle hook that compiles is
-        # not a hook that was tested. `hooks::pre_request::tests` covers the
-        # request rewrite (replacement, empty stdout, fail-open, system-prompt
-        # refusal, chained commands, stdin payload, recursion guard) and
-        # `hooks::post_tool_feedback::tests` covers the feedback envelope and
-        # the text it appends. The hook cases write small /bin/sh scripts, so
-        # each filter carries `--min-passed 1` while still reporting a pass on
-        # Windows, where only the platform-neutral cases run.
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- hooks::pre_request::tests --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- hooks::post_tool_feedback::tests --nocapture
-
       - name: Run hooks cohort (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -1193,6 +1452,22 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- server::runtime_commands::tests::runtime_commands_read_actual_state_without_inference
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- server::session_notes::tests::
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 1 \
+            -- agent::provider::model_preset::tests::
+
+      - name: Run agentgrep locate cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 5 \
+            -- tool::agentgrep::locate::tests:: --nocapture
 
       - name: Run tool verdict and prewalk cohort
         shell: bash
@@ -1212,7 +1487,7 @@ jobs:
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-tool-types \
-            --timeout 600 --min-passed 9
+            --timeout 600 --min-passed 14
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 21 \
@@ -1223,8 +1498,20 @@ jobs:
             -- agent::round_budget::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 600 --min-passed 12 \
+            --timeout 600 --min-passed 16 \
             -- agent::prewalk_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- agent::prompting::run_prompt::tests:: --nocapture
+
+      - name: Verify Python eval host
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 300 --min-passed 15 \
+            -- tool::eval::tests:: --test-threads=1 --nocapture
 
       - name: Run tool surface cohort
         shell: bash
@@ -1253,6 +1540,8 @@ jobs:
         # overlay merged into a copy that is never stored.
         # `tool::inflight::tests` (3) pins the in-flight marks every dispatch
         # takes and releases, nested marks included.
+        # `tool::apply_patch::apply_patch_tests` (35) covers both patch formats,
+        # including rejection before writes, client buffers and local undo.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
@@ -1262,6 +1551,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 900 --min-passed 48 \
             -- tool::read::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- tool::read::options_tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 5 \
@@ -1282,6 +1575,34 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 3 \
             -- tool::inflight::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 35 \
+            -- tool::apply_patch::apply_patch_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- tool::client_fs::tests::apply_patch_tool_routes_unified_diffs_through_the_client --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- tool::artifacts::render_tests::preview_column_cap_ --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- tool::artifacts::render_tests::shared_output_budget_ --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- tool::run_approval::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- tool::diagnostics_list::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- tool::agentgrep::tests::grep_context_merges_overlaps_and_preserves_paths_only --nocapture
 
       - name: Run instant handling cohort
         shell: bash
@@ -1376,16 +1697,6 @@ jobs:
             -- startup_profile --nocapture
           failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- prompt::prompt_tests --nocapture
-          failed=$((failed | $?))
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- prompt::session_context_tests --nocapture
-          failed=$((failed | $?))
-          python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- agent::tests::prompt_prefix_stability --nocapture
@@ -1399,14 +1710,19 @@ jobs:
 
       - name: Run memory record cohort
         shell: bash
-        # `memory` update and `read memory://` both live in the
-        # `horon-agent-app-core` lib suite, which this workflow only ever runs
-        # through filtered cohorts. Without a step naming their prefixes the
-        # tests would compile and never execute, so each filter must report at
-        # least one pass (`--min-passed 1`): `memory_update` covers the in-place
-        # update (id, links and created_at kept, secret redaction, unknown id,
-        # empty update refused) and `memory_url` covers the full-record read,
-        # the newest-first listing, not-found and out-of-scope refusal.
+        # `memory` update, `read memory://` and the whole `memory` tool action
+        # surface live in the `horon-agent-app-core` lib suite, which this
+        # workflow only ever runs through filtered cohorts. Without a step naming
+        # their prefixes the tests would compile and never execute, so each
+        # filter must report its measured count: `memory_update` covers the
+        # in-place update (id, links and created_at kept, secret redaction,
+        # unknown id, empty update refused); `memory_url` covers the full-record
+        # read, the newest-first listing, not-found and out-of-scope refusal;
+        # `tool::memory::` covers every action end to end on the wiki store
+        # (remember/learn/recall/search/list/forget/update/tag/link/related,
+        # scope and limit handling, the fail-closed Jev recall, the lesson caps
+        # and redaction, managed-skill authoring) and is the command the issue
+        # names as its verification.
         # `run_lib_tests.py` forwards its arguments to libtest, which accepts a
         # single filter, so each filter needs its own call. The store-side
         # helpers (tag normalization, the one-line preview) sit in the
@@ -1421,33 +1737,19 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- memory_url --nocapture
           python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- memory_update --nocapture
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 900 --min-passed 22 \
+            -- tool::memory:: --nocapture
 
       - name: Run memory recall cohorts
         shell: bash
         # Recall used to run in the background through a pending queue that the
         # turn picked up; it is now only the agent's explicit `memory` tool call,
-        # and the consolidation summary is the one automatic piece. Those tests
-        # live in `horon-agent-base` and `horon-agent-app-core` lib suites, which
-        # this workflow runs only through filtered cohorts, so without a step
-        # naming them they would compile and never execute. `--min-passed` pins
-        # the measured count: `memory::consolidation::tests::` covers the pass,
-        # the merge rules and the digest rebuild after a forget;
-        # `memory_agent::tests::` covers what a context update does and does not
-        # schedule; `request_snapshot_reuse` and `memory_guidance` cover the
-        # injection slot on the turn path. `run_lib_tests.py` forwards a single
-        # filter to libtest, so each package gets its own call.
+        # and the consolidation summary is the one automatic piece. These
+        # `horon-agent-app-core` tests run through filtered cohorts
+        # (`horon-agent-base` consolidation/agent tests run in the whole-crate
+        # `horon-agent-base` step above).
         run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 900 --min-passed 12 \
-            -- memory::consolidation::tests:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 900 --min-passed 3 \
-            -- memory_agent::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 900 --min-passed 2 \
@@ -1472,42 +1774,28 @@ jobs:
 
       - name: Run session durability cohort
         shell: bash
-        # The fsync reductions change which originals a session flushes, and
-        # none of the session or runtime-journal tests ran in this workflow
-        # before. `durable_runtime::` covers the runtime journal, including the
-        # entry flush of every directory level an open creates (the record of
-        # a confirmed journal must survive a power loss with its directory);
-        # `session::session_tests::` covers the event store and its local head
-        # files (no explicit-head flag for a session that never selected one);
-        # `session_replication` covers what a replica reads from those files.
-        # `session::tests::durability::` covers the close at the end of a run
-        # publishing only the runtime binding, with nothing appended to the log.
-        # `session::tests::retired_swarm_actions::` covers replay of a session
-        # written before the swarm channel and shared-context removal: the
-        # stored calls must survive projection and render.
-        # The other `session` modules are left out: two of their tests fail on
-        # `dev` itself and are outside this change.
+        # `session_replication` in `horon-agent-app-core` checks what a replica
+        # reads from session files (`horon-agent-base` durability and journal
+        # tests run in the whole-crate `horon-agent-base` step above).
         run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- durable_runtime:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- session::session_tests:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- session::tests::durability:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- session::tests::retired_swarm_actions:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- session_replication --nocapture
+
+      - name: Run session export cohort
+        shell: bash
+        # One redacted projection feeds the Markdown transcript and the
+        # standalone HTML report, but no cohort named either: both modules
+        # compiled and never ran. The filter matches both
+        # (`session_export::tests` and `session_export_html::tests`), so a new
+        # export format cannot land unexecuted, and the count is the number of
+        # tests the filter really selects.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 300 --min-passed 13 \
+            -- session_export --nocapture
 
       - name: Run tool verdict storage cohort
         shell: bash
@@ -1533,6 +1821,40 @@ jobs:
             --timeout 600 --min-passed 3 \
             -- agent::verdict_store_tests:: --nocapture
 
+      - name: Run A2UI core cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-message-types \
+            --timeout 600 --min-passed 2 \
+            -- a2ui_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-protocol \
+            --timeout 600 --min-passed 3 \
+            -- a2ui_wire_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 3 \
+            -- agent::a2ui_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- server::client_lifecycle::a2ui_tests:: --nocapture
+
+      - name: Run A2UI harness API and bridge cohort
+        shell: bash
+        # `a2ui_v1` wire contracts in `horon-agent-harness-api` and bridge translation
+        # + opt-in filtering in `horon-agent-harness-api-server` run only via filters.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api \
+            --timeout 600 --min-passed 4 \
+            -- a2ui_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 5 \
+            -- translate::a2ui::a2ui_tests:: --nocapture
+
       - name: Run provider wire cohorts
         shell: bash
         # `horon-agent-provider-openai` is compiled with `--lib` for its
@@ -1542,16 +1864,24 @@ jobs:
         # recovery layer - was compiled here and executed in no workflow.
         # `--min-passed` is the measured count of each filter, so a renamed
         # module fails on the count instead of passing over an empty subset.
-        # libtest takes one filter per run, so the two cohorts are two runs.
+        # The request cohort also covers Responses definitions loaded on demand.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
-            --timeout 600 --min-passed 53 \
+            --timeout 600 --min-passed 56 \
             -- chat:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
-            --timeout 600 --min-passed 174 \
+            --timeout 600 --min-passed 177 \
             -- wire:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
+            --timeout 600 --min-passed 10 \
+            -- request::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
+            --timeout 600 --min-passed 2 \
+            -- stream::stream_tool_tests::tool_call_example_stays_text --nocapture
 
       - name: Run swarm plan proposal and lightweight comm cohort
         shell: bash
@@ -1574,6 +1904,34 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- server::client_lifecycle::tests::lightweight_comm --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- tool::communicate::tests::spawn_label_validation --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- tool::communicate::tests::spawn_execute_rejects_missing_label_before_sending_request --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 3 \
+            -- agent::swarm_budget::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 4 \
+            -- agent::request_messages::tool_result_trim::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 2 \
+            -- plan_review::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 3 \
+            -- agent::turn_streaming_mpsc::prose_repeat::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 2 \
+            -- tool::package_tool::stage_tests:: --nocapture
 
       - name: Run turn end race cohort
         shell: bash
@@ -1613,6 +1971,46 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
             --timeout 600 --min-passed 1 \
             -- tool_done_carries_ --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 1 \
+            -- translate::tests::soft_interrupt_injected_closes_open_text_and_carries_ids --nocapture
+
+      - name: Run turn retry wire tests
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 1 \
+            -- translate::turn_retry_tests::
+
+      - name: Run effective settings wire cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api \
+            --timeout 600 --min-passed 5 \
+            -- effective_settings_snapshot_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 6 \
+            -- translate::effective_settings::tests:: --nocapture
+
+      - name: Run todo status edit cohort
+        shell: bash
+        # `todo_edit_v1` has its wire snapshot in `horon-agent-harness-api` and
+        # its bridge translation in `horon-agent-harness-api-server`; both run
+        # only through these filters. `--min-passed` is the number of tests each
+        # filter matches, so a renamed module fails instead of passing empty.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api \
+            --timeout 600 --min-passed 1 \
+            -- todo_edit_snapshot_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 1 \
+            -- translate::todo_tests:: --nocapture
 
       - name: Run stale API socket probe cohort
         shell: bash
@@ -1648,51 +2046,48 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- single_instance_tests:: --nocapture
 
-      - name: Run session id prefix cohort
+      - name: Run harness API exposure auth cohort
         shell: bash
-        # Both suites only run through filters, so a prefix resolver that
-        # compiles would ship untested: `horon-agent-base` and
-        # `horon-agent-app-core` lib tests are never run whole here. The base
-        # half covers the matcher itself (exact id wins, duplicates do not
-        # ambiguate, ten-candidate cap, a five-character match refused);
-        # the app-core half covers the Subscribe path that resolves a stored
-        # or live session, and the refusals an operator sees.
+        # The opt-in TCP listener is the only harness transport that
+        # authenticates, and both suites run only through filters, so without
+        # this step they would compile and never execute
+        # (scripts/ci/check_lib_test_coverage.py). `tcp::tests` proves a
+        # missing, wrong, oversized, late, revoked or rotated token closes the
+        # connection before the daemon is dialled while a valid one reaches
+        # hello and a ping; `credentials::tests` proves the store keeps only a
+        # digest, prints the token once, and refuses a symlinked or loose file.
+        # `--min-passed` is the number of tests the filter matches on a platform
+        # without the two Unix-only permission tests, so a renamed module fails
+        # here instead of passing over an empty subset.
         run: |
           python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- session_prefix:: --nocapture
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 8 \
+            -- tcp::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 10 \
+            -- credentials::tests:: --nocapture
+
+      - name: Run stored message content cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 3 \
+            -- message_content::tests:: --nocapture
+
+      - name: Run session id prefix cohort
+        shell: bash
+        # `subscribe_prefix` in `horon-agent-app-core` covers the Subscribe path
+        # that resolves a stored or live session (`horon-agent-base` prefix
+        # matcher tests run in the whole-crate `horon-agent-base` step above).
+        run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- subscribe_prefix --nocapture
 
-      - name: Run MCP server request cohort
-        shell: bash
-        # An MCP server may call back into the client (`ping`, `roots/list`, or a
-        # method this version does not implement). Dropping those requests
-        # leaves the server waiting on a reply that never comes, so the three
-        # modules below cover the answer end to end and none of them has another
-        # cohort: they would compile and never execute
-        # (scripts/ci/check_lib_test_coverage.py). The stdio half proves a
-        # request is answered while a notification is not, and that roots are
-        # served only under the `[mcp] expose_roots` opt-in; the remote half
-        # proves the same two answers over the dedicated POST that bypasses the
-        # request registry; the config half proves the opt-in defaults off and
-        # parses when set.
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 2 \
-            -- mcp::client::server_requests_tests --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 2 \
-            -- mcp::remote::remote_server_requests_tests --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- config::mcp::tests --nocapture
       - name: Run cancellable work cohort
         shell: bash
         # Cancelling a run, cancelling one tool call and listing background work
@@ -1728,12 +2123,10 @@ jobs:
 
       - name: Run checkpoint tool cohort
         shell: bash
-        # `horon-agent-app-core` and `horon-agent-base` lib tests only run
-        # through filters, so the checkpoint and rewind tools would compile and
-        # ship unexecuted. The first filter covers the two tools and their
-        # registration switch, the second the settle path that commits the
-        # marker, folds a branch into the report and undoes it, the third the
-        # `[tools] checkpoint` config switch.
+        # `horon-agent-app-core` lib tests only run through filters, so the
+        # checkpoint and rewind tools would compile and ship unexecuted
+        # (`horon-agent-base` config switch tests run in the whole-crate step
+        # above).
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
@@ -1743,41 +2136,18 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 14 \
             -- agent::rewind_summary:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 3 \
-            -- config::checkpoint_switch_tests:: --nocapture
 
       - name: Run compaction and handoff cohorts
         shell: bash
-        # Compaction is the path that decides what a resumed session can still
-        # see, and no other step in this workflow runs it: every `horon-agent-base`
-        # and `horon-agent-app-core` run above is filtered to another prefix, so
-        # a change to the handoff generator, the strategy dispatch or the
-        # overnight trigger would compile and never execute. All three live in
-        # the lib suites, which is why `--min-passed 1` matters: a filter that
-        # matched nothing reports `0 passed` and exits 0, the looks-green shape
-        # this workflow has already fixed twice.
-        #
-        # `overnight_handoff` is the subset of the overnight trigger that crosses
-        # into compaction; it is not selected by `compaction` alone because the
-        # module is named for the run, not the mechanism.
-        #
-        # `HORON_HOME` points at a throwaway directory with mode 700. The
-        # compaction tests in `agent::tests` save and reload a session, and the
-        # store refuses a home whose path components are not owner-private; on a
-        # hosted runner `$HOME` is world-readable, so those tests pass on a
-        # developer machine and fail here. One directory serves the whole step:
-        # the three calls run in sequence and share the session store they build.
+        # Compaction in `horon-agent-app-core` is only run through filtered
+        # cohorts (`horon-agent-base` runs in the whole-crate step above).
+        # `HORON_HOME` points at a throwaway directory with mode 700 because the
+        # `agent::tests` compaction tests refuse a world-readable `$HOME`.
         run: |
           HORON_HOME="$(mktemp -d)"
           export HORON_HOME
           chmod 700 "$HORON_HOME"
           trap 'rm -rf "$HORON_HOME"' EXIT
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- compaction --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
@@ -1789,6 +2159,8 @@ jobs:
 
       - name: Run integration contracts
         shell: bash
+        env:
+          HORON_AGENT_SOAK_CYCLES: ${{ github.event_name == 'pull_request' && '20' || '200' }}
         # Compiles `--tests` above, so these are built; before #226 nothing
         # started them, and a target that only builds can break in a merged
         # pull request without turning a check red. The target list, package
@@ -1796,7 +2168,80 @@ jobs:
         # so the guard that checks this coverage reads the same file.
         run: |
           python3 scripts/ci/run_integration_targets.py \
-            --artifacts "$TEST_ARTIFACTS" --timeout 900
+            --artifacts "$TEST_ARTIFACTS" --jobs 4 --timeout 900
+
+      - name: Run extension wire contracts with an isolated home
+        shell: bash
+        # The extension wire owns the framing, deadlines and correlation a
+        # user-installed Rust child speaks. It is a lib module in
+        # `horon-agent-app-core`, so no other cohort filter reaches it: the
+        # `--min-passed` count is the guard against a filter that matches
+        # nothing and reports `0 passed` with exit 0. One test starts this very
+        # test executable as a real child process over stdin and stderr, so the
+        # framing crosses real OS pipes.
+        #
+        # `HORON_HOME` selects a fresh owner-private directory for Horon state,
+        # so the tests and the child they start never touch the user's Horon
+        # home. It sets no other limit on what a process can open.
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          chmod 700 "$HORON_HOME"
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --min-passed 34 --timeout 900 -- extensions::wire::tests --nocapture
+
+      - name: Run package observation contracts with an isolated home
+        shell: bash
+        # Package observation is a lib module in `horon-agent-app-core`, so no
+        # other cohort filter reaches it. `--min-passed 10` is the measured count
+        # of the module: a filter that matched nothing reports `0 passed` with
+        # exit 0, which would look green. Two cases drive `Registry::execute`, so
+        # they read the process `HORON_HOME`; the observation worker resolves the
+        # package area once per session, and this fresh owner-private directory
+        # keeps that resolution away from the user's packages.
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          chmod 700 "$HORON_HOME"
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --min-passed 10 --timeout 900 -- extensions::observer::tests --nocapture
+
+      - name: Run the extension author SDK contracts with an isolated home
+        shell: bash
+        # The author SDK is a workspace member outside the agent binary's graph,
+        # so no other cohort reaches its lib tests. `--min-passed 11` is the
+        # measured count: a filter that matched nothing would report `0 passed`
+        # with exit 0. The example package's real child process runs in the next
+        # step; `HORON_HOME` is a fresh owner-private directory for both.
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          chmod 700 "$HORON_HOME"
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-extension-sdk \
+            --min-passed 11 --timeout 900
+
+      - name: Run the package example in both installed layouts
+        if: ${{ steps.impact.outputs.scoped != 'true' || steps.impact.outputs.run_package_example == 'true' }}
+        shell: bash
+        # The example package is the artifact an author ships: the test starts
+        # the built binary under the standalone extension layout and under the
+        # plugin layout over real OS pipes, with an isolated `HORON_HOME`. The
+        # target is named with `--test` so `scripts/ci/check_test_targets.py`
+        # sees it run rather than allowlisting it.
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          chmod 700 "$HORON_HOME"
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          cargo test --locked --target ${{ matrix.target }} -p horon-package-example --test extension_layouts -- --nocapture 2>&1 \
+            | tee "$RUNNER_TEMP/package-example.log"
+          grep -Eq 'test result: ok\. 2 passed' "$RUNNER_TEMP/package-example.log"
 
       # e2e runs inside `Run integration contracts` above, through the same
       # artifacts file: its binary is built by the compile step, and a second
@@ -1812,7 +2257,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          scripts/ci/check_warnings.sh
+          scripts/ci/check_warnings.sh --target ${{ matrix.target }}
 
       - name: Install cargo-audit
         if: runner.os == 'Linux'
@@ -1828,19 +2273,14 @@ jobs:
         run: |
           scripts/ci/check_security.sh --strict
 
-      - name: sccache stats
-        # Runs even after a failed gate so the cache state is visible in the
-        # log, but only when the wrapper was really enabled.
-        if: ${{ always() && env.RUSTC_WRAPPER == 'sccache' }}
-        shell: bash
-        run: sccache --show-stats
-
   windows-build-test:
     name: Build & Test (windows-latest)
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' && (github.event_name != 'pull_request' || needs.changes.outputs.platform_windows == 'true' || needs.changes.outputs.full_matrix == 'true') }}
     timeout-minutes: 75
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - name: Report free disk space
         # D: carries the workspace and target dir on the Windows image. Logged,
@@ -1853,6 +2293,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Verify Python eval runner
+        run: python -B -m unittest -v scripts/ci/test_eval_runner.py
+
       - uses: ./.github/actions/msvc-dev-cmd
         with:
           arch: amd64
@@ -1862,56 +2305,10 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
 
-      # Job-wide, before the first cargo call: a wrapper applied to one step
-      # only left `<unknown rustc version>` artifacts that the next unwrapped
-      # compile rejected with E0514 ("compiled by an incompatible version of
-      # rustc", run 42373575639). Every cargo call in this job must share the
-      # same wrapper.
-      #
-      # CARGO_INCREMENTAL=0 is required, not a speed tweak: sccache cannot
-      # cache incremental units, and both [profile.dev] and [profile.release]
-      # in Cargo.toml set incremental = true, so nothing would be cached.
-      #
-      # This job runs on a GitHub-hosted Windows image only; the guard keeps
-      # the step out of any other environment.
-      - name: Setup sccache
-        if: runner.environment == 'github-hosted'
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          disable_annotations: true
-        continue-on-error: true
-
-      - name: Enable sccache
-        # The wrapper is written only when the server actually starts, so a
-        # runner without a working sccache runs every cargo call unwrapped
-        # instead of mixing wrapped and unwrapped builds.
-        if: runner.environment == 'github-hosted'
-        shell: pwsh
-        run: |
-          if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) {
-            Write-Host 'sccache is not available; this job builds without a wrapper'
-            exit 0
-          }
-          sccache --start-server
-          if ($LASTEXITCODE -eq 0) {
-            "RUSTC_WRAPPER=sccache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            "CARGO_INCREMENTAL=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          } else {
-            Write-Host 'sccache failed to start; this job builds without a wrapper'
-          }
-          # A step is not a script: GitHub appends `exit $LASTEXITCODE` to a
-          # pwsh body, so a failed `sccache --start-server` would fail the whole
-          # job even though the branch above deliberately continues unwrapped.
-          # The bash twin has no such epilogue, which is why only Windows went
-          # red when the cache backend answered 503 ServerBusy ("Egress is over
-          # the account limit", run 43451256902) and every later step, including
-          # the build, was skipped. Ending with an explicit success keeps the
-          # decision here: the wrapper is opt-in, its absence is not a failure.
-          exit 0
-
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           key: windows-latest
           cache-all-crates: "true"
 
@@ -1934,11 +2331,19 @@ jobs:
             throw 'Windows horon-tui build failed'
           }
 
+      - name: Cache pywinpty wheel on Windows
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.tui_smoke == 'true' || needs.changes.outputs.full_matrix == 'true' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/pip-cache
+          key: windows-pip-pywinpty-v1
+
       - name: ConPTY smoke (TUI client on Windows)
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.tui_smoke == 'true' || needs.changes.outputs.full_matrix == 'true' }}
         shell: bash
         # The client's Windows behaviour used to be covered only by its library
         # tests: nothing drew a screen, read a keystroke or left through a real
-        # console, so a broken render or exit path merged green (#432). The same
+        # console, so a broken render or exit path merged green. The same
         # smoke cases the Unix jobs run (happy path, piped stdin) now drive
         # `horon-agent.exe` -> `horon-tui.exe` through a ConPTY.
         #
@@ -1946,7 +2351,7 @@ jobs:
         # package, and a package that cannot be installed must say so instead of
         # failing the job for an unrelated reason.
         run: |
-          if ! python -m pip install --quiet --disable-pip-version-check pywinpty; then
+          if ! python -m pip install --cache-dir "$RUNNER_TEMP/pip-cache" --quiet --disable-pip-version-check pywinpty; then
             echo "::warning::pywinpty could not be installed; the Windows ConPTY smoke test did not run"
             exit 0
           fi
@@ -1965,92 +2370,170 @@ jobs:
             target/x86_64-pc-windows-msvc/release/horon-agent.exe \
             target/x86_64-pc-windows-msvc/debug/horon-tui.exe
 
-      - name: Compile library and binary tests
+      - name: Compile Windows test executables
         shell: pwsh
+        # Compile every library, binary, and integration test target Windows runs
+        # in one cargo invocation so feature unification runs once, then invoke
+        # the pre-built executables directly in subsequent steps without cargo
+        # re-unifying per crate.
         run: |
-          & cargo test --locked --target x86_64-pc-windows-msvc --lib --bins --no-run
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Windows library/binary test compilation failed'
-          }
-
-      - name: Run horon-tui tests
-        shell: pwsh
-        # No filter: the whole crate runs. The Linux and macOS jobs additionally
-        # go through `run_lib_tests.py --min-passed 1`, which is what catches a
-        # libtest run that matched nothing; here the count is read back from the
-        # run so a silently empty executable still fails.
-        run: |
-          # The compile runs under the timeout wrapper: it is the expensive part
-          # of this step, and an unwrapped hang would sit here until the job
-          # limit. Afterwards the executable exists, so the `--list` call below
-          # only starts it and is safe to run outside the wrapper.
+          $artifacts = Join-Path $env:RUNNER_TEMP 'windows-test-artifacts.jsonl'
+          "WINDOWS_TEST_ARTIFACTS=$artifacts" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'compile horon-tui tests' `
-            -TimeoutSeconds 600 `
-            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-tui', '--lib', '--no-run')
-          # The timeout helper launches cargo as a child process, so its output
-          # never reaches a captured variable. The count therefore comes from a
-          # separate `--list` invocation of the same already-compiled test
-          # binary, and the run itself is only checked for its exit code.
-          $list = & cargo test --locked --target x86_64-pc-windows-msvc -p horon-tui --lib -- --list 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            throw 'could not list horon-tui tests'
-          }
-          $compiled = ($list | Select-String -Pattern ': test$').Count
-          if ($compiled -lt 1) {
-            throw 'horon-tui compiled no tests'
-          }
-          Write-Host "horon-tui tests compiled: $compiled"
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'horon-tui tests' `
-            -TimeoutSeconds 600 `
-            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-tui', '--lib')
-
-      - name: Prepare targeted Windows validation tests
-        shell: pwsh
-        # One cargo invocation builds all four group executables. Asking cargo
-        # per group re-unified features over that group's package alone, so
-        # every group recompiled the workspace crates and the step spent
-        # minutes building for seconds of tests (#413; the Unix jobs took the
-        # same path in #19). The second cargo call only reports where those
-        # executables landed: the build above is up to date, so it compiles
-        # nothing, and the human diagnostics stay in the first call where a
-        # failure is read.
-        run: |
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'compile targeted Windows validation tests' `
+            -Name 'Compile Windows test executables' `
             -TimeoutSeconds 1800 `
-            -CargoArgs @(
-              'test', '--locked', '--target', 'x86_64-pc-windows-msvc',
-              '-p', 'horon-agent-platform-windows', '-p', 'horon-agent-base',
-              '-p', 'horon-agent-app-core', '-p', 'horon-agent-irc-core',
-              '--lib', '--no-run'
-            )
-          $artifacts = Join-Path $env:RUNNER_TEMP 'targeted-validation-artifacts.jsonl'
-          "TARGETED_VALIDATION_ARTIFACTS=$artifacts" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'locate targeted Windows validation executables' `
-            -TimeoutSeconds 300 `
             -StandardOutput $artifacts `
             -CargoArgs @(
               'test', '--locked', '--target', 'x86_64-pc-windows-msvc',
-              '-p', 'horon-agent-platform-windows', '-p', 'horon-agent-base',
-              '-p', 'horon-agent-app-core', '-p', 'horon-agent-irc-core',
-              '--lib', '--no-run', '--message-format=json-render-diagnostics'
+              '-p', 'horon-agent',
+              '-p', 'horon-tui',
+              '-p', 'horon-agent-platform-windows',
+              '-p', 'horon-agent-base',
+              '-p', 'horon-agent-app-core',
+              '-p', 'horon-agent-irc-core',
+              '--lib', '--bins',
+              '--test', 'package_manifest',
+              '--test', 'package_catalog',
+              '--test', 'package_cli',
+              '--test', 'e2e',
+              '--no-run', '--message-format=json-render-diagnostics'
             )
 
-      - name: Run targeted Windows validation tests
+      - name: Run Windows compiled test suites
         shell: pwsh
+        env:
+          HORON_AGENT_E2E_ARTIFACT_DIR: ${{ runner.temp }}/horon-agent-windows-e2e-logs
         run: |
-          # Each test lives in a specific crate, so every group names its
-          # package. A filter that matches nothing makes libtest report
-          # "0 passed" and exit 0, so each name is checked against the
-          # executable's own test list before the run and a missing name fails
-          # the step. The executables are the ones the prepare step built;
-          # starting them directly is what skips cargo's per-package feature
-          # re-unification (#413).
-          $groups = [ordered]@{
-            'horon-agent-platform-windows' = @(
+          New-Item -ItemType Directory -Force -Path $env:HORON_AGENT_E2E_ARTIFACT_DIR | Out-Null
+
+          $executables = @{}
+          Get-Content -LiteralPath $env:WINDOWS_TEST_ARTIFACTS | ForEach-Object {
+            if ([string]::IsNullOrWhiteSpace($_)) { return }
+            $message = $_ | ConvertFrom-Json
+            if ($message.reason -ne 'compiler-artifact') { return }
+            if (-not $message.profile.test) { return }
+            if (-not $message.executable) { return }
+            $kinds = @($message.target.kind)
+            $kind = if ($kinds -contains 'lib') { 'lib' } elseif ($kinds -contains 'test') { 'test' } else { return }
+
+            $packageId = [string]$message.package_id
+            if ($packageId.Contains('#')) {
+              $fragment = $packageId.Substring($packageId.LastIndexOf('#') + 1)
+              $at = $fragment.IndexOf('@')
+              if ($at -ge 0) {
+                $package = $fragment.Substring(0, $at)
+                $version = $fragment.Substring($at + 1)
+              } else {
+                $pathPart = $packageId.Substring(0, $packageId.LastIndexOf('#')).TrimEnd('/')
+                if ($fragment -match '^\d+\.') {
+                  $package = ($pathPart -split '/')[-1]
+                  $version = $fragment
+                } else {
+                  $package = $fragment
+                  $version = '0.0.0'
+                }
+              }
+            } else {
+              $fields = $packageId.Split(' ')
+              $package = $fields[0]
+              $version = if ($fields.Count -ge 2) { $fields[1] } else { '0.0.0' }
+            }
+
+            $key = "${package}::${kind}::$($message.target.name)"
+            if ($executables.ContainsKey($key)) {
+              throw "cargo reported duplicate test executable for $key"
+            }
+            $executables[$key] = [pscustomobject]@{
+              Package    = $package
+              Version    = $version
+              Executable = [string]$message.executable
+              Directory  = Split-Path -Parent ([string]$message.manifest_path)
+            }
+          }
+
+          $cargoPath = (Get-Command cargo -ErrorAction Stop).Source
+
+          function Invoke-CompiledTest {
+            param(
+              [Parameter(Mandatory=$true)][string]$StepName,
+              [Parameter(Mandatory=$true)][string]$Key,
+              [Parameter(Mandatory=$true)][string[]]$TestArgs,
+              [string]$ListFilter = '',
+              [string[]]$RequiredNames = @(),
+              [int]$MinListed = 1,
+              [int]$MinPassed = 1,
+              [int]$TimeoutSeconds = 900,
+              [switch]$FreshHome
+            )
+            if (-not $executables.ContainsKey($Key)) {
+              throw "compiled Windows test artifacts missing $Key"
+            }
+            $entry = $executables[$Key]
+            if ($ListFilter) {
+              $listed = @(& $entry.Executable --list $ListFilter 2>&1 | ForEach-Object { "$_" })
+            } else {
+              $listed = @(& $entry.Executable --list 2>&1 | ForEach-Object { "$_" })
+            }
+            if ($LASTEXITCODE -ne 0) {
+              $listed | ForEach-Object { Write-Host $_ }
+              throw "$StepName`: --list failed for $Key with exit code $LASTEXITCODE"
+            }
+            $testLines = @($listed | Where-Object { $_ -match ': test$' })
+            if ($testLines.Count -lt $MinListed) {
+              throw "$StepName`: expected at least $MinListed listed tests for $Key, found $($testLines.Count)"
+            }
+            foreach ($req in $RequiredNames) {
+              if (-not ($listed | Where-Object { $_ -match "(^|::)$([regex]::Escape($req)): test$" })) {
+                throw "$StepName`: test '$req' missing from $Key"
+              }
+            }
+
+            $safeName = ($StepName -replace '[^A-Za-z0-9_-]', '_')
+            $logPath = Join-Path $env:RUNNER_TEMP "win-test-$safeName.log"
+            $prevHome = $env:HORON_HOME
+            if ($FreshHome) {
+              $env:HORON_HOME = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+              New-Item -ItemType Directory -Path $env:HORON_HOME -ErrorAction Stop | Out-Null
+            }
+            try {
+              $env:CARGO_MANIFEST_DIR = $entry.Directory
+              $env:CARGO_PKG_NAME = $entry.Package
+              $env:CARGO_PKG_VERSION = $entry.Version
+              $env:CARGO = $cargoPath
+              & ./scripts/ci/run_with_timeout.ps1 `
+                -Name $StepName `
+                -TimeoutSeconds $TimeoutSeconds `
+                -FilePath $entry.Executable `
+                -WorkingDirectory $entry.Directory `
+                -StandardOutput $logPath `
+                -Arguments $TestArgs
+              $lines = @(Get-Content -LiteralPath $logPath)
+              $lines | ForEach-Object { Write-Host $_ }
+              $passed = 0
+              foreach ($m in ($lines | Select-String -Pattern 'test result: ok\. (\d+) passed')) {
+                $passed += [int]$m.Matches[0].Groups[1].Value
+              }
+              if ($passed -lt $MinPassed) {
+                throw "$StepName`: expected at least $MinPassed passed tests, reported $passed"
+              }
+            } finally {
+              if ($FreshHome) {
+                if (Test-Path -LiteralPath $env:HORON_HOME) {
+                  Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
+                }
+                if ($null -eq $prevHome) {
+                  Remove-Item Env:\HORON_HOME -ErrorAction SilentlyContinue
+                } else {
+                  $env:HORON_HOME = $prevHome
+                }
+              }
+            }
+          }
+
+          Invoke-CompiledTest -StepName 'horon-tui tests' -Key 'horon-tui::lib::horon_tui' -TestArgs @('--nocapture') -MinListed 1 -MinPassed 1 -TimeoutSeconds 600
+
+          $targetedGroups = [ordered]@{
+            'horon-agent-platform-windows::lib::horon_agent_platform_windows' = @(
               'is_process_running_reports_exited_children_as_stopped',
               'spawn_replacement_process_returns_without_waiting_for_child_exit',
               'pipe_name_is_stable_and_normalizes_case_and_separators',
@@ -2065,134 +2548,61 @@ jobs:
               'resources::tests::disk_fact_reads_the_system_volume',
               'resources::tests::disk_fact_is_skipped_when_no_path_is_asked_for'
             )
-            'horon-agent-base' = @(
+            'horon-agent-base::lib::horon_agent_base' = @(
               'import::takeover_tests::takeover_is_refused_before_a_session_is_staged_on_an_unsupported_platform',
               'import::takeover_tests::unsupported_reason_is_none_exactly_where_takeover_works'
             )
-            'horon-agent-app-core' = @(
+            'horon-agent-app-core::lib::horon_agent_app_core' = @(
               'sibling_socket_path_roundtrip',
               'cleanup_socket_pair_removes_main_and_debug_files',
-              'build_shell_command_uses_cmd_and_executes_command'
+              'build_shell_command_uses_cmd_and_executes_command',
+              'eval_opt_in_follows_profile_and_disabled_tools',
+              'eval_accepts_model_tool_arguments',
+              'eval_requires_explicit_approval_even_in_permissive_modes',
+              'eval_retains_state_until_reset_or_idle_reclamation',
+              'eval_bounds_inline_output_and_keeps_a_session_artifact',
+              'eval_timeout_stops_the_process_and_its_child',
+              'eval_aborted_call_cleans_up_before_the_next_cell',
+              'eval_oversized_cell_preserves_previous_state',
+              'eval_daemon_approval_is_consumed_once',
+              'eval_editor_approves_one_cell_without_releasing_another',
+              'eval_bridge_reads_and_runs_shell_through_the_registry',
+              'eval_bridge_requires_separate_approval_for_a_shell_call',
+              'eval_bridge_refuses_off_tools_dispatchers_and_background_shell',
+              'eval_bridge_limits_calls_and_keeps_the_next_cell_usable',
+              'eval_bridge_timeout_stops_running_shell'
             )
-            'horon-agent-irc-core' = @(
+            'horon-agent-irc-core::lib::horon_agent_irc_core' = @(
               'send_orders_same_millisecond_messages_by_seq',
               'mailbox_drops_oldest_beyond_cap',
               'mutual_wait_returns_unanswerable'
             )
           }
-
-          # Read the prepare step's artifact report. Each selected package
-          # contributes exactly one test-profile lib executable; two would mean
-          # the report is ambiguous and the run could start the wrong binary.
-          $executables = @{}
-          Get-Content -LiteralPath $env:TARGETED_VALIDATION_ARTIFACTS | ForEach-Object {
-            if ([string]::IsNullOrWhiteSpace($_)) { return }
-            $message = $_ | ConvertFrom-Json
-            if ($message.reason -ne 'compiler-artifact') { return }
-            if (-not ($message.target.kind -contains 'lib')) { return }
-            if (-not $message.profile.test) { return }
-            if (-not $message.executable) { return }
-
-            $packageId = [string]$message.package_id
-            if ($packageId.Contains('#')) {
-              $fragment = $packageId.Substring($packageId.LastIndexOf('#') + 1)
-              $at = $fragment.IndexOf('@')
-              if ($at -ge 0) {
-                $package = $fragment.Substring(0, $at)
-                $version = $fragment.Substring($at + 1)
-              } else {
-                $package = $fragment
-                $version = '0.0.0'
-              }
-            } else {
-              $fields = $packageId.Split(' ')
-              $package = $fields[0]
-              $version = if ($fields.Count -ge 2) { $fields[1] } else { '0.0.0' }
-            }
-
-            if ($executables.ContainsKey($package)) {
-              throw "cargo reported two lib test executables for $package"
-            }
-            $executables[$package] = [pscustomobject]@{
-              Executable = [string]$message.executable
-              Directory  = Split-Path -Parent ([string]$message.manifest_path)
-              Version    = $version
-            }
+          foreach ($key in $targetedGroups.Keys) {
+            $names = $targetedGroups[$key]
+            Invoke-CompiledTest -StepName "targeted $key" -Key $key -RequiredNames $names -TestArgs (@($names) + @('--nocapture')) -MinListed $names.Count -MinPassed $names.Count -TimeoutSeconds 600
           }
 
-          $cargoPath = (Get-Command cargo -ErrorAction Stop).Source
+          Invoke-CompiledTest -StepName 'Windows power tests' -Key 'horon-agent-platform-windows::lib::horon_agent_platform_windows' -ListFilter 'power::tests::' -TestArgs @('power::tests::', '--nocapture') -MinListed 1 -MinPassed 1
+          Invoke-CompiledTest -StepName 'Windows package manifest contracts' -Key 'horon-agent-base::test::package_manifest' -TestArgs @('--nocapture') -MinListed 1 -MinPassed 1 -FreshHome
+          Invoke-CompiledTest -StepName 'Windows package catalog contracts' -Key 'horon-agent-base::test::package_catalog' -TestArgs @('--nocapture') -MinListed 1 -MinPassed 1 -FreshHome
+          Invoke-CompiledTest -StepName 'Windows extension wire contracts' -Key 'horon-agent-app-core::lib::horon_agent_app_core' -ListFilter 'extensions::wire::tests' -TestArgs @('extensions::wire::tests', '--nocapture') -MinListed 34 -MinPassed 34 -FreshHome
+          Invoke-CompiledTest -StepName 'Windows package CLI contracts' -Key 'horon-agent::test::package_cli' -TestArgs @('--nocapture') -MinListed 1 -MinPassed 1 -FreshHome
 
-          foreach ($package in $groups.Keys) {
-            $names = $groups[$package]
-            if (-not $executables.ContainsKey($package)) {
-              throw "the prepared artifacts hold no lib test executable for $package"
-            }
-            $entry = $executables[$package]
-
-            $listed = & $entry.Executable --list 2>&1 | ForEach-Object { "$_" }
-            if ($LASTEXITCODE -ne 0) {
-              $listed | ForEach-Object { Write-Host $_ }
-              throw "listing tests of $package failed with exit code $LASTEXITCODE"
-            }
-            foreach ($testName in $names) {
-              if (-not ($listed | Where-Object { $_ -match "(^|::)$([regex]::Escape($testName)): test$" })) {
-                throw "Windows targeted test $testName is not in the $package lib tests"
-              }
-            }
-
-            # Cargo runs a lib test executable with the package root as the
-            # working directory and these variables set; starting the
-            # executable directly has to reproduce both.
-            $env:CARGO_MANIFEST_DIR = $entry.Directory
-            $env:CARGO_PKG_NAME = $package
-            $env:CARGO_PKG_VERSION = $entry.Version
-            $env:CARGO = $cargoPath
-            & ./scripts/ci/run_with_timeout.ps1 `
-              -Name "Windows targeted tests: $package" `
-              -TimeoutSeconds 600 `
-              -FilePath $entry.Executable `
-              -WorkingDirectory $entry.Directory `
-              -Arguments (@($names) + @('--nocapture'))
-          }
-
-      - name: Run Windows power tests
-        shell: pwsh
-        run: |
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'Windows power-inhibit tests' `
-            -TimeoutSeconds 900 `
-            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-platform-windows', '--lib', 'power::tests::', '--', '--nocapture')
-
-      - name: Run Windows e2e smoke tests
-        shell: pwsh
-        run: |
-          $tests = @(
-            'provider_behavior::test_socket_model_cycle_supported_models',
-            'provider_behavior::test_model_switch_resets_provider_session'
+          $e2eSmoke = @(
+            'provider_behavior::test_multi_turn_conversation',
+            'provider_behavior::test_resume_restores_model_and_tool_history'
           )
-
-          foreach ($testName in $tests) {
-            & ./scripts/ci/cargo_with_timeout.ps1 `
-              -Name "Windows e2e smoke test: $testName" `
-              -TimeoutSeconds 420 `
-              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '--test', 'e2e', $testName, '--', '--exact', '--nocapture')
+          foreach ($testName in $e2eSmoke) {
+            Invoke-CompiledTest -StepName "Windows e2e $testName" -Key 'horon-agent::test::e2e' -RequiredNames @($testName) -TestArgs @($testName, '--exact', '--nocapture') -MinListed 1 -MinPassed 1 -TimeoutSeconds 420
           }
 
-      - name: Run Windows lifecycle e2e tests
-        shell: pwsh
-        env:
-          HORON_AGENT_E2E_ARTIFACT_DIR: ${{ runner.temp }}/horon-agent-windows-e2e-logs
-        run: |
-          New-Item -ItemType Directory -Force -Path $env:HORON_AGENT_E2E_ARTIFACT_DIR | Out-Null
-          $tests = @(
+          $e2eLifecycle = @(
             'windows_lifecycle::windows_binary_server_accepts_clients_and_debug_cli',
             'windows_lifecycle::windows_binary_server_rebinds_named_pipe_after_exit'
           )
-          foreach ($testName in $tests) {
-            & ./scripts/ci/cargo_with_timeout.ps1 `
-              -Name "Windows lifecycle e2e test: $testName" `
-              -TimeoutSeconds 420 `
-              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '--test', 'e2e', $testName, '--', '--exact', '--nocapture')
+          foreach ($testName in $e2eLifecycle) {
+            Invoke-CompiledTest -StepName "Windows lifecycle $testName" -Key 'horon-agent::test::e2e' -RequiredNames @($testName) -TestArgs @($testName, '--exact', '--nocapture') -MinListed 1 -MinPassed 1 -TimeoutSeconds 420
           }
 
       - name: Upload Windows e2e diagnostics
@@ -2217,41 +2627,10 @@ jobs:
           & ./scripts/install/test_install_windows_launcher.ps1
           & ./scripts/install/test_windows_setup.ps1
 
-      - name: sccache stats
-        # Runs even after a failed test so the cache state is in the log, and
-        # only when the wrapper was enabled for this job.
-        if: ${{ always() && env.RUSTC_WRAPPER == 'sccache' }}
-        shell: pwsh
-        run: sccache --show-stats
-
-  fmt:
-    name: Format
-    needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Install the pinned toolchain
-        # `cargo fmt` runs under the toolchain rust-toolchain.toml pins. Installing
-        # it here, with its listed components, replaces rustup's automatic install,
-        # which prints a warning on first use.
-        run: rustup toolchain install --profile minimal
-
-      - name: Check module declarations resolve
-        # A `mod x;` with no file makes rustfmt fail with "Error writing files:
-        # failed to resolve mod", which reads like a formatting problem and hides
-        # every gate behind it. Naming the real cause first (221159294).
-        run: python3 scripts/ci/check_module_files.py
-
-      - name: Check formatting
-        run: bash scripts/ci/check_format.sh
-
   typescript-sdk:
     name: TypeScript SDK
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.ts_sdk == 'true' || needs.changes.outputs.npm_pkg == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -2267,6 +2646,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.3
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-ts-sdk-${{ hashFiles('packages/sdk/typescript/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-ts-sdk-
 
       # The SDK mirrors crates/harness-api by hand. Without this job the
       # only guard that runs on a change is the Rust-side variant check, and a
@@ -2290,7 +2676,7 @@ jobs:
   python-sdk:
     name: Python SDK (${{ matrix.python }})
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.py_sdk == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
@@ -2304,9 +2690,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: ${{ matrix.python }}
+          enable-cache: false
+
+      - name: Configure uv cache directory
+        run: echo "UV_CACHE_DIR=$RUNNER_TEMP/setup-uv-cache" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/setup-uv-cache
+          key: uv-${{ runner.os }}-py${{ matrix.python }}-${{ hashFiles('packages/sdk/python/uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-py${{ matrix.python }}-
 
       # Like the TypeScript job: the SDK mirrors crates/harness-api by hand,
       # and the Rust-side parity test only proves the method names exist.
@@ -2330,7 +2727,7 @@ jobs:
   docs-site:
     name: Documentation Site
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.docs_site == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # `packages/docs-site` is the Mintlify project served at agent.horon.ai.
@@ -2357,6 +2754,13 @@ jobs:
         with:
           bun-version: 1.4.3
 
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-docs-site-${{ hashFiles('packages/docs-site/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-docs-site-
+
       - name: Install
         run: bun install --frozen-lockfile
         working-directory: packages/docs-site
@@ -2369,7 +2773,7 @@ jobs:
     name: Setup Friction Eval (Linux installer)
     needs: changes
     runs-on: ubuntu-24.04
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.install_scripts == 'true' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2387,7 +2791,7 @@ jobs:
     name: PowerShell Syntax
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.install_scripts == 'true' || needs.changes.outputs.platform_windows == 'true' || needs.changes.outputs.workflows == 'true' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2406,7 +2810,7 @@ jobs:
     name: Windows ARM64 Release Configuration
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     timeout-minutes: 30
     env:
       # `dtolnay/rust-toolchain` installs components into the `stable` toolchain
@@ -2438,15 +2842,24 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           key: windows-arm64-release-check
           cache-all-crates: "true"
+
+      - name: Cache pinned justrust
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/justrust-bin
+          key: justrust-${{ runner.os }}-${{ hashFiles('scripts/ci/install_justrust.sh') }}
 
       - name: Install pinned justrust
         shell: bash
         env:
           # Only for the release API fallback when the download URL fails.
           GH_TOKEN: ${{ github.token }}
+          JUSTRUST_INSTALL_DIR: ${{ runner.temp }}/justrust-bin
+          JUSTRUST_USE_CACHED: "1"
         run: bash scripts/ci/install_justrust.sh
 
       - name: Check full Windows ARM64 release configuration
@@ -2461,7 +2874,7 @@ jobs:
     name: Windows Cross-Target Check (Linux)
     needs: changes
     runs-on: ubuntu-24.04
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     timeout-minutes: 30
     env:
       # The two Windows targets are installed into `stable`; the same pin makes
@@ -2489,7 +2902,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           key: windows-cross-check
           cache-all-crates: "true"
 
@@ -2628,17 +3042,25 @@ jobs:
   workflow-lint:
     name: Workflow Lint
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.workflows == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Cache actionlint binary
+        id: actionlint-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/actionlint-bin
+          key: actionlint-${{ runner.os }}-v1.7.12
+
       # The image's preinstalled Go can be older than actionlint's go.mod
       # requirement, and the automatic toolchain switch then fails on a
       # toolchain version the module proxy does not serve. Pin Go here and keep
       # it from fetching another toolchain so the job depends only on these pins.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        if: ${{ steps.actionlint-cache.outputs.cache-hit != 'true' }}
         with:
           go-version: '1.25.x'
           cache: false
@@ -2650,8 +3072,13 @@ jobs:
           GOTOOLCHAIN: local
         run: |
           set -euo pipefail
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-          "$(go env GOPATH)/bin/actionlint" -color
+          bin_dir="${RUNNER_TEMP}/actionlint-bin"
+          mkdir -p "$bin_dir"
+          if [ ! -x "$bin_dir/actionlint" ]; then
+            GOBIN="$bin_dir" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          fi
+          "$bin_dir/actionlint" -version
+          "$bin_dir/actionlint" -color
 
   # The one check a branch rule needs. Gates that a documentation-only pull
   # request or `dev` push skips by design stay "skipped" and would leave a
@@ -2666,7 +3093,6 @@ jobs:
       - release-automation
       - build
       - windows-build-test
-      - fmt
       - typescript-sdk
       - python-sdk
       - docs-site
@@ -2692,6 +3118,7 @@ jobs:
           fi
           code="$(echo "$NEEDS" | jq -r '.changes.outputs.code // ""')"
           docs_only="$(echo "$NEEDS" | jq -r '.changes.outputs.docs_only // ""')"
+          rust="$(echo "$NEEDS" | jq -r '.changes.outputs.rust // ""')"
           if [ "$code" != true ] && [ "$code" != false ]; then
             echo "::error::Changed Paths gave code='$code'; expected true or false"
             exit 1
@@ -2700,8 +3127,17 @@ jobs:
             echo "::error::Changed Paths skipped the code gates without a documentation-only result"
             exit 1
           fi
-          failed="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key')"
-          if [ -n "$failed" ]; then
-            echo "::error::failed or cancelled: $failed"
+          if [ "$rust" != true ] && [ "$rust" != false ]; then
+            echo "::error::Changed Paths gave rust='$rust'; expected true or false"
+            exit 1
+          fi
+          succeeded="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.key != "changes" and .value.result == "success") | .key')"
+          if [ -z "$succeeded" ]; then
+            echo "::error::every downstream gate was skipped; refused empty aggregate pass"
+            exit 1
+          fi
+          bad="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key):\(.value.result)"')"
+          if [ -n "$bad" ]; then
+            echo "::error::unexpected downstream result(s): $bad"
             exit 1
           fi

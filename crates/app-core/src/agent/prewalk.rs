@@ -26,15 +26,14 @@ impl std::fmt::Display for PrewalkRefusal {
         match self {
             Self::UnknownModel(model) => write!(
                 formatter,
-                "`prewalk.into` names the model `{model}`, which the active provider profile does not offer",
+                "the `[prewalk]` model `{model}` is not offered by the active provider profile",
             ),
-            Self::UnresolvedRole(role) => write!(
-                formatter,
-                "`prewalk.into` refers to the model role `{role}`, which resolves to no model",
-            ),
+            Self::UnresolvedRole(role) => {
+                write!(formatter, "the `[prewalk]` model role `{role}` resolves to no model",)
+            }
             Self::UnknownRole(role) => write!(
                 formatter,
-                "`prewalk.into` refers to `role:{role}`, but the only roles are `default`, `plan`, and `aux`",
+                "the `[prewalk]` model refers to `role:{role}`, but the only roles are `default`, `plan`, and `aux`",
             ),
         }
     }
@@ -51,14 +50,16 @@ impl Agent {
             return;
         }
         // A session that already decided this, in this process or in the stored
-        // file, never decides again.
+        // file, never decides again (and never switches back to planning).
         if self.session.prewalk_event().is_some() {
             return;
         }
-        if !self.prewalk_applies(&config.prewalk) {
-            return;
-        }
-        if !self.prewalk_triggered() {
+        self.apply_prewalk_planning(&config.prewalk);
+        if config.tools.plan_mode {
+            if !self.prewalk_triggered() || !self.prewalk_applies(&config.prewalk) {
+                return;
+            }
+        } else if !self.prewalk_applies(&config.prewalk) || !self.prewalk_triggered() {
             return;
         }
         let Some(into) = config.prewalk.into_model().map(str::to_string) else {
@@ -102,6 +103,32 @@ impl Agent {
         }
     }
 
+    /// Start a new session on the `[prewalk] planning` model, once.
+    ///
+    /// It runs only before the session's first assistant message, so a model the
+    /// user picks later, a resumed session and a session already handed off are
+    /// never switched back. An unusable value leaves the session model alone and
+    /// says why, the same as an unusable `into`.
+    fn apply_prewalk_planning(&mut self, config: &PrewalkConfig) {
+        let Some(planning) = config.planning_model() else {
+            return;
+        };
+        if self.session.prewalk_event().is_some() || self.session.has_visible_assistant_message() {
+            return;
+        }
+        let current = self.provider_model();
+        match self.resolve_prewalk_model(planning, &current) {
+            Ok(target) if target == current => {}
+            Ok(target) => match self.set_model(&target) {
+                Ok(()) => logging::info(&format!("prewalk: planning on '{target}' before the handoff")),
+                Err(error) => logging::warn(&format!(
+                    "prewalk: planning on `{target}` failed: {error}; keeping '{current}'"
+                )),
+            },
+            Err(refusal) => logging::warn(&format!("prewalk: planning: {refusal}; keeping '{current}'")),
+        }
+    }
+
     /// Whether `from`, when set, names the model this session currently runs.
     fn prewalk_applies(&self, config: &PrewalkConfig) -> bool {
         let Some(from) = config.from_model() else {
@@ -137,15 +164,15 @@ impl Agent {
             ModelReference::Model(model) => model.to_string(),
             ModelReference::Role(role) => self.resolve_prewalk_role(role)?,
         };
+        // The session may already run the target model (including an aliased
+        // route the switch list hides); re-selecting it is never a downgrade.
+        if model == current {
+            return Ok(model);
+        }
         let offered = self.available_models_for_switching();
         // A profile without a catalog cannot prove the model unknown, so the
         // switch proceeds the same way an explicit `/model` would.
         if offered.is_empty() || offered.iter().any(|entry| entry == &model) {
-            return Ok(model);
-        }
-        // The session may already run a model the switch list hides (an aliased
-        // route); re-selecting it is never a downgrade.
-        if model == current {
             return Ok(model);
         }
         Err(PrewalkRefusal::UnknownModel(model))

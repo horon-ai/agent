@@ -252,6 +252,9 @@ pub enum ApiEvent {
         /// Tools skipped by an urgent interrupt at point C.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tools_skipped: Option<u32>,
+        /// User-facing notice for a native tool retry. Ordinary interrupts omit it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        notice: Option<String>,
         /// `system` or `background_task` for daemon-originated injections.
         /// Absent for user messages.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -551,6 +554,27 @@ pub enum ApiEvent {
     TodoState {
         session_id: String,
         state: horon_agent_todo_policy::TodoSnapshot,
+        /// Digest of the stored todo list this snapshot's `todos` were read
+        /// from, or absent when the server predates revisions. An edit sends
+        /// it back so the write only lands on the list the client showed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        revision: Option<String>,
+    },
+
+    /// Reply to `SetTodoStatus`.
+    ///
+    /// `applied` says whether the list was written. A refusal leaves it
+    /// untouched, names why in `refusal`, and still carries the current `state`
+    /// and `revision`, so a stale editor can refresh from this one frame
+    /// instead of asking again. `revision` is always the one the state was read
+    /// at.
+    TodoEditResult {
+        session_id: String,
+        applied: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refusal: Option<horon_agent_todo_policy::TodoEditRefusal>,
+        state: horon_agent_todo_policy::TodoSnapshot,
+        revision: String,
     },
 
     /// The session's committed todo list changed. Read its current snapshot
@@ -666,6 +690,14 @@ pub enum ApiEvent {
         /// Full Markdown transcript: secrets redacted, long tool results
         /// truncated with a marker.
         markdown: String,
+    },
+
+    /// Reply to `ExportSessionHtml`.
+    SessionHtml {
+        session_id: String,
+        /// Standalone HTML report: every transcript character escaped, the
+        /// stylesheet inline, and nothing loaded from the network.
+        html: String,
     },
 
     /// Reply to `ExportSessionEvents`.
@@ -806,6 +838,39 @@ pub enum ApiEvent {
         modes: crate::MessageModes,
     },
 
+    /// Reply to `GetEffectiveSettings`: the allow-listed daemon values a
+    /// settings screen displays, each with the layer that supplied it.
+    ///
+    /// Requires `effective_settings_v1`. The report names only keys the
+    /// allow-list holds, so a client that shows it cannot display a value the
+    /// server did not choose to report. The daemon behind the bridge produced
+    /// the rows from its own configuration; a bridge that cannot get them
+    /// answers `unsupported` instead of reporting its own environment.
+    EffectiveSettings {
+        session_id: String,
+        settings: Vec<crate::EffectiveSetting>,
+    },
+
+    /// Reply to `package_control`, carrying the catalog generation the daemon
+    /// published and the complete catalog at it.
+    ///
+    /// No session id: the catalog belongs to the daemon, not to a transcript.
+    /// Removed records stay in `receipt.catalog` with state `revoked`, so a
+    /// client can tell "never installed" from "removed".
+    PackageControl { receipt: crate::PackageControlReceipt },
+
+    /// Validated A2UI v1.0 server-to-client envelope emitted by the assistant.
+    ///
+    /// Delivered only to clients that requested `a2ui_v1` in `hello.event_capabilities`.
+    A2uiEnvelope {
+        session_id: String,
+        tool_call_id: String,
+        sequence: u32,
+        envelope: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fallback_text: Option<String>,
+    },
+
     /// Forward-compatibility catch-all: clients must skip this silently.
     #[serde(other)]
     Unknown,
@@ -830,6 +895,9 @@ impl ApiEvent {
             }
             Self::BackgroundOutput { .. } => Some(crate::CAPABILITY_BACKGROUND_OUTPUT_V1),
             Self::TodoChanged { .. } => Some(crate::CAPABILITY_LIVE_TODO_V1),
+            Self::EffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
+            Self::PackageControl { .. } => Some(crate::CAPABILITY_PACKAGE_CONTROL_V1),
+            Self::A2uiEnvelope { .. } => Some(crate::CAPABILITY_A2UI_V1),
             _ => None,
         }
     }
@@ -937,6 +1005,24 @@ pub struct HistoryMessage {
     /// "user" | "assistant" | "tool".
     pub role: String,
     pub content: String,
+    /// The visible answer of an assistant row that also carries a reasoning
+    /// trace, with the reasoning left out.
+    ///
+    /// `content` keeps its historical value: every typed block's text in
+    /// storage order, which can put reasoning beside the answer with no
+    /// marker. This field is additive and only set on such rows, so a client
+    /// that needs the answer itself does not have to interpret the daemon's
+    /// reasoning markup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+    /// The session's stored id for the message this row shows.
+    ///
+    /// Present only when the client asked for stored message ids and the row
+    /// was rendered from a stored message, so it names the exact original a
+    /// reader can key an annotation by. Rows from a daemon that predates the
+    /// request, and synthetic rows, omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -14,7 +14,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 
 <rect x="44" y="78" width="452" height="42" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
 <text x="270" y="96" font-size="13.5" font-weight="600" text-anchor="middle">horon</text>
-<text x="270" y="112" font-size="11" class="m mono" text-anchor="middle">also hrn, horon-agent</text>
+<text x="270" y="112" font-size="11" class="m mono" text-anchor="middle">--continue selects the latest workspace session</text>
 <line x1="270" y1="120" x2="270" y2="132" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
 
 <rect x="44" y="132" width="452" height="56" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
@@ -77,8 +77,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="556" y="136" font-size="11.5" class="m">exits after the 300 s idle deadline with no clients</text>
 
 <rect x="544" y="164" width="372" height="74" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
-<text x="556" y="185" font-size="13" font-weight="600" class="mono">run &lt;message&gt;</text>
-<text x="556" y="204" font-size="11.5" class="m">one message in-process, no daemon;</text>
+<text x="556" y="185" font-size="13" font-weight="600" class="mono">run &lt;message&gt; [--thinking] [--service-tier]</text>
+<text x="556" y="204" font-size="11.5" class="m">--no-pty uses pipes; --max-time limits the run</text>
 <text x="556" y="221" font-size="11.5" class="m">a server starts only for a tool that needs one</text>
 
 <rect x="544" y="250" width="372" height="74" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>

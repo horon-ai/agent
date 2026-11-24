@@ -12,7 +12,7 @@ use std::time::Duration;
 use horon_agent_sdk::api::ApiEvent;
 use horon_agent_sdk::{ConnectOptions, Error, EventStream, HistoryMessage, HoronAgentClient, SessionInfo};
 
-use super::{AttachedSession, cut, detail, runtime};
+use super::{AttachedSession, ForkRow, cut, detail, runtime};
 
 /// How to reach the harness, kept after the first connection took the options.
 ///
@@ -21,6 +21,10 @@ use super::{AttachedSession, cut, detail, runtime};
 /// (`crates/harness-api-server/src/translate.rs`, the `create_session |
 /// attach_session` arm). A new session therefore needs a connection of its own,
 /// and dialling it needs the settings the first connection consumed.
+///
+/// Cloned for the side-question thread, which opens a second connection while
+/// the worker keeps the first: both need the same endpoint and client identity.
+#[derive(Clone)]
 pub(super) struct Dial {
     socket_path: Option<PathBuf>,
     client_name: String,
@@ -28,6 +32,7 @@ pub(super) struct Dial {
     ensure_runtime: bool,
     supports_user_response: bool,
     supports_ask_requests: bool,
+    a2ui: Option<horon_agent_sdk::A2uiSessionCapabilities>,
 }
 
 impl Dial {
@@ -40,6 +45,7 @@ impl Dial {
             ensure_runtime: options.ensure_runtime,
             supports_user_response: options.supports_user_response,
             supports_ask_requests: options.supports_ask_requests,
+            a2ui: options.a2ui.clone(),
         }
     }
 
@@ -52,6 +58,7 @@ impl Dial {
             ensure_runtime: self.ensure_runtime,
             supports_user_response: self.supports_user_response,
             supports_ask_requests: self.supports_ask_requests,
+            a2ui: self.a2ui.clone(),
         }
     }
 }
@@ -99,24 +106,35 @@ const INJECTED: &str = "<system-reminder>";
 ///
 /// The history is empty rather than read: a session the daemon just created has
 /// stored no messages, and a history read would answer the same thing for one
-/// request more.
+/// request more. The directory the daemon reports for it comes back with it.
 pub(super) fn created(
     dial: &Dial,
     working_dir: Option<&str>,
     socket: &str,
-) -> Result<(HoronAgentClient, EventStream, AttachedSession), Error> {
+) -> Result<(HoronAgentClient, EventStream, AttachedSession, Option<String>), Error> {
     let client = HoronAgentClient::connect(dial.options())?;
     let stream = client.events(None);
     let session = client.create_session(working_dir.map(str::to_owned))?;
     let (model, effort) = runtime::identity(&client, &session.session_id);
-    Ok((client, stream, described(session, Vec::new(), model, effort, socket)))
+    let directory = session_directory(&session);
+    Ok((
+        client,
+        stream,
+        described(session, Vec::new(), model, effort, socket),
+        directory,
+    ))
 }
 
 /// Attach to a session and read back what the client has to show for it.
 ///
 /// The stored conversation is read after the attach, so it is the one the
-/// connection now follows.
-pub(super) fn resumed(client: &HoronAgentClient, session_id: &str, socket: &str) -> Result<AttachedSession, Error> {
+/// connection now follows. The directory the session reports comes back beside
+/// it, for the client to adopt as the folder a draft's paths are relative to.
+pub(super) fn resumed(
+    client: &HoronAgentClient,
+    session_id: &str,
+    socket: &str,
+) -> Result<(AttachedSession, Option<String>), Error> {
     let session = client.attach_session(session_id)?;
     // From here the connection already follows `session`, so a read that fails
     // cannot be the answer's failure: the caller moves the worker with
@@ -125,7 +143,8 @@ pub(super) fn resumed(client: &HoronAgentClient, session_id: &str, socket: &str)
     // conversation shows empty instead.
     let history = history_or_empty(client.get_history(&session.session_id));
     let (model, effort) = runtime::identity(client, &session.session_id);
-    Ok(described(session, history, model, effort, socket))
+    let directory = session_directory(&session);
+    Ok((described(session, history, model, effort, socket), directory))
 }
 
 /// The stored conversation an attach reports when the read itself failed.
@@ -204,6 +223,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | TextMatches { session_id, .. }
         | FileStatus { session_id, .. }
         | TodoState { session_id, .. }
+        | TodoEditResult { session_id, .. }
         | TodoChanged { session_id }
         | Artifacts { session_id, .. }
         | Compacted { session_id, .. }
@@ -211,6 +231,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | SessionHeads { session_id, .. }
         | SessionHistoryPage { session_id, .. }
         | SessionMarkdown { session_id, .. }
+        | SessionHtml { session_id, .. }
         | SessionEventPage { session_id, .. }
         | SessionImportResult { session_id, .. }
         | SessionBlobChunk { session_id, .. }
@@ -223,7 +244,9 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | CancelTurnResult { session_id, .. }
         | ToolCallCancelResult { session_id, .. }
         | BackgroundWorkList { session_id, .. }
-        | MessageModes { session_id, .. } => Some(session_id.as_str()),
+        | MessageModes { session_id, .. }
+        | EffectiveSettings { session_id, .. }
+        | A2uiEnvelope { session_id, .. } => Some(session_id.as_str()),
         Attached { session } | SessionForked { session } => Some(session.session_id.as_str()),
         // A report narrowed to one session names it; a full report names none,
         // so it belongs to the connection rather than to a conversation.
@@ -233,6 +256,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         // rest of the arm list comes from the import above.
         | ApiEvent::Ok
         | Error { .. }
+        | PackageControl { .. }
         | Sessions { .. }
         | Pong
         | DegradationReceipts(_)
@@ -277,6 +301,20 @@ pub(super) fn described(
         history,
         title,
     }
+}
+
+/// The directory the harness reports for a session, trimmed.
+///
+/// It travels beside the attached session rather than inside it, so the record
+/// the client shows stays the session's own report, and the directory is
+/// applied where the switch answer is received.
+pub(super) fn session_directory(session: &SessionInfo) -> Option<String> {
+    session
+        .working_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|directory| !directory.is_empty())
+        .map(str::to_string)
 }
 
 /// The stored messages of a session, newest last, or none when nothing answers.
@@ -328,6 +366,101 @@ pub(super) fn first_user_text(messages: &[HistoryMessage]) -> Option<String> {
                 .find(|line| !line.is_empty())
                 .map(cut)
         })
+}
+
+/// The recorded boundaries of one conversation, newest first.
+///
+/// A boundary is a user message the daemon stored with an id: forking from it
+/// keeps every message recorded before it and leaves the message itself for the
+/// branch to replace. Injected context rows are not boundaries, because the
+/// user never wrote them and could not have chosen to branch there.
+pub(super) fn boundaries(messages: &[HistoryMessage]) -> Vec<ForkRow> {
+    let mut rows = Vec::new();
+    let mut ordinal = 0usize;
+    for (kept, message) in messages.iter().enumerate() {
+        if message.role != "user" || injected(message) {
+            continue;
+        }
+        let Some(boundary) = message.message_id.clone() else {
+            // A daemon that never negotiated stored ids cannot name a stable
+            // boundary; an index here would fork the wrong message after an
+            // edit, so it is skipped rather than guessed.
+            continue;
+        };
+        ordinal += 1;
+        let text = single_line(&message.content);
+        let label = if text.is_empty() {
+            "(message with no text)".to_string()
+        } else {
+            cut(&text)
+        };
+        rows.push(ForkRow {
+            boundary,
+            label,
+            detail: format!("#{ordinal}"),
+            preview: vec![
+                "fork before this recorded message".to_string(),
+                if text.is_empty() {
+                    "you: (no text)".to_string()
+                } else {
+                    format!("you: {text}")
+                },
+                format!("the branch keeps the {kept} stored messages before it"),
+                "the original session keeps every message".to_string(),
+            ],
+        });
+    }
+    rows.reverse();
+    rows
+}
+
+/// Fork off a recorded boundary and follow the child.
+///
+/// The boundary is resolved by the daemon against the source's selected head,
+/// so a stale row is refused before anything moves: the worker stays on the
+/// source and the caller shows the refusal. Once the fork lands, the child is
+/// attached on the same connection and the caller's id and stream move with
+/// it. A fork the daemon accepted but could not attach is reported with the
+/// branch id, because the branch is persisted and `/switch` can still open it.
+pub(super) fn forked(
+    client: &HoronAgentClient,
+    boundary: &str,
+    session_id: &mut String,
+    stream: &mut EventStream,
+    socket: &str,
+) -> Result<(AttachedSession, Option<String>), Error> {
+    let branch = client.fork_session_at(session_id.as_str(), boundary)?;
+    let next = client.events(None);
+    match resumed(client, &branch.session_id, socket) {
+        Ok((attached, directory)) => {
+            follow(&attached, next, session_id, stream);
+            Ok((attached, directory))
+        }
+        Err(error) => Err(Error::new(
+            error.kind.clone(),
+            format!(
+                "branch {} was created but could not be opened: {}",
+                branch.session_id, error.message
+            ),
+        )),
+    }
+}
+
+/// The newest thing the assistant said in a stored conversation, on one line.
+///
+/// A worker is asked to close its turn with a short final response after it
+/// reports completion, so this is the summary a client can show for it: the
+/// structured completion report is recorded on the swarm member and reaches no
+/// client API. The answer field is preferred when the row names one, because a
+/// raw stored row can carry reasoning and answer as one string.
+pub(super) fn last_assistant_text(messages: &[HistoryMessage]) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .filter(|message| message.role == "assistant")
+        .map(|message| message.answer.as_deref().unwrap_or(&message.content))
+        .map(single_line)
+        .find(|line| !line.is_empty())
 }
 
 /// Whether a stored message is context the daemon injected rather than speech.

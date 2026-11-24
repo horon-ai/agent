@@ -29,11 +29,17 @@ from .protocol import (
     EVENT_CAPABILITIES,
     MAX_REPLICATION_WIRE_BYTES,
     REPLICATION_PROTOCOL_VERSION,
+    A2uiSessionCapabilities,
     ApprovalAckReceipt,
     ArtifactEntry,
     CanonicalRecordRef,
+    EffectiveSetting,
     FailoverAckReceipt,
     MessageModes,
+    PackageCommandList,
+    PackageCommandOutcome,
+    PackageControlReceipt,
+    PackageControlRequest,
     SessionSearchHit,
     SessionToolDefinition,
     UsageReport,
@@ -58,6 +64,8 @@ from .tools import (
 )
 
 __all__ = [
+    "A2uiEnvelopeEvent",
+    "AttachSessionOptions",
     "ConnectOptions",
     "CreateSessionOptions",
     "EventBufferStats",
@@ -441,6 +449,8 @@ class ConnectOptions:
     transport: Transport | None = None
     #: Milliseconds before a request without a reply raises. 0 disables.
     request_timeout_ms: float = 30_000
+    #: Optional A2UI v1.0 renderer capabilities offered as the connection default.
+    a2ui: A2uiSessionCapabilities | None = None
 
 
 @dataclass
@@ -456,6 +466,15 @@ class CreateSessionOptions:
     system_prompt: str | None = None
     #: Configured before the create request resolves, before any model turn starts.
     tools: SessionToolsOptions | None = None
+    #: Optional A2UI v1.0 renderer capabilities for the created session.
+    a2ui: A2uiSessionCapabilities | None = None
+
+
+@dataclass
+class AttachSessionOptions:
+    """Options fixed when attaching to an existing session."""
+
+    a2ui: A2uiSessionCapabilities | None = None
 
 
 @dataclass
@@ -502,6 +521,16 @@ class TurnUsage:
 
 
 @dataclass
+class A2uiEnvelopeEvent:
+    """One validated A2UI v1.0 envelope emitted by the assistant in a turn."""
+
+    tool_call_id: str
+    sequence: int
+    envelope: Any
+    fallback_text: str | None = None
+
+
+@dataclass
 class TurnResult:
     """One turn's collected output."""
 
@@ -517,6 +546,8 @@ class TurnResult:
     reasoning: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: TurnUsage | None = None
+    #: A2UI v1.0 envelopes emitted during this turn when ``a2ui_v1`` is active.
+    a2ui_envelopes: list[A2uiEnvelopeEvent] = field(default_factory=list)
 
 
 @dataclass
@@ -1129,6 +1160,8 @@ class HoronAgentClient:
             "supports_ask_requests": resolved.supports_ask_requests,
             "event_capabilities": EVENT_CAPABILITIES,
         }
+        if resolved.a2ui is not None:
+            hello["a2ui"] = resolved.a2ui
         frame = await client.request(hello)
         if frame.get("ev") != "hello_ok":
             await client.close()
@@ -1229,9 +1262,12 @@ class HoronAgentClient:
         ignored the negotiation: the client then keeps the same guarantee, and a
         subscriber never receives an event it has no branch for.
         """
-        if frame.get("ev") not in ("snapshot_marker", "snapshot"):
-            return False
-        return not self.supports("snapshot_marker_v1")
+        ev = frame.get("ev")
+        if ev in ("snapshot_marker", "snapshot"):
+            return not self.supports("snapshot_marker_v1")
+        if ev == "a2ui_envelope":
+            return not self.supports("a2ui_v1")
+        return False
 
     def _handle_close(self, error: BaseException | None) -> None:
         if self._closed:
@@ -1472,18 +1508,22 @@ class HoronAgentClient:
         working_dir: str | None = None,
         system_prompt: str | None = None,
         tools: SessionToolsOptions | None = None,
+        a2ui: A2uiSessionCapabilities | None = None,
     ) -> dict[str, Any]:
         """Create a session, optionally replacing the system prompt or configuring tools.
 
         Pass either a :class:`CreateSessionOptions` or the individual keywords.
         """
-        if options is not None and any(value is not None for value in (working_dir, system_prompt, tools)):
+        if options is not None and any(value is not None for value in (working_dir, system_prompt, tools, a2ui)):
             raise HarnessError("invalid_option", "pass CreateSessionOptions or keyword arguments, not both")
         resolved = options or CreateSessionOptions(
             working_dir=working_dir,
             system_prompt=system_prompt,
             tools=tools,
+            a2ui=a2ui,
         )
+        if resolved.a2ui is not None:
+            self._require_capability("a2ui_v1", "create_session with a2ui")
         if resolved.tools is not None:
             self._require_session_tools()
             prepare_tools(resolved.tools)
@@ -1492,6 +1532,8 @@ class HoronAgentClient:
             request["working_dir"] = resolved.working_dir
         if resolved.system_prompt is not None:
             request["system_prompt"] = resolved.system_prompt
+        if resolved.a2ui is not None:
+            request["a2ui"] = resolved.a2ui
         frame = await self._expect_reply(request, "attached")
         session = frame.get("session")
         if not isinstance(session, dict):
@@ -1578,15 +1620,103 @@ class HoronAgentClient:
         await self.submit_tool_result(session_id, call_id, result)
 
     async def attach_session(self, session_id: str) -> dict[str, Any]:
-        frame = await self._expect_reply({"req": "attach_session", "session_id": session_id}, "attached")
+        return await self.attach_session_with_options(session_id, AttachSessionOptions())
+
+    async def attach_session_with_options(
+        self,
+        session_id: str,
+        options: AttachSessionOptions | None = None,
+        *,
+        a2ui: A2uiSessionCapabilities | None = None,
+    ) -> dict[str, Any]:
+        """Attach to an existing session, optionally sending A2UI capabilities."""
+        if options is not None and a2ui is not None:
+            raise HarnessError("invalid_option", "pass AttachSessionOptions or keyword arguments, not both")
+        resolved = options or AttachSessionOptions(a2ui=a2ui)
+        request: dict[str, Any] = {"req": "attach_session", "session_id": session_id}
+        if resolved.a2ui is not None:
+            self._require_capability("a2ui_v1", "attach_session with a2ui")
+            request["a2ui"] = resolved.a2ui
+        frame = await self._expect_reply(request, "attached")
         session = frame.get("session")
         if not isinstance(session, dict):
             raise HarnessError("unexpected_reply", "attached without a session")
         return session
 
-    async def fork_session(self, session_id: str) -> dict[str, Any]:
-        """Clone a session's complete persisted context into a new idle session."""
-        frame = await self._expect_reply({"req": "fork_session", "session_id": session_id}, "session_forked")
+    async def configure_a2ui(self, session_id: str, capabilities: A2uiSessionCapabilities | None) -> None:
+        """Update A2UI v1.0 renderer capabilities for an attached session."""
+        self._require_capability("a2ui_v1", "configure_a2ui")
+        await self._expect_reply(
+            {"req": "configure_a2ui", "session_id": session_id, "capabilities": capabilities},
+            "ok",
+        )
+
+    async def send_a2ui_event(
+        self,
+        session_id: str,
+        envelope: Any,
+        data_model: Any | None = None,
+    ) -> None:
+        """Forward a client-to-agent A2UI v1.0 envelope to an attached session."""
+        self._require_capability("a2ui_v1", "send_a2ui_event")
+        request: dict[str, Any] = {
+            "req": "a2ui_event",
+            "session_id": session_id,
+            "envelope": envelope,
+        }
+        if data_model is not None:
+            request["data_model"] = data_model
+        await self._expect_reply(request, "ok")
+
+    async def fork_session(
+        self,
+        session_id: str,
+        *,
+        consult: bool = False,
+        boundary: str | None = None,
+    ) -> dict[str, Any]:
+        """Clone a session's context into a new idle session.
+
+        ``consult`` makes the child read-only; the daemon stores the flag before
+        answering. ``boundary`` is a stored message id the child stops before,
+        keeping the prefix before it; a stale id is refused and forks nothing.
+        """
+        request: dict[str, Any] = {"req": "fork_session", "session_id": session_id}
+        if consult:
+            request["consult"] = True
+        if boundary is not None:
+            request["boundary"] = boundary
+        frame = await self._expect_reply(request, "session_forked")
+        session = frame.get("session")
+        if not isinstance(session, dict):
+            raise HarnessError("unexpected_reply", "session_forked without a session")
+        return session
+
+    async def fork_consult(self, session_id: str, boundary: str | None = None) -> dict[str, Any]:
+        """Fork a read-only consult child, optionally before a stored message id."""
+        if "consult_fork_v1" not in self.capabilities:
+            raise HarnessError(
+                "unsupported",
+                "This harness cannot create a read-only side session. Update the runtime and API bridge.",
+            )
+        return await self.fork_session(session_id, consult=True, boundary=boundary)
+
+    async def fork_session_at(self, session_id: str, boundary_message_id: str) -> dict[str, Any]:
+        """Fork the messages recorded before ``boundary_message_id`` into a new session.
+
+        The boundary is a stored message id from the source's history, not an
+        index. A boundary the source no longer records is refused and the source
+        is left untouched. Requires ``session_fork_at_v1``.
+        """
+        self._require_capability("session_fork_at_v1", "fork_session_at")
+        frame = await self._expect_reply(
+            {
+                "req": "fork_session_at",
+                "session_id": session_id,
+                "boundary_message_id": boundary_message_id,
+            },
+            "session_forked",
+        )
         session = frame.get("session")
         if not isinstance(session, dict):
             raise HarnessError("unexpected_reply", "session_forked without a session")
@@ -1667,6 +1797,23 @@ class HoronAgentClient:
                 "session_id": session_id,
                 "content": "",
                 "system_reminder": reminder,
+            }
+        )
+
+    async def continue_run(self, session_id: str, expected_run_id: str) -> None:
+        """Continue the named failed run after the daemon accepts it."""
+        self._require_capability("turn_retry_v1", "continue_run")
+        if not expected_run_id.strip():
+            raise HarnessError("invalid_option", "continue_run requires the failed run ID")
+        await self._request_ok(
+            {
+                "req": "send_message",
+                "session_id": session_id,
+                "content": "",
+                "system_reminder": (
+                    "Continue the failed task from where it left off. Do not repeat completed tool calls or edits."
+                ),
+                "expected_run_id": expected_run_id,
             }
         )
 
@@ -1937,6 +2084,69 @@ class HoronAgentClient:
             "message": frame.get("message"),
         }
 
+    async def get_effective_settings(self, session_id: str) -> list[EffectiveSetting]:
+        """The allow-listed daemon values a settings screen displays.
+
+        The daemon behind the bridge answers from its own configuration, so the
+        values and their sources describe the process the session runs with.
+        Requires ``effective_settings_v1``; an older bridge does not advertise
+        it, and a daemon that predates the request is refused with
+        ``unsupported`` naming the capability, so the caller never has to guess
+        whether the daemon has no settings or the request never landed.
+        """
+        self._require_capability("effective_settings_v1", "get_effective_settings")
+        frame = await self._expect_reply(
+            {"req": "get_effective_settings", "session_id": session_id},
+            "effective_settings",
+        )
+        settings = frame.get("settings")
+        return cast(list[EffectiveSetting], settings if isinstance(settings, list) else [])
+
+    async def package_control(self, request: PackageControlRequest) -> PackageControlReceipt:
+        """Apply one package-management operation and return the published catalog receipt.
+
+        Requires ``package_control_v1``. The daemon owns the catalog, so this needs
+        no attached session; reusing the same ``operation_id`` reports the recorded
+        result instead of applying the operation twice.
+        """
+        self._require_capability("package_control_v1", "package_control")
+        frame = await self._expect_reply({"req": "package_control", **request}, "package_control")
+        receipt = frame.get("receipt")
+        return cast(PackageControlReceipt, receipt if isinstance(receipt, dict) else {})
+
+    async def list_package_commands(self, session_id: str) -> PackageCommandList:
+        """List the slash commands the installed packages supply for this session.
+
+        Requires ``package_commands_v1``. The entries belong to the package
+        generation the session currently observes, and ``generation`` says which
+        one: a command listed here and run later is refused as stale if its
+        package left that generation in between.
+        """
+        self._require_capability("package_commands_v1", "list_package_commands")
+        frame = await self.runtime_command(session_id, "package_commands")
+        data = frame.get("data")
+        return cast(PackageCommandList, data if isinstance(data, dict) else {})
+
+    async def run_package_command(
+        self,
+        session_id: str,
+        package_id: str,
+        command: str,
+        arguments: str = "",
+    ) -> PackageCommandOutcome:
+        """Run one package slash command and return what the daemon answered.
+
+        ``arguments`` is the text typed after the command name. A template
+        answers with ``text``, the user message it expands to; an executable
+        command answers with ``output`` and the child's ``data`` after the tool
+        policy allowed the call. Requires ``package_commands_v1``.
+        """
+        self._require_capability("package_commands_v1", "run_package_command")
+        words = arguments.split()
+        frame = await self.runtime_command(session_id, "package_command", [package_id, command, *words])
+        data = frame.get("data")
+        return cast(PackageCommandOutcome, data if isinstance(data, dict) else {})
+
     async def get_runtime_info(self, session_id: str) -> RuntimeInfo:
         await self.ping()
         frame = await self._expect_reply({"req": "get_runtime_info", "session_id": session_id}, "runtime_info")
@@ -2101,6 +2311,45 @@ class HoronAgentClient:
         frame = await self._expect_reply({"req": "get_todo_state", "session_id": session_id}, "todo_state")
         state = frame.get("state")
         return state if isinstance(state, dict) else {}
+
+    async def todo_snapshot(self, session_id: str) -> tuple[dict[str, Any], str | None]:
+        """Persisted todo state with the revision that names the stored list.
+
+        The revision is ``None`` on a server that predates revisions. Requires
+        the ``todo_state`` capability.
+        """
+        frame = await self._expect_reply({"req": "get_todo_state", "session_id": session_id}, "todo_state")
+        state = frame.get("state")
+        revision = frame.get("revision")
+        return (
+            state if isinstance(state, dict) else {},
+            revision if isinstance(revision, str) else None,
+        )
+
+    async def set_todo_status(
+        self,
+        session_id: str,
+        expected_revision: str,
+        id: str,
+        status: str,
+    ) -> dict[str, Any]:
+        """Change one todo item's status only if the stored list is unchanged.
+
+        A stale list answers with ``applied`` false, the refusal
+        ``stale_revision``, and the current state, and writes nothing. Requires
+        the ``todo_edit_v1`` capability.
+        """
+        self._require_capability("todo_edit_v1", "set_todo_status")
+        return await self._expect_reply(
+            {
+                "req": "set_todo_status",
+                "session_id": session_id,
+                "expected_revision": expected_revision,
+                "todo_id": id,
+                "status": status,
+            },
+            "todo_edit_result",
+        )
 
     async def ack_todo_follow_up(self, session_id: str, effects: dict[str, Any]) -> None:
         """Apply a follow-up decision's persistent effects."""
@@ -2531,6 +2780,21 @@ class HoronAgentClient:
         frame = await self._replication_reply(request, "session_markdown")
         return {"session_id": frame.get("session_id"), "markdown": frame.get("markdown", "")}
 
+    async def export_session_html(
+        self,
+        session_id: str,
+    ) -> dict[str, Any]:
+        """Export the conversation as a standalone offline HTML report.
+
+        Requires ``session_replication_v1``. The document renders the same
+        redacted projection as :meth:`export_session_markdown`, escapes every
+        transcript character, and loads nothing from the network.
+        """
+        self._require_capability("session_replication_v1", "export_session_html")
+        request: dict[str, Any] = {"req": "export_session_html", "session_id": session_id}
+        frame = await self._replication_reply(request, "session_html")
+        return {"session_id": frame.get("session_id"), "html": frame.get("html", "")}
+
     async def import_session_events(
         self,
         page: dict[str, Any],
@@ -2819,6 +3083,16 @@ class HoronAgentClient:
                 elif kind == "turn_stopped":
                     result.stop_reason = event.get("reason")
                     result.stop_message = event.get("message")
+                elif kind == "a2ui_envelope":
+                    fallback_text = event.get("fallback_text")
+                    result.a2ui_envelopes.append(
+                        A2uiEnvelopeEvent(
+                            tool_call_id=str(event.get("tool_call_id", "")),
+                            sequence=int(event.get("sequence", 0)),
+                            envelope=event.get("envelope"),
+                            fallback_text=fallback_text if isinstance(fallback_text, str) else None,
+                        )
+                    )
                 elif kind == "turn_done":
                     return finish()
                 elif kind == "error":

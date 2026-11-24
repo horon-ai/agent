@@ -5,6 +5,8 @@
 //! `lib.rs` is at its code-size budget and production code keeps the room;
 //! `streaming_tests.rs` is the same arrangement for streamed text.
 
+use std::time::Duration;
+
 use super::*;
 use crate::app::Action;
 use crate::transcript::ToolState;
@@ -80,6 +82,15 @@ fn args_parse_session_and_cwd() {
 }
 
 #[test]
+fn args_parse_hide_thinking_flag() {
+    let parsed = Args::parse(["--hide-thinking".to_string()]);
+    assert_eq!(parsed.map(|args| args.hide_thinking), Ok(true));
+    // A value after `=` is not part of the flag: the bare form is the only one,
+    // so a script that writes one is told rather than silently obeyed.
+    assert!(Args::parse(["--hide-thinking=maybe".to_string()]).is_err());
+}
+
+#[test]
 fn args_parse_repeated_config_files() {
     let parsed = Args::parse([
         "--config".to_string(),
@@ -98,6 +109,48 @@ fn args_parse_repeated_config_files() {
     }
     assert!(Args::parse(["--config".to_string()]).is_err());
     assert!(Args::parse(["--config=".to_string()]).is_err());
+}
+
+#[test]
+fn args_parse_repeated_add_dir_directories() {
+    let parsed = Args::parse([
+        "--add-dir".to_string(),
+        "/work/library".to_string(),
+        "--add-dir=/work/tests".to_string(),
+    ]);
+    match parsed {
+        Ok(args) => assert_eq!(
+            args.add_dirs,
+            vec![
+                std::path::PathBuf::from("/work/library"),
+                std::path::PathBuf::from("/work/tests")
+            ]
+        ),
+        Err(message) => panic!("expected a parse: {message}"),
+    }
+    assert!(Args::parse(["--add-dir".to_string()]).is_err());
+    assert!(Args::parse(["--add-dir=".to_string()]).is_err());
+}
+
+#[test]
+fn args_parse_motion_flags_with_both_spellings() {
+    let parsed = Args::parse([
+        "--motion".to_string(),
+        "reduced".to_string(),
+        "--spinner-interval=120".to_string(),
+        "--max-fps".to_string(),
+        "12".to_string(),
+    ])
+    .expect("a parse");
+    assert_eq!(parsed.motion, Some(crate::settings::MotionMode::Reduced));
+    assert_eq!(parsed.spinner_interval, Some(120));
+    assert_eq!(parsed.max_fps, Some(12));
+
+    assert!(Args::parse(["--motion".to_string(), "slow".to_string()]).is_err());
+    assert!(Args::parse(["--motion".to_string()]).is_err());
+    assert!(Args::parse(["--spinner-interval".to_string(), "10".to_string()]).is_err());
+    assert!(Args::parse(["--max-fps".to_string(), "0".to_string()]).is_err());
+    assert!(Args::parse(["--max-fps".to_string()]).is_err());
 }
 
 #[test]
@@ -325,6 +378,88 @@ fn statusline_custom_preset_draws_left_then_right() {
 }
 
 #[test]
+fn a_usage_report_fills_the_opt_in_segments_and_the_runtime_window() {
+    let mut app = app_with(None);
+    app.apply_event(&ApiEvent::ModelInfo {
+        session_id: "s1".into(),
+        provider: Some("anthropic".into()),
+        model: Some("claude-sonnet-4".into()),
+        reasoning_effort: None,
+        auth_method: None,
+    });
+    app.apply_event(&ApiEvent::TokenUsage {
+        session_id: "s1".into(),
+        input: 250,
+        output: 50,
+        cache_read_input: None,
+        cache_creation_input: None,
+    });
+    app.statusline = statusline::Layout {
+        preset: statusline::Preset::Custom,
+        left: vec![statusline::SegmentId::Model],
+        right: vec![statusline::SegmentId::ContextPct, statusline::SegmentId::Usage],
+        path_max: 40,
+        // No override: the segment divides by what the runtime reported, so a
+        // model switch can move the denominator without a restart.
+        context_window: 0,
+    };
+    app.usage(statusline::UsageSnapshot {
+        totals: Some(statusline::UsageTotals {
+            input: Some(1_000),
+            output: Some(20),
+            cache_read: None,
+            cache_creation: None,
+        }),
+        context_window: Some(1_000),
+        cost: None,
+    });
+    let row = last_row(&mut app);
+    assert!(row.contains("30%"), "the runtime window was not used: {row:?}");
+    assert!(row.contains("Σ↑1.0k ↓20"), "the totals are missing: {row:?}");
+
+    // A report that measured nothing does not erase what the token events
+    // already summed: the running total is the newer reading of the two.
+    app.usage(statusline::UsageSnapshot::default());
+    let kept = last_row(&mut app);
+    assert!(kept.contains("Σ↑1.0k ↓20"), "the running totals were cleared: {kept:?}");
+    assert!(!kept.contains("%"), "an unknown window drew a percentage: {kept:?}");
+
+    // A second report for another route moves the denominator and the totals:
+    // this is the shape a model switch answers with.
+    app.usage(statusline::UsageSnapshot {
+        totals: Some(statusline::UsageTotals {
+            input: Some(1_960),
+            output: Some(40),
+            cache_read: None,
+            cache_creation: None,
+        }),
+        context_window: Some(4_000),
+        cost: None,
+    });
+    // The last request still occupies 300 tokens, now of a 4 000-token route:
+    // the percentage moved because the denominator did, which is the whole
+    // point of reading the window from the runtime.
+    let moved = last_row(&mut app);
+    assert!(moved.contains("7%"), "the refreshed window was not used: {moved:?}");
+    assert!(
+        moved.contains("Σ↑2.0k ↓40"),
+        "the refreshed totals are missing: {moved:?}"
+    );
+}
+
+/// The bottom row of the drawn screen, without `TestBackend`'s quotes.
+fn last_row(app: &mut App) -> String {
+    let screen = draw_to_string(app);
+    screen
+        .lines()
+        .nth(22)
+        .unwrap_or_default()
+        .trim_matches('"')
+        .trim_end()
+        .to_string()
+}
+
+#[test]
 fn submit_sends_and_quit_leaves() {
     let mut app = app_with(None);
     for character in "hi".chars() {
@@ -447,6 +582,65 @@ fn reasoning_events_are_inert_while_the_setting_is_off() {
 }
 
 #[test]
+fn ctrl_t_hides_later_reasoning_and_the_choice_outlives_an_unrelated_reload() {
+    let mut app = app_with(None);
+    app.reasoning_effort = Some("high".to_string());
+    app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
+    assert!(
+        app.transcript.show_reasoning(),
+        "the setting did not reach the transcript"
+    );
+
+    assert_eq!(app.on_key(ctrl('t')), None, "the toggle is not submitted as text");
+    assert!(!app.transcript.show_reasoning(), "ctrl+t did not hide reasoning");
+    assert_eq!(
+        app.reasoning_effort.as_deref(),
+        Some("high"),
+        "hiding the display changed the effort the model is asked for"
+    );
+    let notice = format!("{:?}", app.transcript.items().last());
+    assert!(notice.contains("reasoning hidden for this session"), "{notice}");
+
+    // The same setting resolved again: another file's edit, not a newer choice
+    // than the key, so the session toggle stays in force.
+    app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
+    assert!(
+        !app.transcript.show_reasoning(),
+        "an unrelated reload put the setting back over the session toggle"
+    );
+
+    // Changing the setting itself is the newer choice and ends the toggle.
+    app.refresh_settings(&settings_with(&[]));
+    assert!(!app.transcript.show_reasoning(), "the new setting did not apply");
+    app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
+    assert!(
+        app.transcript.show_reasoning(),
+        "a changed setting did not end the toggle"
+    );
+}
+
+#[test]
+fn the_settings_screen_keeps_the_toggle_key_to_itself() {
+    let mut app = app_with(None);
+    app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
+    let _ = app.open_settings();
+
+    assert_eq!(app.on_key(ctrl('t')), None);
+    assert!(
+        app.transcript.show_reasoning(),
+        "the toggle ran underneath the settings screen"
+    );
+    assert!(app.overlay.is_some(), "the settings screen closed on the toggle key");
+    app.on_key(key(crossterm::event::KeyCode::Char('x')));
+    assert!(
+        app.input.text().is_empty(),
+        "a letter went past the settings screen into the draft"
+    );
+    app.on_key(key(crossterm::event::KeyCode::Esc));
+    assert!(app.overlay.is_none(), "esc did not close the settings screen");
+}
+
+#[test]
 fn ask_prompt_collects_one_answer_per_question() {
     let mut app = app_with(None);
     let questions = vec![
@@ -502,7 +696,7 @@ fn ask_prompt_collects_one_answer_per_question() {
 }
 
 #[test]
-fn ctrl_c_cancels_a_turn_and_ctrl_d_leaves() {
+fn ctrl_c_cancels_a_turn_and_ctrl_d_leaves_once_it_stops() {
     let mut app = app_with(None);
     app.pending_turn = true;
     let cancel = crossterm::event::KeyEvent::new(
@@ -515,11 +709,51 @@ fn ctrl_c_cancels_a_turn_and_ctrl_d_leaves() {
         crossterm::event::KeyCode::Char('d'),
         crossterm::event::KeyModifiers::CONTROL,
     );
+    // The cancel is a request: the harness has not stopped the turn yet, so
+    // `ctrl+d` must not drop the session from under it.
+    assert_eq!(app.on_key(quit), None);
+    assert!(app.pending_turn);
+
+    app.apply_event(&ApiEvent::TurnStopped {
+        session_id: "s1".into(),
+        reason: horon_agent_sdk::api::TurnStopReason::Interrupted,
+        message: "the turn was interrupted".into(),
+        provider_stop_reason: None,
+    });
     assert_eq!(app.on_key(quit), Some(Action::Quit));
+}
+
+#[test]
+fn ctrl_g_hands_the_draft_to_the_editor_only_when_nothing_owns_the_screen() {
+    let mut app = app_with(None);
+    let draft = "first line\nsecond".to_string();
+    app.input.set_text(&draft);
+    let hand_over = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('g'),
+        crossterm::event::KeyModifiers::CONTROL,
+    );
+    assert_eq!(app.on_key(hand_over), Some(Action::EditDraft));
+    assert_eq!(app.input.text(), draft, "the key itself must not touch the draft");
+
+    // A parked approval owns every key: the editor is never opened on top of a
+    // question that is still waiting for an answer.
+    app.prompt = Some(crate::prompts::Prompt::approval(
+        "req-1".to_string(),
+        "shell".to_string(),
+    ));
+    assert_eq!(app.on_key(hand_over), None);
+    assert_eq!(app.input.text(), draft);
 }
 
 fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
     crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+}
+
+fn ctrl(character: char) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char(character),
+        crossterm::event::KeyModifiers::CONTROL,
+    )
 }
 
 fn draw_at(app: &mut App, width: u16, height: u16) -> String {
@@ -641,6 +875,7 @@ fn a_tool_preview_wraps_under_its_own_column() {
         symbols: crate::theme::Symbols::default(),
         width: 40,
         markdown: false,
+        visual_blocks: true,
     };
     let call = crate::transcript::ToolCall {
         call_id: "c1".to_string(),
@@ -698,5 +933,259 @@ fn clear_keeps_the_display_settings_the_transcript_owns() {
     assert!(
         app.transcript.show_reasoning(),
         "/clear turned reasoning off while /settings still shows it on"
+    );
+}
+
+#[test]
+fn args_parse_the_gallery_flag() {
+    let parsed = Args::parse(["--gallery".to_string()]);
+    assert_eq!(
+        parsed.map(|args| args.gallery),
+        Ok(Some(gallery::FIRST.to_string())),
+        "--gallery alone did not open the first scene"
+    );
+    let parsed = Args::parse(["--gallery=prompt".to_string()]);
+    assert_eq!(
+        parsed.map(|args| args.gallery),
+        Ok(Some("prompt".to_string())),
+        "--gallery=<scene> did not carry the scene name"
+    );
+    assert!(
+        Args::parse(["--gallery=".to_string()]).is_err(),
+        "an empty scene name was accepted and would draw nothing"
+    );
+}
+
+#[test]
+fn every_gallery_scene_draws_the_same_frame_twice() {
+    // The acceptance is a stable preview at a fixed width: a second frame from
+    // the same fixture has to match the first, or nothing on it can be compared.
+    for scene in gallery::SCENES {
+        for (width, height) in [(100u16, 40u16), (60, 20), (32, 10), (20, 6)] {
+            let first =
+                gallery::frame(scene.name, width, height).unwrap_or_else(|message| panic!("{}: {message}", scene.name));
+            let second =
+                gallery::frame(scene.name, width, height).unwrap_or_else(|message| panic!("{}: {message}", scene.name));
+            assert_eq!(
+                first, second,
+                "{} drew a different frame at {width}x{height}",
+                scene.name
+            );
+        }
+    }
+}
+
+#[test]
+fn each_gallery_scene_names_itself_and_unknown_names_are_refused() {
+    // The viewer draws no chrome of its own, so the marker row is the only thing
+    // on screen that says which fixture is showing.
+    for scene in gallery::SCENES {
+        let screen = gallery::frame(scene.name, 100, 40).unwrap_or_else(|message| panic!("{}: {message}", scene.name));
+        assert!(
+            screen.contains(&format!("gallery · {}", scene.name)),
+            "{} is on screen without its marker:\n{screen}",
+            scene.name
+        );
+    }
+    let refusal = gallery::frame("nope", 80, 24).expect_err("unknown scene accepted");
+    assert!(
+        refusal.to_string().contains("nope"),
+        "an unknown scene was refused without naming it: {refusal}"
+    );
+}
+
+#[test]
+fn the_unicode_fixture_keeps_every_row_inside_a_narrow_pane() {
+    // Double-width text is where a layout that counts characters instead of
+    // cells puts a row past the pane edge, which the terminal then wraps or
+    // clips under the status line.
+    const WIDTH: u16 = 32;
+    let screen = gallery::frame("unicode", WIDTH, 14).unwrap_or_else(|message| panic!("{message}"));
+    for row in screen.lines() {
+        // The backend appends a diagnostic for cells hidden by wide glyphs.
+        // It follows the quoted screen row and is never displayed in the pane.
+        let (cells, _) = row.split_once("\" Hidden by multi-width symbols:").unwrap_or((row, ""));
+        let inner = cells.trim_matches('"');
+        assert!(
+            unicode_width::UnicodeWidthStr::width(inner) <= usize::from(WIDTH),
+            "a row is wider than the pane ({WIDTH}): {inner}"
+        );
+    }
+    assert!(
+        screen.contains("漢字"),
+        "the wide characters did not reach the frame:\n{screen}"
+    );
+}
+
+fn control(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::CONTROL)
+}
+
+/// Write `glyph` into every cell, as a program that believes it owns the
+/// terminal would.
+fn overwrite_screen(terminal: &mut Terminal<TestBackend>, glyph: &'static str) {
+    let area = terminal.backend().buffer().area;
+    let cells: Vec<(u16, u16, ratatui::buffer::Cell)> = area
+        .positions()
+        .map(|position| (position.x, position.y, ratatui::buffer::Cell::new(glyph)))
+        .collect();
+    terminal
+        .backend_mut()
+        .draw(cells.iter().map(|(column, row, cell)| (*column, *row, cell)))
+        .expect("the test backend takes cells");
+}
+
+/// Press the repaint key without handing an action to the harness.
+fn press_repaint(app: &mut App) {
+    assert_eq!(
+        app.on_key(control(crossterm::event::KeyCode::Char('l'))),
+        None,
+        "the repaint key handed an action to the harness"
+    );
+}
+
+#[test]
+fn the_repaint_key_draws_a_corrupted_screen_again_and_keeps_the_view() {
+    let mut app = app_with(None);
+    for index in 0..40 {
+        app.transcript.push_notice(format!("line {index:02}"));
+    }
+    for character in "draft kept".chars() {
+        app.on_key(key(crossterm::event::KeyCode::Char(character)));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(60, 12)).expect("test backend failed");
+    if let Err(message) = draw(&mut terminal, &mut app) {
+        panic!("draw failed: {message}");
+    }
+    // A held view is the state the key must not move: it is measured from the
+    // rows counted before the press, and the key changes none of them.
+    app.on_key(key(crossterm::event::KeyCode::PageUp));
+    if let Err(message) = draw(&mut terminal, &mut app) {
+        panic!("draw failed: {message}");
+    }
+    let intact = format!("{}", terminal.backend());
+    assert!(intact.contains("draft kept"), "the draft is not on screen:\n{intact}");
+    assert!(!app.scroll.is_following(), "the view did not leave the end");
+    let offset = app.scroll.offset();
+
+    // Another program writes over the frame. Ratatui still holds the picture it
+    // drew, so the next ordinary frame leaves the damage where it is: that is
+    // the state the key exists for.
+    overwrite_screen(&mut terminal, "#");
+    if let Err(message) = draw(&mut terminal, &mut app) {
+        panic!("draw failed: {message}");
+    }
+    let damaged = format!("{}", terminal.backend());
+    assert!(
+        damaged.matches('#').count() >= 60 * 12,
+        "the corruption did not cover the screen"
+    );
+
+    press_repaint(&mut app);
+    if let Err(message) = draw(&mut terminal, &mut app) {
+        panic!("draw failed: {message}");
+    }
+    // Every cell was written again: no `#` the other program left survives,
+    // and the rows the client wants are back.
+    let repainted = format!("{}", terminal.backend());
+    assert!(
+        !repainted.contains('#'),
+        "cells the other program wrote survived the repaint:\n{repainted}"
+    );
+    assert!(
+        repainted.contains("draft kept"),
+        "the draft did not come back:\n{repainted}"
+    );
+    assert_eq!(app.scroll.offset(), offset, "the repaint moved a held view");
+    assert_eq!(app.input.text(), "draft kept", "the repaint touched the draft");
+}
+
+#[test]
+fn the_repaint_key_asks_for_one_draw_and_leaves_the_session_alone() {
+    let mut app = app_with(None);
+    for character in "keep me".chars() {
+        app.on_key(key(crossterm::event::KeyCode::Char(character)));
+    }
+    let items = app.transcript.items().len();
+    assert!(!app.take_repaint_request(), "a fresh app asked for a repaint");
+
+    press_repaint(&mut app);
+    assert!(app.take_repaint_request(), "the repaint key asked for no draw");
+    assert!(!app.take_repaint_request(), "one press asked for two draws");
+    assert_eq!(app.input.text(), "keep me", "the repaint key edited the draft");
+    assert_eq!(app.input.cursor(), 7, "the repaint key moved the caret");
+    assert_eq!(app.transcript.items().len(), items, "the repaint key wrote a line");
+    assert!(app.running, "the repaint key ended the session");
+    assert!(!app.pending_turn, "the repaint key started or stopped a turn");
+}
+
+#[test]
+fn the_repaint_key_answers_under_every_surface_without_taking_its_keys() {
+    // The settings screen: the key reaches the display, and the screen keeps
+    // both its selection and the keys it answers.
+    let mut app = app_with(None);
+    // The screen lists the `*.json` files in its theme directory, so the test
+    // points it at an empty one instead of the user's own themes folder.
+    let themes = tempfile::tempdir().expect("a temporary theme directory");
+    app.themes_dir = themes.path().to_path_buf();
+    let _ = app.open_settings();
+    app.on_key(key(crossterm::event::KeyCode::Down));
+    let selected = app
+        .overlay
+        .as_ref()
+        .and_then(|overlay| overlay.selected())
+        .map(|row| row.id);
+    press_repaint(&mut app);
+    assert_eq!(
+        app.overlay
+            .as_ref()
+            .and_then(|overlay| overlay.selected())
+            .map(|row| row.id),
+        selected,
+        "the repaint moved the settings selection"
+    );
+    app.on_key(key(crossterm::event::KeyCode::Esc));
+    assert!(app.overlay.is_none(), "the settings screen stopped answering `esc`");
+
+    // The list: same rule, and its cursor stays on the row it was on.
+    app.picker = Some(crate::overlays::picker::Picker::new(
+        crate::overlays::picker::Kind::Models,
+        "Select model",
+        vec![
+            crate::overlays::picker::Row::new("alpha", "alpha"),
+            crate::overlays::picker::Row::new("beta", "beta"),
+        ],
+        "no models",
+    ));
+    app.on_key(key(crossterm::event::KeyCode::Down));
+    let row = app
+        .picker
+        .as_ref()
+        .and_then(|picker| picker.selected_label())
+        .map(str::to_string);
+    press_repaint(&mut app);
+    assert_eq!(
+        app.picker
+            .as_ref()
+            .and_then(|picker| picker.selected_label())
+            .map(str::to_string),
+        row,
+        "the repaint moved the list cursor"
+    );
+    app.on_key(key(crossterm::event::KeyCode::Esc));
+    assert!(app.picker.is_none(), "the list stopped answering `esc`");
+
+    // A prompt owns every key but this one, and it still answers its own.
+    app.prompt = Some(crate::prompts::Prompt::approval("r1".into(), "bash".into()));
+    press_repaint(&mut app);
+    assert!(app.prompt.is_some(), "the repaint key answered the prompt");
+    assert_eq!(
+        app.on_key(key(crossterm::event::KeyCode::Char('y'))),
+        Some(Action::Approval {
+            request_id: "r1".into(),
+            approved: true,
+            always: false
+        }),
+        "the prompt stopped answering its own key"
     );
 }

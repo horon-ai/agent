@@ -1,3 +1,4 @@
+mod a2ui;
 mod available_models_cache;
 mod available_models_dedup;
 mod await_members_state;
@@ -11,6 +12,7 @@ mod client_comm_message;
 mod client_comm_swarms;
 mod client_disconnect_cleanup;
 mod client_lifecycle;
+mod client_lifecycle_acks;
 // Alt+B handler, reachable from the agent-side tests only.
 #[cfg(test)]
 pub(crate) use self::client_lifecycle_tool_move::move_tool_to_background;
@@ -29,9 +31,11 @@ mod comm_session;
 mod comm_sync;
 mod comm_worktree;
 mod configured_name;
+mod effective_settings;
 mod plan_proposals;
 mod session_connections;
 mod session_forget;
+pub(crate) mod session_notes;
 mod session_observation;
 pub mod session_replication;
 use configured_name::normalize_configured_server_name;
@@ -51,10 +55,16 @@ mod durable_state;
 mod fanout_flush;
 pub mod foreground_state;
 mod headless;
+mod hosted_tenant;
 mod idle_hibernation;
 mod irc;
 mod lifecycle;
 mod live_turn;
+/// The package command listing and dispatch the daemon's runtime-command path
+/// reaches through its `RuntimeCommand` dispatch; integration tests drive the
+/// same code with the agent a turn would hand it.
+pub mod package_commands;
+pub mod package_control;
 mod provider_control;
 pub(crate) mod reload;
 pub(crate) mod reload_recovery;
@@ -687,6 +697,10 @@ mod reload_marker_scope_tests {
 #[path = "server/server_idle_monitor_tests.rs"]
 mod idle_monitor_tests;
 
+#[cfg(all(test, unix))]
+#[path = "server/hosted_tenant_tests.rs"]
+mod hosted_tenant_tests;
+
 /// How often the retained-heap watchdog samples allocator retention.
 const HEAP_RETENTION_CHECK_SECS: u64 = 120;
 
@@ -1302,25 +1316,14 @@ impl Server {
             .await;
         });
 
-        // On SIGTERM: log, unregister, let in-flight saves finish, exit. Where
-        // the platform has no termination signal, the watcher never resolves.
-        {
-            let sigterm_server_name = self.identity.name.clone();
-            let sigterm_sessions = Arc::clone(&self.sessions);
-            tokio::spawn(async move {
-                horon_agent_platform::signal::wait_for_termination().await;
-                let _ = crate::registry::unregister_server(&sigterm_server_name).await;
-                // A job that is still summarizing must not race the save or
-                // apply after the transcript is drained.
-                for agent in sigterm_sessions.read().await.values() {
-                    if let Ok(mut agent) = agent.try_lock() {
-                        agent.cancel_background_compaction(crate::compaction::jobs::CancelReason::Shutdown);
-                    }
-                }
-                lifecycle::drain_session_saves_before_exit().await;
-                std::process::exit(0);
-            });
-        }
+        // On SIGTERM or SIGINT: cancel background compaction, drain in-flight
+        // session saves, unregister, clean up sockets/locks, and exit 0.
+        lifecycle::spawn_termination_signal_handler(
+            self.identity.name.clone(),
+            Arc::clone(&self.sessions),
+            self.socket_path.clone(),
+            self.debug_socket_path.clone(),
+        );
 
         Self::spawn_idle_compaction_monitor(Arc::clone(&self.sessions), Arc::clone(&self.swarm_state.members));
 
@@ -2267,6 +2270,9 @@ impl Server {
 
     /// Start the server (both main and debug sockets)
     pub async fn run(&self) -> Result<()> {
+        // A hosted container proves its execution boundary before it binds a
+        // socket; an invalid hosting value is a startup error, not a warning.
+        self::hosted_tenant::enforce_at_startup()?;
         // Pin the binary this server runs before a later install can repoint
         // the channel link it was started through (see running_server_binary).
         if let Some(binary) = self::util::running_server_binary() {
@@ -2295,6 +2301,15 @@ impl Server {
         crate::startup_profile::mark(crate::startup_profile::SOCKET_BOUND);
         crate::startup_profile::report_to_log();
         irc::install(self);
+        // The package catalog belongs to this daemon: validate it, take in the
+        // inbox and publish the first generation management clients and
+        // sessions read. Starting is detached so socket readiness never waits
+        // for a large inbox, and every request awaits the same startup pass.
+        tokio::spawn(async move {
+            if let Err(error) = package_control::shared().await {
+                crate::logging::warn(&format!("package catalog control is unavailable: {error:#}"));
+            }
+        });
 
         // Server reload replaces the process image where the platform supports
         // it. Force the published listener descriptors to close across that

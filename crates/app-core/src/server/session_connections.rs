@@ -37,9 +37,15 @@ pub(super) async fn connection_presence_pong(
         native_ssh_protocol: Some(1),
         capabilities: vec![
             "session_tools".into(),
+            // `split` accepts `consult: true`, which stores the flag on the
+            // child before its id is answered. A client that needs a read-only
+            // fork checks this first: an older daemon would ignore the field
+            // and hand back a fork with the parent's tools.
+            "consult_fork_v1".into(),
             "soft_interrupt_ids".into(),
             "runtime_commands".into(),
             "session_connections".into(),
+            "turn_retry_v1".into(),
             // The daemon answers the stable API's durable runtime requests
             // (`get_runtime_state`, `apply_control`, `get_control_receipt`).
             // The bridge checks this before forwarding: an older daemon would
@@ -52,8 +58,28 @@ pub(super) async fn connection_presence_pong(
             // capability only when this is present, because the work is done
             // here and not in the bridge.
             "cancellable_work_api".into(),
+            "a2ui_v1".into(),
+            // The daemon answers `get_effective_settings` from its own loaded
+            // config, its own environment and its own launch record. The bridge
+            // forwards the request only when this is present: an older daemon
+            // would answer an unknown request with an uncorrelated error frame,
+            // so a forwarding bridge would wait out the client's timeout.
+            "effective_settings_api".into(),
+            // The daemon answers `split_at`, forking a session from a recorded
+            // message boundary. The bridge advertises the matching API
+            // capability only when this is present: an older daemon answers the
+            // unknown request with an uncorrelated error frame.
+            "session_fork_at_api".into(),
             "background_output_v1".into(),
             "live_todo_v1".into(),
+            // The daemon owns the package catalog: it validates the catalog and
+            // the inbox at startup, serializes management operations with the
+            // inbox pass, and answers only after the resulting generation is
+            // published. The bridge forwards `package_control` only when this is
+            // present, and a management CLI treats its absence as "this daemon
+            // predates package management" instead of mutating offline behind
+            // its back.
+            "package_control".into(),
         ],
         user_connected_session_ids: Some(user_connected_session_ids),
     }

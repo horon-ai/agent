@@ -51,7 +51,7 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }', arm64)
         self.assertNotIn('continue-on-error:', arm64)
         conditions = [line.strip() for line in arm64.splitlines() if line.strip().startswith('if:')]
-        self.assertEqual(conditions, ["if: ${{ needs.changes.outputs.code == 'true' }}"])
+        self.assertEqual(conditions, ["if: ${{ needs.changes.outputs.rust == 'true' }}"])
 
     def test_workflows_do_not_select_self_hosted_runners(self):
         for path in (ROOT / '.github/workflows').iterdir():
@@ -199,7 +199,7 @@ class WorkflowGuardTests(unittest.TestCase):
         pinned = ('ci.yml', 'structural-perf.yml', 'require-issue.yml', 'freebsd-smoke.yml',
                   'windows-smoke.yml', 'loading-ab.yml', 'benchmark.yml',
                   'benchmark-os.yml', 'benchmark-docs.yml', 'release-recovery.yml',
-                  'soak.yml')
+                  'soak.yml', 'package-compat.yml')
         use = re.compile(r'^\s*(?:- )?uses: (\S+)@(\S+)(?: # (\S+))?\s*$')
         for name in pinned:
             text = (ROOT / f'.github/workflows/{name}').read_text()
@@ -220,10 +220,46 @@ class WorkflowGuardTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         for action in ('actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7',
                        'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7',
-                       'astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3',
-                       'mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11'):
+                       'astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0',
+                       'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6'):
             with self.subTest(action=action):
                 self.assertIn(action, workflow)
+        self.assertNotIn('mozilla-actions/sccache-action', workflow)
+        self.assertNotIn('CARGO_INCREMENTAL=0', workflow)
+        self.assertNotIn('SCCACHE_CACHE_SIZE', workflow)
+
+    def test_stable_toolchain_and_rust_cache_policy_hold(self):
+        toolchain_toml = (ROOT / 'rust-toolchain.toml').read_text()
+        match = re.search(r'^channel\s*=\s*"([^"]+)"', toolchain_toml, re.MULTILINE)
+        self.assertIsNotNone(match, 'rust-toolchain.toml missing channel')
+        pinned_channel = match.group(1)
+        ci_text = (ROOT / '.github/workflows/ci.yml').read_text()
+        quality_block = ci_text.split('\n  quality:\n', 1)[1].split('\n  release-automation:\n', 1)[0]
+        self.assertIn(f'RUSTUP_TOOLCHAIN: "{pinned_channel}"', quality_block)
+        self.assertIn(f'toolchain: "{pinned_channel}"', quality_block)
+        for job, nxt in (('build', 'windows-build-test'),
+                         ('windows-build-test', 'typescript-sdk')):
+            block = ci_text.split(f'\n  {job}:\n', 1)[1].split(f'\n  {nxt}:\n', 1)[0]
+            with self.subTest(job=job):
+                self.assertIn('RUSTUP_TOOLCHAIN: stable', block)
+        soak_text = (ROOT / '.github/workflows/soak.yml').read_text()
+        self.assertIn('RUSTUP_TOOLCHAIN: stable', soak_text)
+        expected_save_if = (
+            "save-if: ${{ github.event_name == 'push' && "
+            "(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') "
+            "&& github.run_attempt == '1' }}"
+        )
+        for wf in ('ci.yml', 'soak.yml', 'package-windows.yml', 'package-compat.yml', 'structural-perf.yml'):
+            text = (ROOT / f'.github/workflows/{wf}').read_text()
+            blocks = text.split('uses: Swatinem/rust-cache@')[1:]
+            self.assertTrue(blocks, wf)
+            for idx, blk in enumerate(blocks):
+                segment = blk.split('\n      -', 1)[0]
+                with self.subTest(workflow=wf, idx=idx):
+                    if 'save-if: false' in segment:
+                        continue
+                    self.assertIn(expected_save_if, segment)
+                    self.assertIn('cache-on-failure: "false"', segment)
 
     def test_documentation_only_changes_never_leave_a_required_check_pending(self):
         # A skipped job reports "skipped", which a branch rule waits on forever.
@@ -258,6 +294,10 @@ class WorkflowGuardTests(unittest.TestCase):
         ci_block = (ROOT / '.github/workflows/ci.yml').read_text().split('\n  ci-required:\n', 1)[1]
         self.assertRegex(ci_block, r'if \[ "\$code" != true \] && \[ "\$docs_only" != true \]; then\n'
                                    r'\s+echo "::error::[^\n]*"\n\s+exit 1\n')
+        self.assertIn('.value.result != "success" and .value.result != "skipped"', ci_block)
+        sp_block = (ROOT / '.github/workflows/structural-perf.yml').read_text().split(
+            '\n  structural-perf-required:\n', 1)[1]
+        self.assertIn('[ "$perf_result" != success ] && [ "$perf_result" != skipped ]', sp_block)
         # A push to main, a tag, a dispatch and a re-run are never classified,
         # because release evidence needs every mandatory job to have run.
         import importlib.util
@@ -265,13 +305,67 @@ class WorkflowGuardTests(unittest.TestCase):
             'classify_changes', ROOT / 'scripts/ci/classify_changes.py')
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        full = {'code': True, 'docs': False, 'docs_only': False}
+        full = {
+            'code': True,
+            'docs': False,
+            'docs_only': False,
+            'rust': True,
+            'docs_site': True,
+            'ts_sdk': True,
+            'py_sdk': True,
+            'npm_pkg': True,
+            'install_scripts': True,
+            'release_scripts': True,
+            'workflows': True,
+            'tui_only': False,
+            'tui_smoke': True,
+            'platform_windows': True,
+            'platform_macos': True,
+            'full_matrix': True,
+        }
         for event, ref, attempt in (('push', 'refs/heads/main', 1),
                                     ('push', 'refs/tags/v1.0.0', 1),
                                     ('workflow_dispatch', 'refs/heads/dev', 1),
                                     ('push', 'refs/heads/dev', 2)):
             with self.subTest(event=event, ref=ref, attempt=attempt):
                 self.assertEqual(mod.classify(event, ['README.md'], ref=ref, attempt=attempt), full)
+
+    def test_macos_target_reuse_and_cached_tools(self):
+        ci_text = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertIn('scripts/ci/check_warnings.sh --target ${{ matrix.target }}', ci_text)
+        self.assertIn(
+            'cargo test --locked --target ${{ matrix.target }} -p horon-package-example --test extension_layouts',
+            ci_text,
+        )
+        py_block = ci_text.split('\n  python-sdk:\n', 1)[1].split('\n  docs-site:\n', 1)[0]
+        self.assertIn('UV_CACHE_DIR=$RUNNER_TEMP/setup-uv-cache', py_block)
+        self.assertIn('enable-cache: false', py_block)
+        for cache_key in (
+            'actionlint-${{ runner.os }}-v1.7.12',
+            'bun-${{ runner.os }}-ts-sdk-',
+            'bun-${{ runner.os }}-docs-site-',
+            'uv-${{ runner.os }}-py${{ matrix.python }}-',
+            'minilm-l6-v2-${{ runner.os }}-v1',
+            'direnv-linux-amd64-v2.38.2-148820a187930d36',
+            'justrust-${{ runner.os }}-',
+            'windows-pip-pywinpty-v1',
+        ):
+            with self.subTest(cache_key=cache_key):
+                self.assertIn(cache_key, ci_text)
+
+    def test_ci_required_gate_rejects_abandoned_result(self):
+        # Simulate the exact jq filter used by ci-required to ensure queue-evicted
+        # matrix legs (`abandoned`) never count as a green gate.
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        match = re.search(r"bad=\"\$\(echo \"\$NEEDS\" \| jq -r '([^']+)'\)\"", workflow)
+        self.assertIsNotNone(match, 'missing strict allowlist filter in ci-required')
+        jq_filter = match.group(1)
+        out = subprocess.check_output(
+            ['jq', '-r', jq_filter],
+            input='{"changes":{"result":"success"},"build":{"result":"abandoned"},"docs":{"result":"skipped"}}',
+            text=True,
+        ).strip()
+        self.assertEqual(out, 'build:abandoned')
 
     def test_cross_target_jobs_pin_the_toolchain_they_installed_targets_into(self):
         # `dtolnay/rust-toolchain@stable` installs into the `stable` toolchain by
@@ -305,6 +399,137 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertTrue(commits)
         for message in commits:
             self.assertIn('[skip ci]', message)
+
+    def test_pr_os_matrix_scoping_preserves_push_and_shared_platform_gates(self):
+        import importlib.util
+
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        build_block = workflow.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
+        self.assertIn("github.event_name != 'pull_request'", build_block)
+        self.assertIn("needs.changes.outputs.platform_macos == 'true'", build_block)
+        self.assertIn("needs.changes.outputs.full_matrix == 'true'", build_block)
+
+        win_block = workflow.split('\n  windows-build-test:\n', 1)[1].split('\n  typescript-sdk:\n', 1)[0]
+        win_if = next(line.strip() for line in win_block.splitlines() if line.strip().startswith('if:'))
+        self.assertEqual(
+            win_if,
+            "if: ${{ needs.changes.outputs.rust == 'true' && (github.event_name != 'pull_request' || "
+            "needs.changes.outputs.platform_windows == 'true' || needs.changes.outputs.full_matrix == 'true') }}",
+        )
+
+        # Verify all #[path = "../../platform-linux/src/*.rs"] files included by
+        # crates/platform-macos/src/lib.rs set platform_macos=true in classify_changes.py.
+        macos_lib = (ROOT / 'crates/platform-macos/src/lib.rs').read_text()
+        shared_linux = re.findall(r'#\[path = "\.\./\.\./(platform-linux/src/[^"]+)"\]', macos_lib)
+        self.assertEqual(len(shared_linux), 6, shared_linux)
+
+        spec = importlib.util.spec_from_file_location('classify_changes', ROOT / 'scripts/ci/classify_changes.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        portable_pr = mod.classify('pull_request', ['crates/extension-types/src/lib.rs'])
+        self.assertTrue(portable_pr['rust'])
+        self.assertFalse(portable_pr['platform_macos'])
+        self.assertFalse(portable_pr['platform_windows'])
+        self.assertFalse(portable_pr['full_matrix'])
+
+        for rel in shared_linux:
+            path = f'crates/{rel}'
+            with self.subTest(shared_macos_path=path):
+                res = mod.classify('pull_request', [path])
+                self.assertTrue(res['rust'])
+                self.assertTrue(res['platform_macos'])
+                self.assertFalse(res['platform_windows'])
+
+        labeled = mod.classify('pull_request', ['crates/extension-types/src/lib.rs'], labels={'ci:all-os'})
+        self.assertTrue(labeled['platform_macos'])
+        self.assertTrue(labeled['platform_windows'])
+        self.assertTrue(labeled['full_matrix'])
+
+        for event, ref, attempt in (
+            ('push', 'refs/heads/dev', 1),
+            ('push', 'refs/heads/main', 1),
+            ('workflow_dispatch', 'refs/heads/dev', 1),
+            ('push', 'refs/heads/dev', 2),
+        ):
+            with self.subTest(event=event, ref=ref, attempt=attempt):
+                res = mod.classify(event, ['crates/extension-types/src/lib.rs'], ref=ref, attempt=attempt)
+                self.assertTrue(res['platform_macos'])
+                self.assertTrue(res['platform_windows'])
+                self.assertTrue(res['full_matrix'])
+
+    def test_tui_smoke_scoping_and_windows_unified_test_compile(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertIn("tui_smoke: ${{ steps.classify.outputs.tui_smoke }}", workflow)
+        build_block = workflow.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
+        for step_name in ('TUI PTY smoke (Linux, macOS)', 'Installed layout TUI smoke'):
+            step_block = build_block.split(f'      - name: {step_name}\n', 1)[1].split('\n      - name:', 1)[0]
+            self.assertIn("needs.changes.outputs.tui_smoke == 'true'", step_block, step_name)
+            self.assertIn("github.event_name != 'pull_request'", step_block, step_name)
+
+        win_block = workflow.split('\n  windows-build-test:\n', 1)[1].split('\n  typescript-sdk:\n', 1)[0]
+        for step_name in ('Cache pywinpty wheel on Windows', 'ConPTY smoke (TUI client on Windows)'):
+            step_block = win_block.split(f'      - name: {step_name}\n', 1)[1].split('\n      - name:', 1)[0]
+            self.assertIn("needs.changes.outputs.tui_smoke == 'true'", step_block, step_name)
+            self.assertIn("github.event_name != 'pull_request'", step_block, step_name)
+
+        compile_count = win_block.count("'test', '--locked'") + len(re.findall(r'\bcargo test\b', win_block))
+        self.assertEqual(compile_count, 1, 'windows-build-test must compile test targets in a single locked cargo call')
+        self.assertIn('--message-format=json-render-diagnostics', win_block)
+        self.assertIn('if ($passed -lt $MinPassed)', win_block)
+        self.assertIn('$m.Matches[0].Groups[1].Value', win_block)
+        self.assertNotIn('$_.Matches', win_block)
+        self.assertNotIn('@listArgs', win_block)
+        self.assertIn('& $entry.Executable --list', win_block)
+
+        e2e_names = re.findall(r"'((?:provider_behavior|windows_lifecycle)::[A-Za-z0-9_]+)'", win_block)
+        self.assertGreaterEqual(len(e2e_names), 4, e2e_names)
+        for full_name in e2e_names:
+            mod_name, fn_name = full_name.split('::', 1)
+            source = (ROOT / f'tests/e2e/{mod_name}.rs').read_text()
+            with self.subTest(e2e_test=full_name):
+                self.assertIn(f'fn {fn_name}(', source)
+
+    def test_workspace_impact_scoping_and_parallel_integration_targets(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        build_block = workflow.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
+        checkout_block = build_block.split('\n      - name: Verify Python eval runner', 1)[0]
+        self.assertIn('fetch-depth: 0', checkout_block)
+        self.assertIn('scripts/ci/workspace_impact.py', build_block)
+        self.assertIn('HORON_CI_SCOPED_PACKAGES=', build_block)
+        self.assertIn('if [ "$token" = "horon-agent" ]; then', build_block)
+        self.assertIn('${extra_test_targets[@]+"${extra_test_targets[@]}"}', build_block)
+        self.assertIn('--jobs 4', build_block)
+
+        joined = re.sub(r'\\\n\s*', ' ', build_block)
+        base_calls = [
+            m.group(0)
+            for m in re.finditer(r'run_lib_tests\.py\s+[^\n]*--package horon-agent-base\b[^\n]*', joined)
+        ]
+        self.assertEqual(len(base_calls), 2, base_calls)
+        for call in base_calls:
+            self.assertNotIn(' -- ', call, call)
+
+    def test_structural_perf_unified_compile_and_pr_soak_cycle_split(self):
+        ci_text = (ROOT / '.github/workflows/ci.yml').read_text()
+        build_block = ci_text.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
+        it_step = build_block.split('      - name: Run integration contracts\n', 1)[1].split('\n      - name:', 1)[0]
+        self.assertIn(
+            "HORON_AGENT_SOAK_CYCLES: ${{ github.event_name == 'pull_request' && '20' || '200' }}",
+            it_step,
+        )
+        soak_text = (ROOT / '.github/workflows/soak.yml').read_text()
+        self.assertIn("HORON_AGENT_SOAK_CYCLES: ${{ inputs.cycles || '1000' }}", soak_text)
+
+        sp_text = (ROOT / '.github/workflows/structural-perf.yml').read_text()
+        self.assertIn('CARGO_BUILD_RUSTC_WRAPPER: ""', sp_text)
+        self.assertIn('apt-get install -y -qq clang mold', sp_text)
+        self.assertIn('-fuse-ld=mold', sp_text)
+        self.assertIn('CARGO_BUILD_JOBS=', sp_text)
+
+        gate_text = (ROOT / 'scripts/perf/check_structural.py').read_text()
+        self.assertIn('"--no-run", "--message-format=json-render-diagnostics"', gate_text)
+        self.assertIn('"HORON_AGENT_SOAK_CYCLES": "20"', gate_text)
 
 
 if __name__ == '__main__':

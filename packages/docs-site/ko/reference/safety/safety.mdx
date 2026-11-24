@@ -673,11 +673,12 @@ exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 �
   `[package]`와 `[workspace]`를 겸하고 `default-members`가 없습니다. 그래서 루트에서
   `cargo clippy --locked --all-targets --all-features -- -D warnings`를 돌리면 멤버 크레이트의
   라이브러리 코드는 린트하지만 멤버 크레이트의 테스트·예제 타깃은 린트하지 않습니다. 워크스페이스
-  전체를 검사하는 명령은 `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`이고,
-  2026-11-05 `dev`에서 exit 0으로 통과합니다.
-- **CI는 아직 루트 형태를 돌립니다.** `.github/workflows/ci.yml`의 `Run clippy with warnings denied`
-  단계와 `scripts/ci/check_all.sh`는 `--workspace` 없이 돌립니다. 멤버 크레이트 테스트 코드의
-  린트 회귀는 CI에서 잡히지 않으므로, 그 코드를 바꿨다면 위 `--workspace` 명령을 로컬에서 돌립니다.
+  전체를 검사하는 명령은 루트 전체 기능 검사와
+  `cargo clippy --locked --workspace --all-targets -- -D warnings`를 함께 돌리는 것입니다.
+- **CI도 두 형태를 함께 돌립니다.** `.github/workflows/ci.yml`의 `Run clippy with warnings denied`와
+  `Run clippy on workspace targets` 단계(및 `scripts/ci/check_all.sh`)가 루트 `--all-targets --all-features`에
+  이어 `--workspace --all-targets -- -D warnings`를 실행하므로, 멤버 크레이트 테스트·예제·벤치 타깃의
+  린트 회귀도 CI에서 잡힙니다.
 
 ### 먼저 읽을 파일
 

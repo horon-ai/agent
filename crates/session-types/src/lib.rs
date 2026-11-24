@@ -76,6 +76,13 @@ pub struct RenderedMessage {
     /// transcript (issue #432).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stored_index: Option<usize>,
+    /// The stored message's own id, copied while rendering it.
+    ///
+    /// A row is built from the message in hand, so this names the exact
+    /// original even when `stored_index` indexes a history snapshot rather
+    /// than the resident context. `None` for synthetic rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

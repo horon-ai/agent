@@ -4,15 +4,18 @@ use std::time::Duration;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::style::Color;
 use ratatui::widgets::Paragraph;
 use time::Time;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    Layout, Preset, SEGMENT_IDS, SegmentId, StatusData, TokenTotals, compact, render, shorten_path, status_word,
+    Layout, Preset, SEGMENT_IDS, SegmentId, StatusData, TokenTotals, UsageTotals, apply_appearance, compact, render,
+    shorten_path, status_word,
 };
 use crate::settings::{Reloader, Settings, Sources};
-use crate::theme::{Symbols, Theme};
+use crate::theme::schema::BUILTIN_DARK;
+use crate::theme::{ChangePalette, SymbolPreset, Symbols, Theme, changes, parse};
 
 fn settings_from(text: &str) -> Settings {
     let directory = tempfile::tempdir().expect("temp dir");
@@ -50,7 +53,13 @@ fn sample() -> StatusData<'static> {
             cache_read: 0,
             cache_creation: 0,
         }),
+        // Unknown to the runtime in the sample, so every test that expects a
+        // percentage supplies the capacity itself.
+        capacity: None,
+        usage: None,
+        cost: None,
         now: Some(time(9, 5)),
+        spinner: None,
     }
 }
 
@@ -173,6 +182,30 @@ fn statusline_narrow_width_keeps_only_the_highest_priority() {
 }
 
 #[test]
+fn a_spinner_is_drawn_beside_the_state_only_when_it_is_supplied() {
+    let layout = Layout {
+        left: vec![SegmentId::Status],
+        right: Vec::new(),
+        ..Layout::default()
+    };
+    let mut data = StatusData {
+        pending_turn: true,
+        ..StatusData::default()
+    };
+    assert_eq!(rendered(&data, &layout, 80), "running");
+
+    data.spinner = Some(Symbols::default().spinner[1]);
+    assert_eq!(
+        rendered(&data, &layout, 80),
+        format!("running {}", Symbols::default().spinner[1])
+    );
+
+    // A static preset hands no glyph, so the state stands alone again.
+    data.spinner = None;
+    assert_eq!(rendered(&data, &layout, 80), "running");
+}
+
+#[test]
 fn statusline_zero_width_draws_nothing() {
     let layout = Layout::default();
     assert_eq!(rendered(&sample(), &layout, 0), "");
@@ -274,6 +307,79 @@ fn statusline_catalogue_round_trips() {
     assert!(Preset::parse("bogus").is_none());
 }
 
+/// The theme and the glyphs a settings file resolves to.
+fn appearance(text: &str) -> (Theme, Symbols) {
+    let mut theme = Theme::default();
+    let mut symbols = Symbols::default();
+    apply_appearance(&settings_from(text), &mut theme, &mut symbols);
+    (theme, symbols)
+}
+
+#[test]
+fn a_chosen_separator_joins_every_part_of_the_line() {
+    let (theme, symbols) = appearance("[statusline]\nseparator = \"bar\"\n");
+    let line = render(&sample(), &Layout::default(), &theme, symbols, 100).to_string();
+    assert!(
+        line.starts_with("idle | anthropic/claude-sonnet-4 | ~/proj"),
+        "left side wrong: {line:?}"
+    );
+    assert!(line.ends_with("↑200 ↓50 | 09:05"), "right side wrong: {line:?}");
+    assert!(!line.contains('·'), "the glyph set's mark survived: {line:?}");
+
+    // The model and its effort are parts of the same line, so the chosen mark
+    // joins them too.
+    let mut data = sample();
+    data.effort = Some("high");
+    let line = render(&data, &Layout::default(), &theme, symbols, 100).to_string();
+    assert!(line.contains("anthropic/claude-sonnet-4 | high"), "{line:?}");
+
+    // `preset` keeps whatever the glyph set draws, whichever set it is.
+    let mut ascii = SymbolPreset::Ascii.symbols();
+    apply_appearance(
+        &settings_from("[statusline]\nseparator = \"preset\"\n"),
+        &mut Theme::default(),
+        &mut ascii,
+    );
+    assert_eq!(ascii.separator, "|");
+}
+
+#[test]
+fn a_chosen_separator_keeps_the_narrow_priority_order() {
+    let (theme, symbols) = appearance("[statusline]\nseparator = \"bar\"\n");
+    let layout = Layout {
+        context_window: 1000,
+        ..Layout::default()
+    };
+    let narrow = render(&sample(), &layout, &theme, symbols, 20).to_string();
+    assert!(narrow.contains("anthropic/claude-sonnet-4"), "{narrow:?}");
+    assert!(!narrow.contains("09:05"), "the clock should go first: {narrow:?}");
+    assert!(!narrow.contains('↑'), "the tokens should go second: {narrow:?}");
+    assert!(
+        !narrow.contains('|'),
+        "a separator was left with nothing beside it: {narrow:?}"
+    );
+}
+
+#[test]
+fn the_background_setting_chooses_the_theme_or_the_terminal() {
+    let theme = Theme::default();
+    let (themed, _) = appearance("[statusline]\nbackground = \"theme\"\n");
+    assert_eq!(themed.status.status_bg, theme.status.status_bg);
+
+    let (unset, _) = appearance("");
+    assert_eq!(
+        unset.status.status_bg, theme.status.status_bg,
+        "the default is the theme's background"
+    );
+
+    let (terminal, _) = appearance("[statusline]\nbackground = \"terminal\"\n");
+    assert_eq!(terminal.status.status_bg, Color::Reset);
+    assert_eq!(
+        terminal.status.status_text, theme.status.status_text,
+        "the setting changed more than the background"
+    );
+}
+
 #[test]
 fn a_lost_connection_is_named_in_the_state_segment() {
     let layout = Layout {
@@ -362,4 +468,165 @@ fn the_path_cut_never_passes_the_limit_and_never_panics() {
 fn a_lone_name_carries_no_separator_marker() {
     assert_eq!(shorten_path("namewithoutseparator", None, 6), "…rator");
     assert_eq!(shorten_path("~/alpha", None, 6), "…/lpha");
+}
+
+#[test]
+fn the_context_percentage_follows_the_runtime_window_until_the_setting_overrides_it() {
+    let data = StatusData {
+        capacity: Some(200_000),
+        ..sample()
+    };
+    let layout = Layout {
+        left: Vec::new(),
+        right: vec![SegmentId::ContextPct],
+        ..Layout::default()
+    };
+    // 250 tokens of 200 000 rounded down is zero percent, and a zero percent
+    // somebody measured is still a reading.
+    assert_eq!(rendered(&data, &layout, 40), "0%");
+
+    // The manual override wins over the report: a user who knows the route
+    // better than this daemon's catalog does gets the number they typed.
+    let override_ = Layout {
+        context_window: 1_000,
+        ..layout.clone()
+    };
+    assert_eq!(rendered(&data, &override_, 40), "25%");
+
+    // Neither known draws nothing: an unknown window is not a zero percent.
+    let unknown = StatusData {
+        capacity: None,
+        ..sample()
+    };
+    assert_eq!(rendered(&unknown, &layout, 40), "");
+}
+
+#[test]
+fn cumulative_usage_shows_only_the_metrics_the_runtime_recorded() {
+    let layout = Layout {
+        left: Vec::new(),
+        right: vec![SegmentId::Usage],
+        ..Layout::default()
+    };
+    let with_cache = StatusData {
+        usage: Some(UsageTotals {
+            input: Some(12_345),
+            output: Some(678),
+            cache_read: Some(4_000),
+            cache_creation: None,
+        }),
+        ..sample()
+    };
+    assert_eq!(rendered(&with_cache, &layout, 40), "Σ↑12.3k ↓678 ⚡4.0k");
+
+    // A provider that never reported cache accounting gets no cache column,
+    // and not a zero one.
+    let no_cache = StatusData {
+        usage: Some(UsageTotals {
+            input: Some(2_000),
+            output: None,
+            cache_read: None,
+            cache_creation: None,
+        }),
+        ..sample()
+    };
+    assert_eq!(rendered(&no_cache, &layout, 40), "Σ↑2.0k");
+
+    // Nothing reported draws nothing at all.
+    assert_eq!(rendered(&sample(), &layout, 40), "");
+}
+
+#[test]
+fn a_spend_estimate_is_drawn_only_when_one_was_published() {
+    let layout = Layout {
+        left: Vec::new(),
+        right: vec![SegmentId::Cost],
+        ..Layout::default()
+    };
+    let priced = StatusData {
+        cost: Some(1.5),
+        ..sample()
+    };
+    assert_eq!(rendered(&priced, &layout, 40), "$1.50");
+
+    // This build carries no price table, so every report leaves the estimate
+    // absent; the segment then hides rather than claiming a free session.
+    assert_eq!(rendered(&sample(), &layout, 40), "");
+    let nonsense = StatusData {
+        cost: Some(f64::NAN),
+        ..sample()
+    };
+    assert_eq!(rendered(&nonsense, &layout, 40), "");
+}
+
+#[test]
+fn opt_in_segments_are_dropped_before_the_preset_segments_under_width_pressure() {
+    let layout = Layout {
+        preset: Preset::Custom,
+        left: vec![SegmentId::Model],
+        right: vec![SegmentId::Time, SegmentId::Usage, SegmentId::Cost],
+        ..Layout::default()
+    };
+    let data = StatusData {
+        usage: Some(UsageTotals {
+            input: Some(9_000),
+            output: Some(1_000),
+            cache_read: None,
+            cache_creation: None,
+        }),
+        cost: Some(0.25),
+        ..sample()
+    };
+    let wide = rendered(&data, &layout, 120);
+    assert!(wide.contains("Σ↑9.0k"), "the usage vanished: {wide:?}");
+    assert!(wide.contains("$0.25"), "the estimate vanished: {wide:?}");
+
+    // The clock goes first, then the estimate, then the usage: the preset's
+    // own segments outlive both opt-in ones, which is what makes them opt-in.
+    let narrow = rendered(&data, &layout, 20);
+    assert!(narrow.starts_with("anthropic/claude-sonnet-4"), "{narrow:?}");
+    assert!(!narrow.contains("09:05"), "the clock should go first: {narrow:?}");
+    assert!(!narrow.contains('$'), "the estimate should go second: {narrow:?}");
+}
+
+#[test]
+fn statusline_state_word_and_colour_move_with_the_change_palette() {
+    let theme = parse(BUILTIN_DARK, "built-in dark").expect("the built-in theme parses");
+    let drawn = changes::apply(&theme, ChangePalette::Accessible);
+    let layout = Layout::default();
+
+    let state_color = |data: &StatusData<'_>, theme: &Theme, word: &str| {
+        let line = render(data, &layout, theme, Symbols::default(), 120);
+        let span = line
+            .spans
+            .iter()
+            .find(|span| span.content.contains(word))
+            .unwrap_or_else(|| panic!("`{word}` is not on the line: {line:?}"));
+        (span.content.to_string(), span.style.fg)
+    };
+
+    // A turn that ended well is a positive change, and one that lost the
+    // harness is a negative one: both take the palette's pair, and both keep
+    // the word that says it without colour.
+    assert_eq!(
+        state_color(&sample(), &drawn, "idle"),
+        ("idle".to_string(), Some(drawn.core.success))
+    );
+    let mut lost = sample();
+    lost.disconnected = true;
+    assert_eq!(
+        state_color(&lost, &drawn, "disconnected"),
+        ("disconnected".to_string(), Some(drawn.core.error))
+    );
+
+    // With the setting off, the selected theme's own pair is back.
+    let plain = changes::apply(&theme, ChangePalette::Theme);
+    assert_eq!(
+        state_color(&sample(), &plain, "idle"),
+        ("idle".to_string(), Some(theme.core.success))
+    );
+    assert_eq!(
+        state_color(&lost, &plain, "disconnected"),
+        ("disconnected".to_string(), Some(theme.core.error))
+    );
 }

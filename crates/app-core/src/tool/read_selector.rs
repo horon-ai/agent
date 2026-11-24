@@ -14,9 +14,12 @@ use std::path::Path;
 /// that were dropped.
 pub(crate) const MAX_LINE_LEN: usize = 2000;
 
-/// Default line count for a read without an explicit limit, and for the
-/// open-ended selector `:N-`.
-pub(crate) const DEFAULT_LIMIT: usize = 5000;
+/// Maximum configured default page and fixed cap for the open-ended selector `:N-`.
+const DEFAULT_LIMIT: usize = 5000;
+
+pub(super) fn default_read_limit() -> usize {
+    crate::config::config().tools.read_default_limit.clamp(1, DEFAULT_LIMIT)
+}
 
 /// Hard ceiling on the bytes one page may return, so a file of very long lines
 /// cannot spend a whole context window on a single page.
@@ -61,6 +64,109 @@ pub(crate) struct Rendered {
     pub truncated_lines: usize,
     /// More lines remain in the document beyond `last_line`.
     pub more: bool,
+}
+
+/// Render bounded heading excerpts with inclusive source ranges.
+pub(super) fn render_markdown_outline(text: &str, display: &str, total_lines: usize) -> Option<Rendered> {
+    const MAX_HEADINGS: usize = 100;
+    let mut headings = Vec::new();
+    let mut fence = None;
+    let mut previous = None;
+    for (index, line) in text.lines().enumerate() {
+        let number = index + 1;
+        let trimmed = line.trim_start_matches(' ');
+        let marker = trimmed.as_bytes().first().copied();
+        let delimiter = marker.filter(|byte| matches!(byte, b'`' | b'~'));
+        let run = delimiter.map_or(0, |byte| trimmed.bytes().take_while(|&item| item == byte).count());
+        let indented = line.len() - trimmed.len() > 3 || trimmed.starts_with('\t');
+        if let Some((open, width)) = fence {
+            if !indented && delimiter == Some(open) && run >= width && trimmed[run..].trim().is_empty() {
+                fence = None;
+            }
+            continue;
+        }
+        if indented || trimmed.is_empty() {
+            previous = None;
+            continue;
+        }
+        if run >= 3 {
+            fence = delimiter.map(|byte| (byte, run));
+            previous = None;
+            continue;
+        }
+
+        let hashes = trimmed.bytes().take_while(|&byte| byte == b'#').count();
+        let heading = if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with([' ', '\t']) {
+            Some((number, hashes, trimmed[hashes..].trim()))
+        } else if matches!(marker, Some(b'=' | b'-')) && trimmed.trim_end().bytes().all(|byte| Some(byte) == marker) {
+            previous
+                .take()
+                .map(|(line, title)| (line, if marker == Some(b'=') { 1 } else { 2 }, title))
+        } else {
+            None
+        };
+        previous = if heading.is_none() && !trimmed.starts_with(['#', '>', '-', '+', '*']) {
+            Some((number, trimmed.trim_end()))
+        } else {
+            None
+        };
+        if let Some(heading) = heading {
+            headings.push(heading);
+            if headings.len() > MAX_HEADINGS {
+                break;
+            }
+        }
+    }
+
+    let &(first, _, _) = headings.first()?;
+    let shown = headings.len().min(MAX_HEADINGS);
+    let mut body = String::with_capacity(64 + shown * 48 + display.len() + 64);
+    body.push_str("[Markdown heading outline]\n");
+    for (index, &(start, level, title)) in headings.iter().take(MAX_HEADINGS).enumerate() {
+        let end = headings.get(index + 1).map_or(total_lines, |&(line, _, _)| line - 1);
+        let hashes = &"######"[..level];
+        let title = crate::util::truncate_str(title, 240);
+        push_decimal(&mut body, start);
+        body.push('-');
+        push_decimal(&mut body, end);
+        body.push('\t');
+        body.push_str(hashes);
+        body.push(' ');
+        body.push_str(title);
+        body.push('\n');
+    }
+    if headings.len() > MAX_HEADINGS {
+        body.push_str("[More headings omitted]\n");
+    }
+    body.push_str("\nRead source with path:A-B, e.g. ");
+    body.push_str(display);
+    body.push(':');
+    push_decimal(&mut body, first);
+    body.push('-');
+    push_decimal(&mut body, first);
+    body.push('.');
+    Some(Rendered {
+        body,
+        total_lines,
+        last_line: total_lines,
+        ..Rendered::default()
+    })
+}
+
+fn push_decimal(out: &mut String, mut value: usize) {
+    let mut buf = [0u8; 20];
+    let mut pos = buf.len();
+    loop {
+        pos -= 1;
+        buf[pos] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    for &byte in &buf[pos..] {
+        out.push(byte as char);
+    }
 }
 
 /// Splits a read path into the path itself and its selector.

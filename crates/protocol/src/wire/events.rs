@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod tool_done;
+
 /// Server event sent to client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -38,7 +40,9 @@ pub enum ServerEvent {
     /// The session's committed todo list changed.
     #[serde(rename = "todo_changed")]
     TodoChanged { session_id: String },
-
+    /// Reply to `set_todo_status`.
+    #[serde(rename = "todo_edit_result")]
+    TodoEditResult(TodoEditResultEvent),
     /// Acknowledgment of request
     #[serde(rename = "ack")]
     Ack { id: u64 },
@@ -72,9 +76,7 @@ pub enum ServerEvent {
         duration_secs: Option<f64>,
     },
 
-    /// Replace the current turn's streamed text content
-    /// Used when text-wrapped tool calls are recovered: the garbled text
-    /// shown during streaming is replaced with the clean prefix text.
+    /// Replace the current turn's streamed text content. Kept for older peers.
     #[serde(rename = "text_replace")]
     TextReplace { text: String },
 
@@ -298,6 +300,7 @@ pub enum ServerEvent {
         display_role: Option<String>,
         /// Which injection point: "A" (after stream), "B" (no tools),
         /// "C" (between tools), "D" (after all tools)
+        /// `native_tool_retry` carries a user-facing system notice.
         point: String,
         /// Number of tools skipped (only for urgent interrupt at point C)
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1094,6 +1097,9 @@ pub enum ServerEvent {
         snapshot: serde_json::Value,
     },
 
+    /// Reply to `get_effective_settings`: the allow-listed values this daemon loaded.
+    #[serde(rename = "effective_settings")]
+    EffectiveSettings { id: u64, settings: serde_json::Value },
     /// Answer to `cancel_tool_call` and `cancel_background_terminal`.
     ///
     /// `accepted` says a cancellation was started for the named call. A
@@ -1116,7 +1122,6 @@ pub enum ServerEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
-
     /// Answer to a targeted `cancel_turn`.
     ///
     /// The daemon still acks every cancel (a client waiting on the ack must not
@@ -1135,27 +1140,22 @@ pub enum ServerEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
-
     /// The tool call named by `id` was cancelled and its work stopped.
     ///
     /// Its `tool_done` still follows with the cancellation text the model sees,
     /// so a client treats this as the reason that result reports an error.
     #[serde(rename = "tool_cancelled")]
     ToolCancelled { id: String },
-
     /// Output a running tool call produced, as base64 of the original bytes.
     #[serde(rename = "tool_output_delta")]
     ToolOutputDelta { id: String, data: String },
-
     /// One background work item changed state.
     #[serde(rename = "background_work")]
     BackgroundWork(BackgroundWorkEvent),
-
     /// Answer to `list_background_work`: the work still running in this
     /// session.
     #[serde(rename = "background_work_list")]
     BackgroundWorkList { id: u64, items: Vec<BackgroundWorkItem> },
-
     /// The `ask` tool call named by `tool_call_id` sent this `request_id`.
     ///
     /// Sent immediately before [`ServerEvent::AskRequested`] for the same
@@ -1163,31 +1163,31 @@ pub enum ServerEvent {
     /// them.
     #[serde(rename = "ask_tool_call")]
     AskToolCall { request_id: String, tool_call_id: String },
-
     /// A soft interrupt was stored as a conversation row while a turn ran.
     ///
     /// `message_id` is the id the stored row has, which replay reports for the
     /// same message, so a client can add the row it did not see arrive.
     #[serde(rename = "soft_interrupt_stored")]
     SoftInterruptStored { message_id: String, content: String },
-}
-
-impl ServerEvent {
-    /// A `ToolDone` whose verdict no layer recorded. Producing the event this
-    /// way keeps the absent verdict explicit at the call site instead of
-    /// leaving a field for a later reader to misread as "not considered".
-    pub fn tool_done(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        output: impl Into<String>,
-        error: Option<String>,
-    ) -> Self {
-        Self::ToolDone {
-            id: id.into(),
-            name: name.into(),
-            output: output.into(),
-            error,
-            verdict: None,
-        }
-    }
+    /// Reply to [`Request::PackageControl`], after the resulting catalog
+    /// generation is on disk and published to subscribers.
+    ///
+    /// The receipt carries that generation and the complete catalog at it, so a
+    /// client that lost the answer can retry with the same operation id and
+    /// learn the outcome instead of guessing.
+    #[serde(rename = "package_control_result")]
+    PackageControlResult {
+        id: u64,
+        receipt: horon_agent_extension_types::control::PackageControlReceipt,
+    },
+    /// Validated A2UI v1.0 envelope emitted as part of the agent response.
+    #[serde(rename = "a2ui_envelope")]
+    A2uiEnvelope {
+        session_id: String,
+        tool_call_id: String,
+        sequence: u32,
+        envelope: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fallback_text: Option<String>,
+    },
 }

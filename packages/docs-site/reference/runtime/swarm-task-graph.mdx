@@ -516,6 +516,8 @@ a model role.
 workspace. It is a separate action from `list`, which still means "list swarm
 members" and keeps `list_agents` as its alias.
 
+Use `horon agents` to inspect the catalog without starting a session. It shows each definition's source path, scope, configured model, effort and tool allow list. Project entries are shown when the workspace is trusted and take precedence over user entries of the same name. `--trust-workspace` applies to the inspection without writing a trust decision. The output omits role prompts and result schemas.
+
 ## 8c. Fan-out: `spawn_many`
 
 A parent that fans work out pays one model round trip per child when it calls
@@ -678,10 +680,9 @@ It reuses `VersionedPlan` / `PlanItem` (which already has `blocked_by` edges,
   user-visible entities.
 
 ### Runaway protection: a live-agent budget under one hard member cap
-Runaway protection is two counts, not a matrix of limits. A swarm may hold at most
-**`MAX_SWARM_MEMBERS` = 1000** live members (`crates/swarm-core/src/lib.rs:43`), and
-that ceiling holds even when the configurable budget is off. Below it,
-`agents.swarm_max_concurrent_agents` (default `32`, `crates/config-types/src/lib.rs:636-638`;
+Two counts limit concurrent work. A swarm may hold at most **`MAX_SWARM_MEMBERS` = 1000**
+live members (`crates/swarm-core/src/lib.rs`), even when the configurable budget is off.
+Below it, `agents.swarm_max_concurrent_agents` (default `32`, `crates/config-types/src/lib.rs`;
 `0` turns it off) caps the live spawned agents, and it applies to deep recursive spawning
 as well as to `run_plan`. There is deliberately **no depth cap and no per-node
 breadth/fan-out cap**. The spawn tree may nest and fan out freely until one of the two
@@ -691,10 +692,21 @@ This is implemented in `ensure_spawn_coordinator_swarm`
 counting the swarm's live members and live spawned agents. The old
 `MAX_SWARM_SPAWN_DEPTH` depth limit has been removed.
 
+### Per-child limits
+
+Set these in `[agents]` to bound each spawned child independently.
+
+| Key | Behaviour |
+| --- | --- |
+| `swarm_child_runtime_secs` | Elapsed seconds from the child's first active turn. On expiry the agent signals cancellation, finishes turn cleanup and reports the runtime limit. `0` disables it. |
+| `swarm_child_request_limit` | Number of main-model requests per live child. A retry started by the turn counts once, and stream chunks do not count. `0` disables it. |
+| `swarm_child_request_notice` | Defaults to `true`. Before the last allowed request, the child and its attached clients get a notice so the child can return findings. |
+| `swarm_max_spawn_effort` | Optional ceiling from `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. The child is started with a level the selected model supports within that ceiling. |
+
+The deadline and request count belong to the live spawned child. They apply during that agent's lifetime. Limits stop that child only. The coordinator and siblings can continue, subject to the same concurrent member budget.
+
 ### Honest trade-offs and limits
-- The two counts are the only regulators. They bound total concurrency and cost, but
-  they cannot stop a lopsided tree (say, one greedy node eating much of the budget). That
-  judgment is left to the agents and the gate discipline.
+- The live-member counts bound total concurrency. Set per-child budgets when one node could use too much runtime or too many model requests.
 - The graph **orders** work but does not mutually exclude it. Two subtrees editing the
   same file is still the "talk it over by DM, no lock" case, as today.
 - Domain bias must stay out of the structure/gate layer (section 7 invariant).

@@ -2,7 +2,7 @@
 
 언어: [English](README.md) | **한국어**
 
-이 폴더는 horon agent의 현재 동작만 설명한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
+이 폴더는 horon agent의 현재 동작을 설명하고 설계 제안에는 상태를 표시한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
 
 문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. [agent.horon.ai](https://agent.horon.ai) 사이트는 이 문서들을 Reference 탭에 보여 준다. `scripts/ci/sync_docs_site.py`가 이 폴더에서 `packages/docs-site/reference/`를 생성하고, `packages/docs-site`의 나머지 가이드는 손으로 쓰므로, 가이드도 설명하는 동작이 바뀌면 두 곳을 함께 고친다.
 
@@ -28,23 +28,35 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | `diagram/` | [`README.ko.md`](diagram/README.ko.md) | 손으로 그린 SVG 그림 여덟 장과 각 그림이 그리는 코드 경로: 시스템 개요, 실행 모드, 턴 수명 주기, 프로바이더 방식, ACP 협상, 세션 저장, 도구 로딩, 브랜치·릴리스 흐름 |
 | `architecture/` | [`SERVER.ko.md`](architecture/SERVER.ko.md) | 서버·세션·소켓 구조 |
 | | [`CRATES.ko.md`](architecture/CRATES.ko.md) | 크레이트 소유권 경계, 플랫폼 어댑터, 저장 내구성과 TLS 신뢰 집합 |
+| | [`HOSTING.ko.md`](architecture/HOSTING.ko.md) | 사용자별 호스팅 경계: `HORON_AGENT_HOSTING_MODE` 계약, 컨테이너 이미지와 볼륨 배치, 컨트롤 플레인 라우팅 계약, quiesce 요구를 포함한 Fly Machines·Volume 수명 주기, 정지와 깨우기, 테넌트 삭제 |
 | `protocol/` | [`ACP.ko.md`](protocol/ACP.ko.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
-| | [`HARNESS_API.ko.md`](protocol/HARNESS_API.ko.md) | 하네스 API 자격 증명 설정과 요청·이벤트 표면 |
+| | [`HARNESS_API.ko.md`](protocol/HARNESS_API.ko.md) | 하네스 API 자격 증명 설정, 선택적 인증 TCP 노출, 요청·이벤트 표면 |
 | | [`SESSION_STORE.ko.md`](protocol/SESSION_STORE.ko.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
+| | [`COLLABORATION.ko.md`](protocol/COLLABORATION.ko.md) | 실시간 세션 초대와 참가자 권한 설계 제안 |
 | | [`RPC.ko.md`](protocol/RPC.ko.md) | stdio JSONL RPC 모드: 명령, 프레임, omp 대조 표 |
+| | [`SHARING.ko.md`](protocol/SHARING.ko.md) | 암호화된 세션 공유와 폐기 설계 제안 |
 | `runtime/` | [`TOOLS.ko.md`](runtime/TOOLS.ko.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://`·`memory://` 읽기와 MCP 설정 출처, 보조 호출 |
+| | [`MEMORY.ko.md`](runtime/MEMORY.ko.md) | 기억 위키: 정본인 마크다운 페이지, 파생 SQLite 인덱스와 스키마, 검색 스트림과 융합, 삭제와 secure-delete 순서, 재생성, 한국어 평가와 측정된 recall, 볼륨 내보내기·가져오기·quiesce·키 계약·`delete_user` 단계 기계 |
+| | [`EDIT_DIAGNOSTICS.ko.md`](runtime/EDIT_DIAGNOSTICS.ko.md) | 편집 후 언어 서버 진단 설계 제안 |
 | | [`TOOL_SCHEDULING.ko.md`](runtime/TOOL_SCHEDULING.ko.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, `[prewalk]` 계획→실행 모델 인계, 목표 계속과 토큰 예산, 런타임 명령, `--resume` |
 | | [`IRC.ko.md`](runtime/IRC.ko.md) | 에이전트 간 IRC 메일박스 버스, `irc` 도구, 설정, 성능 게이트 |
 | | [`TUI.ko.md`](runtime/TUI.ko.md) | `horon-tui` 터미널 클라이언트: 인자 없는 `horon`의 핸드오프, 사용자 파일(`tui.toml`, 테마, 키 배치, 명령 파일, 상태 줄), 키, 여러 줄 편집기, 트랜스크립트와 스크롤백, 턴 상태, 프롬프트, 슬래시 팝업, 모델·세션 선택 목록, 명령, 설정 화면, 선택 자산 설치, 한계 |
 | | [`PROMPT.ko.md`](runtime/PROMPT.ko.md) | 시스템 프롬프트 구성, 스킬 출처와 호출, 토큰 추정 |
 | | [`HOOKS.ko.md`](runtime/HOOKS.ko.md) | 수명 주기 훅 |
+| | [`PACKAGES.ko.md`](runtime/PACKAGES.ko.md) | 사용자 설치 Rust 패키지: 작성 SDK, 선언과 해시, 두 레이아웃, 대상, 서명, 설치와 패키지가 공급하는 슬래시 명령 |
 | | [`SWARM_TASK_GRAPH.ko.md`](runtime/SWARM_TASK_GRAPH.ko.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
 | `provider/` | [`MODEL.ko.md`](provider/MODEL.ko.md) | 프로파일 `type`이 고른 방식(Chat Completions, Responses, Anthropic Messages, Gemini generateContent)의 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 역할과 폴백 순서, 한 번만 실행되는 `[prewalk]` 핸드오프, 모델 사용 메타데이터 |
+| | [`LOCAL_HELPERS.ko.md`](provider/LOCAL_HELPERS.ko.md) | 오프라인 로컬 모델 보조 기능 설계 제안 |
 | | [`INTEGRATIONS.ko.md`](provider/INTEGRATIONS.ko.md) | 원격 MCP, 사용자 정의 웹 검색 |
+| | [`VISION_POLICY.ko.md`](provider/VISION_POLICY.ko.md) | 이미지 입력 경로 정책 설계 제안 |
+| | [`DIAGNOSTICS.ko.md`](provider/DIAGNOSTICS.ko.md) | 요청 수를 제한하는 프로바이더 스트림 진단 설계 제안 |
+| | [`SAMPLING.ko.md`](provider/SAMPLING.ko.md) | 타입이 정해진 모델 샘플링 설계 제안 |
+| | [`QUOTA_FALLBACK.ko.md`](provider/QUOTA_FALLBACK.ko.md) | 할당량을 반영한 대체 경로 설계 제안 |
 | `safety/` | [`SAFETY.ko.md`](safety/SAFETY.ko.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.ko.md`](safety/SECURITY.ko.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
 | `performance/` | [`BENCHMARK.ko.md`](performance/BENCHMARK.ko.md) | jcode를 이기는 목표와 측정 기준, OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정, 스킬·MCP 설정 로딩 A/B |
+| | [`EVAL.ko.md`](performance/EVAL.ko.md) | 고정 입력을 쓰는 지시 준수 평가 설계 제안 |
 | | [`RESULTS.ko.md`](performance/RESULTS.ko.md) | 측정 결과와 한계 |
 | | [`MEMORY.ko.md`](performance/MEMORY.ko.md) | 메모리 회귀 예산, 유휴 세션 파생 캐시 해제, 사고 대응 절차 |
 | `release/` | [`INSTALL.ko.md`](release/INSTALL.ko.md) | 릴리스 자산 검증과 `install-release`, npm 설치, Linux 서버 실행, TLS 신뢰 집합 |

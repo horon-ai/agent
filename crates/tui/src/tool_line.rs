@@ -10,11 +10,12 @@
 
 use std::time::Instant;
 
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::keys::Key;
+use crate::theme::changes::{self, RowStyle};
 use crate::theme::{Symbols, Theme};
 use crate::transcript::{Decision, ToolCall, ToolState};
 
@@ -71,7 +72,9 @@ impl OutputHead {
 /// name it, and `text` is the whole output while the call is drawn expanded.
 /// `kept` says the client still holds the text, which the marker needs even when
 /// the call no longer names the key: a line that hid output keeps its count row
-/// after the label moves to a newer call, so the two states take the same rows.
+/// after the label moves to another call, so the two states take the same rows.
+/// `selected` marks the call the expand key acts on, which is the one the view
+/// shows.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Retained<'a> {
     /// The key that shows the rest of this call's output.
@@ -80,6 +83,8 @@ pub struct Retained<'a> {
     pub text: Option<&'a str>,
     /// Whether the client still holds this call's text.
     pub kept: bool,
+    /// Whether this is the call the expand key acts on.
+    pub selected: bool,
 }
 
 /// Append streamed argument bytes, stopping at [`MAX_INPUT_BYTES`].
@@ -196,15 +201,20 @@ pub fn cut_output(output: &str, lines: usize) -> Option<OutputHead> {
     if keep == 0 {
         return None;
     }
-    let total_rows = output.lines().count();
+    let mut rows = Vec::new();
+    let mut total_rows = 0usize;
+    for row in output.lines() {
+        total_rows += 1;
+        if rows.len() < keep {
+            if rows.is_empty() {
+                rows.reserve(keep);
+            }
+            rows.push(truncate_cells(row, MAX_PREVIEW_CELLS));
+        }
+    }
     if total_rows == 0 {
         return None;
     }
-    let rows = output
-        .lines()
-        .take(keep)
-        .map(|row| truncate_cells(row, MAX_PREVIEW_CELLS))
-        .collect();
     Some(OutputHead { rows, total_rows })
 }
 
@@ -215,6 +225,16 @@ pub fn cut_output(output: &str, lines: usize) -> Option<OutputHead> {
 /// display width.
 pub fn truncate_cells(text: &str, width: usize) -> String {
     let width = width.max(1);
+    if text.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+        if text.len() <= width {
+            return text.to_string();
+        }
+        let budget = width - 1;
+        let mut out = String::with_capacity(budget + '…'.len_utf8());
+        out.push_str(&text[..budget]);
+        out.push('…');
+        return out;
+    }
     if text.width() <= width {
         return text.to_string();
     }
@@ -236,8 +256,10 @@ pub fn truncate_cells(text: &str, width: usize) -> String {
 /// The wording the approval gate refuses a call with.
 ///
 /// The request id in it is how a parked prompt pairs itself with this line, so
-/// the sentence is stored whole and cannot be shortened at the source.
-const GATE_REFUSAL: &str = "needs approval before it runs";
+/// the sentence is stored whole and cannot be shortened at the source. A
+/// recording reads this too: a call the gate held is an approval matter, and
+/// the default recording leaves those out.
+pub(crate) const GATE_REFUSAL: &str = "needs approval before it runs";
 /// What that refusal is drawn as: one phrase, because the prompt beside it
 /// already asks the question and three rows of the same words push the rest of
 /// the conversation off the pane.
@@ -254,12 +276,44 @@ fn display_error(message: &str) -> &str {
 
 /// How long a call took, in the shortest form that stays readable.
 pub fn format_elapsed(millis: u64) -> String {
+    let mut out = String::with_capacity(12);
+    push_elapsed(&mut out, millis);
+    out
+}
+
+/// Append `value` in base 10 directly into `out`.
+pub(crate) fn push_u64(out: &mut String, mut value: u64) {
+    let mut digits = [0u8; 20];
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    for &byte in &digits[start..] {
+        out.push(byte as char);
+    }
+}
+
+/// Append [`format_elapsed`]'s representation directly into `out`.
+pub(crate) fn push_elapsed(out: &mut String, millis: u64) {
     if millis < 60_000 {
-        return format!("{:.1}s", millis as f64 / 1000.0);
+        use std::fmt::Write as _;
+        if write!(out, "{:.1}s", millis as f64 / 1000.0).is_err() {
+            // `fmt::Write` for `String` is infallible.
+        }
+        return;
     }
     let minutes = millis / 60_000;
     let seconds = (millis % 60_000) / 1000;
-    format!("{minutes}m {seconds:02}s")
+    push_u64(out, minutes);
+    out.push_str("m ");
+    out.push((b'0' + (seconds / 10) as u8) as char);
+    out.push((b'0' + (seconds % 10) as u8) as char);
+    out.push('s');
 }
 
 /// The rows one tool call occupies.
@@ -290,7 +344,7 @@ pub fn lines_with(
             // The whole output, one row at a time: a caller that draws it builds
             // every row, which is what the pane avoids by keeping the text.
             for row in text.lines() {
-                head.push(Line::from(Span::styled(format!("{OUTPUT_PREFIX}{row}"), style)));
+                head.push(Line::from(Span::styled(format!("{OUTPUT_PREFIX}{row}"), style.of(row))));
             }
             head
         }
@@ -314,8 +368,9 @@ pub(crate) enum CallRows<'a> {
         head: Vec<Line<'static>>,
         /// The whole kept output, one row per line.
         text: &'a str,
-        /// The style every output row is drawn in.
-        style: Style,
+        /// The style every output row is drawn in, or the styles that tell an
+        /// added line and a removed one apart.
+        style: RowStyle,
     },
 }
 
@@ -352,9 +407,15 @@ pub(crate) fn rows_with<'a>(
 
     let lead = format!("{} ", symbols.tool_lead);
     let fixed = lead.width() + call.name.width() + tail.width();
+    let mut name = Style::default().fg(theme.transcript.tool_title);
+    if retained.selected {
+        // The view decides which call the key acts on, so the line has to show
+        // it even where the marker's key label does not fit on one row.
+        name = name.add_modifier(Modifier::UNDERLINED);
+    }
     let mut head = vec![
         Span::styled(lead, Style::default().fg(color)),
-        Span::styled(call.name.clone(), Style::default().fg(theme.transcript.tool_title)),
+        Span::styled(call.name.clone(), name),
     ];
     if let Some(summary) = summarize(&call.input) {
         let budget = usize::from(width).max(1).saturating_sub(fixed + 1);
@@ -379,7 +440,12 @@ pub(crate) fn rows_with<'a>(
             Style::default().fg(color),
         )));
     }
-    let style = Style::default().fg(theme.transcript.notice);
+    // The change palette colours an added or removed line and leaves every
+    // other row as the output's own quiet style. The row keeps its own sign
+    // either way, so the colour is never the only thing that marks a change,
+    // and a block without a diff keeps one style: a leading sign means a change
+    // only inside a diff.
+    let plain = Style::default().fg(theme.transcript.notice);
     if let Some(text) = retained.text.filter(|_| !settled) {
         // An expanded call draws every row it kept. That is true even where the
         // preview would have repeated the failure text above it: the press was a
@@ -389,7 +455,7 @@ pub(crate) fn rows_with<'a>(
         return CallRows::Expanded {
             head: rows,
             text,
-            style,
+            style: RowStyle::for_theme(theme, plain, || changes::looks_like_diff_text(text)),
         };
     }
     if let Some(output) = call.output.as_ref().filter(|_| !settled) {
@@ -402,8 +468,9 @@ pub(crate) fn rows_with<'a>(
             !shown.is_empty() && error_text.is_some_and(|message| message.contains(shown))
         });
         if !repeats_error {
+            let style = RowStyle::for_theme(theme, plain, || changes::looks_like_diff(&output.rows));
             for row in &output.rows {
-                rows.push(Line::from(Span::styled(format!("{OUTPUT_PREFIX}{row}"), style)));
+                rows.push(Line::from(Span::styled(format!("{OUTPUT_PREFIX}{row}"), style.of(row))));
             }
             // A row cut at its right edge hides output with no rows to count, so
             // the count alone would say the preview is whole. A call whose text
@@ -421,19 +488,19 @@ pub(crate) fn rows_with<'a>(
                 (0, true) => Some(format!("{OUTPUT_PREFIX}cut")),
                 (hidden, _) => Some(format!("{OUTPUT_PREFIX}+{hidden} lines")),
             };
-            let marker = marker.map(|plain| match retained.key {
+            let marker = marker.map(|row| match retained.key {
                 Some(key) => {
-                    let labelled = format!("{plain} · {key} expands");
+                    let labelled = format!("{row} · {key} expands");
                     if UnicodeWidthStr::width(labelled.as_str()) <= usize::from(width) {
                         labelled
                     } else {
-                        plain
+                        row
                     }
                 }
-                None => plain,
+                None => row,
             });
             if let Some(marker) = marker {
-                rows.push(Line::from(Span::styled(marker, style)));
+                rows.push(Line::from(Span::styled(marker, style.plain())));
             }
         }
     }

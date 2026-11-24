@@ -183,6 +183,12 @@ State lives in a process-global map keyed by session id. It is not a field on th
 
 Plan mode is off by default. The configuration field defaults to `false` (`crates/base/src/config.rs:920`), and the default configuration file also sets `plan_mode = false` (`crates/base/src/config/default_file.rs:283`). A session that never touches configuration has no entry in the state map, so it always evaluates as `Off`.
 
+### Reviewing a plan before approval
+
+While a plan is `PendingApproval`, `/plan review` reads it and prints findings. The review is read-only and local: it sends no model request, records no verdict and leaves the plan waiting, so only `/plan approve` or `/plan reject` (or the approval policy) decides. Each review names a revision, the first 12 hex digits of a SHA-256 over the plan text and its file list. The same plan always gets the same revision and any edit changes it, so a verdict can be tied to exactly the text that was reviewed.
+
+The findings are structural: a plan that lists no files, a listed path that is absolute or climbs out of the workspace (`..`), a file listed twice, a text that names no test, check or build step, and a plan over 20,000 characters. The last three are advisory, because they are heuristics. `/plan review` with no pending plan is an error (`crates/app-core/src/plan_review.rs`).
+
 ### Approval tiers
 
 `[tools] approval_mode` defaults to `"yolo"` (`crates/base/src/config.rs:1023`). It auto-approves ordinary calls. Explicit `"off"` keeps its equivalent policy. To require prompts, set `approval_mode = "write"` or `approval_mode = "all"` under `[tools]` in `$HORON_HOME/config.toml` and reload the daemon configuration.
@@ -208,6 +214,8 @@ The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:2051`
 ### Scoped grants
 
 An answer can cover a place instead of one call. `allow_path` approves the one file the request named; `allow_folder` approves its folder and everything under it. The grant lives in `<agent home>/approvals.json`, written with mode 0600 under `approvals/.grants.lock`, and every grant carries an expiry (`[tools] approval_grant_ttl_days`, default 7; `0` turns grants off).
+
+`horon approvals grants list [--json]` shows every stored grant with a stable id, its capability (`append` or `write`), scope (`path` or `folder`), canonical path, workspace and expiry, and marks expired ones. It writes nothing, and paths are printed with control characters escaped. `horon approvals grants revoke <id>...` removes the named grants, so the next matching call asks again. `revoke --all` prints how many grants in which workspaces it would remove and needs `--yes`. Revocation leaves other grants untouched, refuses to touch an `approvals.json` it cannot read, and cannot weaken `[tools] restricted_paths`, which no grant covers.
 
 A grant is consulted only after `evaluate` said "ask" for a reason a grant can answer: not a dual-confirm class, not a restricted path, not a bash-pattern verdict, and only for a call whose effect is a file mutation. A hit becomes an auto-approval with reason `grant`, so the audit line says why the user was not asked. Five things a grant is not:
 
@@ -285,6 +293,21 @@ The journal never touches files itself. It returns the bytes to restore, and the
 - On success it commits that change as a new mutation unit, so it can be undone again.
 - The redo queue lives in per-session module state and disappears when the process ends.
 
+### apply_patch preflight
+
+`apply_patch` accepts its Codex envelope and plain unified diffs (`---`/`+++`), which route to the same applier (`crates/app-core/src/tool/patch.rs`). The unified path reads and validates every file in the request before the first write.
+
+- Hunk headers are parsed as `@@ -start[,count] +start[,count] @@`, and the declared counts must match the supplied lines. The declared new range must match the hunk's position, so an insertion is counted in later `+start` values.
+- Only `--- ` and `+++ ` lines are file headers. A body line whose content starts with `--` stays inside the hunk because parsing follows the declared counts.
+- A hunk with no old lines inserts at `old_start`; `-0,0` inserts before the first line. Hunks must appear in file order and must not overlap.
+- Removed and context lines must match the current text exactly at the declared position. The applier does not shift the hunk or search for a nearby match.
+- A missing final newline is preserved, and the `\ No newline at end of file` marker sets the ending for the new text. The marker is valid only on the last line of its side, and the old-side marker must agree with the original ending. A uniformly CRLF file keeps CRLF; mixed endings fail the context check instead of being converted.
+- Two paths that resolve to the same file are refused, so one operation cannot overwrite what an earlier one produced.
+- Reads go through `client_fs`, so a patch that matches only the stale disk copy is rejected while an editor buffer is served. Deletes still act on disk.
+- Preflight runs under the per-path locks and writes nothing. A failure reports `✗ <path>` and `No files changed`, records no undo unit, and carries the `failed` verdict.
+- A failure after preflight is external I/O: files written before it stay written, and the result states how many changed so it cannot be mistaken for a preflight refusal. That result carries `partial` when at least one file changed and `failed` otherwise.
+- A protected delete path is refused during preflight too, keeping the issue #604 policy on this route.
+
 ### hashline anchors
 
 Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{body}` (`crates/app-core/src/tool/read.rs:164`). The tag is the first two bytes of the line's SHA-256 written as four lowercase hex digits (`crates/edit-safety/src/hashline.rs:27` `tag_for`). A 16-bit value is not a cryptographic commitment; it is a cheap marker for the line the model read.
@@ -314,6 +337,30 @@ Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{bod
 | Overlapping spans | The whole call is refused. |
 
 The crate never reads the file system, so it cannot detect outside changes by itself. Detection happens when the caller compares current bytes with the recorded state through `BlobId::of`. History never leaves the process and is not shared with another process or a restarted session.
+
+## `eval`
+
+`eval` runs one Python cell in a child process. A session reuses its Python state while the kernel is alive and the working directory stays the same. Python 3.10 or later must be available on an absolute `PATH` entry outside the session working directory.
+
+```toml
+[tools]
+profile = "full"
+eval = true
+```
+
+The default is `eval = false`. With an explicit `enabled` list, include `eval` and keep `eval = true`. The closed `core`, `acp` and `minimal` profiles do not add it automatically. The session's tool load mode and allow-list still apply.
+
+When the session can call `eval`, the default system prompt explains when to use Python cells and how to call the bridge. A discoverable `eval` can be invoked through `toolbox run`. Sessions where the tool is disabled or unreachable omit this guidance.
+
+Send `code` as a Python string. `timeout` accepts 1 to 3600 seconds and defaults to 30. Use `reset = true` to discard the previous kernel before executing the cell. Top-level `await`, stdout, stderr and the last expression's value are supported. A timeout, cancellation, directory change, session close or idle sweep discards the kernel. The next cell in that session starts with fresh state.
+
+Each cell needs explicit approval before it runs, including in `yolo` and `off`. Approved Python can read files, connect to the network and start processes with the agent's OS permissions. See the [security guide](../safety/SECURITY.md#python-eval) for the execution boundary.
+
+Tool output has a 50 KiB maximum inline size. Read longer retained output with `read` and the returned `artifact://` address. Collection keeps at most 4 MiB and marks output above that limit.
+
+Inside a cell, use `await tool.read(file_path="notes.txt")` to get a tool's text, or `await tool.bash(command="echo ready")` to run an allowed foreground command. A refusal or failure raises `RuntimeError` in the cell. Calls run serially, with up to 64 per cell and a 256 KiB frame limit. The cell's deadline includes time spent waiting for a tool or its approval.
+
+The session's usual tool restrictions and audit trail apply. Dispatchers and recursive `eval` calls are unavailable through the bridge. Bridge shell calls run in the foreground with closed input. Cancellation and timeout stop the running process tree. On Unix, the process group also stops when the shell exits. A process that detaches from the group, or outlives the shell on Windows, can remain running. If an approval is queued, rerunning the cell after granting it can repeat earlier side effects.
 
 ## `generate_image`
 
@@ -351,6 +398,12 @@ file. The model reads a path with `read` if it needs the contents.
 | A URL-only `data` entry | Error. The tool never fetches a second host. |
 | Call runs past 180 s | Error. An image is slow, so the bound is generous, but it exists. |
 
+## `bash` environment from direnv
+
+Set `[tools] bash_direnv = true` with direnv 2.38 or later on `PATH` to load new environment variables for local POSIX shell calls, including PTY and background calls. Horon looks up the file from the shell's starting directory, only inside the session workspace. Both [Horon workspace trust](../safety/SECURITY.md#workspace-trust) and direnv approval are required. If direnv blocks the file, review it and run `direnv allow` in its directory.
+
+Exports apply only to the local shell child. Variables already in the agent's environment keep their values, including `PATH`. When there are exports to apply, Horon runs the command locally rather than forwarding those values to an ACP client terminal.
+
 ## Executable files that write creates
 
 When `write` creates a new file whose content starts with `#!`, it also grants the execute permission on Unix (`crates/app-core/src/tool/write_shebang.rs` `make_executable`). The point is to stop a freshly written script from burning a turn on a permission error when it is next run as `bash ./script.sh`.
@@ -374,6 +427,8 @@ The `todo` tool accepts `blocked` as a status. Writing a task that cannot procee
 - The tool result JSON includes `blocker`, so whoever reads the list can read the reason.
 
 ## Live background output notices
+
+`horon run --no-pty` uses pipes for shell tools started by that invocation, including background shell jobs. It overrides both `[tools] bash_pty` and the shell call's `pty` argument.
 
 Set `run_in_background: true` and `notify_pattern` to receive matching stdout or stderr lines from a finite `bash` call while it runs. Use a Rust regex of at most 512 bytes. The tool rejects invalid patterns, foreground calls with a pattern, and patterns on named services before starting a process.
 
@@ -533,6 +588,10 @@ The path-denial policy (`path_policy`) never treats the literal `skill://` as a 
 
 `{"action": "install", "name": "<endorsed name>"}` installs an endorsed catalog entry from the fixed repository its source names; the model never supplies a command. `{"action": "install", "source": "<git URL or path>", "ref": "<branch, tag, or commit>"}` installs any other skill, and `name` beside `source` chooses one skill inside a repository that holds several. The clone is shallow, lands in a staging directory beside the target, and moves into place with one rename only after its `SKILL.md` parsed and its name validated, so a refused install writes nothing. The name comes from the frontmatter, a description is taken from it as well, and `install-lock.json` in the managed directory records the name, source, requested ref, and resolved commit of every install. The installer lives in `crates/base/src/skill_install.rs`.
 
+From the command line, `horon skills list [--json]` shows each skill with its path and, for an installed one, the source and commit recorded in the install lock. `horon skills install <source> [--ref REF] [--name NAME] --approve` runs the same installer as `skill_manage install`. Without `--approve` nothing is written. It also needs `[tools] managed_skills = true`.
+
+A source is accepted only as an `https://`, `ssh://` or `file://` URL, a `user@host:path` remote, or an existing local directory. A leading `-`, a `transport::address` remote such as `ext::`, and unencrypted `http://` or `git://` are refused before any directory is created, so a refused source leaves no partial skill. The clone lands in a staging directory and one rename moves the finished skill into place. No install script runs, and an existing skill is never overwritten. Registry search and publication are not part of this command.
+
 The safety rules for `delete` live in one place, `remove` in `crates/base/src/managed_skills.rs`.
 
 - The name is revalidated, so `..` or a path separator cannot reach outside the managed directory.
@@ -594,6 +653,16 @@ no separate redaction step for them.
 
 Memory injected into the prompt is truncated, and seeing the full content used to require a separate call to the `memory` tool. `read` now handles `memory://` references directly, with the same tool and the same paging rules as files.
 
+### Where memory lives
+
+Memory is stored in the per-user markdown wiki: one markdown page per memory plus a SQLite index rebuilt from those pages (`docs/runtime/MEMORY.md`). Every `memory` action and `read memory://` goes through it.
+
+- `remember` and `learn` write to the working folder's project store, or to the user-level store with `scope: "global"`. A `learn` with `all` is refused, because `all` is a read scope.
+- `search` keeps its substring contract: the query and the stored search text are normalized the same way (lowercase, whitespace and separators folded), so `side-panel` still matches `side_panel`. It deliberately does not use the wiki's ranked search, whose link, recency and kind-authority streams would change which memories the action returns.
+- `list` is newest first by `updated_at`, with the id as the final tie-break, so two records stored in the same millisecond list the same way every time.
+- `tag` with several tags is one store write, not one per tag.
+- The pre-wiki JSON files are imported on first use by a migration that never modifies them; `horon-agent memory migrate [--dry-run]` imports every project file at once. See "Migration from JSON" in `docs/runtime/MEMORY.md`.
+
 ### `read memory://`
 
 - `memory://<id>` returns the full content of that one memory. The output is an `id`, `category`, `scope`, `tags`, `created`, `updated`, `links` header plus a `content:` body. `links` holds the target ids of graph edges to other memories (related, supersedes, contradicts, derived); tag and cluster edges are metadata and are left out.
@@ -635,6 +704,32 @@ Extraction stores memories one session at a time and never merges across session
 - `[agents] memory_consolidation_min_new` (Horon default `20`) is how many memories must have been stored since the previous pass before it runs. A pass reloads the graph, merges and rewrites it, so it is batched instead of run per session.
 - `[agents] memory_consolidation_summary_bytes` (Horon default `4096`) caps the injected summary. Over the cap the text is cut at a character boundary, never dropped.
 
+## Package tools
+
+An installed extension or plugin can declare native tools in its `extension.toml`. Installing the package is the consent to run its executable with the user's OS permissions, so no second prompt is added. Each call still goes through the ordinary tool path (`crates/app-core/src/tool/package_tool.rs`).
+
+| Question | Answer |
+| --- | --- |
+| Name | `ext__<package id>__<declared name>`. The installer caps the declared part so the whole name stays within 64 bytes. |
+| Which generation | The one the turn captured (see `docs/runtime/PACKAGES.md`). A package installed or removed since appears from the next turn; a running turn keeps its tools. |
+| Effect | `ToolEffects::process()` (`crates/app-core/src/tool/package_tool.rs:89`). The call is a write barrier and never overlaps another call in its round. |
+| Name collision | A name the registry already holds wins. The package never replaces an existing tool. |
+
+Exposure follows the session's frozen policy and adds no rule of its own:
+
+- A profile that names its tools (`minimal`, `none`, `acp`) exposes no package tool, because a package name is not on its list.
+- The untouched `core` profile lists package tools behind `toolbox`, like the core tools it does not send eagerly. The `full` default defers them.
+- An explicit `[tools] enabled` list or an SDK `enabled` overlay exposes exactly the names it gives, eagerly.
+- `[tools] disabled`, `[tools.load_mode] = "off"` and any `off` tier hide the name outright. A hidden or unknown name is refused before anything reaches a child.
+
+Plan mode refuses the process effect, the approval tiers that gate process effects ask before the child starts, and `off` and `yolo` behave as they do for every tool. A denied call starts no child. The `pre_tool` hook receives the exact input the child would receive.
+
+The child is started, or reused for the same session, package and installed copy, only after the call is approved. It runs from the copy the snapshot pinned, and the launcher checks the installed declaration against the catalog record and the declaration digest the child reports in the handshake. Input that holds an unresolved secret placeholder, or a value the session vault already knows, is refused before it crosses to the child.
+
+Disabling or removing the package cancels the pending request and reaps the child and its descendants. A handle obtained before the revocation is refused afterwards, even if the package is installed again.
+
+Limits: starting a child is serialized across the process, bounded by the 30-second wire deadline. Tool calls and package commands share the one child; observer notifications are a separate step. The tests run on Linux and macOS and compile on Windows (`cargo test --locked -p horon-agent-app-core --test package_tools`).
+
 ## Where MCP server configuration comes from
 
 MCP server definitions are merged in the order given by `crates/base/src/mcp/sources.rs`. Earlier sources come first, and the first definition of a name wins.
@@ -652,6 +747,7 @@ MCP server definitions are merged in the order given by `crates/base/src/mcp/sou
 - The project entry in `~/.claude.json` is selected by the canonical working folder path, so one project's servers never mix into another repository's session.
 - A user-level file is not re-parsed while its `FileStamp` holds; a process cache (up to 16 files) is used instead. A session start with no changed user settings reads no file at all. Working-folder files are not cached, because they must be parsed from the same single read that produced the trust decision.
 - Environment expansion (`${VAR}`) and removal of unlaunchable entries happen after merging, every time.
+- A hosted daemon refuses a server its mode forbids before anything starts: a shared worker refuses every MCP connection, and a per-user container keeps its own. `[hosting] allowed_mcp_servers` narrows the names a hosted process may connect (absent leaves all, empty refuses all). Each refusal is an explicit error to the caller and one `HOSTED_POLICY` audit line; [hosted MCP and extension isolation](../safety/SECURITY.md) has the matrix, and a refused package server is reported to the session's next turn.
 
 ### Resources and prompts
 
@@ -732,6 +828,8 @@ The full body of output over budget is saved under the agent home's `artifacts/<
 
 Output over budget becomes a head, a signal line for the omitted region, a tail, and the address of the original. Head and tail are 40% of the budget each and are cut on line boundaries. Lines in the omitted region that contain words such as `error`, `warning`, `failed`, `panic`, `exception`, `traceback`, `fatal`, or `assert` are carried over within the remaining budget as `L<original line>: <line>` (300 bytes per line).
 
+Set `[tools] output_column_cap = 120` to shorten each text preview line to 120 Unicode characters, including the truncation marker. The default `0` keeps the original line widths. The artifact keeps the original text within the existing storage limits. Inline JSON and existing artifact addresses keep their full width.
+
 | Point | Budget |
 | --- | --- |
 | `bash` | 30,000 bytes |
@@ -739,7 +837,36 @@ Output over budget becomes a head, a signal line for the omitted region, a tail,
 | PDF text from `read` | 64 KiB |
 | Other tools (MCP, `agentgrep`, and the rest) | 48 KiB, applied in `Registry::execute` just before the context guard |
 
+Use `[tools.artifact_output]` to lower the shared budgets above. Unset keys keep their defaults.
+
+| Key | Effect |
+| --- | --- |
+| `spill_threshold_kib` | Start retaining text as an artifact above this threshold. The minimum is 1 KiB and the tool's existing limit remains the maximum. |
+| `head_kib` / `tail_kib` | Limit each preview segment to this size, at most 40% of the effective budget. Zero omits that segment. |
+| `tail_lines` | Also limit the tail by line count. Zero omits the tail. |
+| `file_cap_mib` | Limit each retained shared preview artifact to 1–16 MiB, including its truncation notice. |
+
+Lowering the spill threshold keeps valid inline JSON intact when it fits the tool's original budget. These settings apply to the shared text condenser. Other artifact writers keep their existing storage limits.
+
 A call given `accept_large_output: true` and `read`'s text files are not condensed. A text `read` returns at most 64 KiB at once and points at the next `start_line` (or `offset`). The file is on disk, so nothing is stored separately. SDK tool results never pass through the registry and get only the history cap (512 KiB, by bytes).
+
+Set `[tools] read_default_limit = 300` to change the default page size for `read` without an explicit `limit` or end line. The default is 5,000 lines. Configured values are clamped to 1–5,000. Explicit limits, line ranges, and path selectors keep their own behavior. A partial page reports where to continue.
+
+### Markdown heading outlines
+
+With `[tools] read_summary = true`, an unqualified `read` of a Markdown file over 400 lines and up to 2 MiB shows a heading outline. It lists up to 100 headings with inclusive source ranges. Each range ends before the next heading. Headings inside fenced code are skipped. Use `full: true` or an explicit line range to read the original text within the regular read limits.
+
+### `agentgrep` match context
+
+In grep mode, set `before` and `after` to show neighboring lines with their original line numbers. Each value defaults to zero and is capped at 20. Overlapping windows share a single copy of each line. An `@` marks matches. `paths_only: true` keeps the path list format.
+
+Context rendering stays within 48 KiB. If a matching file cannot be reread within the context budget, the result still shows its matching lines and reports that neighboring lines are unavailable.
+
+### `agentgrep` locate mode
+
+`mode: "locate"` ranks code locations for a plain-language description in `query`, for example "remove old logins that timed out". The ranking is local and deterministic and needs no model: the description is split into words, each word becomes a concept (its stem plus a small built-in synonym group), and every window of six lines is scored by how rare the concepts it contains are across the scanned files. Nothing is sent to a provider and nothing is stored.
+
+The result lists up to `max_regions` locations (default 5) as `path:first-last` with the matched terms and up to two evidence lines, and starts with a `confidence` line: `ok`, `low` when the best location matches fewer than half of the query terms, or `none` when no scanned line contains any of them. A weak result says so and should be treated as a lead, not an answer. Only files under the searched root are read: symbolic links are not followed, `.gitignore` rules apply, files over 256 KiB and binary files are skipped, and at most `max_files` files (default 2000) are scanned.
 
 ### `read` deduplication
 
@@ -749,8 +876,15 @@ Reading a file that was already read in the same session compares content hashes
 - When the content changed, the earlier read covered the whole file, and this read also covers the whole file, a unified diff against the earlier read is returned. If the diff is larger than 40% of the file, the whole file is sent. The baseline snapshot is kept only for files up to 1 MiB and is not readable through `artifact://`.
 - `full: true` always sends the body. When the `hashline` format differs from the earlier read, it is rendered again.
 - Applying compaction, rewinding or editing the conversation, urgent truncation, aging old results, and ending the session all drop that session's records. The deduplication is only correct while the earlier output is still in the context.
+- Python cell reads bypass these records. Python receives the result directly and decides what to print into the model context.
 
 The setting is `[tools] read_dedup = true` (the default), with environment override `HORON_AGENT_READ_DEDUP`.
+
+### Require a current read before editing
+
+Set `[tools] enforce_seen_line_guard = true` to require the session to have read each line an `edit` will change. The default is `false`. Use `read` with `start_line` and `end_line` to show a fresh range. If the file changed or the range was unread, `edit` names the lines to read before retrying. The whole batch is checked before any write, including every `replace_all` match.
+
+With the guard enabled, normal file reads print the original page and track shown lines even if `read_dedup` is off. Path selectors, summaries, and width-truncated lines do not supply edit evidence. Existing write permissions still apply.
 
 ### Aging batches of old results
 
@@ -935,3 +1069,21 @@ Tests: `crates/app-core/src/tool/checkpoint_tests.rs` covers the registration
 gate, the refusals and the pending map;
 `crates/app-core/src/agent/rewind_summary_tests.rs` covers the settle path, the
 report that replaces the branch, and undo.
+
+### Preview a read-only tool
+
+`horon preview <read|agentgrep|websearch> '<json input>'` runs one of these three built-ins once, without a model, a session or an approval prompt. The input is the tool's own JSON object, and the tool applies its normal path checks. Output is redacted for credentials and capped at 32 KiB. `--json` returns `tool`, `output`, `truncated` and, for `websearch`, the configured engine order as `backend`; the search endpoint and any key are never shown. Any other tool name is refused.
+
+### Diagnostics before delegating a fix
+
+`horon diagnostics <file>...` asks each file's language server for its diagnostics and lists them grouped by file, errors before warnings, with a number per entry. A file that cannot be checked (missing, no language server for its type, server not installed) stays in the list with the reason. Nothing is edited. `--json` returns the same list.
+
+`horon diagnostics <file>... --select 1,3 --delegate` prints the files of the selected entries and then runs a normal one-shot `horon run` that is asked to fix only those diagnostics, so its approvals, tool policy and isolation apply as for any run. A number that is not in the listing is refused before any model call. `--select` and `--delegate` go together.
+
+## Capability-gated A2UI tool (`a2ui`)
+
+`a2ui` is intentionally outside `CORE_TOOLS` and every default profile (`crates/app-core/src/tool/a2ui.rs`, `crates/tool-types/src/a2ui.rs`). It registers per session only when the attached client negotiates `A2uiSessionCapabilities`, keeping the default `core` tool count at eighteen, eager schemas at 8,975 bytes, and the static prompt at 1,322 bytes unchanged for all unnegotiated sessions.
+
+- **Accepted inputs**: `envelopes` (non-empty array of A2UI v1.0 `agent_to_renderer` envelopes such as `createSurface`, `updateComponents`, `updateDataModel`, `deleteSurface`, or allowed `callRendererFunction`), optional `fallback_text`, optional `final_response` (finishes the assistant turn after emitting), and optional `intent`.
+- **Validation and self-correction**: Every batch checks envelope size (at most 256 KiB), JSON depth (at most 32), batch length (at most 64 envelopes), per-surface component count (at most 500), catalog allow-lists (defaulting to `https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json`), required `root` component presence and acyclic component graphs, and safe URI schemes (rejecting `javascript:`, `data:`, `file:`, and `vbscript:`). Validation errors return to the model before anything leaves the daemon so the model can self-correct without emitting broken envelopes.
+- **Storage and non-UI fallback**: Validated batches persist as `ContentBlock::A2ui` inside `StoredMessage`, project to provider history as compact `[A2UI summary]` lines, and render via `render_a2ui_text_card` for non-UI readers (`horon run --a2ui`, `horon export`, and `horon-tui` read-only fallback cards).

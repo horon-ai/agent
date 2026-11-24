@@ -17,19 +17,84 @@ const REASONING_ESCAPES: &str = "\\*_`[]<>&~|$";
 /// instead of interpreting the terminal's escaped emphasis wrapper. Ordinary
 /// Markdown is never unescaped here.
 pub fn reasoning_line_content(line: &str) -> Option<String> {
-    let body = line
-        .trim_end_matches([' ', '\r', '\n'])
-        .strip_prefix("*\u{2063}")?
-        .strip_suffix("\u{2063}*")?;
-    let mut chars = body.chars().peekable();
+    let body = reasoning_line_body(line)?;
     let mut content = String::with_capacity(body.len());
+    unescape_reasoning_body(body, &mut content);
+    Some(content)
+}
+
+fn reasoning_line_body(line: &str) -> Option<&str> {
+    line.trim_end_matches([' ', '\r', '\n'])
+        .strip_prefix("*\u{2063}")?
+        .strip_suffix("\u{2063}*")
+}
+
+fn unescape_reasoning_body(body: &str, out: &mut String) {
+    if !body.contains('\\') {
+        out.push_str(body);
+        return;
+    }
+    let mut chars = body.chars().peekable();
     while let Some(ch) = chars.next() {
         let escaped = (ch == '\\')
             .then(|| chars.next_if(|next| REASONING_ESCAPES.contains(*next)))
             .flatten();
-        content.push(escaped.unwrap_or(ch));
+        out.push(escaped.unwrap_or(ch));
     }
-    Some(content)
+}
+
+/// Split a rendered history body into the reasoning it starts with and the
+/// answer that follows.
+///
+/// The daemon writes a stored assistant row as the reasoning markup, the block
+/// terminator, then the answer. Blank lines inside the reasoning are paragraph
+/// breaks and belong to it; the blank line that ends the block is dropped.
+/// Answers `None` when the body carries no reasoning markup, so a caller can
+/// keep the body as it is for every other row.
+pub fn split_rendered_reasoning(content: &str) -> Option<(String, String)> {
+    // Every reasoning line is wrapped in the sentinel, so a body without one
+    // carries no reasoning: answer before walking lines or filling buffers.
+    if !content.contains(REASONING_SENTINEL) {
+        return None;
+    }
+    let mut reasoning = String::new();
+    let mut has_reasoning = false;
+    let mut blanks = 0usize;
+    let mut answer_start = None;
+    let mut offset = 0usize;
+    for line in content.split('\n') {
+        let line_start = offset;
+        offset += line.len() + 1;
+        if line.trim().is_empty() {
+            blanks += 1;
+            continue;
+        }
+        if let Some(body) = reasoning_line_body(line) {
+            for _ in 0..blanks {
+                if has_reasoning {
+                    reasoning.push('\n');
+                }
+                has_reasoning = true;
+            }
+            blanks = 0;
+            if has_reasoning {
+                reasoning.push('\n');
+            }
+            has_reasoning = true;
+            unescape_reasoning_body(body, &mut reasoning);
+        } else {
+            answer_start = Some(line_start);
+            break;
+        }
+    }
+    if !has_reasoning {
+        return None;
+    }
+    let answer = match answer_start {
+        Some(start) => content[start..].to_string(),
+        None => String::new(),
+    };
+    Some((reasoning, answer))
 }
 
 /// Escape the characters that would otherwise be interpreted as inline markdown
@@ -119,5 +184,30 @@ mod tests {
         for text in ["**heading**", r"\*literal\*", "*\u{2063}unfinished", "*ordinary*", ""] {
             assert_eq!(reasoning_line_content(text), None);
         }
+    }
+
+    /// A body without reasoning markup is answered `None`, and one carrying
+    /// the markup the renderer writes splits into its lines and the answer.
+    #[test]
+    fn split_rendered_reasoning_names_the_answer_only_when_reasoning_precedes_it() {
+        assert_eq!(split_rendered_reasoning("the answer\nsecond line"), None);
+        assert_eq!(split_rendered_reasoning("plain text with \u{2063} sentinel"), None);
+        let body = format!(
+            "\n{}\n{}\nthe answer\nsecond line",
+            reasoning_line_markup("step *one*"),
+            reasoning_line_markup("step two"),
+        );
+        assert_eq!(
+            split_rendered_reasoning(&body),
+            Some((
+                "\nstep *one*\n\nstep two".to_string(),
+                "the answer\nsecond line".to_string()
+            ))
+        );
+        let only_reasoning = reasoning_line_markup("solo thought");
+        assert_eq!(
+            split_rendered_reasoning(&only_reasoning),
+            Some(("solo thought".to_string(), String::new()))
+        );
     }
 }

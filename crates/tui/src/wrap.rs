@@ -16,6 +16,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthChar;
 
+use crate::theme::changes::RowStyle;
+
 /// One character, the columns it takes, and the style of the span it came from.
 type Cell = (char, usize, Style);
 
@@ -167,8 +169,8 @@ impl FromEnd {
 pub enum Source<'a> {
     /// Every line is built already.
     Built(Vec<Indented>),
-    /// `head` rows, then one line per row of `text`, each `prefix`ed in `style`
-    /// and keeping `indent` columns on its continuation rows.
+    /// `head` rows, then one line per row of `text`, each `prefix`ed in its
+    /// row style and keeping `indent` columns on its continuation rows.
     Output {
         /// The rows above the output: a tool call's head, and a failure.
         head: Vec<Indented>,
@@ -176,10 +178,13 @@ pub enum Source<'a> {
         text: &'a str,
         /// Columns every row of the output starts with.
         prefix: &'static str,
-        /// The style every row of the output is drawn in.
-        style: Style,
+        /// The style every row of the output is drawn in, or the styles that
+        /// tell an added line and a removed one apart.
+        style: RowStyle,
         /// Columns a continuation row of the output keeps.
         indent: usize,
+        /// Lines under the output: a reader's note sits here.
+        tail: Vec<Indented>,
     },
 }
 
@@ -197,6 +202,14 @@ impl<'a> Source<'a> {
         }
     }
 
+    /// Put `line` under the block.
+    pub fn append(&mut self, line: Indented) {
+        match self {
+            Self::Built(lines) => lines.push(line),
+            Self::Output { tail, .. } => tail.push(line),
+        }
+    }
+
     /// Rows the block occupies once wrapped, counted without building any.
     pub fn height(&self, width: u16) -> usize {
         let width = usize::from(width);
@@ -209,16 +222,18 @@ impl<'a> Source<'a> {
                 prefix,
                 style,
                 indent,
+                tail,
             } => {
                 let above: usize = head.iter().map(|line| line_height(&mut cells, line, width)).sum();
                 let rows: usize = text
                     .lines()
                     .map(|row| {
-                        fill_row(&mut cells, prefix, *style, row);
+                        fill_row(&mut cells, prefix, style.of(row), row);
                         break_rows(&cells, width, *indent, |_| {})
                     })
                     .sum();
-                above + rows
+                let below: usize = tail.iter().map(|line| line_height(&mut cells, line, width)).sum();
+                above + rows + below
             }
         }
     }
@@ -257,12 +272,21 @@ impl<'a> Source<'a> {
                 prefix,
                 style,
                 indent,
+                tail,
             } => {
+                for line in tail.iter().rev() {
+                    if take == 0 {
+                        break;
+                    }
+                    fill(&mut cells, line.line());
+                    let window = take_from_line(&cells, line.line(), width, line.indent(), &mut skip, &mut take);
+                    rows.extend(window.into_iter().rev());
+                }
                 for row in text.lines().rev() {
                     if take == 0 {
                         break;
                     }
-                    fill_row(&mut cells, prefix, *style, row);
+                    fill_row(&mut cells, prefix, style.of(row), row);
                     let window = take_from_line(&cells, &plain, width, *indent, &mut skip, &mut take);
                     rows.extend(window.into_iter().rev());
                 }
@@ -632,8 +656,9 @@ mod tests {
             head: vec![head.clone()],
             text: &text,
             prefix: "  ",
-            style,
+            style: RowStyle::Plain(style),
             indent: 2,
+            tail: Vec::new(),
         };
         // The same block with its output rows built: what the pane used to draw.
         let mut eager = vec![head];
@@ -653,6 +678,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn an_appended_line_draws_under_the_block() {
+        // What the transcript pane uses for a note under a message.
+        let mut built = Source::built(vec![Indented::plain(Line::from("message"))]);
+        built.append(Indented::plain(Line::from("note: mine")));
+        assert_eq!(built.height(40), 2);
+        let rows = built.rows_from_end(40, FromEnd::new(0, 2));
+        assert_eq!(
+            rows.iter().map(text_of).collect::<Vec<_>>(),
+            vec!["message", "note: mine"]
+        );
+
+        // A note never lands on an output block, but the tail keeps the same
+        // offer: after the output, not before it.
+        let text = String::from("output");
+        let mut output = Source::Output {
+            head: vec![Indented::plain(Line::from("head"))],
+            text: &text,
+            prefix: "",
+            style: RowStyle::Plain(Style::default()),
+            indent: 0,
+            tail: Vec::new(),
+        };
+        output.append(Indented::plain(Line::from("note: mine")));
+        assert_eq!(output.height(40), 3);
+        let rows = output.rows_from_end(40, FromEnd::new(0, 3));
+        assert_eq!(
+            rows.iter().map(text_of).collect::<Vec<_>>(),
+            vec!["head", "output", "note: mine"]
+        );
     }
 
     #[test]
@@ -683,8 +740,9 @@ mod tests {
             head: vec![Indented::plain(Line::from("head"))],
             text: &text,
             prefix: "  ",
-            style: Style::default(),
+            style: RowStyle::Plain(Style::default()),
             indent: 2,
+            tail: Vec::new(),
         };
         assert_eq!(source.height(120), 2001);
         assert_eq!(built_rows(), 0, "counting a block built rows");

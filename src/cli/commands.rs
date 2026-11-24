@@ -4,20 +4,37 @@ use anyhow::Result;
 use serde::Serialize;
 use std::io::Write;
 use std::net::ToSocketAddrs;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{gateway, memory, storage};
 
+pub(super) mod a2ui_run;
+pub(super) mod config_cli;
+mod early_commands;
+mod failover_preview;
 mod provider_setup;
 mod report_info;
+mod run_deadline;
 mod session_delete;
+mod session_move;
 mod session_rename;
+mod skills_cli;
+mod thoughts;
+mod tool_preview;
 
 pub(crate) use session_delete::run_session_delete_command;
+pub(crate) use session_move::run_session_move_command;
 pub(crate) use session_rename::run_session_rename_command;
 
 pub(crate) use super::sessions::run_session_command;
+pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
-pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command};
+pub(crate) use config_cli::ConfigCommand;
+pub(crate) use early_commands::{Early, run_early_command};
+pub(crate) use failover_preview::run_provider_failover_command;
+pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command, run_provider_diagnose_command};
+pub(crate) use skills_cli::run_skills_command;
+pub(crate) use tool_preview::run_preview_command;
 
 pub enum AmbientSubcommand {
     Status,
@@ -57,6 +74,9 @@ pub enum MemorySubcommand {
     },
     Stats,
     ClearTest,
+    Migrate {
+        dry_run: bool,
+    },
 }
 
 pub async fn run_memory_command(cmd: MemorySubcommand) -> Result<()> {
@@ -295,6 +315,8 @@ async fn run_memory_command_for_dir(cmd: MemorySubcommand, project_dir: Option<s
                 println!("Test memory storage is already empty");
             }
         }
+
+        MemorySubcommand::Migrate { dry_run } => super::memory_migrate::run(dry_run)?,
     }
 
     Ok(())
@@ -404,15 +426,6 @@ struct ModelListRouteReport {
     available: bool,
 }
 
-#[derive(Debug, Serialize)]
-struct RunCommandReport {
-    session_id: String,
-    provider: String,
-    model: String,
-    text: String,
-    usage: crate::agent::TokenUsage,
-}
-
 #[derive(Debug, Default)]
 struct NdjsonRunState {
     text: String,
@@ -442,6 +455,16 @@ pub fn run_version_command(emit_json: bool) -> Result<()> {
 
 pub async fn run_usage_command(emit_json: bool) -> Result<()> {
     report_info::run_usage_command(emit_json).await
+}
+
+pub(super) fn run_stats_command(from: Option<&str>, through: Option<&str>, json: bool) -> Result<()> {
+    let report = horon_agent_harness_api_server::translate::local_usage(&storage::horon_agent_dir()?, from, through)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{report}");
+    }
+    Ok(())
 }
 
 /// Explicitly pin the daemon's shared-server channel to an installed build.
@@ -840,45 +863,6 @@ Re-run with `--force` if you really want to stop the server.";
     Ok(())
 }
 
-pub async fn run_single_message_command(
-    choice: &super::provider_init::ProviderChoice,
-    model: Option<&str>,
-    resume_session: Option<&str>,
-    message: &str,
-    emit_json: bool,
-    emit_ndjson: bool,
-) -> Result<()> {
-    let provider = super::provider_init::init_provider_for_run(choice, model).await?;
-    let registry = crate::tool::Registry::new(provider.clone()).await;
-    // Load MCP servers from ~/.horon/mcp.json so headless `horon-agent run` has the
-    // same `mcp__*` tools as interactive/server sessions. This is non-blocking:
-    // `register_mcp_tools` advertises cached tool schemas synchronously (so the
-    // first locked tool snapshot already contains MCP tools, for zero
-    // prompt-cache miss) and connects in the background (connect-on-first-call).
-    // For a short single-message run, startup latency is unchanged.
-    // (#390, #206 Phase 2)
-    if run_command_mcp_enabled() {
-        registry.register_mcp_tools(None, None, None).await;
-        // Cold-cache gap: when a configured MCP server has no cached schema yet
-        // (first ever use, or reconfigured), advertise-early registers nothing
-        // for it, and a single-turn `horon-agent run` locks its tool snapshot before
-        // the background connection finishes, so the model would never see those
-        // tools. Long-lived sessions recover on a later turn, but `horon-agent run`
-        // has no later turn. So, only when the cache is cold for some configured
-        // server, briefly wait for the first connection to register tools before
-        // the agent runs. Warm runs skip this entirely and stay instant. (#390)
-        wait_for_cold_cache_mcp_tools(&registry).await;
-    }
-    let mut agent = crate::agent::Agent::for_one_shot_run(provider.clone(), registry).closing_after_run();
-    if let Err(error) = restore_agent_session_if_requested(&mut agent, resume_session) {
-        agent.mark_closed();
-        return Err(error);
-    }
-    // User-authored `run` message; later helper turns are synthetic.
-    agent.arm_effort_keywords(message);
-    run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson).await
-}
-
 /// Provider id for `horon-agent run --json`/`--ndjson` output.
 ///
 /// Every direct OpenAI-compatible profile (Ollama, LM Studio, DeepSeek, custom
@@ -897,41 +881,15 @@ fn run_report_provider_name(provider: &dyn crate::provider::Provider, session_pr
     name.to_string()
 }
 
-async fn run_single_message_with_agent(
-    agent: &mut crate::agent::Agent,
-    provider: std::sync::Arc<dyn crate::provider::Provider>,
-    message: &str,
-    emit_json: bool,
-    emit_ndjson: bool,
-) -> Result<()> {
-    let result: Result<()> = async {
-        if emit_json {
-            let text = run_single_message_command_capture_with_auto_poke(agent, message).await?;
-            let report = RunCommandReport {
-                session_id: agent.session_id().to_string(),
-                provider: run_report_provider_name(provider.as_ref(), agent.session_provider_key().as_deref()),
-                model: provider.model(),
-                text,
-                usage: agent.last_usage().clone(),
-            };
-            println!("{}", serde_json::to_string_pretty(&report)?);
-        } else if emit_ndjson {
-            run_single_message_command_ndjson(agent, provider, message).await?;
-        } else {
-            run_single_message_command_plain_with_auto_poke(agent, message).await?;
-        }
-        Ok(())
-    }
-    .await;
+mod run_jobs;
+pub(super) use run_jobs::{RunLimits, run_single_message_with_agent};
 
-    // `Agent::new` and session restore both register this process as the active
-    // owner. Unlike the interactive lifecycle, `horon-agent run` has no later quit
-    // path to close the session. Finalize after output has been emitted, while
-    // returning the original command result unchanged. This prevents a normal
-    // one-shot exit from looking like a stale-PID crash on the next startup
-    // (issue #988).
-    agent.mark_closed();
-    result
+/// A positive, finite US dollar amount for `run --warn-cost` and `--max-cost`.
+pub(super) fn parse_run_cost(raw: &str) -> Result<f64, &'static str> {
+    match raw.parse::<f64>() {
+        Ok(usd) if usd.is_finite() && usd > 0.0 => Ok(usd),
+        _ => Err("expected a positive amount in US dollars"),
+    }
 }
 
 fn run_command_auto_poke_enabled() -> bool {
@@ -947,7 +905,7 @@ fn run_command_auto_poke_enabled() -> bool {
 /// Whether headless `horon-agent run` should load MCP servers from `~/.horon/mcp.json`.
 /// Enabled by default; set `HORON_AGENT_RUN_MCP=0` (or `false`/`off`/`no`) to skip MCP
 /// registration for latency-sensitive scripting. (#390)
-fn run_command_mcp_enabled() -> bool {
+pub(super) fn run_command_mcp_enabled() -> bool {
     std::env::var("HORON_AGENT_RUN_MCP")
         .ok()
         .map(|value| {
@@ -996,7 +954,7 @@ mod mcp_startup_tests;
 /// (or the budget elapses) so the single turn's locked tool snapshot includes
 /// them. Warm caches return immediately because `cold_cache_mcp_servers` is
 /// empty. (#390)
-async fn wait_for_cold_cache_mcp_tools(registry: &crate::tool::Registry) {
+pub(super) async fn wait_for_cold_cache_mcp_tools(registry: &crate::tool::Registry) {
     let cold_servers = cold_cache_mcp_servers();
     if cold_servers.is_empty() {
         return;
@@ -1178,14 +1136,18 @@ fn build_run_todo_validation_message(
     }
 }
 
-async fn run_single_message_command_plain_with_auto_poke(agent: &mut crate::agent::Agent, message: &str) -> Result<()> {
+async fn run_single_message_command_plain_with_auto_poke(
+    agent: &mut crate::agent::Agent,
+    message: &str,
+    print_thoughts: bool,
+) -> Result<()> {
     let mut next_message = message.to_string();
     let max_turns = run_command_auto_poke_max_turns();
     let mut turns_completed = 0usize;
     let mut confidence_spike_challenged = false;
     let mut gate_digest_delivered = false;
     loop {
-        agent.run_once(&next_message).await?;
+        thoughts::run_plain_turn(agent, &next_message, print_thoughts).await?;
         turns_completed += 1;
         if !run_command_auto_poke_enabled() {
             break;
@@ -1321,7 +1283,10 @@ async fn run_single_message_command_capture_with_auto_poke(
     Ok(outputs.join("\n\n"))
 }
 
-fn restore_agent_session_if_requested(agent: &mut crate::agent::Agent, resume_session: Option<&str>) -> Result<()> {
+pub(super) fn restore_agent_session_if_requested(
+    agent: &mut crate::agent::Agent,
+    resume_session: Option<&str>,
+) -> Result<()> {
     if let Some(session_id) = resume_session {
         agent.restore_session_for_one_shot_run(session_id)?;
     }
@@ -1332,6 +1297,8 @@ async fn run_single_message_command_ndjson(
     agent: &mut crate::agent::Agent,
     provider: std::sync::Arc<dyn crate::provider::Provider>,
     message: &str,
+    deadline_elapsed: &AtomicBool,
+    jobs: Option<&mut run_jobs::OwnedJobs<'_>>,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
     let session_id = agent.session_id().to_string();
@@ -1383,6 +1350,10 @@ async fn run_single_message_command_ndjson(
             }
             run_result.unwrap_or(Ok(()))
         };
+
+        if deadline_elapsed.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
         if let Err(err) = turn_result {
             result = Err(err);
@@ -1476,6 +1447,18 @@ async fn run_single_message_command_ndjson(
 
     match result {
         Ok(()) => {
+            if let Some(jobs) = jobs {
+                let statuses = jobs.settle(&session_id).await;
+                if deadline_elapsed.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                for job in statuses {
+                    write_json_line(
+                        &mut stdout,
+                        &serde_json::json!({"type":"background_job", "session_id":session_id, "job":job}),
+                    )?;
+                }
+            }
             write_json_line(
                 &mut stdout,
                 &serde_json::json!({
@@ -1700,31 +1683,35 @@ fn emit_ndjson_event(
                 "retry_after_secs": retry_after_secs,
             }),
         ),
+        ServerEvent::A2uiEnvelope {
+            sequence,
+            envelope,
+            fallback_text,
+            ..
+        } => a2ui_run::emit_ndjson_a2ui(stdout, sequence, &envelope, fallback_text.as_deref()),
         ServerEvent::Ack { .. } | ServerEvent::Done { .. } | ServerEvent::Pong { .. } => Ok(()),
         _ => Ok(()),
     }
 }
 
-fn write_json_line(stdout: &mut impl Write, value: &impl Serialize) -> Result<()> {
+pub(super) fn write_json_line(stdout: &mut impl Write, value: &impl Serialize) -> Result<()> {
     serde_json::to_writer(&mut *stdout, value)?;
     stdout.write_all(b"\n")?;
     stdout.flush()?;
     Ok(())
 }
 
-pub async fn run_model_command(
+pub(super) async fn run_model_command(
     choice: &super::provider_init::ProviderChoice,
     model: Option<&str>,
     emit_json: bool,
     verbose: bool,
+    filter: &super::args::ModelListFilter,
 ) -> Result<()> {
-    let provider = super::provider_init::init_provider_quiet(choice, model).await?;
-
-    if let Err(err) = provider.prefetch_models().await
-        && !super::output::quiet_enabled()
-    {
-        eprintln!("Warning: failed to refresh dynamic model list: {}", err);
+    if filter.refresh || filter.profile.is_some() || filter.search.is_some() {
+        return model_catalog::run(filter, emit_json).await;
     }
+    let provider = super::provider_init::init_provider_quiet(choice, model).await?;
 
     let routes = provider.model_routes();
     let filtered_routes = filter_cli_model_routes_for_choice(choice, &routes);
@@ -1776,6 +1763,7 @@ pub async fn run_model_command(
     Ok(())
 }
 
+mod model_catalog;
 mod model_routes;
 use model_routes::*;
 

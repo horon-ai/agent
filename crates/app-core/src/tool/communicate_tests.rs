@@ -1416,16 +1416,17 @@ impl RawClient {
             continue_on_disconnect: false,
             terminal_env: Vec::new(),
             acp: None,
+            history_message_ids: false,
+            a2ui: None,
         })
         .await?;
         self.read_until(
             Duration::from_secs(5),
-            |event| matches!(event, ServerEvent::Done { id: done_id } if *done_id == id),
+            |e| matches!(e, ServerEvent::Done { id: d } if *d == id),
         )
         .await?;
         Ok(())
     }
-
     async fn session_id(&mut self) -> Result<String> {
         let id = self.next_id;
         self.next_id += 1;
@@ -1441,7 +1442,6 @@ impl RawClient {
             other => anyhow::bail!("unexpected state response: {other:?}"),
         }
     }
-
     async fn send_message(&mut self, content: &str) -> Result<u64> {
         let id = self.next_id;
         self.next_id += 1;
@@ -1451,6 +1451,7 @@ impl RawClient {
             images: vec![],
             system_reminder: None,
             active_skill: None,
+            expected_run_id: None,
             no_reply: false,
         })
         .await
@@ -1594,24 +1595,6 @@ async fn wait_for_member_status(
                     .map(|member| (member.session_id.clone(), member.status.clone()))
                     .collect::<Vec<_>>()
             );
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-}
-
-async fn wait_for_member_presence(
-    client: &mut RawClient,
-    requester_session: &str,
-    target_session: &str,
-) -> Result<Vec<AgentInfo>> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let members = client.comm_list(requester_session).await?;
-        if members.iter().any(|member| member.session_id == target_session) {
-            return Ok(members);
-        }
-        if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!("timed out waiting for member {} to appear", target_session);
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }

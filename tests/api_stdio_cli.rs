@@ -80,6 +80,7 @@ fn exercise_stdio(close_daemon_first: bool) {
             supports_user_response: false,
             supports_ask_requests: false,
             event_capabilities: Vec::new(),
+            a2ui: None,
         },
     );
     let hello = rx.recv_timeout(Duration::from_secs(15)).expect("CLI hello deadline");

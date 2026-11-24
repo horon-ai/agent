@@ -20,7 +20,7 @@ use crate::settings::Settings;
 use crate::theme::{Symbols, Theme};
 use crate::tool_expand;
 use crate::tool_line;
-use crate::transcript::Item;
+use crate::transcript::{Item, TurnMetrics};
 use crate::wrap::{self, Indented};
 
 /// Columns a wrapped continuation row keeps under a prefixed item.
@@ -30,12 +30,16 @@ use crate::wrap::{self, Indented};
 /// so both kinds of continuation line up on the same column.
 pub(crate) const INDENT: usize = 2;
 
+/// Columns a note's continuation rows keep, under the text after `note: `.
+pub(crate) const NOTE_INDENT: usize = 6;
+
 /// What one item's lines are drawn with, gathered once per block.
 pub(crate) struct Look<'a> {
     pub(crate) theme: &'a Theme,
     pub(crate) symbols: Symbols,
     pub(crate) width: u16,
     pub(crate) markdown: bool,
+    pub(crate) visual_blocks: bool,
 }
 
 impl<'a> Look<'a> {
@@ -46,6 +50,7 @@ impl<'a> Look<'a> {
             symbols: app.symbols,
             width,
             markdown: markdown_enabled(&app.settings),
+            visual_blocks: visual_blocks_enabled(&app.settings),
         }
     }
 }
@@ -57,6 +62,15 @@ impl<'a> Look<'a> {
 /// agree with the measurement it just took reads it fresh.
 pub(crate) fn markdown_enabled(settings: &Settings) -> bool {
     settings.boolean("transcript.markdown").unwrap_or(true)
+}
+
+/// Whether a supported visual block is drawn rather than left as source.
+///
+/// Read fresh for the same reason as `markdown_enabled`: the settings screen
+/// flips it while the transcript is on screen, and the frame that draws a block
+/// has to agree with the height the scrollback measured for it.
+pub(crate) fn visual_blocks_enabled(settings: &Settings) -> bool {
+    settings.boolean("transcript.visual_blocks").unwrap_or(true)
 }
 
 /// The lines of one item, in display order.
@@ -83,6 +97,9 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         ),
         Item::Assistant(text) => answer(text, look),
         Item::Tool(call) => {
+            if hidden(call, expand) {
+                return Vec::new();
+            }
             let retained = match expand {
                 Some(expand) => expand.retained(&call.call_id),
                 None => tool_line::Retained::default(),
@@ -103,7 +120,86 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         Item::Reasoning(text) => reasoning(text, look),
         Item::Context(report) => crate::context::lines(report, look),
         Item::Report(report) => crate::report::lines(report, look),
+        Item::A2ui(card) => crate::a2ui::lines(card, look),
+        Item::TurnUsage(metrics) => turn_usage(metrics, look),
+        Item::CacheMiss(miss) => cache_miss(miss, look),
     }
+}
+
+/// Whether a finished call is left out of the pane.
+///
+/// The setting hides the record of what ran. A call still in progress and one
+/// waiting for approval are the work the reader has to see or answer, so they
+/// are drawn either way.
+fn hidden(call: &crate::transcript::ToolCall, expand: Option<&tool_expand::Frame<'_>>) -> bool {
+    expand.is_some_and(|frame| frame.hides_finished()) && call.finished_activity()
+}
+
+/// A completed turn's footer: how long it ran and what it spent.
+///
+/// Only the fields the turn reported are drawn, and the separator appears only
+/// between two parts: a turn whose calls reported no usage shows its time
+/// alone, and a zero never stands in for a missing count.
+fn turn_usage(metrics: &TurnMetrics, look: &Look<'_>) -> Vec<Indented> {
+    let mut text = String::with_capacity(if metrics.tokens.is_some() { 36 } else { 12 });
+    tool_line::push_elapsed(&mut text, metrics.elapsed_ms);
+    if let Some((input, output)) = metrics.tokens {
+        let separator = if look.symbols.separator.is_empty() {
+            "·"
+        } else {
+            look.symbols.separator
+        };
+        text.push(' ');
+        text.push_str(separator);
+        text.push_str(" ↑");
+        crate::statusline::push_compact(&mut text, input);
+        text.push_str(" ↓");
+        crate::statusline::push_compact(&mut text, output);
+    }
+    let style = Style::default().fg(look.theme.transcript.notice);
+    vec![Indented::plain(Line::from(Span::styled(text, style)))]
+}
+
+/// The marker a request leaves when the provider had to serve it without its
+/// cached prefix.
+///
+/// Drawn as one dim row: it belongs to the request above it and says what the
+/// resend cost, and it is neither the model's answer nor an error the reader can
+/// act on. The wording is the client's own, so it names the cause in words
+/// rather than echoing the daemon's reason id, and it carries no part of the
+/// prompt: the daemon never sends one.
+fn cache_miss(miss: &crate::transcript::CacheMiss, look: &Look<'_>) -> Vec<Indented> {
+    let style = Style::default().fg(look.theme.transcript.notice);
+    let mut text = String::with_capacity(look.symbols.bullet.len() + 64);
+    text.push_str(look.symbols.bullet);
+    text.push_str(" cache miss: ");
+    push_cache_miss_summary(miss, &mut text);
+    vec![Indented::new(Line::from(Span::styled(text, style)), INDENT)]
+}
+
+/// Format [`crate::transcript::CacheMiss::summary`] as a single owned string.
+pub(crate) fn cache_miss_summary(miss: &crate::transcript::CacheMiss) -> String {
+    let mut out = String::with_capacity(48);
+    push_cache_miss_summary(miss, &mut out);
+    out
+}
+
+/// Append a cache-miss summary directly into `out`.
+fn push_cache_miss_summary(miss: &crate::transcript::CacheMiss, out: &mut String) {
+    out.push_str(miss.cause.label());
+    out.push_str(", ~");
+    if miss.missed_tokens >= 1_000_000 {
+        use std::fmt::Write as _;
+        if write!(out, "{:.1}M", miss.missed_tokens as f64 / 1_000_000.0).is_err() {
+            // `fmt::Write` for `String` is infallible.
+        }
+    } else if miss.missed_tokens >= 1_000 {
+        tool_line::push_u64(out, miss.missed_tokens / 1_000);
+        out.push('K');
+    } else {
+        tool_line::push_u64(out, miss.missed_tokens);
+    }
+    out.push_str(" tokens resent");
 }
 
 /// The lines of one item, keeping a call's whole output as the text it came
@@ -117,6 +213,9 @@ pub(crate) fn source<'a>(item: &Item, look: &Look<'_>, expand: Option<&tool_expa
     let Item::Tool(call) = item else {
         return wrap::Source::built(lines(item, look, expand));
     };
+    if hidden(call, expand) {
+        return wrap::Source::built(Vec::new());
+    }
     let retained = match expand {
         Some(expand) => expand.retained(&call.call_id),
         None => tool_line::Retained::default(),
@@ -129,6 +228,9 @@ pub(crate) fn source<'a>(item: &Item, look: &Look<'_>, expand: Option<&tool_expa
             prefix: tool_line::OUTPUT_PREFIX,
             style,
             indent: INDENT,
+            // A note never lands on a tool row: only user and assistant
+            // messages can be addressed, so there is nothing below the output.
+            tail: Vec::new(),
         },
     }
 }
@@ -153,10 +255,32 @@ fn indented(lines: Vec<Line<'static>>) -> Vec<Indented> {
         .collect()
 }
 
+/// The reader's note on one message, drawn under it.
+///
+/// A note is one line by construction (`crate::notes::NoteStore::set`), so this
+/// makes one [`Indented`] rather than a list. The label is the accent colour so
+/// the note reads as the reader's mark rather than as part of the message, and
+/// the text is dim so it never competes with the conversation it describes.
+pub(crate) fn note(text: &str, look: &Look<'_>) -> Indented {
+    let line = Line::from(vec![
+        Span::styled("note: ", Style::default().fg(look.theme.core.accent)),
+        Span::styled(
+            text.to_string(),
+            Style::default()
+                .fg(look.theme.transcript.notice)
+                .add_modifier(Modifier::ITALIC),
+        ),
+    ]);
+    Indented::new(line, NOTE_INDENT)
+}
+
 /// An assistant message, committed or still streaming.
 pub(crate) fn answer(text: &str, look: &Look<'_>) -> Vec<Indented> {
     if look.markdown {
-        return markdown::render(text, look.theme, look.symbols, look.width);
+        let options = markdown::Options {
+            visual_blocks: look.visual_blocks,
+        };
+        return markdown::render(text, look.theme, look.symbols, look.width, options);
     }
     plain_lines(text, Style::default().fg(look.theme.transcript.assistant_text), 0)
 }
@@ -183,16 +307,30 @@ fn plain_lines(text: &str, style: Style, indent: usize) -> Vec<Indented> {
         .collect()
 }
 
+const INDENT_PAD: &str = const {
+    assert!(INDENT == 2);
+    "  "
+};
+
 /// One line per logical line, the first under `prefix` and the rest under it.
 fn prefixed(prefix: Span<'static>, text: &str, style: Style) -> Vec<Indented> {
-    let pad = " ".repeat(INDENT);
+    if text.is_empty() {
+        return Vec::new();
+    }
+    if !text.contains('\n') {
+        let line = text.strip_suffix('\r').unwrap_or(text);
+        return vec![Indented::new(
+            Line::from(vec![prefix, Span::styled(line.to_string(), style)]),
+            INDENT,
+        )];
+    }
     text.lines()
         .enumerate()
         .map(|(index, line)| {
             let built = if index == 0 {
                 Line::from(vec![prefix.clone(), Span::styled(line.to_string(), style)])
             } else {
-                Line::from(vec![Span::raw(pad.clone()), Span::styled(line.to_string(), style)])
+                Line::from(vec![Span::raw(INDENT_PAD), Span::styled(line.to_string(), style)])
             };
             Indented::new(built, INDENT)
         })
@@ -213,7 +351,6 @@ fn notice(text: &str, look: &Look<'_>) -> Vec<Indented> {
     let style = Style::default().fg(look.theme.transcript.notice);
     let prefix = Span::styled(format!("{} ", look.symbols.bullet), style);
     let prefix_width = UnicodeWidthStr::width(look.symbols.bullet) + 1;
-    let pad = " ".repeat(INDENT);
     let width = usize::from(look.width);
     text.lines()
         .enumerate()
@@ -225,7 +362,7 @@ fn notice(text: &str, look: &Look<'_>) -> Vec<Indented> {
                 )
             } else {
                 (
-                    Line::from(vec![Span::raw(pad.clone()), Span::styled(line.to_string(), style)]),
+                    Line::from(vec![Span::raw(INDENT_PAD), Span::styled(line.to_string(), style)]),
                     INDENT,
                 )
             };

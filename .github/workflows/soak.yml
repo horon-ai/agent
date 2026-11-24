@@ -74,6 +74,7 @@ jobs:
       # .cargo/config.toml (a POSIX shell script; see
       # scripts/dev/rustc_parallel_frontend).
       CARGO_BUILD_RUSTC_WRAPPER: ""
+      RUSTUP_TOOLCHAIN: stable
       # The 1,000-cycle form is selected through the test's own switch, the same
       # way RESULTS.md documents it.
       HORON_AGENT_SOAK_CYCLES: ${{ inputs.cycles || '1000' }}
@@ -97,9 +98,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: soak-${{ runner.os }}
-          # The soak runs on a schedule from `dev`, never on a pull request, so
-          # the cache is always worth saving.
-          save-if: ${{ github.event_name != 'pull_request' }}
+          # Save only on dev/main first-attempt pushes; never on failure or PRs.
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
 
       - name: Contract test the soak report shape
         # Fast and compile-free: proves the parse of the run's own summary line

@@ -44,6 +44,7 @@ use Disposition::{ClientInternal, Covered};
 ///
 /// Sorted by name so additions produce clean diffs.
 const LEDGER: &[(&str, Disposition)] = &[
+    ("A2uiEvent", Covered),
     ("ApplyControl", Covered),
     ("ApprovalAck", Covered),
     ("ArchiveSession", Covered),
@@ -61,12 +62,16 @@ const LEDGER: &[(&str, Disposition)] = &[
     // The ACP adapter's own reply channel for questions it renders itself.
     ("ClientResponse", ClientInternal),
     ("Compact", Covered),
+    ("ConfigureA2ui", Covered),
     // ACP session/new and session/set_mode semantics.
     ("ConfigureSessionMcp", ClientInternal),
     // Debug socket only.
     ("DebugCommand", ClientInternal),
     ("FailoverAck", Covered),
     ("GetControlReceipt", Covered),
+    // The daemon owns the configuration, its environment overrides and the
+    // launch record, so only it can answer truthfully; the bridge forwards.
+    ("GetEffectiveSettings", Covered),
     ("GetHistory", Covered),
     ("GetModelCatalog", Covered),
     ("GetRuntimeState", Covered),
@@ -77,6 +82,8 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("Message", Covered),
     ("NotifyAuthChanged", Covered),
     ("PermissionDecision", Covered),
+    // Package management: the daemon owns the catalog, so the bridge only forwards.
+    ("PackageControl", Covered),
     ("Ping", Covered),
     // ACP's graceful disconnect handshake; API clients use detach_session.
     ("PrepareDisconnect", ClientInternal),
@@ -89,9 +96,16 @@ const LEDGER: &[(&str, Disposition)] = &[
     // ACP's session/set_mode; API clients answer prompts, not sessions.
     ("SetSessionApprovalMode", ClientInternal),
     ("SetSessionSaved", Covered),
+    // The daemon applies the revision-checked status edit itself, so the
+    // bridge forwards it instead of writing the stored list.
+    ("SetTodoStatus", Covered),
     ("SoftInterrupt", Covered),
     ("Split", Covered),
+    // Forking from a recorded boundary. The API serves it as `fork_session_at`
+    // and the daemon resolves the boundary against the source's head.
+    ("SplitAt", Covered),
     ("Subscribe", Covered),
+    ("ToolResult", Covered),
     ("Transfer", Covered),
     // ACP retracts a queued prompt before the model sees it; the API exposes
     // cancel and soft_interrupt instead.
@@ -271,6 +285,14 @@ fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
         "cancellable_work_v1",
         "background_output_v1",
         "live_todo_v1",
+        "effective_settings_v1",
+        "package_control_v1",
+        "package_commands_v1",
+        "session_fork_at_v1",
+        "todo_edit_v1",
+        "turn_retry_v1",
+        "consult_fork_v1",
+        "a2ui_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();
     assert_eq!(
@@ -327,6 +349,22 @@ fn every_gated_request_names_a_defined_capability() {
         ApiRequest::ListBackgroundWork {
             session_id: "s1".into(),
         },
+        ApiRequest::GetEffectiveSettings {
+            session_id: "s1".into(),
+        },
+        ApiRequest::ForkSessionAt {
+            session_id: "s1".into(),
+            boundary_message_id: "message-1".into(),
+        },
+        ApiRequest::ConfigureA2ui {
+            session_id: "s1".into(),
+            capabilities: None,
+        },
+        ApiRequest::A2uiEvent {
+            session_id: "s1".into(),
+            envelope: serde_json::json!({"version": "v0.9"}),
+            data_model: None,
+        },
     ];
     let mut gated = 0;
     for request in requests {
@@ -337,7 +375,10 @@ fn every_gated_request_names_a_defined_capability() {
         );
         gated += 1;
     }
-    assert_eq!(gated, 9, "the scan must cover every new request, not silently skip one");
+    assert_eq!(
+        gated, 13,
+        "the scan must cover every new request, not silently skip one"
+    );
 
     let events = [
         ApiEvent::RuntimeState {
@@ -378,6 +419,13 @@ fn every_gated_request_names_a_defined_capability() {
         },
         ApiEvent::TodoChanged {
             session_id: "s1".into(),
+        },
+        ApiEvent::A2uiEnvelope {
+            session_id: "s1".into(),
+            tool_call_id: "c1".into(),
+            sequence: 0,
+            envelope: serde_json::json!({"version": "v0.9"}),
+            fallback_text: None,
         },
     ];
     for event in events {

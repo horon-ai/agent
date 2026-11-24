@@ -560,10 +560,15 @@ impl MessageKind {
 
 /// IS-6: one streamed text block of a message.
 pub(crate) fn message_chunk(kind: ChunkKind, message_id: &str, text: &str) -> Value {
+    message_content_chunk(kind, message_id, json!({ "type": "text", "text": text }))
+}
+
+/// One streamed content block of a message (text, embedded resource, etc.).
+pub(crate) fn message_content_chunk(kind: ChunkKind, message_id: &str, content: Value) -> Value {
     json!({
         "sessionUpdate": kind.session_update(),
         "messageId": message_id,
-        "content": { "type": "text", "text": text },
+        "content": content,
     })
 }
 

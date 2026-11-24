@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 780" width="960" height="780" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 930" width="960" height="930" role="img" aria-labelledby="t d">
 <title id="t">프로파일별 도구 로딩</title><desc id="d">세션은 시작할 때 도구마다 로딩 등급을 한 번 정하고 세션 중에는 바꾸지 않는다. 손대지 않은 기본 core 프로파일은 목록 세션이다. core는 CORE_TOOLS 열여덟 개에 toolbox를 더한 허용 목록이고, 일곱 도구(read, write, edit, apply_patch, bash, ls, agentgrep)를 toolbox와 함께 미리 보내며, 나머지 열한 개(replace, webfetch, websearch, skill_manage, mcp, monitor, undo, ask, todo, session_search, swarm)는 discoverable이 되어 시스템 프롬프트의 Additional tools 절에 이름만 오른다. 허용 목록이 없는 full 프로파일은 필수가 아닌 모든 도구를 discoverable로 두고, 선택 도구는 toolbox 뒤에 놓인다. acp, minimal, none, 명시적 enabled 목록, 프로파일을 정하지 않은 세션은 허용한 도구를 모두 미리 보내고 색인이 없다. acp는 열두 개, minimal은 여덟 개, none은 아무것도 허용하지 않는다. [tools.load_mode]의 명시적 항목은 프로파일보다 우선하지만 toolbox 자체는 discoverable이 될 수 없고, off 항목은 도구를 제거한다. toolbox = "off"나 disabled 항목은 목록 모드를 끄고 core 열여덟 도구를 모두 미리 보내는 표면으로 되돌린다. irc 도구는 core 집합 밖에 있고 [tools] irc = true일 때 비어 있지 않은 허용 목록에 합류한다. 열한 개 이름은 crates/base/src/config.rs의 CORE_TOOLS와 ESSENTIAL_TOOLS 차이에서 나왔다. 여러 스위치가 어긋날 때 운영자의 프로파일이 어느 등급이 되는지는 ToolLoadTiers::tier에서 추론했다.</desc>
 <style>
 :root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
@@ -6,7 +6,7 @@
 text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--fg)}
 .m{fill:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </style>
-<rect width="960" height="780" rx="14" fill="var(--bg)"/>
+<rect width="960" height="930" rx="14" fill="var(--bg)"/>
 <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
 
 <text x="30" y="32" font-size="13" class="m">1. 프로파일이 허용하는 것과 미리 보내는 것</text>
@@ -32,7 +32,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="238" y="166" font-size="11" class="m">일곱 도구와 toolbox는</text>
 <text x="238" y="182" font-size="11" class="m">미리 전송된다</text>
 <text x="238" y="206" font-size="11" class="m">irc는 full 세션에 합류한다</text>
-<text x="238" y="230" font-size="10.5" class="m"> </text>
+<text x="238" y="228" font-size="10.5" class="m">eval은 설정에서 켜야 한다</text>
 
 <rect x="414" y="48" width="176" height="196" rx="10" fill="var(--panel)" stroke="var(--line)"/>
 <text x="430" y="72" font-size="12.5" class="mono" font-weight="600">acp</text>
@@ -123,4 +123,18 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="506" y="710" font-size="11" class="m">toolbox를 빼면 core 열여덟 도구가 모두 미리 전송되어</text>
 <text x="506" y="726" font-size="11" class="m">닿을 수 없는 도구가 남지 않는다</text>
 <text x="506" y="742" font-size="11" class="m">[tools] irc = true는 비어 있지 않은 허용 목록에 합류한다</text>
+
+<text x="30" y="800" font-size="13" class="m">4. 패키지가 선언하는 도구</text>
+
+<rect x="30" y="816" width="440" height="96" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="838" font-size="12" class="mono" font-weight="600">ext__&lt;패키지 id&gt;__&lt;이름&gt;</text>
+<text x="46" y="858" font-size="11" class="m">extension.toml에 선언하며 그 턴의 세대에서 읽는다</text>
+<text x="46" y="874" font-size="11" class="m">core는 toolbox 뒤에 나열하고 full은 미룬다</text>
+<text x="46" y="890" font-size="11" class="m">minimal, none, acp는 노출하지 않고 기존 이름이 이긴다</text>
+
+<rect x="490" y="816" width="440" height="96" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="506" y="838" font-size="12" font-weight="600">평소의 Registry::execute 경로</text>
+<text x="506" y="858" font-size="11" class="m">계획 모드, 승인, 훅, 비밀값 검사가 먼저 돈다</text>
+<text x="506" y="874" font-size="11" class="m">자식은 승인 뒤 고정한 사본에서만 시작한다</text>
+<text x="506" y="890" font-size="11" class="m">비활성화나 제거는 호출을 취소하고 자식을 회수한다</text>
 </svg>

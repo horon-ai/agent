@@ -139,6 +139,37 @@ pub(super) fn tool_call_block(id: &str, name: &str, arguments: Value) -> Value {
     json!({"type": "toolCall", "id": id, "name": name, "arguments": arguments})
 }
 
+pub(super) fn a2ui_update(
+    session_id: &str,
+    tool_call_id: &str,
+    sequence: u32,
+    envelope: &Value,
+    fallback_text: Option<&str>,
+) -> Value {
+    let mut frame = json!({
+        "type": "a2ui_update",
+        "sessionId": session_id,
+        "toolCallId": tool_call_id,
+        "sequence": sequence,
+        "envelope": envelope,
+    });
+    if let Some(text) = fallback_text.filter(|text| !text.trim().is_empty()) {
+        frame["fallbackText"] = Value::String(text.to_string());
+    }
+    frame
+}
+
+pub(super) fn a2ui_block(envelopes: &[Value], fallback_text: Option<&str>) -> Value {
+    let mut block = json!({
+        "type": "a2ui",
+        "envelopes": envelopes,
+    });
+    if let Some(text) = fallback_text.filter(|text| !text.trim().is_empty()) {
+        block["fallbackText"] = Value::String(text.to_string());
+    }
+    block
+}
+
 pub(super) fn user_message(text: &str, timestamp: i64) -> Value {
     json!({
         "role": "user",

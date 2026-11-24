@@ -45,6 +45,12 @@ description: "메모리 회귀 예산과 서버 메모리 사고 대응 절차�
 - `crates/base/src/runtime_memory_log.rs`
 - `crates/app-core/src/server/debug_server_state.rs`
 
+### 사용자 설치 패키지
+
+패키지는 누군가 요구한 뒤에야 메모리를 쓴다. 패키지 영역이 없는 홈은 카탈로그도, 스냅숏도, 참조 디렉터리도 두지 않으므로 그 홈의 세션 시작과 모든 턴이 아무 비용도 치르지 않는다. 구조 게이트가 턴 두 번에서 패키지 파일 읽기 0회, 디렉터리 훑기 0회, 영역 쓰기 0회, 자식 기동 0회를 확인한다(`python3 scripts/perf/check_structural.py --only packages`). 설치한 패키지도 턴이 카탈로그 세대를 잡기 전에는 메모리에 올라가지 않는다. 턴은 스냅숏 하나(로드할 수 있는 레코드를 ID로 정렬한 것)와 그 세대가 고정한 복사본을 잡는 임차 하나만 유지하고, 둘 다 그 턴이 사는 동안만 남는다. 자식 프로세스는 그 자체로 메모리이고, 호출이 오거나 패키지가 구독한 관찰 이벤트가 있을 때만 생긴다.
+
+세 상황의 메모리는 `python3 scripts/perf/package_workloads.py`가 재는 프로세스 트리 최대 RSS다(설치 안 함, 설치했으나 호출 안 함, 실제 호출 한 번). 턴 시간 옆에 OS별로 기록한다. 한 OS 안의 비율로 읽고, OS 사이의 절대값을 비교하지 않는다.
+
 터미널 UI를 쓰던 `:debug memory`, `:debug markdown:memory` 같은 표면은 이 빌드에 없다.
 터미널 클라이언트 `horon-tui`는 그리는 동안 어시스턴트의 마크다운을 렌더링하고, 렌더된 행과
 소스, 하이라이트, 이미지의 캐시는 두지 않으므로, 그 캐시에 걸려 있던 상한도 여기에 대응하는
@@ -199,17 +205,18 @@ sweep은 10초마다 임계값을 다시 읽으므로 설정 파일을 고치면
 
 ### 해제하는 것
 
-`hibernate_idle_caches`는 다음 두 가지만 버린다.
+`hibernate_idle_caches`는 다음 항목을 해제합니다.
 
 - **provider projection**: `release_provider_messages_cache()`를 거쳐 `provider_messages_cache`,
   접두부 해시 캐시, 캐시 길이와 그 메모리 프로필 카운터를 비운다. 캐시 모드를 `Full`로 되돌리므로
   다음 `provider_messages()`는 빈 트랜스크립트를 보내지 않고 다시 만든다.
 - **도구 출력 인덱스**: `tool_call_ids`와 `tool_result_ids`를 `clear()`가 아니라 새 `HashSet`으로
   바꿔 할당 자체를 놓고, `tool_output_scan_index`를 0으로 되돌린다.
+- **Python eval 커널**은 세션에서 시작했을 때 정리합니다. 다음 셀은 새 상태에서 시작합니다.
 
 ### 남기는 것
 
-해제는 파생 캐시에만 손대고 영속·정본 상태는 건드리지 않는다.
+해제할 때 세션에 저장된 원본 상태를 보존합니다.
 
 - 정본 트랜스크립트와 이벤트 원본(`events.jsonl`, `blobs/`), 상주 active context
 - 얼린 시스템 프롬프트와 잠긴 도구 표면(`listed_tools_index`). 다음 턴이 도구 목록을 다시 협상하지

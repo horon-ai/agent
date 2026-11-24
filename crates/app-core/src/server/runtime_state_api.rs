@@ -57,10 +57,15 @@ pub(super) async fn snapshot(
         messages: view
             .messages
             .into_iter()
-            .map(|message| horon_agent_harness_api::HistoryMessage {
-                response_stats: None,
-                role: message.role,
-                content: message.content,
+            .map(|message| {
+                let answer = crate::session::split_rendered_reasoning(&message.content).map(|(_, answer)| answer);
+                horon_agent_harness_api::HistoryMessage {
+                    response_stats: None,
+                    role: message.role,
+                    content: message.content,
+                    answer,
+                    message_id: None,
+                }
             })
             .collect(),
         next_history_cursor: view.next_history_cursor,

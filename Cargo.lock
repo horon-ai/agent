@@ -1384,9 +1384,9 @@ dependencies = [
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -1710,6 +1710,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "tikv-jemallocator",
  "tokio",
@@ -1760,6 +1761,7 @@ dependencies = [
  "horon-agent-command-risk",
  "horon-agent-core",
  "horon-agent-edit-safety",
+ "horon-agent-extension-types",
  "horon-agent-harness-api",
  "horon-agent-import-core",
  "horon-agent-irc-core",
@@ -1852,6 +1854,7 @@ dependencies = [
  "horon-agent-config-types",
  "horon-agent-core",
  "horon-agent-embedding",
+ "horon-agent-extension-types",
  "horon-agent-gateway-types",
  "horon-agent-import-core",
  "horon-agent-logging",
@@ -1883,10 +1886,12 @@ dependencies = [
  "rand 0.9.3",
  "regex",
  "reqwest",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "tikv-jemalloc-ctl",
  "tikv-jemalloc-sys",
@@ -1996,6 +2001,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "horon-agent-extension-sdk"
+version = "0.1.0"
+dependencies = [
+ "horon-agent-extension-types",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "horon-agent-extension-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "horon-agent-gateway-types"
 version = "0.1.0"
 dependencies = [
@@ -2006,6 +2031,7 @@ dependencies = [
 name = "horon-agent-harness-api"
 version = "0.1.0"
 dependencies = [
+ "horon-agent-extension-types",
  "horon-agent-platform",
  "horon-agent-session-store",
  "horon-agent-session-types",
@@ -2021,6 +2047,7 @@ name = "horon-agent-harness-api-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
  "horon-agent-app-core",
  "horon-agent-background-types",
  "horon-agent-base",
@@ -2033,9 +2060,11 @@ dependencies = [
  "horon-agent-todo-policy",
  "horon-agent-transport",
  "libc",
+ "rand 0.9.3",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
 ]
 
@@ -2227,6 +2256,7 @@ dependencies = [
  "anyhow",
  "horon-agent-batch-types",
  "horon-agent-config-types",
+ "horon-agent-extension-types",
  "horon-agent-message-types",
  "horon-agent-plan",
  "horon-agent-provider-core",
@@ -2412,6 +2442,7 @@ dependencies = [
  "horon-agent-time",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -2464,20 +2495,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "horon-package-example"
+version = "0.1.0"
+dependencies = [
+ "horon-agent-extension-sdk",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "horon-tui"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "crossterm",
  "horon-agent-sdk",
  "horon-agent-tool-types",
  "libc",
+ "open",
  "ratatui",
  "serde_json",
+ "shlex",
  "tempfile",
  "time",
  "toml",
  "toml_edit 0.20.2",
+ "unicode-segmentation",
  "unicode-width",
+ "url",
 ]
 
 [[package]]
@@ -5870,9 +5917,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",

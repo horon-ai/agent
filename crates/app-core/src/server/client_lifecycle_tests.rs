@@ -39,7 +39,7 @@ fn cancel_soft_interrupts_by_id_reports_each_requested_id_exactly_once() {
         .lock()
         .expect("queue lock")
         .iter()
-        .map(|message| message.content.clone())
+        .map(|m| m.content.clone())
         .collect();
     assert_eq!(remaining, vec!["b".to_string(), "c".to_string()]);
 
@@ -1068,7 +1068,6 @@ impl Provider for PanicOnForkProvider {
 fn ping_request_is_lightweight_control_request() {
     assert!((Request::Ping { id: 1 }).is_lightweight_control_request());
 }
-
 fn subscribe_request(working_dir: Option<&str>) -> Request {
     Request::Subscribe {
         system_prompt: None,
@@ -1084,6 +1083,8 @@ fn subscribe_request(working_dir: Option<&str>) -> Request {
         continue_on_disconnect: false,
         terminal_env: Vec::new(),
         acp: None,
+        history_message_ids: false,
+        a2ui: None,
     }
 }
 
@@ -1210,7 +1211,6 @@ fn reload_starting_rejects_new_turn_without_spawning_processing_task() {
         let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
         let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let (swarm_event_tx, _) = broadcast::channel(8);
-
         start_processing_message(
             ProcessingMessage {
                 id: 42,
@@ -1219,6 +1219,7 @@ fn reload_starting_rejects_new_turn_without_spawning_processing_task() {
                 system_reminder: None,
                 active_skill: None,
                 v2: None,
+                expected_run_id: None,
             },
             "session_guard",
             None,
@@ -1314,7 +1315,6 @@ async fn client_initiated_turn_fans_out_stream_and_terminal_events_to_live_attac
     let mut processing_message_id = None;
     let mut processing_session_id = None;
     let mut processing_task = None;
-
     start_processing_message(
         ProcessingMessage {
             id: 479,
@@ -1323,6 +1323,7 @@ async fn client_initiated_turn_fans_out_stream_and_terminal_events_to_live_attac
             system_reminder: None,
             active_skill: None,
             v2: None,
+            expected_run_id: None,
         },
         session_id,
         None,
@@ -1430,7 +1431,6 @@ fn accepted_reload_recovery_continuation_marks_intent_delivered() -> anyhow::Res
         let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
         let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let (swarm_event_tx, _) = broadcast::channel(8);
-
         start_processing_message(
             ProcessingMessage {
                 id: 77,
@@ -1439,6 +1439,7 @@ fn accepted_reload_recovery_continuation_marks_intent_delivered() -> anyhow::Res
                 system_reminder: Some(continuation.to_string()),
                 active_skill: None,
                 v2: None,
+                expected_run_id: None,
             },
             session_id,
             None,
@@ -1528,7 +1529,6 @@ fn reload_starting_rejects_new_turns_for_multiple_sessions() {
             let mut processing_message_id = None;
             let mut processing_session_id = None;
             let mut processing_task = None;
-
             start_processing_message(
                 ProcessingMessage {
                     id: message_id,
@@ -1537,6 +1537,7 @@ fn reload_starting_rejects_new_turns_for_multiple_sessions() {
                     system_reminder: None,
                     active_skill: None,
                     v2: None,
+                    expected_run_id: None,
                 },
                 session_id,
                 None,
@@ -2353,20 +2354,14 @@ async fn acp_session_bridge_round_trip_and_desktop_turn_uses_local_fs() {
 
     drop(bridge);
     sessions.write().await.clear();
-    drop(client_writer);
-    drop(client_reader);
-    tokio::time::timeout(Duration::from_secs(10), server_task)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    drop(observer_writer);
-    drop(observer_reader);
-    tokio::time::timeout(Duration::from_secs(10), observer_task)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
+    drop((client_writer, client_reader, observer_writer, observer_reader));
+    for task in [server_task, observer_task] {
+        tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
 }
 
 #[path = "client_lifecycle_tests/acp_background_work.rs"]

@@ -241,15 +241,17 @@ Every method mirrors the Rust SDK's name exactly:
 - Interaction: `respond_to_permission`, `respond_to_ask`,
   `respond_to_ask_with_id`, `ack_approval`, `ack_failover`.
 - Reads: `get_history`, `get_history_with_images`, `peek_session`,
-  `list_models`, `get_runtime_info`, `runtime_command`, `read_file`,
-  `find_files`, `search_text`, `list_artifacts`, `file_status`, `todo_state`,
-  `ack_todo_follow_up`.
+  `list_models`, `get_runtime_info`, `get_effective_settings`,
+  `runtime_command`, `read_file`, `find_files`, `search_text`,
+  `list_artifacts`, `file_status`, `todo_state`, `ack_todo_follow_up`.
+- Packages: `package_control`, `list_package_commands`, `run_package_command`.
 - Usage: `usage_report`.
 - Tools: `configure_tools`, `list_tools`, `submit_tool_result`.
 - Runtime: `get_runtime_state`, `apply_control`, `get_control_receipt`,
   `get_snapshot`, `snapshot_with_buffered_events`.
 - Replication: `list_session_heads`, `select_session_head`,
   `get_history_page`, `export_session_events`, `import_session_events`,
+  `export_session_markdown`, `export_session_html`,
   `export_session_blob`, `import_session_blob`, `session_blob_status`,
   `export_session_record_blob`, `import_session_record_blob`,
   `session_record_blob_status`.
@@ -313,6 +315,36 @@ Three reply shapes carry fields they used to drop: a `list_sessions()` row keeps
 reports them, `get_runtime_info()` keeps `reasoning_effort` and `auth_method`,
 and a turn's `usage` keeps `cache_creation_input`. A field the wire omits stays
 absent from the mapping, or `None` on `TurnUsage`; an omitted count is not zero.
+
+## A2UI v1.0 surfaces
+
+A2UI support (`a2ui_v1`, protocol v1.32) is opt-in per connection and per session. Leaving `a2ui=None` on `ConnectOptions`, `CreateSessionOptions`, and `AttachSessionOptions` preserves the exact tool catalog and prompt cache prefix of prior versions, and unnegotiated connections never deliver `a2ui_envelope` frames.
+
+```python
+from horon_agent_sdk import (
+    A2UI_BASIC_CATALOG_V1_0,
+    A2UI_VERSION_V1_0,
+    ConnectOptions,
+    CreateSessionOptions,
+    HoronAgentClient,
+)
+
+caps = {
+    "version": A2UI_VERSION_V1_0,
+    "supported_catalog_ids": [A2UI_BASIC_CATALOG_V1_0],
+    "accepts_inline_catalogs": False,
+}
+client = await HoronAgentClient.connect(ConnectOptions(a2ui=caps))
+session = await client.create_session_with_options(CreateSessionOptions(a2ui=caps))
+turn = await client.run(session["session_id"], "Show a confirmation card")
+print(turn.a2ui_envelopes)
+await client.send_a2ui_event(
+    session["session_id"],
+    {"version": "1.0", "action": {"name": "confirm", "surfaceId": "main", "sourceComponentId": "confirm_btn"}},
+)
+```
+
+Use `configure_a2ui(session_id, caps_or_none)` to toggle A2UI capabilities on an attached session, and collect streamed envelopes from `TurnResult.a2ui_envelopes` (`A2uiEnvelopeEvent`).
 
 ## Binary resolution order
 

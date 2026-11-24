@@ -1,11 +1,10 @@
-use super::response_recovery::{MalformedToolCallInfo, TextToolRecovery};
+use super::response_recovery::MalformedToolCallInfo;
 use super::*;
-use futures::FutureExt;
-use std::panic::AssertUnwindSafe;
 
 use super::stream_rules::{MAX_INJECTIONS, STREAM_RULE_POINT, StreamRuleAction, ToolRuleAction, TurnStreamRules};
-use super::streaming::find_wrap_marker_incremental;
 
+pub mod prose_repeat;
+mod run;
 mod tool_wait;
 
 /// Result text of a call the user cancelled, shared with the blocking turn
@@ -21,76 +20,9 @@ const USER_INTERRUPT_SKIP: &str = "[Skipped: user interrupted]";
 /// Result text for a call skipped because the server is reloading.
 const RELOAD_SKIP: &str = "[Skipped - server reloading]";
 
-/// Called only after automatic continuations have been exhausted.
-fn incomplete_turn_stop(stop_reason: Option<&str>) -> Option<ServerEvent> {
-    let reason = stop_reason?;
-    if Agent::should_continue_after_stop_reason(reason) || Agent::is_stranded_tool_use_stop(Some(reason)) {
-        Some(ServerEvent::TurnStopped {
-            reason: crate::protocol::TurnStopReason::LimitReached,
-            message: format!(
-                "The provider stopped with {reason} after automatic continuation attempts were exhausted. Output may be incomplete."
-            ),
-            provider_stop_reason: Some(reason.to_string()),
-        })
-    } else {
-        None
-    }
-}
+use run::incomplete_turn_stop;
 
 impl Agent {
-    pub(super) async fn run_turn_streaming_mpsc(&mut self, event_tx: mpsc::UnboundedSender<ServerEvent>) -> Result<()> {
-        // Loop detection is per turn, and a reminder this turn's guard set must
-        // not reach the next turn.
-        self.loop_guard.reset();
-        self.begin_turn_state();
-        // Register this turn's cancel signal for the whole turn, including the
-        // outcome bookkeeping below: the guard resets the signal when it drops,
-        // so a scope that ended before the outcome was named would report every
-        // cancelled turn as a plain stop.
-        let _turn_cancel_guard =
-            crate::turn_cancel_registry::register_active_turn(&self.session.id, self.graceful_shutdown.clone());
-        let mut in_flight = Some(InFlightGuard::new(
-            self.session.id.clone(),
-            self.soft_interrupt_queue.clone(),
-        ));
-        let outcome = AssertUnwindSafe(self.run_turn_streaming_mpsc_inner(event_tx, in_flight.as_mut()))
-            .catch_unwind()
-            .await;
-        self.current_turn_system_reminder = None;
-        match outcome {
-            Ok(result) => {
-                self.settle_soft_interrupt_turn(&mut in_flight, result.is_ok() && !self.is_graceful_shutdown())
-                    .await;
-                self.settle_streaming_turn_outcome(result.is_err());
-                result
-            }
-            Err(payload) => {
-                // A panic never reaches the normal settle point. Roll the
-                // injected messages back here, then let the unwind continue
-                // so the caller still observes the panic it caused.
-                self.settle_soft_interrupt_turn(&mut in_flight, false).await;
-                std::panic::resume_unwind(payload);
-            }
-        }
-    }
-
-    /// Record the streaming turn's exit reason when its loop left one open.
-    fn settle_streaming_turn_outcome(&mut self, failed: bool) {
-        if self.turn_state().outcome().is_some() {
-            return;
-        }
-        let outcome = if failed {
-            TurnOutcome::Error
-        } else if self.is_graceful_shutdown() {
-            TurnOutcome::Aborted
-        } else {
-            TurnOutcome::Stop
-        };
-        if let Err(error) = self.turn_state.finish(outcome) {
-            logging::warn(&format!("Turn outcome not recorded: {error}"));
-        }
-    }
-
     async fn run_turn_streaming_mpsc_inner(
         &mut self,
         event_tx: mpsc::UnboundedSender<ServerEvent>,
@@ -115,6 +47,7 @@ impl Agent {
             &self.session.stream_rule_ledger,
             super::stream_rules::user_turn_index(&self.session),
         );
+        self.reset_a2ui_turn();
 
         loop {
             // Never open a new provider request after a cancel. Several paths
@@ -133,6 +66,8 @@ impl Agent {
                 ));
                 break;
             }
+            self.prepare_child_request(&event_tx)?;
+            self.reset_a2ui_stream_attempt();
             let repaired = self.repair_missing_tool_outputs();
             if repaired > 0 {
                 logging::warn(&format!(
@@ -144,7 +79,7 @@ impl Agent {
             // compacting the request history. This is the first point where the
             // stable request settings are available.
             let mut tools = self.tool_definitions().await;
-            let mut split_prompt = self.build_system_prompt_split(None);
+            let mut split_prompt = self.build_request_system_prompt(&tools);
             self.provider
                 .prewarm_with_context(&tools, &split_prompt.static_part, &self.provider_request_context())
                 .await;
@@ -173,7 +108,7 @@ impl Agent {
                 // Compaction clears the tool lock, so rebuild the foreground
                 // request metadata rather than relying on the pre-compaction snapshot.
                 tools = self.tool_definitions().await;
-                split_prompt = self.build_system_prompt_split(None);
+                split_prompt = self.build_request_system_prompt(&tools);
             }
 
             // `messages` is this turn's single owned request snapshot. Memory,
@@ -297,6 +232,13 @@ impl Agent {
             // The provider gets this session's lineage with every call, so it can
             // pin its cache key to the same family on a retry as on the first
             // attempt. Nothing is written to the shared provider state.
+            if self.is_graceful_shutdown() {
+                break;
+            }
+            crate::spend_cap::admit()?;
+            if let Some(budget) = &mut self.swarm_budget {
+                budget.charge_request();
+            }
             let provider_context = self.provider_request_context();
             let stream = {
                 let mut complete_future = std::pin::pin!(provider.complete_split_with_context(
@@ -398,7 +340,6 @@ impl Agent {
             );
 
             let mut text_content = String::new();
-            let mut text_wrapped_detected = false;
             // Inline swarm worker output tap: publish a throttled tail of the
             // in-progress assistant text to the bus so a coordinator can render
             // a live inline gallery viewport.
@@ -451,6 +392,10 @@ impl Agent {
             let mut retry_after_recovery = false;
             let mut retry_after_stream_rule = false;
             let mut stream_rule_stop = false;
+            let mut prose_guard = crate::config::config()
+                .features
+                .repeat_guard
+                .then(prose_repeat::ProseRepeatGuard::default);
             let mut keepalive = stream_keepalive_ticker();
             loop {
                 let next_event = std::pin::pin!(stream.next());
@@ -775,18 +720,26 @@ impl Agent {
                                 }
                             }
                         }
-                        if !text_wrapped_detected {
-                            // Scan only the new delta (plus a short overlap for
-                            // markers straddling the boundary) instead of the
-                            // whole accumulated response on every token.
-                            if let Some(marker_idx) = find_wrap_marker_incremental(&text_content, text.len()) {
-                                text_wrapped_detected = true;
-                                let clean_prefix = text_content[..marker_idx].trim_end().to_string();
-                                let _ = event_tx.send(ServerEvent::TextReplace { text: clean_prefix });
-                            } else {
-                                let _ = event_tx.send(ServerEvent::TextDelta { text: text.clone() });
+                        if let Some(sentence) = prose_guard.as_mut().and_then(|guard| guard.feed(&text)) {
+                            logging::warn("Repeated prose detected; stopping the turn");
+                            if inline_output_tap {
+                                self.inline_tail.clear_live();
                             }
+                            let notice = self.finish_prose_repeat_stop(&text_content, &sentence)?;
+                            if event_tx
+                                .send(ServerEvent::TurnStopped {
+                                    reason: crate::protocol::TurnStopReason::LimitReached,
+                                    message: notice,
+                                    provider_stop_reason: None,
+                                })
+                                .is_err()
+                            {
+                                logging::debug("Repeated prose stop has no event receiver");
+                            }
+                            stream_rule_stop = true;
+                            break;
                         }
+                        let _ = event_tx.send(ServerEvent::TextDelta { text: text.clone() });
                         if self.is_graceful_shutdown() {
                             logging::info("Graceful shutdown during streaming - checkpointing partial response");
                             let _ = event_tx.send(ServerEvent::TextDelta {
@@ -810,6 +763,7 @@ impl Agent {
                         });
                         tool_id_to_name.insert(id.clone(), name.clone());
                         current_tool = Some(id.clone());
+                        self.register_a2ui_stream_tool(&id, &name);
                         streaming_tools.entry(id.clone()).or_insert_with(|| {
                             (
                                 ToolCall {
@@ -831,6 +785,7 @@ impl Agent {
                         if let Some((_, input)) = input_tool_id.as_ref().and_then(|id| streaming_tools.get_mut(id)) {
                             input.push_str(&delta);
                         }
+                        self.feed_a2ui_stream_delta(input_tool_id.as_deref(), &delta, &event_tx);
                     }
                     StreamEvent::ToolUseEnd | StreamEvent::ToolUseEndFor { .. } => {
                         if let Some((mut tool, current_tool_input)) =
@@ -995,7 +950,6 @@ impl Agent {
                             // discarded partial from the live tail too.
                             self.inline_tail.clear_live();
                         }
-                        text_wrapped_detected = false;
                         tool_calls.clear();
                         // A retry re-announces its calls; stale entries would
                         // answer a cancel for an id the client no longer sees.
@@ -1012,7 +966,11 @@ impl Agent {
                         provider_native_items.clear();
                         provider_native_tracker.clear();
                         openai_native_compaction = None;
+                        if let Some(guard) = prose_guard.as_mut() {
+                            guard.reset_all();
+                        }
                         saw_message_end = false;
+                        self.reset_a2ui_stream_attempt();
                         stop_reason = None;
                         let _ = event_tx.send(ServerEvent::RetryRollback { attempt, max });
                         let _ = event_tx.send(ServerEvent::ConnectionPhase {
@@ -1290,12 +1248,12 @@ impl Agent {
             }
 
             // Store usage for debug queries
-            self.last_usage = TokenUsage {
+            self.set_last_usage(TokenUsage {
                 input_tokens: usage_input.unwrap_or(0),
                 output_tokens: usage_output.unwrap_or(0),
                 cache_read_input_tokens: usage_cache_read,
                 cache_creation_input_tokens: usage_cache_creation,
-            };
+            });
 
             // Detect a transparent mid-request model switch (e.g. Anthropic's
             // retired `claude-fable-5` falling back to `claude-opus-4-8`). The
@@ -1332,9 +1290,6 @@ impl Agent {
                 });
             }
 
-            let had_tool_calls_before = !tool_calls.is_empty();
-            let text_tool_recovery = self.recover_text_wrapped_tool_call(&mut text_content, &mut tool_calls);
-
             // Passive text rules never abort the response: their reminders
             // enter this turn's reminder slot, so the next request carries them
             // and the model can correct itself on the following round.
@@ -1343,30 +1298,6 @@ impl Agent {
                 Self::merge_system_reminder(&mut self.current_turn_system_reminder, &reminder);
             }
             stream_rule_state.flush_ledger(&mut self.session.stream_rule_ledger);
-
-            if !had_tool_calls_before && text_tool_recovery == TextToolRecovery::Recovered {
-                let _ = event_tx.send(ServerEvent::TextReplace {
-                    text: text_content.clone(),
-                });
-                // Markup envelopes can carry several calls, so announce each.
-                for tc in tool_calls.iter().filter(|tc| tc.id.starts_with("fallback_text_call_")) {
-                    let _ = event_tx.send(ServerEvent::ToolStart {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                    });
-                    tool_id_to_name.insert(tc.id.clone(), tc.name.clone());
-                    let _ = event_tx.send(ServerEvent::ToolInput {
-                        id: Some(tc.id.clone()),
-                        delta: tc.input.to_string(),
-                    });
-                    // Armed before the announcement, as on the streaming path.
-                    crate::tool_cancel_registry::arm_into(&mut armed, self.session_id(), &tc.id);
-                    let _ = event_tx.send(ServerEvent::ToolExec {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                    });
-                }
-            }
 
             // Add assistant message to history
             let mut content_blocks = Vec::new();
@@ -1467,18 +1398,17 @@ impl Agent {
             // Injecting before tool_results would break the API requirement that
             // tool_use must be immediately followed by tool_result.
             if tool_calls.is_empty() {
-                // The model printed a tool call as markup we could not parse
-                // (issue #1702): say so visibly and ask it to re-issue the
-                // call natively instead of silently ending the turn.
+                // Ask for a native call before retrying a text-only tool attempt.
                 if saw_message_end
                     && !self.is_graceful_shutdown()
+                    && !tools.is_empty()
                     && let Some(notice) =
-                        self.maybe_nudge_unparsed_tool_markup(&text_tool_recovery, stop_reason.as_deref())?
+                        self.maybe_nudge_unparsed_tool_markup(&text_content, stop_reason.as_deref())?
                 {
                     let _ = event_tx.send(ServerEvent::SoftInterruptInjected {
                         content: notice,
                         display_role: Some("system".to_string()),
-                        point: "B".to_string(),
+                        point: "native_tool_retry".to_string(),
                         tools_skipped: None,
                         client_ids: Vec::new(),
                     });
@@ -1544,6 +1474,7 @@ impl Agent {
                                 message: notice,
                             });
                         }
+                        self.flush_deferred_a2ui_blocks()?;
                         self.turn_state.set_final_text(&text_content);
                         let outcome = if self.is_graceful_shutdown() {
                             TurnOutcome::Aborted
@@ -1819,6 +1750,7 @@ impl Agent {
                     | None => {}
                     Some(super::loop_guard::LoopGuardVerdict::Refuse(message)) => {
                         self.write_loop_guard_result(tc, &message, &event_tx);
+                        self.note_a2ui_round_failure();
                         tool_results_dirty = true;
                         continue;
                     }
@@ -1854,6 +1786,7 @@ impl Agent {
                             }],
                         );
                         tool_results_dirty = true;
+                        self.note_a2ui_round_failure();
                         stream_rule_state.flush_ledger(&mut self.session.stream_rule_ledger);
                         continue;
                     }
@@ -1962,6 +1895,7 @@ impl Agent {
                                     error: None,
                                     verdict: output.verdict,
                                 });
+                                self.collect_a2ui_tool_output(&tc.id, &tc.name, &output, Some(&event_tx));
 
                                 let side_pane_images =
                                     tool_output_side_pane_images(&tc.id, &tc.name, &tc.input, &output);
@@ -2002,6 +1936,7 @@ impl Agent {
                                     break;
                                 }
                                 let error_msg = format!("Error: {}", e);
+                                self.note_a2ui_round_failure();
                                 let verdict = tool_failure_verdict(&e);
                                 let _ = event_tx.send(ServerEvent::ToolDone {
                                     id: tc.id.clone(),
@@ -2185,6 +2120,9 @@ impl Agent {
 
             if tool_results_dirty {
                 self.save_session()?;
+            }
+            if self.finalize_a2ui_round()? {
+                break;
             }
 
             // A `todo` write in this round is the planning handoff point, so the
@@ -2685,6 +2623,7 @@ impl Agent {
                                 error: None,
                                 verdict: output.verdict,
                             });
+                            self.collect_a2ui_tool_output(&tc.id, &tc.name, &output, Some(event_tx));
 
                             let side_pane_images = tool_output_side_pane_images(&tc.id, &tc.name, &tc.input, &output);
                             if !side_pane_images.is_empty() {
@@ -2707,6 +2646,7 @@ impl Agent {
                         }
                         Some(Err(e)) => {
                             let error_msg = format!("Error: {}", e);
+                            self.note_a2ui_round_failure();
                             let verdict = tool_failure_verdict(&e);
                             let _ = event_tx.send(ServerEvent::ToolDone {
                                 id: tc.id.clone(),
@@ -2736,6 +2676,7 @@ impl Agent {
                             // every `tool_use` keeps exactly one `tool_result`
                             // whatever the members did.
                             skipped_members += 1;
+                            self.note_a2ui_round_failure();
                             let (skipped, error) = if matches!(stopped, Some(super::tool_round::GroupStop::Interrupt)) {
                                 (USER_INTERRUPT_SKIP.to_string(), "interrupted by user".to_string())
                             } else {

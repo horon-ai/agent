@@ -55,6 +55,8 @@ fn subscribe(target: &str) -> Request {
         continue_on_disconnect: false,
         terminal_env: vec![],
         acp: None,
+        history_message_ids: false,
+        a2ui: None,
     }
 }
 

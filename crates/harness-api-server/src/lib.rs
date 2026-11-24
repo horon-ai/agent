@@ -20,11 +20,13 @@
 pub mod allocator;
 pub mod background_progress;
 mod bridge;
+pub mod credentials;
 mod degradation_receipts;
 mod message_content;
 mod message_modes;
 pub mod replication;
 pub mod session_prefix;
+mod tcp;
 mod tool_args_repaired;
 pub mod translate;
 mod writer;
@@ -44,14 +46,16 @@ mod stdio_tests;
 #[cfg(test)]
 mod writer_tests;
 
-pub use bridge::run_bridge;
+pub use bridge::{run_bridge, run_bridge_exposed};
 #[cfg(test)]
-pub(crate) use bridge::{run_bridge_with_deadline, run_bridge_with_lifecycle, single_instance_lock};
+pub(crate) use bridge::{
+    run_bridge_exposed_on, run_bridge_with_deadline, run_bridge_with_lifecycle, single_instance_lock,
+};
 
 use anyhow::{Context, Result};
 use horon_agent_harness_api::{
-    API_VERSION_MAJOR, ApiEvent, CAPABILITY_BACKGROUND_OUTPUT_V1, CAPABILITY_LIVE_TODO_V1, ErrorCode,
-    OPT_IN_EVENT_CAPABILITIES, ServerFrame,
+    API_VERSION_MAJOR, ApiEvent, CAPABILITY_A2UI_V1, CAPABILITY_BACKGROUND_OUTPUT_V1, CAPABILITY_LIVE_TODO_V1,
+    ErrorCode, OPT_IN_EVENT_CAPABILITIES, ServerFrame,
 };
 use serde_json::Value;
 use std::path::PathBuf;
@@ -127,6 +131,26 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     horon_agent_harness_api::CAPABILITY_CANCELLABLE_WORK_V1,
     CAPABILITY_BACKGROUND_OUTPUT_V1,
     CAPABILITY_LIVE_TODO_V1,
+    // The daemon answers the settings report from its own configuration. The
+    // bridge advertises the surface unconditionally and forwards, because a
+    // client that checks before sending must find it: a daemon too old to serve
+    // it is refused with a structured `unsupported` naming this capability
+    // rather than being sent a frame it would answer with no correlation.
+    horon_agent_harness_api::CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    // The daemon owns the package catalog, so the bridge answers nothing itself:
+    // it forwards when the daemon reported `package_control`, and otherwise
+    // refuses with `unsupported` naming this capability. Advertising it
+    // unconditionally is what lets a client find it before sending.
+    horon_agent_harness_api::CAPABILITY_PACKAGE_CONTROL_V1,
+    // Listed so an SDK capability gate finds it; `hello_ok` drops it when the
+    // daemon did not report `runtime_commands`.
+    horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1,
+    // Forwarded to daemon; unsupported or non-advertising daemons are filtered or return `unsupported`.
+    horon_agent_harness_api::CAPABILITY_SESSION_FORK_AT_V1,
+    horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1,
+    horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1,
+    horon_agent_harness_api::CAPABILITY_CONSULT_FORK_V1,
+    CAPABILITY_A2UI_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -265,22 +289,27 @@ where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Send + 'static + Unpin,
 {
-    run_bridge_stream_with_deadline(read_half, write_half, legacy_socket, writer::WRITE_STALL_DEADLINE).await
+    run_bridge_stream_with_deadline(
+        BufReader::new(read_half),
+        write_half,
+        legacy_socket,
+        writer::WRITE_STALL_DEADLINE,
+    )
+    .await
 }
 
 /// [`run_bridge_stream`] with the write deadline injected, so a test can watch a
 /// stalled peer close the connection without waiting the production interval.
 pub(crate) async fn run_bridge_stream_with_deadline<R, W>(
-    read_half: R,
+    mut reader: R,
     mut write_half: W,
     legacy_socket: PathBuf,
     write_deadline: std::time::Duration,
 ) -> Result<()>
 where
-    R: tokio::io::AsyncRead + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
     W: tokio::io::AsyncWrite + Send + 'static + Unpin,
 {
-    let mut reader = BufReader::new(read_half);
     let mut line = String::new();
 
     // 1. Handshake: first frame must be hello with a compatible version.
@@ -355,9 +384,21 @@ where
     let user_connections_supported = daemon_caps.iter().any(|cap| cap == "session_connections");
     let runtime_commands_supported = daemon_caps.iter().any(|cap| cap == "runtime_commands");
     let session_tools_supported = daemon_caps.iter().any(|cap| cap == "session_tools");
+    let consult_fork_supported = daemon_caps.iter().any(|cap| cap == "consult_fork_v1");
+    let a2ui_supported = daemon_caps.iter().any(|cap| cap == CAPABILITY_A2UI_V1);
     let soft_interrupt_ids_supported = daemon_caps.iter().any(|cap| cap == "soft_interrupt_ids");
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
+    let effective_settings_api_supported = daemon_caps.iter().any(|cap| cap == "effective_settings_api");
+    let retry_capability = horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1;
+    let retry_supported = daemon_caps.iter().any(|cap| cap == retry_capability);
+    let session_fork_at_supported = daemon_caps.iter().any(|cap| cap == "session_fork_at_api");
+    // The daemon owns the package catalog. The bridge advertises the matching
+    // API capability only when the daemon can serve it, and forwards nothing
+    // when it cannot: an older daemon answers an unknown frame with an
+    // uncorrelated error, which a client would read as a timeout.
+    let package_control_supported = daemon_caps.iter().any(|cap| cap == "package_control");
+    translate::package_control::set_supported(package_control_supported);
     let requested_events = hello["event_capabilities"].as_array();
     let event_capabilities: [Option<&str>; OPT_IN_EVENT_CAPABILITIES.len()] = std::array::from_fn(|index| {
         let capability = OPT_IN_EVENT_CAPABILITIES[index];
@@ -365,6 +406,13 @@ where
             && requested_events.is_some_and(|requested| requested.iter().any(|cap| cap.as_str() == Some(capability))))
         .then_some(capability)
     });
+    let default_a2ui = match translate::a2ui::parse_optional_capabilities(hello.get("a2ui"), reply_to) {
+        Ok(caps) => caps,
+        Err(frame) => {
+            write_json_line(&mut write_half, &frame).await?;
+            return Ok(());
+        }
+    };
     let hello_ok = ServerFrame::reply(
         reply_to,
         ApiEvent::HelloOk {
@@ -374,6 +422,12 @@ where
                 .iter()
                 .copied()
                 .filter(|cap| !OPT_IN_EVENT_CAPABILITIES.contains(cap) || event_capabilities.contains(&Some(*cap)))
+                .filter(|cap| retry_supported || *cap != retry_capability)
+                // Package commands ride `runtime_command` and consult forks require daemon
+                // `consult_fork_v1`; drop them when the connected daemon lacks support.
+                .filter(|cap| *cap != horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1 || runtime_commands_supported)
+                .filter(|cap| *cap != horon_agent_harness_api::CAPABILITY_CONSULT_FORK_V1 || consult_fork_supported)
+                .filter(|cap| *cap != CAPABILITY_A2UI_V1 || a2ui_supported)
                 .map(str::to_string)
                 .chain(user_connections_supported.then(|| "session_connections".to_string()))
                 .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))
@@ -401,6 +455,12 @@ where
     state.soft_interrupt_ids_supported = soft_interrupt_ids_supported;
     state.durable_runtime_api_supported = durable_runtime_api_supported;
     state.cancellable_work_api_supported = cancellable_work_api_supported;
+    state.session_fork_at_supported = session_fork_at_supported;
+    state.a2ui_supported = a2ui_supported;
+    state.default_a2ui = default_a2ui;
+    // The daemon, and therefore this capability, is one per bridge process, so
+    // the forwarding module records it instead of every `BridgeState` site.
+    translate::effective_settings::set_supported(effective_settings_api_supported);
 
     // 3. Translate both directions in one loop so translation state stays
     //    single-threaded, and never await a write to the client from it: one
@@ -602,6 +662,10 @@ where
                         // than session state, so the bridge answers them here and
                         // the daemon never sees the request.
                         if let Some(frame) = message_modes::reply(&request) {
+                            send_frame!('translate, frame);
+                            continue;
+                        }
+                        if let Some(frame) = translate::refuse_unsupported_retry(&request, retry_supported) {
                             send_frame!('translate, frame);
                             continue;
                         }
@@ -1078,78 +1142,5 @@ mod socket_permission_tests {
 }
 
 #[cfg(test)]
-mod fragmented_reply_tests {
-    use super::*;
-    use horon_agent_platform::ipc::Listener;
-    use serde_json::json;
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn concurrent_history_replies_survive_api_requests_between_fragments() {
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            let path = std::env::temp_dir().join(format!("horon-agent-fragments-{}-{}.sock", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-            let mut listener = Listener::bind(&path).unwrap();
-            let (client, bridge) = tokio::io::duplex(4 * 1024 * 1024);
-            let (bridge_read, bridge_write) = tokio::io::split(bridge);
-            let task = tokio::spawn(run_bridge_stream(bridge_read, bridge_write, path.clone()));
-            let (client_read, mut client_write) = tokio::io::split(client);
-            let mut replies = BufReader::new(client_read).lines();
-            write_json_line(&mut client_write, &json!({"v":1,"id":1,"req":"hello","min_version":1,"max_version":1})).await.unwrap();
-            let (daemon, _) = listener.accept().await.unwrap();
-            let (daemon_read, mut daemon_write) = daemon.into_split();
-            let mut requests = BufReader::new(daemon_read).lines();
-            assert_eq!(serde_json::from_str::<Value>(&replies.next_line().await.unwrap().unwrap()).unwrap()["ev"], "hello_ok");
-            write_json_line(&mut client_write, &json!({"v":1,"id":2,"req":"attach_session","session_id":"fragment-session"})).await.unwrap();
-            for _ in 0..3 {
-                let request: Value = serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
-                if request["type"] == "state" {
-                    write_json_line(&mut daemon_write, &json!({"type":"state","id":request["id"],"session_id":"fragment-session"})).await.unwrap();
-                }
-            }
-            loop {
-                let frame: Value = serde_json::from_str(&replies.next_line().await.unwrap().unwrap()).unwrap();
-                if frame["ev"] == "attached" { break; }
-            }
-            for id in 3..6 {
-                write_json_line(&mut client_write, &json!({"v":1,"id":id,"req":"get_history","session_id":"fragment-session"})).await.unwrap();
-            }
-            let mut history_ids = Vec::new();
-            for _ in 0..3 {
-                let request: Value = serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
-                assert_eq!(request["type"], "get_history");
-                history_ids.push(request["id"].clone());
-            }
-            for (index, id) in history_ids.into_iter().enumerate() {
-                // Larger than the socket send buffer, forcing the bridge to
-                // consume an unterminated prefix before API activity cancels it.
-                let text = "x".repeat(1024 * 1024);
-                let prefix = format!("{{\"type\":\"history\",\"id\":{id},\"session_id\":\"fragment-session\",\"messages\":[{{\"role\":\"assistant\",\"content\":\"{text}");
-                daemon_write.write_all(prefix.as_bytes()).await.unwrap();
-                let ping_id = 20 + index;
-                write_json_line(&mut client_write, &json!({"v":1,"id":ping_id,"req":"ping"})).await.unwrap();
-                let ping: Value = serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
-                assert_eq!(ping["type"], "ping");
-                daemon_write.write_all(b"\"}]}\n").await.unwrap();
-                write_json_line(&mut daemon_write, &json!({"type":"pong","id":ping["id"]})).await.unwrap();
-                let mut history_seen = false;
-                let mut pong_seen = false;
-                while !history_seen || !pong_seen {
-                    let reply: Value = serde_json::from_str(&replies.next_line().await.unwrap().unwrap()).unwrap();
-                    if reply["reply_to"] == index + 3 {
-                        assert_eq!(reply["ev"], "history");
-                        assert_eq!(reply["messages"][0]["content"], text);
-                        history_seen = true;
-                    }
-                    if reply["reply_to"] == ping_id {
-                        assert_eq!(reply["ev"], "pong");
-                        pong_seen = true;
-                    }
-                }
-            }
-            drop(client_write);
-            drop(replies);
-            task.await.unwrap().unwrap();
-            drop(listener);
-            std::fs::remove_file(path).unwrap();
-        }).await.expect("fragmented history requests must all receive correlated replies");
-    }
-}
+#[path = "fragmented_reply_tests.rs"]
+mod fragmented_reply_tests;

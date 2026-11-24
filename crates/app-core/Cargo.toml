@@ -14,6 +14,27 @@ publish = false
 name = "horon_agent_app_core"
 path = "src/lib.rs"
 
+# The installed child of `tests/package_tools.rs`, never shipped. It is the
+# package executable the test installs and starts; `test = false` keeps it out
+# of the unit-test surface (`src/bin/horon-package-probe.rs` explains the rest).
+[[bin]]
+name = "horon-package-probe"
+path = "src/bin/horon-package-probe.rs"
+test = false
+doc = false
+
+[[bench]]
+name = "opt_round2"
+harness = false
+
+[[bench]]
+name = "opt_r3_export"
+harness = false
+
+[[bench]]
+name = "opt_r3_core"
+harness = false
+
 [dependencies]
 # NOTE: the jemalloc allocator stats live in `horon-agent-base` (process_memory) and
 # local embeddings live in `horon-agent-base` (embedding); this crate forwards those
@@ -95,6 +116,8 @@ horon-agent-base = { path = "../base", default-features = false }
 horon-agent-command-risk = { path = "../command-risk" }
 horon-agent-core = { path = "../core" }
 horon-agent-edit-safety = { path = "../edit-safety" }
+# Shared data contract for user-installed Rust packages (manifests, targets, wire).
+horon-agent-extension-types = { path = "../extension-types" }
 horon-agent-message-types = { path = "../message-types" }
 horon-agent-overnight-core = { path = "../overnight-core" }
 horon-agent-perf-counters = { path = "../perf-counters" }

@@ -52,6 +52,7 @@ pub(super) fn reply_id(event: &ServerEvent) -> Option<u64> {
     match event {
         ServerEvent::Ack { id }
         | ServerEvent::BackgroundWorkList { id, .. }
+        | ServerEvent::ContextMessageAdded { id }
         | ServerEvent::Done { id }
         | ServerEvent::Error { id, .. }
         | ServerEvent::History { id, .. }
@@ -98,9 +99,11 @@ pub(super) fn is_turn_content(event: &ServerEvent) -> bool {
         | ServerEvent::ToolDiff { .. }
         | ServerEvent::PlanUpdated { .. }
         | ServerEvent::GeneratedImage { .. }
+        | ServerEvent::A2uiEnvelope { .. }
         | ServerEvent::Compaction { .. }
         | ServerEvent::ProviderGuardrail { .. }
         | ServerEvent::TokenUsage { .. } => true,
+        ServerEvent::SoftInterruptInjected { point, .. } => point == "native_tool_retry",
         ServerEvent::TurnStopped { reason, .. } => !matches!(reason, TurnStopReason::Interrupted),
         _ => false,
     }

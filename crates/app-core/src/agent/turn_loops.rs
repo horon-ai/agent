@@ -5,96 +5,12 @@ use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
 
 use super::turn_failover::ProviderErrorAction;
-use horon_agent_agent_runtime::{
-    RunIdentity, RunStop, StopProvenance, current_run, current_stop, note_conversation_save, observe_cause,
-    observed_cause, provider_failure_provenance,
-};
+use horon_agent_agent_runtime::StopProvenance;
 
-/// How long a reload marker still describes this process's own shutdown.
-const RELOAD_MARKER_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(120);
-
-/// The stop cause a failed turn names, read from the error it returned.
-///
-/// A context, token, or plan limit ends a turn through the same error path as a
-/// provider fault, so the message decides between them. Every other failure is
-/// what the provider reported.
-pub(super) fn cause_for_turn_failure(message: &str) -> StopProvenance {
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("context limit") || lower.contains("token limit") || lower.contains("plan limit") {
-        StopProvenance::Limit
-    } else {
-        provider_failure_provenance(message)
-    }
-}
+mod run_stop;
+pub(super) use run_stop::cause_for_turn_failure;
 
 impl Agent {
-    /// Mint the run id a newly triggered input executes under.
-    ///
-    /// The id is a UUID v4 because the journal rejects any other spelling, so
-    /// this is the one place a run id is created.
-    pub(super) fn mint_run_id() -> String {
-        uuid::Uuid::new_v4().to_string()
-    }
-
-    /// Record a cause the loop observed at a point that ends the turn.
-    ///
-    /// Only a terminal observation belongs here: a retryable provider failure the
-    /// turn recovered from is not a cause, so no path that continues the loop
-    /// records one.
-    pub(super) fn observe_stop_cause(&self, provenance: StopProvenance) {
-        observe_cause(&self.session.id, provenance);
-    }
-
-    /// Record whether this turn's conversation save succeeded.
-    pub(super) fn note_turn_conversation_save(&self, saved: bool) {
-        note_conversation_save(&self.session.id, saved);
-    }
-
-    /// The cause this turn's run stopped for, from what the turn observed.
-    ///
-    /// An observation the loop made at the exact point the turn ended wins,
-    /// because the outcome alone cannot tell a loop-guard stop from a normal one.
-    /// Otherwise the recorded outcome names it: a truncation that spent its
-    /// continuation budget is a limit, an abort is a shutdown only when this
-    /// process is reloading and a cancel otherwise, and a failure is whatever its
-    /// own error says.
-    pub(super) fn stop_cause_for(&self, error: Option<&str>) -> StopProvenance {
-        if let Some(observed) = observed_cause(&self.session.id) {
-            return observed;
-        }
-        match self.turn_state().outcome() {
-            Some(TurnOutcome::Stop) => StopProvenance::Completed,
-            Some(TurnOutcome::Length) => StopProvenance::Limit,
-            Some(TurnOutcome::Aborted) => {
-                if crate::server::reload_marker_active(RELOAD_MARKER_MAX_AGE) {
-                    StopProvenance::Shutdown
-                } else {
-                    StopProvenance::UserCancelled
-                }
-            }
-            Some(TurnOutcome::Error) => match error {
-                Some(message) => cause_for_turn_failure(message),
-                None => StopProvenance::ProviderError,
-            },
-            None => StopProvenance::InterruptedUnknown,
-        }
-    }
-
-    /// The run executing now, if a run was started.
-    pub fn current_run(&self) -> Option<RunIdentity> {
-        current_run(&self.session.id)
-    }
-
-    /// The current run's stop, if it ended.
-    pub fn current_stop(&self) -> Option<RunStop> {
-        current_stop(&self.session.id)
-    }
-
-    /// Stops this session kept because their run was no longer current.
-    pub fn stop_history(&self) -> Vec<RunStop> {
-        horon_agent_agent_runtime::stop_history(&self.session.id)
-    }
-
     /// Speculatively prewarm the provider while a newly created session is idle.
     ///
     /// This deliberately bypasses `tool_definitions`, whose cache lock is only
@@ -119,7 +35,7 @@ impl Agent {
         // so the index is built here exactly as `tool_definitions` builds it.
         self.ensure_listed_tools_index().await;
         let tools = self.tool_definitions_for_debug().await;
-        let split_prompt = self.build_system_prompt_split(None);
+        let split_prompt = self.build_request_system_prompt(&tools);
         (
             Arc::clone(&self.provider),
             tools,
@@ -612,6 +528,7 @@ impl Agent {
             &self.session.stream_rule_ledger,
             super::stream_rules::user_turn_index(&self.session),
         );
+        self.reset_a2ui_turn();
 
         loop {
             // Do not start another provider request once a cancel has been
@@ -638,7 +555,7 @@ impl Agent {
             // compacting the request history. This is the first point where the
             // stable request settings are available.
             let mut tools = self.tool_definitions().await;
-            let mut split_prompt = self.build_system_prompt_split(None);
+            let mut split_prompt = self.build_request_system_prompt(&tools);
             self.provider
                 .prewarm_with_context(&tools, &split_prompt.static_part, &self.provider_request_context())
                 .await;
@@ -655,7 +572,7 @@ impl Agent {
                 // Compaction clears the tool lock, so rebuild the foreground
                 // request metadata rather than relying on the pre-compaction snapshot.
                 tools = self.tool_definitions().await;
-                split_prompt = self.build_system_prompt_split(None);
+                split_prompt = self.build_request_system_prompt(&tools);
             }
 
             // `messages` is this turn's single owned request snapshot. Memory and
@@ -735,7 +652,7 @@ impl Agent {
             let outbound = super::request_messages::project(&request_context, send_messages).await?;
             let send_messages = outbound.as_deref().unwrap_or(send_messages);
             let prompt_has_recent_tool_result = Self::messages_end_with_tool_result(send_messages);
-            self.last_status_detail = None;
+            self.begin_request()?;
             let completion = self
                 .provider
                 .complete_split_with_context(
@@ -834,6 +751,11 @@ impl Agent {
 
             let mut retry_after_compaction = false;
             let mut retry_after_recovery = false;
+            let mut prose_repeat_stop = false;
+            let mut prose_guard = crate::config::config()
+                .features
+                .repeat_guard
+                .then(super::turn_streaming_mpsc::prose_repeat::ProseRepeatGuard::default);
             while let Some(event) = stream.next().await {
                 let event = match event {
                     Ok(event) => event,
@@ -937,6 +859,15 @@ impl Agent {
                             io::stdout().flush()?;
                         }
                         text_content.push_str(&text);
+                        if let Some(sentence) = prose_guard.as_mut().and_then(|guard| guard.feed(&text)) {
+                            logging::warn("Repeated prose detected; stopping the turn");
+                            let notice = self.finish_prose_repeat_stop(&text_content, &sentence)?;
+                            if print_output {
+                                println!("\n{}", notice);
+                            }
+                            prose_repeat_stop = true;
+                            break;
+                        }
                     }
                     StreamEvent::TextSuffixReplace { old_text, new_text } => {
                         if provider_native_items.replace_text_suffix(&mut text_content, &old_text, &new_text)
@@ -1164,6 +1095,9 @@ impl Agent {
                         openai_reasoning_items.clear();
                         provider_native_items.clear();
                         openai_native_compaction = None;
+                        if let Some(guard) = prose_guard.as_mut() {
+                            guard.reset_all();
+                        }
                         saw_message_end = false;
                         stop_reason = None;
                     }
@@ -1348,6 +1282,10 @@ impl Agent {
                 }
             }
 
+            if prose_repeat_stop {
+                break;
+            }
+
             if retry_after_recovery {
                 logging::info("Retrying the turn after a provider recovery - resending the request");
                 continue;
@@ -1408,14 +1346,12 @@ impl Agent {
             }
 
             // Store usage for debug queries
-            self.last_usage = TokenUsage {
+            self.set_last_usage(TokenUsage {
                 input_tokens: usage_input.unwrap_or(0),
                 output_tokens: usage_output.unwrap_or(0),
                 cache_read_input_tokens: usage_cache_read,
                 cache_creation_input_tokens: usage_cache_creation,
-            };
-
-            let text_tool_recovery = self.recover_text_wrapped_tool_call(&mut text_content, &mut tool_calls);
+            });
 
             let visible_text_is_empty = text_content.trim().is_empty();
 
@@ -1497,10 +1433,11 @@ impl Agent {
 
             // If no tool calls, we're done
             if tool_calls.is_empty() {
-                // Unparseable tool-call markup in the text (issue #1702):
-                // surface it and ask the model to re-issue the call natively.
-                if let Some(notice) =
-                    self.maybe_nudge_unparsed_tool_markup(&text_tool_recovery, stop_reason.as_deref())?
+                // Ask for a native call before retrying a text-only tool attempt.
+                if saw_message_end
+                    && !tools.is_empty()
+                    && let Some(notice) =
+                        self.maybe_nudge_unparsed_tool_markup(&text_content, stop_reason.as_deref())?
                 {
                     if print_output {
                         println!("\n{}", notice);
@@ -1569,6 +1506,7 @@ impl Agent {
                 if print_output {
                     println!();
                 }
+                self.flush_deferred_a2ui_blocks()?;
                 self.turn_state.set_final_text(&text_content);
                 let outcome = if self.is_graceful_shutdown() {
                     TurnOutcome::Aborted
@@ -2011,6 +1949,7 @@ impl Agent {
                                         println!("{}", preview.lines().next().unwrap_or("(done)"));
                                     }
 
+                                    self.collect_a2ui_tool_output(&tc.id, &tc.name, &output, None);
                                     let blocks = tool_output_to_history_blocks(tc.id.clone(), output, &self.session.id);
                                     self.add_message_with_duration(
                                         Role::User,
@@ -2047,6 +1986,7 @@ impl Agent {
                                     }));
 
                                     let error_msg = format!("Error: {}", e);
+                                    self.note_a2ui_round_failure();
                                     if trace {
                                         eprintln!(
                                             "[trace] tool_exec_error name={} id={} {}",
@@ -2129,6 +2069,9 @@ impl Agent {
 
             if tool_results_dirty {
                 self.save_session()?;
+            }
+            if self.finalize_a2ui_round()? {
+                break;
             }
 
             // A `todo` write in this round is the planning handoff point, so the

@@ -116,6 +116,54 @@ A line that is not a JSON object, or that names no `type`, is ignored: a host ma
 - `prompt_result` is always written and always carries `sessionSettled: true`, so a host may end a turn on either `prompt_result` or `session_settled` without waiting for both.
 - Nothing in this mode asks the host for a decision. Approvals and questions are resolved on the daemon side, so `extension_ui_request` never blocks a turn.
 
+## Proposed host question capability
+
+Status: design for #547. The behavior documented above is the current RPC v1 contract. The new capability reuses the typed `AskRequested` and `ask_response` contract from the [Harness API](HARNESS_API.md) for structured questions and choices. Approval decisions stay on the existing approval channel.
+
+| Option | Consequence |
+| --- | --- |
+| Add dialogs to the legacy widget frame | Couples the question lifecycle to an existing compatibility frame and can surprise hosts. |
+| Add an opt-in RPC v1 capability | Preserves the version and existing frames while allowing a host to render a bounded question. Selected. |
+| Create a second UI adapter | Duplicates the turn and cancellation logic. |
+
+A host sends `negotiate_protocol` with `capabilities: ["ask_v1"]` before its first prompt. The adapter echoes `ask_v1` only if it can forward typed questions and answers to the daemon. Legacy negotiations without the field retain the existing response shape. Latch the agreed capability per stdio connection before attaching the first turn, and keep it fixed through the connection lifetime. Missing capability uses the current daemon behavior. Older adapters can omit the field and the host then uses RPC v1 as it does today.
+
+The adapter maps one live `AskRequested` to `ask_requested` with an opaque `askId` and the typed `questions` payload. It accepts `ask_response` with a normal command `id`, the same `askId` and the typed `answers`. Apply the existing `ask` shape and size limits, the RPC frame ceiling and one advertised pending question batch per connection. If a request cannot be represented within those limits, let the existing daemon fallback settle it. During a turn the adapter continues reading stdin, including `abort` and matching `ask_response`. Malformed or stale IDs return a correlated error and leave other pending state alone. Accept a reply only for the current connection's pending batch. When the daemon accepts an answer, report success and retire the batch. A repeated answer gets a settled error with no second effect.
+
+The daemon owns the existing answer deadline. The adapter never restarts it. A daemon timeout, host EOF, abort or turn settlement retires the pending ID. For a capable connection still open, emit `ask_closed` with the ID and reason so the host can dismiss its UI. Keep each turn's prompt acknowledgment, terminal frame ordering and settlement count. The host renders text and choices as data and the adapter runs no in-process host code. The ACP v1 and v2 adapters remain independent.
+
+### Implementation boundaries
+
+1. In `src/cli/rpc/`, extend negotiation and frame validation. Freeze legacy startup, negotiation and terminal frame fixtures before exposing a new frame.
+2. Translate the typed question and answer, enforce pending-ID scope, and tie retirement to daemon settlement. Keep prompt payload and timeout policy with the existing `ask` contract.
+3. Add subprocess host fixtures for negotiated, legacy and silent hosts. Run `cargo test --locked -p horon-agent --lib cli::` and include the focused cases in GitHub Actions.
+
+| Fixture action | Expected observation |
+| --- | --- |
+| Negotiate `ask_v1`, start one turn, then answer its question once | One question frame, one successful correlated answer and one `prompt_result` followed by one `session_settled`. |
+| Send stale and duplicate `ask_response` IDs | The stale answer does not affect the pending question and the duplicate has no second effect. |
+| Use a v1 host with no capability | The startup and turn frames match the existing fixture and no new question frame appears. |
+| Let the existing daemon deadline elapse without an answer | The daemon's existing fallback runs once. The host observes question closure and terminal frames exactly once. |
+
+Use a fixture provider, controlled daemon clock and captured JSONL. Drive the clock to just before and then exactly to the daemon deadline. Check that the question remains pending at the first point and settles at the second. No network or terminal UI is required for the RPC subprocess fixture.
+
+## Opt-in A2UI v1.0 surface capability (`a2ui_v1`)
+
+Stdio RPC hosts can opt into A2UI v1.0 rendering before their first prompt without affecting unnegotiated hosts (`src/cli/rpc/command.rs`, `src/cli/rpc/frame.rs`).
+
+| Frame / field | Direction | Purpose |
+| --- | --- | --- |
+| `negotiate_protocol` (`capabilities: ["a2ui_v1"]`, optional `a2ui`) | Host -> Agent | Latches `a2ui_v1` and optional renderer capabilities (`version`, `supportedCatalogIds`, `acceptsInlineCatalogs`) for the connection |
+| `a2ui_update` | Agent -> Host | Streams one validated `agent_to_renderer` envelope (`toolCallId`, `sequence`, `envelope`, optional `fallbackText`) |
+| `message_end` / `get_messages` (`type: "a2ui"` part) | Agent -> Host | Preserves assistant A2UI content parts (`envelopes`, optional `fallbackText`) alongside text blocks |
+| `a2ui_event` | Host -> Agent | Submits a validated `action`, `callAgentFunction`, or `error` `envelope` (and optional `dataModel`) back to the active session |
+
+- Connections that omit `a2ui_v1` never unlock the `a2ui` tool, never emit `a2ui_update`, and reject `a2ui_event` with an error response.
+
+### One-shot `horon run` flags
+
+`horon-agent run` accepts `--a2ui` and repeatable `--a2ui-catalog <uri>` (`src/cli/commands/a2ui_run.rs`). Plain `horon run --a2ui` renders readable `[A2UI surface: ...]` fallback cards to stdout, `--json` adds `type: "a2ui"` blocks to the JSON response, and `--ndjson` emits `type: "a2ui"` stream frames (`sequence`, `envelope`, `fallback_text`). Running `horon run` without `--a2ui` keeps the default tool set and prompt prefix byte-for-byte unchanged.
+
 ## Verification
 
 The adapter has an integration test that scripts the daemon over an in-process socket pair, so the real protocol path runs without a daemon or a model. It covers the startup handshake, version negotiation, an unknown command, non-JSON lines, `get_state`, one full prompt turn, `abort` while idle, an oversized frame, `set_todos` persistence, and the model catalog projection.

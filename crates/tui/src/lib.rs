@@ -9,32 +9,50 @@
 //! `ratatui` backend, so the tests draw into a `TestBackend` instead of a
 //! terminal. [`run`] is the only entry point that touches the real terminal.
 
+pub mod a2ui;
 pub mod app;
+mod artifact;
+mod clipboard;
 pub mod commands;
 pub mod context;
+mod editor;
 mod fuzzy;
+pub mod gallery;
+mod git_review;
 pub mod help;
 pub mod history;
 pub mod input;
 mod item_lines;
 pub mod keys;
+mod links;
 mod loop_io;
 mod markdown;
+pub mod notes;
 pub mod overlays;
+mod pane;
 pub mod paste;
+mod path_completion;
+mod progress;
 pub mod prompts;
+pub mod recording;
 pub mod report;
 pub mod scroll;
 pub mod sdk_bridge;
+mod session_pins;
 pub mod settings;
 pub mod statusline;
+mod suggestions;
 mod terminal;
 pub mod theme;
 mod title;
-mod todo_panel;
+pub mod todo_panel;
 mod tool_expand;
 pub mod tool_line;
 pub mod transcript;
+mod visual_blocks;
+mod voice;
+mod window;
+mod work_notes;
 mod wrap;
 
 #[cfg(test)]
@@ -54,12 +72,20 @@ mod tool_expand_tests;
 mod title_tests;
 
 #[cfg(test)]
+#[path = "progress_tests.rs"]
+mod progress_tests;
+
+#[cfg(test)]
 #[path = "turn_state_tests.rs"]
 mod turn_state_tests;
 
 #[cfg(test)]
 #[path = "prompt_queue_tests.rs"]
 mod prompt_queue_tests;
+
+#[cfg(test)]
+#[path = "todo_editor_tests.rs"]
+mod todo_editor_tests;
 
 #[cfg(test)]
 #[path = "input_tests.rs"]
@@ -78,6 +104,10 @@ mod scroll_tests;
 mod context_tests;
 
 #[cfg(test)]
+#[path = "recording_tests.rs"]
+mod recording_tests;
+
+#[cfg(test)]
 #[path = "report_tests.rs"]
 mod report_tests;
 
@@ -90,10 +120,28 @@ mod markdown_tests;
 mod help_tests;
 
 #[cfg(test)]
+#[path = "artifact_tests.rs"]
+mod artifact_tests;
+
+#[cfg(test)]
 #[path = "fuzzy_tests.rs"]
 mod fuzzy_tests;
 
-use std::time::Duration;
+#[cfg(test)]
+#[path = "path_completion_tests.rs"]
+mod path_completion_tests;
+
+#[cfg(test)]
+#[path = "git_review_tests.rs"]
+mod git_review_tests;
+
+#[cfg(test)]
+#[path = "voice_tests.rs"]
+mod voice_tests;
+
+#[cfg(test)]
+#[path = "voice/live_tests.rs"]
+mod live_tests;
 
 use ratatui::Terminal;
 use ratatui::backend::Backend;
@@ -103,70 +151,20 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
+use crate::pane::transcript_pane;
+use crate::progress::Channels;
 use crate::sdk_bridge::{Command, Runtime};
+use crate::terminal::show_failure;
+use crate::theme::changes::{self, ChangePalette};
 use crate::theme::{Theme, ThemeLoader};
 // The test modules reach this through `use super::*`; production code draws
 // through `item_lines`, which takes the glyph set from the app itself.
 #[cfg(test)]
 use crate::theme::Symbols;
+#[cfg(test)]
 use crate::transcript::Item;
 
-/// Program usage, printed by `--help` and after an argument error.
-pub const USAGE: &str = "\
-horon-tui - terminal client for the horon-agent harness
-
-Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
-                 [--config <file>]...
-
-Options:
-  --socket <path>  Harness API socket to connect to (default: the resolved
-                   harness socket for this user)
-  --session <id>   Attach to an existing session instead of creating one
-  --cwd <dir>      Working directory for a newly created session
-  --config <file>  Extra settings file, read after the global and project
-                   files and before the environment (repeatable)
-  -V, --version    Print the version and exit
-  -h, --help       Print this help and exit
-
-Keys:
-  Enter          send the typed message
-  Alt-Enter      start a new line (Ctrl-J does the same; most terminals
-                 send Shift-Enter as a plain Enter, which sends)
-  Tab            complete the slash command being typed
-  Esc            send the queued messages into the running turn, or
-                 interrupt it when nothing is queued
-  Ctrl-C         cancel a running turn, or leave when nothing is running
-  Ctrl-D         leave
-  Ctrl-U, Ctrl-K delete from the start or the end of the line to the cursor
-  Ctrl-W         delete the word before the cursor
-  Ctrl-R         search the drafts sent before this one
-  PgUp, PgDn     scroll the transcript one page
-  Shift-Up/Down  scroll the transcript one row
-  Ctrl-End       follow the end of the conversation again
-  Ctrl-O         show or hide the whole output of the newest cut tool call
-  Shift-Tab      step to the next reasoning effort
-  Alt-P          pick the model this session uses
-  Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
-  the keys in force.
-
-Commands:
-  /help          list the commands (built-in, harness, command files),
-                 the skills and the keys in force; /help <command>
-                 describes one of them
-  /clear         clear the transcript pane
-  /effort        set the reasoning effort, or pick one from the ladder
-  /exit          leave, the same as /quit
-  /keys          list the keys in force and what each does
-  /model [name]  pick a model from a list, or switch to the one named
-  /new           start a new session in this directory
-  /quit          leave
-  /resume [id]   replay a stored session, or pick one from the list
-  /settings      open the settings screen, generated from the registry
-  /skills        list the skills the harness reports, and put one in the
-                 draft
-  /switch [id]   move to another stored session, or pick one from the list
-  //text         send the literal message /text
-";
+pub use help::USAGE;
 
 /// Parsed command line.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -175,10 +173,32 @@ pub struct Args {
     pub socket: Option<std::path::PathBuf>,
     /// Existing session to attach to instead of creating one.
     pub session: Option<String>,
+    /// Objective and token ceiling for a new session.
+    pub goal: Option<String>,
+    pub goal_budget: Option<u64>,
+    /// Start the new session in read-only plan mode.
+    pub plan: bool,
     /// Working directory for a session this client creates.
     pub cwd: Option<std::path::PathBuf>,
+    /// Extra workspace directories for the attached session, in the order given.
+    pub add_dirs: Vec<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
     pub config: Vec<std::path::PathBuf>,
+    /// Gallery scene to preview instead of connecting, if the flag was given.
+    ///
+    /// `--gallery` alone resolves to [`gallery::FIRST`], so the field carries
+    /// the scene either way and `run` has one branch to take.
+    pub gallery: Option<String>,
+    /// Motion preset for this launch, over every settings file.
+    pub motion: Option<settings::MotionMode>,
+    /// Spinner interval for this launch, in milliseconds.
+    pub spinner_interval: Option<i64>,
+    /// Frame limit for this launch, in frames a second.
+    pub max_fps: Option<i64>,
+    /// Start with the model's reasoning hidden, whatever the setting says.
+    pub hide_thinking: bool,
+    /// Leave the terminal window title alone for this launch.
+    pub no_title: bool,
     /// Print the version and exit.
     pub version: bool,
     /// Print the usage and exit.
@@ -194,9 +214,24 @@ impl Args {
         let mut parsed = Self::default();
         let mut arguments = args.into_iter();
         while let Some(argument) = arguments.next() {
+            // The motion flags share one setting family and take both spellings,
+            // so they are read and converted together instead of one arm per
+            // flag per spelling.
+            if settings::motion::LaunchFlag::read(
+                &argument,
+                &mut arguments,
+                &mut parsed.motion,
+                &mut parsed.spinner_interval,
+                &mut parsed.max_fps,
+            )? {
+                continue;
+            }
             match argument.as_str() {
                 "--version" | "-V" => parsed.version = true,
                 "--help" | "-h" => parsed.help = true,
+                "--gallery" => parsed.gallery = Some(gallery::FIRST.to_string()),
+                "--hide-thinking" => parsed.hide_thinking = true,
+                "--no-title" => parsed.no_title = true,
                 "--socket" => match arguments.next() {
                     Some(path) => parsed.socket = Some(path.into()),
                     None => return Err("--socket needs a path".to_string()),
@@ -205,9 +240,16 @@ impl Args {
                     Some(session) if !session.is_empty() => parsed.session = Some(session),
                     _ => return Err("--session needs a session id".to_string()),
                 },
+                "--goal" => parsed.goal = Some(parse_goal(arguments.next().as_deref())?),
+                "--plan" => parsed.plan = true,
+                "--goal-budget" => parsed.goal_budget = Some(parse_goal_budget(arguments.next().as_deref())?),
                 "--cwd" => match arguments.next() {
                     Some(path) => parsed.cwd = Some(path.into()),
                     None => return Err("--cwd needs a directory".to_string()),
+                },
+                "--add-dir" => match arguments.next() {
+                    Some(path) if !path.is_empty() => parsed.add_dirs.push(path.into()),
+                    _ => return Err("--add-dir needs a directory".to_string()),
                 },
                 "--config" => match arguments.next() {
                     Some(path) if !path.is_empty() => parsed.config.push(path.into()),
@@ -217,13 +259,34 @@ impl Args {
                     Some(("--socket" | "--session" | "--cwd" | "--config", "")) => {
                         return Err(format!("{} needs a value", other.trim_end_matches('=')));
                     }
+                    Some(("--gallery", "")) => {
+                        return Err("--gallery needs a scene name after '='".to_string());
+                    }
+                    Some(("--gallery", scene)) => parsed.gallery = Some(scene.to_string()),
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
+                    Some(("--goal", title)) => parsed.goal = Some(parse_goal(Some(title))?),
+                    Some(("--goal-budget", budget)) => {
+                        parsed.goal_budget = Some(parse_goal_budget(Some(budget))?);
+                    }
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
+                    Some(("--add-dir", "")) => {
+                        return Err("--add-dir needs a value".to_string());
+                    }
+                    Some(("--add-dir", path)) => parsed.add_dirs.push(path.into()),
                     Some(("--config", path)) => parsed.config.push(path.into()),
                     _ => return Err(format!("unknown argument: {other}")),
                 },
             }
+        }
+        if parsed.goal.is_some() != parsed.goal_budget.is_some() {
+            return Err("--goal and --goal-budget must be used together".into());
+        }
+        if parsed.plan && (parsed.session.is_some() || parsed.gallery.is_some()) {
+            return Err("--plan can only be used when starting a new session".into());
+        }
+        if parsed.goal.is_some() && (parsed.session.is_some() || parsed.gallery.is_some()) {
+            return Err("--goal can only be used when starting a new session".into());
         }
         Ok(parsed)
     }
@@ -246,6 +309,25 @@ pub fn connect_options(socket: Option<std::path::PathBuf>) -> horon_agent_sdk::C
         supports_ask_requests: true,
         ..horon_agent_sdk::ConnectOptions::default()
     }
+}
+
+fn parse_goal(value: Option<&str>) -> Result<String, &'static str> {
+    match value {
+        Some(title) if !title.trim().is_empty() => Ok(title.to_string()),
+        _ => Err("--goal needs a nonempty objective"),
+    }
+}
+
+fn parse_goal_budget(value: Option<&str>) -> Result<u64, &'static str> {
+    let message = "--goal-budget needs a positive token count";
+    let Some(raw) = value else {
+        return Err(message);
+    };
+    let budget = raw.parse::<u64>().map_err(|_| message)?;
+    if budget == 0 {
+        return Err(message);
+    }
+    Ok(budget)
 }
 
 /// Run the client and return the process exit code.
@@ -278,13 +360,30 @@ where
         print!("{USAGE}");
         return 0;
     }
+    // The gallery is a viewer over built-in fixtures, so it runs before
+    // settings are read and before a socket is opened: a frame must not depend
+    // on a file on the machine, and a broken settings file is not a reason to
+    // hide the renderer.
+    if let Some(scene) = args.gallery.as_deref() {
+        return if args.no_title {
+            gallery::run_with_title(scene, false)
+        } else {
+            gallery::run(scene)
+        };
+    }
     // Settings load before the connection so a broken settings file is
     // reported even when the daemon is unreachable.
     let (sources, note) = settings::Sources::from_environment(args.config.clone());
     if let Some(note) = note {
         eprintln!("horon-tui: {note}");
     }
-    let mut reloader = settings::Reloader::new(sources);
+    // A launch flag outranks every file, so it rides with the reloader and is
+    // reapplied after each resolve instead of being written anywhere.
+    let mut overrides = settings::motion::launch_overrides(args.motion, args.spinner_interval, args.max_fps);
+    if args.no_title {
+        overrides.push(("title.enabled", settings::SettingValue::Bool(false)));
+    }
+    let mut reloader = settings::Reloader::with_overrides(sources, std::time::Duration::from_secs(1), overrides);
     for warning in reloader.warnings() {
         eprintln!("horon-tui: settings: {warning}");
     }
@@ -293,12 +392,47 @@ where
         eprintln!("horon-tui: keys: {warning}");
     }
     let working_dir = args.cwd.as_ref().map(|dir| dir.display().to_string());
+    let launch_dir = path_completion::launch_directory(args.cwd);
     match sdk_bridge::connect(
         connect_options(args.socket),
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys),
+        Ok(runtime) => {
+            // The session's extra roots are sent before the goal so a goal's
+            // first turn already sees them in its session context.
+            for directory in &args.add_dirs {
+                if let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Dirs,
+                    arguments: vec!["add".to_string(), directory.display().to_string()],
+                }) {
+                    show_failure(&format!(
+                        "could not add workspace directory {}: {error}",
+                        directory.display()
+                    ));
+                    return 1;
+                }
+            }
+            if let Some((title, budget)) = args.goal.zip(args.goal_budget)
+                && let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Goal,
+                    arguments: vec![budget.to_string(), title],
+                })
+            {
+                show_failure(&format!("could not queue the startup goal: {error}"));
+                return 1;
+            }
+            if args.plan
+                && let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Plan,
+                    arguments: vec!["on".into()],
+                })
+            {
+                show_failure(&format!("could not queue plan mode: {error}"));
+                return 1;
+            }
+            run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking)
+        }
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -309,43 +443,34 @@ where
     }
 }
 
-/// Draw the connection-failure banner once, when there is a terminal to draw it
-/// on, then restore it.
-fn show_failure(message: &str) {
-    eprintln!("horon-tui: {message}");
-    let mut app = App::failure(message);
-    match ratatui::try_init() {
-        Ok(mut terminal) => {
-            let failure = draw(&mut terminal, &mut app).err();
-            paste::disable();
-            ratatui::restore();
-            if let Some(message) = failure {
-                eprintln!("horon-tui: {message}");
-            }
-        }
-        Err(error) => {
-            paste::disable();
-            ratatui::restore();
-            eprintln!("horon-tui: cannot open a terminal: {error}");
-        }
-    }
-}
-
-/// The name the window carries for the app's state.
-///
-/// The session's own title wins and the working directory names a session the
-/// daemon never titled, so a stack of terminals says which one belongs to which
-/// session and a fresh window still says where it is.
-fn window_label(app: &App) -> String {
-    title::label(app.session_title.as_deref(), app.cwd.as_deref())
-}
-
 /// Drive the real terminal until the user leaves.
-fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &mut keys::Loader) -> i32 {
+///
+/// `launch_dir` is the directory the session was asked for, used only when the
+/// daemon's answer names none, so `--cwd` and the session keep one workspace.
+fn run_interactive(
+    runtime: Runtime,
+    reloader: &mut settings::Reloader,
+    keys: &mut keys::Loader,
+    launch_dir: Option<std::path::PathBuf>,
+    hide_thinking: bool,
+) -> i32 {
     let mut themes = ThemeLoader::new();
+    let workspace = runtime.workspace.clone();
+    // The endpoint names the list of pins this client reads and writes: two
+    // daemons can issue the same session id, so the file keeps them apart.
+    let pin_scope = runtime.scope.clone();
+    // Read before the events travel with the app: the flag decides whether a
+    // keystroke may read this machine's disk for the session.
+    let local = runtime.local;
     let mut app = App::new(runtime.description.clone(), runtime.events);
-    // The stderr copy of these warnings is wiped by the alternate screen, so
-    // the transcript carries them for the person using the interface.
+    // Notes live in a file this client owns, read here so a replay's notes are
+    // on screen with the conversation they describe and never on a path a test
+    // or an embedded `App` writes to.
+    app.notes = notes::NoteStore::owned();
+    app.load_notes();
+    app.pins.store = session_pins::PinStore::owned(pin_scope);
+    app.load_pins();
+    // The alternate screen hides stderr, so also show warnings in the transcript.
     for warning in reloader.warnings() {
         app.warn(format!("settings: {warning}"));
     }
@@ -354,10 +479,39 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     }
     app.bindings = keys.bindings().clone();
     apply_settings(&mut app, reloader.settings(), &mut themes);
-    match std::env::current_dir() {
-        Ok(directory) => app.cwd = Some(directory.display().to_string()),
-        Err(error) => app.warn(format!("cannot read the working directory: {error}")),
+    // The flag is a session choice, applied after the settings because it
+    // outranks them: `apply_settings` hands the transcript the setting, and
+    // this then overrides what that setting resolved to.
+    if hide_thinking {
+        app.transcript.set_show_reasoning(false);
+        // The notice names the key in force, not the shipped default: a
+        // rebound `app.toggle_thinking` has to be the key it tells the user to
+        // press.
+        let shows = match app.bindings.first_key(keys::ids::APP_TOGGLE_THINKING) {
+            Some(key) => format!("{key} shows it for this session"),
+            None => "no key is bound to show it; /help lists the keys in force".to_string(),
+        };
+        app.transcript
+            .push_notice(format!("reasoning hidden by --hide-thinking; {shows}"));
     }
+    if let Some(profile) = std::env::var_os("HORON_PROFILE").filter(|name| !name.is_empty()) {
+        app.transcript
+            .push_notice(format!("profile: {}", profile.to_string_lossy()));
+    }
+    // The session's own directory names the workspace: `--cwd` is what the
+    // create was asked for, and a resumed session reports the directory it
+    // already has. A daemon that names none still gets the launch directory on
+    // screen, but path completion stays off, because where the session works
+    // is then only a guess.
+    app.workspace_known = workspace.is_some();
+    app.cwd = workspace.or_else(|| launch_dir.map(|dir| dir.display().to_string()));
+    if app.cwd.is_none() {
+        match std::env::current_dir() {
+            Ok(directory) => app.cwd = Some(directory.display().to_string()),
+            Err(error) => app.warn(format!("cannot read the working directory: {error}")),
+        }
+    }
+    app.workspace_is_local = local;
     app.reload_commands();
     // `try_init` installs the restoring panic hook itself, so a panic inside
     // the alternate screen still leaves the terminal usable.
@@ -375,34 +529,56 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     // the next program in this terminal.
     paste::guard_panics();
     scroll::guard_panics();
-    title::guard_panics();
+    progress::guard_panics();
     // A terminal that refuses the mode is not a reason to stop: a paste then
     // arrives as ordinary keystrokes, which the editor already handles.
     if let Err(error) = paste::enable() {
         app.warn(format!("paste: {error}"));
     }
-    let mut title = title::WindowTitle::stdout();
-    if let Err(error) = title.start(&window_label(&app)) {
+    let title_enabled = reloader.settings().boolean("title.enabled").unwrap_or(true);
+    let mut title = title::WindowTitle::stdout(title_enabled);
+    // Decided once: the terminal's answer about its own title handling does not
+    // change while the client runs, and a terminal that has none is left as it
+    // was before `title.state` existed.
+    let state_supported = title.state_supported();
+    if state_supported {
+        title::guard_panics();
+    }
+    if title.enabled()
+        && let Err(error) = title.start(&window::label(&app, state_supported))
+    {
         app.warn(format!("title: {error}"));
     }
+    // Writes nothing until a different state reaches the terminal.
+    let mut signals = progress::Signals::stdout();
     // Installed once the modes it restores are on: a signal before this point
     // had nothing to undo. A refusal is reported and the client keeps running.
-    if let Err(error) = terminal::guard_signals() {
+    if let Err(error) = terminal::guard_signals(state_supported) {
         app.warn(format!("signals: {error}"));
     }
     let (code, failure) = event_loop(
         &mut terminal,
         &mut app,
-        &mut title,
+        Channels {
+            title: &mut title,
+            signals: &mut signals,
+        },
         &runtime.commands,
         reloader,
         &mut themes,
         keys,
     );
+    // The tab indicator and the status record come down before the alternate screen, from the
+    // writer that knows what it put on the wire; the panic and signal paths go through
+    // `terminal::restore`, which has no writer left.
+    let signals_error = signals.clear().err();
     // The same sequence the signal path runs: see `terminal::restore`.
-    terminal::restore();
+    terminal::restore(state_supported);
     if let Some(message) = failure {
         eprintln!("horon-tui: {message}");
+    }
+    if let Some(error) = signals_error {
+        eprintln!("horon-tui: terminal signals: {error}");
     }
     code
 }
@@ -421,8 +597,12 @@ pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, theme
         app.warn(format!("statusline: {warning}"));
     }
     app.refresh_settings(settings);
-    app.theme = themes.theme().clone();
+    // Apply the palette to a copy so reloading can restore the theme exactly.
+    app.theme = changes::apply(themes.theme(), ChangePalette::from_settings(settings));
     app.symbols = *themes.symbols();
+    let mut status_symbols = app.symbols;
+    statusline::apply_appearance(settings, &mut app.theme, &mut status_symbols);
+    app.status_separator = Some(status_symbols.separator);
 }
 
 /// Write the change the settings screen confirmed, then re-apply it.
@@ -467,7 +647,7 @@ pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloa
 fn event_loop<B>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-    title: &mut title::WindowTitle,
+    channels: Channels<'_>,
     commands: &std::sync::mpsc::Sender<Command>,
     reloader: &mut settings::Reloader,
     themes: &mut ThemeLoader,
@@ -478,18 +658,30 @@ where
     B::Error: std::fmt::Display,
 {
     let mut failure = None;
-    // Whether the terminal is currently reporting the mouse, which follows the
-    // `transcript.mouse_scroll` setting rather than being decided once.
     let mut mouse_captured = false;
-    // The screen is redrawn when something on it changed, not twenty times a
-    // second: a draw walks the visible conversation, and an idle client has
-    // nothing new to show. The frame below is the first one.
-    let mut redraw = true;
-    // The minute the status line's clock last showed, so the frame that turns
-    // it over is drawn and no other idle frame is.
+    let mut frames = loop_io::Frames::new(app.motion, std::time::Instant::now());
+    // Redraw the idle clock only when its minute changes.
     let mut clock = statusline::local_minute();
+    // Whether the terminal keeps a title worth adding the state to; asked once,
+    // because the answer is the terminal's and does not change while it runs.
+    let state_supported = channels.title.state_supported();
+    // The state the window title already carries: `title.start` wrote it, and
+    // the first frame must not write it again.
+    let mut shown_state = window::state(app, state_supported);
     loop {
-        let mut changed = loop_io::drain_events(app);
+        let mut changed = match loop_io::drain_events(app) {
+            loop_io::Redraw::Immediate => true,
+            loop_io::Redraw::None => false,
+            loop_io::Redraw::Stream => {
+                frames.request_stream();
+                false
+            }
+        };
+        // A local command runs on a worker thread; its result joins the same
+        // redraw decision as an event from the bridge.
+        changed |= crate::commands::shell::drain(app);
+        changed |= app.tick_voice();
+        changed |= app.tick_live_voice();
         if !app.running {
             break;
         }
@@ -499,19 +691,30 @@ where
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
-        // The session and the working directory can change while the client
-        // runs; the window is renamed only when the label on it is not the one
-        // the app now names.
-        if changed {
-            let label = window_label(app);
-            if let Err(error) = title.show(&label) {
+        // Titles can change on either a daemon event or local input.
+        // A cycle pressed before the model catalog was known asked for it
+        // instead; that press walks now that the answer is in.
+        if let Some(action) = app.take_model_cycle() {
+            loop_io::dispatch(app, commands, action);
+            changed = true;
+        }
+        // Only changed signals reach the terminal.
+        let signal = app.terminal_signal();
+        if let Err(error) = channels.signals.sync(signal, app.terminal_signals) {
+            app.warn(format!("terminal signals: {error}"));
+            changed = true;
+        }
+        // Titles can change on either a daemon event or local input.
+        let state = window::state(app, state_supported);
+        if channels.title.enabled() && (changed || state != shown_state) {
+            shown_state = state;
+            let label = window::label(app, state_supported);
+            if let Err(error) = channels.title.show(&label) {
                 app.warn(format!("title: {error}"));
                 changed = true;
             }
         }
-        // The reloader throttles itself to one file check per second; the
-        // theme loader, the key bindings and the command directories share
-        // that cadence for their own files.
+        // Reloaders check for changes once per second.
         if let Some(reload) = reloader.tick() {
             for warning in reload.warnings {
                 app.warn(format!("settings: {warning}"));
@@ -534,27 +737,31 @@ where
             app.bindings = reload.bindings;
             changed = true;
         }
-        // Command directories are only stat-ed here; a file is re-read when its
-        // own stamp moved.
+        // Reread command files only when their stamps change.
         changed |= app.tick_commands();
+        changed |= app.tick_replay();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
             changed = true;
         }
+        // The one place a copy reaches standard output: the app decided what it
+        // carries, and the terminal is asked here, after the frame is measured and before it is drawn.
+        changed |= loop_io::flush_copy(app, &mut std::io::stdout().lock(), clipboard::environment());
         let minute = statusline::local_minute();
         if minute != clock {
             clock = minute;
             changed = true;
         }
-        // A turn in flight keeps drawing even while its events are quiet: its
-        // rows are where the elapsed time and the streaming text land.
-        if redraw || changed || app.pending_turn {
-            if let Err(message) = draw(terminal, app) {
-                failure = Some(message);
-                break;
-            }
-            redraw = false;
+        // The frame this pass owes: one for a screen that changed, one the
+        // spinner scheduler says is due, and the first after the loop starts.
+        // An idle screen reaches none of those and is left untouched.
+        if let Err(message) = loop_io::draw_due(terminal, app, &mut frames, changed) {
+            failure = Some(message);
+            break;
         }
-        match crossterm::event::poll(Duration::from_millis(50)) {
+        // The header has been drawn, so the command may start: after the frame,
+        // not inside the key handler, so the target shows before any output.
+        crate::commands::shell::start_pending();
+        match crossterm::event::poll(loop_io::POLL) {
             Ok(true) => {}
             Ok(false) => continue,
             Err(error) => {
@@ -564,19 +771,32 @@ where
                 break;
             }
         }
-        // Every input event can change what is on screen: a key edits the
-        // draft or moves the selection, a paste inserts, the wheel scrolls and a
-        // resize remakes the whole layout.
-        redraw = true;
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
-                // Windows always reports a key's release as its own event; acting
-                // on both would send every message twice.
+                // Windows key releases must not submit another message.
                 if key.is_release() {
                     continue;
                 }
                 if let Some(action) = app.on_key(key) {
-                    loop_io::dispatch(app, commands, action);
+                    // Editor actions borrow the terminal owned by this loop.
+                    let error = match action {
+                        crate::app::Action::EditDraft => {
+                            loop_io::hand_over_draft(terminal, app, channels.title, &mut mouse_captured)
+                        }
+                        crate::app::Action::OpenArtifact(path) => {
+                            loop_io::hand_over_artifact(terminal, app, channels.title, &mut mouse_captured, &path)
+                        }
+                        action => {
+                            loop_io::dispatch(app, commands, action);
+                            None
+                        }
+                    };
+                    if let Some(message) = error {
+                        failure = Some(message);
+                        app.running = false;
+                        app.exit_code = 1;
+                        break;
+                    }
                 }
                 flush_setting_change(app, reloader, themes);
             }
@@ -586,8 +806,9 @@ where
                 app.on_paste(&text);
                 flush_setting_change(app, reloader, themes);
             }
-            // Only the wheel is acted on, and only while the setting holds the
-            // capture that makes the terminal report it at all.
+            // The wheel and a click in the draft are acted on, and only while
+            // the setting holds the capture that makes the terminal report
+            // them at all.
             Ok(crossterm::event::Event::Mouse(mouse)) => app.on_mouse(mouse),
             Ok(_) => {}
             Err(error) => {
@@ -596,20 +817,27 @@ where
                 app.exit_code = 1;
             }
         }
+        // Asked for after the event was acted on, so one keystroke costs one
+        // frame rather than one per pass.
+        frames.request();
     }
     (if failure.is_some() { 1 } else { app.exit_code }, failure)
 }
 
 /// Render one frame.
-pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), String>
+///
+/// A pending repaint request is answered first: `clear` erases the screen and
+/// resets the frame Ratatui keeps, so the draw below writes every cell instead
+/// of only the rows that differ. That is what recovers a screen something else
+/// has overwritten, and it is the whole of what the repaint key does.
+pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), B::Error>
 where
     B: Backend,
-    B::Error: std::fmt::Display,
 {
-    terminal
-        .draw(|frame| render(frame, app))
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    if app.take_repaint_request() {
+        terminal.clear()?;
+    }
+    terminal.draw(|frame| render(frame, app)).map(|_| ())
 }
 
 /// Rows the conversation keeps when a tall draft asks for more.
@@ -619,9 +847,10 @@ const MIN_TRANSCRIPT_ROWS: u16 = 3;
 const MAX_INPUT_ROWS: u16 = 8;
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
-    // The popup is read from the draft on screen, before anything borrows the
-    // app to draw.
+    // The popup and the local suggestion are read from the draft on screen,
+    // before anything borrows the app to draw.
     app.sync_slash();
+    app.sync_suggestions();
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
@@ -649,7 +878,13 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // The popup lists the same commands the hint names, with their
     // descriptions, so the hint is only the fallback for a popup `esc` closed.
     let popup = app.slash.is_open().then(|| app.slash.len());
-    let hint = if popup.is_some() { None } else { app.completion_hint() };
+    let hint = if popup.is_some() {
+        None
+    } else {
+        app.live_voice_hint()
+            .or_else(|| app.voice_hint())
+            .or_else(|| app.completion_hint())
+    };
     // The input pane grows with the draft, but never past a cap and never at
     // the transcript's expense: three rows of conversation stay readable on a
     // short terminal, and a taller draft scrolls inside its own pane.
@@ -777,21 +1012,47 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     }
 
     let input_area = areas[index];
+    // The mouse click is read against the same cells the frame used, so the
+    // pane's position and the character each row starts at are recorded once
+    // the layout is final. An edit drops them; the next frame records them
+    // again.
+    app.input.note_view(
+        crate::input::Placement {
+            x: input_area.x,
+            y: input_area.y,
+            lead: marker_width.saturating_add(1),
+        },
+        &view,
+    );
     // One row per visible line of the draft. Only the first carries the prompt
     // marker; the rest are padded to the same column so the text lines up under
     // itself instead of under the marker.
     let marker = format!("{} ", symbols.prompt_marker);
     let padding = " ".repeat(usize::from(marker_width) + 1);
-    let rows: Vec<Line<'static>> = view
+    // The ghost suffix is drawn after the caret on the row the caret is on.
+    // The offer was checked against the exact draft before this frame, so what
+    // is drawn here is a suffix of the text already on screen.
+    let ghost = app.ghost_suffix();
+    let rows: Vec<Line<'_>> = view
         .rows
         .iter()
         .enumerate()
         .map(|(row, text)| {
-            let lead = if row == 0 { marker.clone() } else { padding.clone() };
-            Line::from(vec![
+            let lead = if row == 0 { marker.as_str() } else { padding.as_str() };
+            let mut spans = vec![
                 Span::styled(lead, Style::default().fg(theme.core.accent)),
-                Span::styled(text.clone(), Style::default().fg(theme.prompt.prompt_text)),
-            ])
+                Span::styled(text.as_str(), Style::default().fg(theme.prompt.prompt_text)),
+            ];
+            if row == view.cursor_row
+                && let Some(ghost) = ghost
+            {
+                let room = text_width.saturating_sub(crate::input::text_cells(text));
+                let tail = crate::input::clip_cells_str(ghost, room);
+                if !tail.is_empty() {
+                    spans.push(Span::styled(tail, Style::default().fg(theme.core.muted)));
+                }
+            }
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(Paragraph::new(rows), input_area);
@@ -801,6 +1062,14 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(theme.core.muted)))),
             areas[index],
         );
+    }
+    // The side question covers the conversation rather than the input, so
+    // closing it reveals the transcript unchanged. It sits above the settings
+    // screen and the picker because it is opened from the draft, where neither
+    // can be open, and every key it takes is one they would not see.
+    if let Some(side) = app.side.as_mut() {
+        overlays::side::draw(frame, transcript_area, side, theme, symbols);
+        return;
     }
     // The settings screen covers the conversation rather than the input, so
     // closing it reveals the transcript unchanged and the message being typed
@@ -836,294 +1105,24 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 }
 
 /// The bottom line: the segments the status-line layout names, joined by the
-/// theme's separator with the right-hand group aligned to the edge.
+/// separator in force, on the theme's background unless `statusline.background`
+/// leaves the terminal's own showing.
 fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
     let mut data = app.status_data();
     data.now = Some(statusline::local_now());
-    let line = statusline::render(&data, &app.statusline, &app.theme, app.symbols, width);
+    let mut symbols = app.symbols;
+    symbols.separator = app.status_separator.unwrap_or(symbols.separator);
+    let line = statusline::render(&data, &app.statusline, &app.theme, symbols, width);
     Paragraph::new(line).style(Style::default().bg(app.theme.status.status_bg))
-}
-
-/// The transcript pane: the rows on screen, and the follow-bottom indicator.
-///
-/// Lines are wrapped here rather than by the widget: a logical line that wraps
-/// over the pane width occupies more than one row, so trimming logical lines
-/// first would push the newest rows off the bottom of the pane.
-///
-/// Items are walked from the newest one so the work is bounded by the pane: a
-/// turn in flight redraws as its text arrives, and wrapping the whole
-/// conversation on every one of those frames would cost more as the session
-/// grows.
-///
-/// A message that is still streaming is drawn first as the newest entry, so
-/// text appears while it arrives instead of all at once when the turn ends.
-/// It is not also in `items`, and `finish_stream` moves it there exactly once.
-///
-/// A view held above the end is a different walk: the content is measured once,
-/// the rows below it are skipped by whole blocks, and only the block holding the
-/// bottom edge of the view is wrapped again. That is what keeps a frame's cost at
-/// the visible rows plus the scroll offset rather than the whole conversation.
-fn transcript_pane(app: &mut App, width: u16, height: u16) -> Pane {
-    // Noticed before anything is drawn: a delta that lands between two frames is
-    // what the indicator calls new output, whether or not it added a row.
-    let mark = scroll::Mark::new(
-        app.transcript.items().len(),
-        app.transcript.open_text().map_or(0, str::len),
-        app.transcript.open_reasoning().map_or(0, str::len),
-    );
-    app.scroll.observe(mark);
-    let view = usize::from(height.max(1));
-    // The indicator spends the pane's bottom row while it is drawn, so the
-    // content is measured against the rows it may actually fill.
-    let held_before = app.scroll.offset() > 0;
-    let measure_rows = if held_before {
-        view.saturating_sub(1).max(1)
-    } else {
-        view
-    };
-    if held_before {
-        measure_transcript(app, width, measure_rows);
-    } else {
-        // A frame at the end measures nothing, so it must say so: the next held
-        // frame takes its height baseline fresh rather than trusting the last
-        // scroll's.
-        app.scroll.following_frame();
-    }
-    let offset = app.scroll.offset();
-    let indicator = offset > 0 && view > 1;
-    let capacity = if indicator { view - 1 } else { view };
-    let rows = if offset > 0 {
-        held_rows(app, width, offset, capacity)
-    } else {
-        follow_rows(app, width, capacity)
-    };
-    let indicator = if offset > 0 && view > 1 {
-        Some(indicator_line(app, offset))
-    } else {
-        None
-    };
-    Pane { rows, indicator }
-}
-
-/// The rows the pane shows, and the line that says it is not at the end.
-struct Pane {
-    rows: Vec<Line<'static>>,
-    indicator: Option<Line<'static>>,
-}
-
-/// One block of the conversation, in the order the pane draws them.
-enum Block<'a> {
-    Item(&'a Item),
-    Reasoning(&'a str),
-    Answer(&'a str),
-}
-
-/// The conversation as the pane draws it, oldest first.
-///
-/// Reasoning being assembled sits above the answer it precedes, the same order
-/// the model produced it in, and both sit below everything already committed.
-fn blocks(app: &App) -> Vec<Block<'_>> {
-    let mut blocks: Vec<Block<'_>> = app.transcript.items().iter().map(Block::Item).collect();
-    if let Some(text) = app.transcript.open_reasoning() {
-        blocks.push(Block::Reasoning(text));
-    }
-    if let Some(text) = app.transcript.open_text() {
-        blocks.push(Block::Answer(text));
-    }
-    blocks
-}
-
-/// One block's lines, ready to be asked for the rows the pane shows.
-///
-/// The wrapped height is what the scrollback measures, so a block means the same
-/// thing here and in `measure_transcript`. `first` is the oldest block, which has
-/// nothing above it to be separated from.
-///
-/// A block is not wrapped here: the pane asks its source for the rows it draws,
-/// and a tool call drawing its whole output answers with only the rows near the
-/// end instead of a row for every line it kept.
-fn block_source<'a>(
-    block: &Block<'_>,
-    look: &item_lines::Look<'_>,
-    expand: Option<&tool_expand::Frame<'a>>,
-    first: bool,
-) -> wrap::Source<'a> {
-    let mut source = match block {
-        Block::Item(item) => item_lines::source(item, look, expand),
-        Block::Reasoning(text) => wrap::Source::built(item_lines::reasoning(text, look)),
-        Block::Answer(text) => wrap::Source::built(item_lines::answer(text, look)),
-    };
-    // A turn starts one blank row below the previous one, so a new message is
-    // not read as more of the answer above it. It is a line of the block, so a
-    // window that starts at the block's first row still counts it.
-    if !first && matches!(block, Block::Item(Item::User(_))) {
-        source.prepend(wrap::Indented::plain(Line::default()));
-    }
-    source
-}
-
-/// Count the conversation's rows so a held view knows how far it may move.
-///
-/// The measurement is kept between frames: only items the last one never saw are
-/// wrapped, so a view held during a long turn does not re-wrap the conversation.
-/// The block still streaming is counted every frame, because it is the one block
-/// whose height changes while the view is held.
-fn measure_transcript(app: &mut App, width: u16, view: usize) {
-    let items = app.transcript.items().len();
-    let App {
-        scroll,
-        transcript,
-        theme,
-        symbols,
-        settings,
-        bindings,
-        ..
-    } = app;
-    let look = item_lines::Look {
-        theme,
-        symbols: *symbols,
-        width,
-        markdown: item_lines::markdown_enabled(settings),
-    };
-    let open = [
-        open_rows(transcript.open_reasoning(), &look, true),
-        open_rows(transcript.open_text(), &look, false),
-    ];
-    // An expanded call is one row taller per row of its whole output, so the
-    // height measured here has to know about the expansion: a view held above
-    // the end counts this height, and a stale one would leave the offset short.
-    let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
-    scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
-        // Counted, not built: the rows of a block that stays off screen are not
-        // made to measure it.
-        Some(item) => block_source(&Block::Item(item), &look, Some(&expand), index == 0).height(width),
-        None => 0,
-    });
-}
-
-/// Wrapped rows of one open buffer, as the pane would draw it.
-fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool) -> usize {
-    match text {
-        Some(text) if reasoning => wrap::Source::built(item_lines::reasoning(text, look)).height(look.width),
-        Some(text) => wrap::Source::built(item_lines::answer(text, look)).height(look.width),
-        None => 0,
-    }
-}
-
-/// The newest rows, following the end of the conversation.
-fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
-    let look = item_lines::Look::new(app, width);
-    let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    let blocks = blocks(app);
-    for (index, block) in blocks.iter().enumerate().rev() {
-        if rows.len() >= capacity {
-            break;
-        }
-        // Only the rows this block contributes to the pane are built, and they
-        // are built from the end: a block taller than the pane costs the pane's
-        // rows, not its own.
-        let source = block_source(block, &look, Some(&expand), index == 0);
-        let wanted = capacity - rows.len();
-        let window = source.rows_from_end(width, wrap::FromEnd::new(0, wanted));
-        rows.extend(window.into_iter().rev());
-    }
-    rows.reverse();
-    placeholder(app, rows, width)
-}
-
-/// The rows a view held `offset` rows above the end shows.
-///
-/// Blocks below the view are skipped by their measured height, so the rows the
-/// user scrolled past are not wrapped again. Only the block that holds the bottom
-/// edge of the view is wrapped, and only for the rows above that edge.
-fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<'static>> {
-    let look = item_lines::Look::new(app, width);
-    let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
-    let blocks = blocks(app);
-    let measured = block_heights(app);
-    // A measurement taken before the block list changed says nothing about this
-    // one, so it is dropped rather than read against the wrong block.
-    let heights: &[usize] = if measured.len() == blocks.len() { &measured } else { &[] };
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    let mut below = offset;
-    for (index, block) in blocks.iter().enumerate().rev() {
-        match heights.get(index) {
-            // Wholly below the view: its height is known, so it is skipped
-            // without wrapping a single line of it.
-            Some(&height) if below >= height && height > 0 => {
-                below -= height;
-                continue;
-            }
-            _ => {}
-        }
-        if rows.len() >= capacity {
-            break;
-        }
-        let source = block_source(block, &look, Some(&expand), index == 0);
-        let wanted = capacity - rows.len();
-        // The rows below the view's bottom edge are counted and dropped; what
-        // is built is the window above them that the pane fills with.
-        let window = source.rows_from_end(width, wrap::FromEnd::new(below, wanted));
-        rows.extend(window.into_iter().rev());
-        below = 0;
-    }
-    rows.reverse();
-    rows
-}
-
-/// The measured height of every block, in the order the pane draws them.
-///
-/// The committed items come from the scrollback's tally; the two open buffers
-/// are blocks only while they are being streamed, so their slots are added only
-/// then, and the list stays aligned with [`blocks`].
-fn block_heights(app: &App) -> Vec<usize> {
-    let mut heights = match app.scroll.heights() {
-        Some(items) => items.to_vec(),
-        None => Vec::new(),
-    };
-    let open = app.scroll.open_heights();
-    if app.transcript.open_reasoning().is_some() {
-        heights.push(open[0]);
-    }
-    if app.transcript.open_text().is_some() {
-        heights.push(open[1]);
-    }
-    heights
-}
-
-/// The line a held view keeps in the pane's bottom row.
-fn indicator_line(app: &App, below: usize) -> Line<'static> {
-    let counted = if below == 1 {
-        "1 row".to_string()
-    } else {
-        format!("{below} rows")
-    };
-    let text = if app.scroll.has_fresh_output() {
-        format!("{} {counted} below · new output", app.symbols.more_below)
-    } else {
-        format!("{} {counted} below", app.symbols.more_below)
-    };
-    Line::from(Span::styled(text, Style::default().fg(app.theme.core.muted)))
-}
-
-/// What an empty transcript says instead of nothing.
-fn placeholder(app: &App, rows: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
-    if !rows.is_empty() {
-        return rows;
-    }
-    wrap::wrap_line(
-        &Line::from(Span::styled(
-            "Send a message to start. /help lists the commands; /quit leaves.",
-            Style::default().fg(app.theme.core.muted),
-        )),
-        usize::from(width),
-    )
 }
 
 #[cfg(test)]
 #[path = "picker_app_tests.rs"]
 mod picker_app_tests;
+
+#[cfg(test)]
+#[path = "app/side_tests.rs"]
+mod side_app_tests;
 
 #[cfg(test)]
 #[path = "tests.rs"]

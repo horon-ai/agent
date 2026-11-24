@@ -1,16 +1,20 @@
 //! A filterable list drawn over the conversation.
 //!
-//! `/model`, `/effort`, `/resume`, `/skills` and the history search all ask the
-//! user to pick one row out of a list, so this screen knows nothing about
-//! models, efforts, sessions, skills or drafts: it holds rows, the filter the
-//! user typed, and the row the selection is on.
+//! `/model`, `/effort`, `/resume`, `/skills`, `/links` and the history search
+//! all ask the user to pick one row out of a list, so this screen knows nothing
+//! about models, efforts, sessions, skills, links or drafts: it holds rows, the
+//! filter the user typed, and the row the selection is on. `/queue` uses the
+//! same screen for rows that are changed instead of chosen; its keys are
+//! answered before this module sees them.
 //! The caller decides what a chosen row means, which is what keeps the keys and
 //! the drawing identical for every list.
 //!
 //! Every key that arrives while the list is open is consumed here, including a
 //! plain letter: a filter that let characters through would type into the
 //! message being drafted underneath. `up`/`down`/`pageup`/`pagedown` move,
-//! typing narrows, `enter` reports the selected row and `esc` closes.
+//! typing narrows, `enter` reports the selected row and `esc` closes. `ctrl-p`
+//! is the session list's pin toggle; a list whose rows cannot be pinned reports
+//! it as handled and changes nothing.
 //!
 //! The panel itself, its preview pane and the way a row reads once it has a
 //! width live in `picker_draw`; this module owns the state and the keys.
@@ -36,10 +40,43 @@ pub enum Kind {
     Efforts,
     /// The sessions stored for this working directory.
     Sessions,
+    /// The recorded message boundaries this session can fork from.
+    Forks,
+    /// The swarm children of the attached session, and the parent it returns to.
+    ///
+    /// Its rows are chosen like a session's: `enter` names a session id for the
+    /// attach request the session list already uses.
+    Swarm,
+    /// Archived sessions available to restore for this working directory.
+    ArchivedSessions,
     /// The skills the harness reports for this session.
     Skills,
+    /// The effective tools the harness reports without invoking them.
+    Tools,
     /// The drafts sent before this one.
     History,
+    /// The text this session can copy: the draft, answers, code blocks.
+    Copies,
+    /// The http(s) links in the newest assistant answers.
+    Links,
+    /// The background work the session is running.
+    ///
+    /// Its rows describe work rather than offer a value, so `delete` cancels
+    /// the selected terminal and `enter` changes nothing; the keys are answered
+    /// before the generic list sees them.
+    Jobs,
+    /// The messages waiting for the running turn to end.
+    ///
+    /// This list is not a choice among values: each row is a message the user
+    /// can take back, delete or move, and its keys are answered before the
+    /// generic list sees them.
+    Queue,
+    /// The attached session's complete todo list.
+    ///
+    /// Like the queue, its rows are changed rather than chosen: `enter` toggles
+    /// an item and `delete` cancels it, and those keys are answered before the
+    /// generic list sees them.
+    Todos,
 }
 
 /// One row of the list.
@@ -53,6 +90,8 @@ pub struct Row {
     pub value: String,
     /// Whether this row is the one in force.
     pub current: bool,
+    /// Whether this row is pinned to the top of its list.
+    pub pinned: bool,
     /// Lines the preview pane shows while this row is selected.
     pub preview: Vec<String>,
     /// Lines the filter matches besides the name and the second column.
@@ -72,6 +111,7 @@ impl Row {
             detail: String::new(),
             value: value.into(),
             current: false,
+            pinned: false,
             preview: Vec::new(),
             search: Vec::new(),
         }
@@ -86,6 +126,12 @@ impl Row {
     /// The same row, marked as the one in force.
     pub fn marked(mut self, current: bool) -> Self {
         self.current = current;
+        self
+    }
+
+    /// The same row, marked as pinned to the top of its list.
+    pub fn pinned(mut self, pinned: bool) -> Self {
+        self.pinned = pinned;
         self
     }
 
@@ -117,6 +163,12 @@ pub enum Outcome {
     Closed,
     /// Enter on a row: the value that row carries.
     Selected(String),
+    /// Ctrl-P on a row: the caller pins or unpins it.
+    ///
+    /// Only a list whose rows mean a stored session acts on this; every other
+    /// list treats it as a key it does not use, so a mistyped shortcut cannot
+    /// choose a row.
+    TogglePin,
 }
 
 /// The state of the list screen.
@@ -219,12 +271,64 @@ impl Picker {
         self.selected_row().map(|row| row.label.as_str())
     }
 
+    /// The index, in the full list, of the row under the cursor.
+    ///
+    /// A caller that keeps its own list beside the rows — the queue does —
+    /// reads the row this way: its position in `rows` is its position there.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.visible.get(self.selected).copied()
+    }
+
+    /// The full-list index of the row `steps` away in the drawn order.
+    ///
+    /// Used to move a row past its neighbour: the neighbour is the row drawn
+    /// next to this one, which is not the next index when a filter hides rows
+    /// between them.
+    pub fn neighbour_index(&self, steps: isize) -> Option<usize> {
+        let at = self.selected.checked_add_signed(steps)?;
+        self.visible.get(at).copied()
+    }
+
+    /// Replace the rows, keeping the row at full-list index `keep` under the
+    /// cursor.
+    ///
+    /// [`fill`](Self::fill) sends the cursor back to the top, which is right
+    /// for rows the harness just answered with and wrong for a list being
+    /// edited: after a move or a delete the user is still looking at the same
+    /// row, and it has to stay selected even when a filter hides it — then the
+    /// top of the result is the closest thing to it.
+    pub fn replace_rows(&mut self, rows: Vec<Row>, keep: usize) {
+        self.rows = rows;
+        self.selected = 0;
+        self.refilter();
+        if let Some(position) = self.visible.iter().position(|index| *index == keep) {
+            self.selected = position;
+        }
+    }
+
     /// Replace the rows with the ones the harness reported.
     pub fn fill(&mut self, rows: Vec<Row>) {
         self.rows = rows;
         self.loading = false;
         self.selected = 0;
         self.refilter();
+    }
+
+    /// Replace the rows, keeping the filter and the row that carries `keep`.
+    ///
+    /// A pin moves rows under the cursor while the reader is still looking at
+    /// the list: sending the selection back to the top would undo that, so the
+    /// row the press acted on stays selected. When the filter hides it, the top
+    /// of the result is the closest thing to it.
+    pub fn refill(&mut self, rows: Vec<Row>, keep: &str) {
+        self.rows = rows;
+        self.loading = false;
+        self.refilter();
+        self.selected = self
+            .visible
+            .iter()
+            .position(|index| self.rows.get(*index).is_some_and(|row| row.value == keep))
+            .unwrap_or(0);
     }
 
     /// Attach preview lines to the row that carries `value`.
@@ -290,6 +394,12 @@ impl Picker {
             KeyCode::Down => self.step(1),
             KeyCode::PageUp => self.step(-(self.page() as isize)),
             KeyCode::PageDown => self.step(self.page() as isize),
+            // The session list's pin key. It is read before the plain-letter
+            // arm; without this branch a control chord would fall through as a
+            // key the list ignored, which is what every other list still does.
+            KeyCode::Char('p') if self.kind == Kind::Sessions && key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Outcome::TogglePin;
+            }
             KeyCode::Backspace => {
                 self.filter.pop();
                 self.reset_selection();
@@ -333,9 +443,14 @@ impl Picker {
     /// and matching it would keep the whole list. The scores order the hits;
     /// equal scores keep the row order the caller gave, which is why an empty
     /// filter shows the list in its own order.
+    ///
+    /// A pinned row stays above an unpinned one whatever the filter scores:
+    /// the pin is a statement about where the row belongs, not a match quality
+    /// that a shorter name could overtake. Inside each group the scores order
+    /// the hits exactly as they do in an unpinned list.
     fn refilter(&mut self) {
         let needle = self.filter.as_str();
-        let mut ranked: Vec<(i32, usize)> = Vec::with_capacity(self.rows.len());
+        let mut ranked: Vec<(bool, i32, usize)> = Vec::with_capacity(self.rows.len());
         for (index, row) in self.rows.iter().enumerate() {
             let label = fuzzy::find(needle, &row.label).map(|found| found.score);
             let detail = if row.detail.is_empty() {
@@ -357,13 +472,13 @@ impl Picker {
                 (found, search) => found.or(search),
             };
             if let Some(score) = score {
-                ranked.push((score, index));
+                ranked.push((row.pinned, score, index));
             }
         }
         // A stable sort keeps the rows that score the same in the order the
         // caller listed them.
-        ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
-        self.visible = ranked.into_iter().map(|(_, index)| index).collect();
+        ranked.sort_by_key(|(pinned, score, _)| (std::cmp::Reverse(*pinned), std::cmp::Reverse(*score)));
+        self.visible = ranked.into_iter().map(|(_, _, index)| index).collect();
         self.selected = self.selected.min(self.visible.len().saturating_sub(1));
     }
 

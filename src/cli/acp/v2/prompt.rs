@@ -22,6 +22,7 @@ struct TakenPrompt {
     text: String,
     images: Vec<(String, String)>,
     content: Vec<Value>,
+    inbound_a2ui: Option<super::super::a2ui::InboundA2uiEvent>,
 }
 
 /// A request the session's stream ended before answering. The stream task is
@@ -55,21 +56,28 @@ impl AcpRuntime {
             Ok(session_id) => session_id,
             Err(err) => return self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await,
         };
-        let (text, images) = match parse_prompt(&message.params, true) {
-            Ok(prompt) => prompt,
-            Err(err) => return self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await,
+        let inbound_a2ui = match super::super::a2ui::extract_inbound_a2ui_event(&message.params) {
+            Ok(event) => event,
+            Err(err) => return self.write_error_value(id, JSONRPC_INVALID_PARAMS, err.message).await,
         };
-        if is_empty_prompt(&message.params) {
-            return self
-                .write_error_value(id, JSONRPC_INVALID_PARAMS, EMPTY_PROMPT.to_string())
-                .await;
-        }
-        let content = message
-            .params
-            .get("prompt")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let (text, images, content) = if inbound_a2ui.is_some() && message.params.get("prompt").is_none() {
+            (String::new(), Vec::new(), Vec::new())
+        } else {
+            let parsed = match parse_prompt(&message.params, true) {
+                Ok(prompt) => prompt,
+                Err(err) => return self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await,
+            };
+            if is_empty_prompt(&message.params) {
+                return self
+                    .write_error_value(id, JSONRPC_INVALID_PARAMS, EMPTY_PROMPT.to_string())
+                    .await;
+            }
+            let content = match message.params.get("prompt").and_then(Value::as_array) {
+                Some(blocks) => blocks.clone(),
+                None => Vec::new(),
+            };
+            (parsed.0, parsed.1, content)
+        };
         let session = self.sessions.lock().await.get(&session_id).cloned();
         let Some((session, v2)) = session.and_then(|session| {
             let v2 = session.v2.get().cloned()?;
@@ -90,6 +98,7 @@ impl AcpRuntime {
             text,
             images,
             content,
+            inbound_a2ui,
         };
         let result = self.run_taken_prompt_v2(taken, &session, &v2).await;
         // Whichever way the prompt ended, the next held one re-checks whether
@@ -110,11 +119,14 @@ impl AcpRuntime {
             cancel,
             text,
             images,
-            content,
+            mut content,
+            inbound_a2ui,
         } = prompt;
         let mut guard = PromptRunGuard::new(session);
 
-        if let Some(command) = parse_acp_slash_command(&text) {
+        if inbound_a2ui.is_none()
+            && let Some(command) = parse_acp_slash_command(&text)
+        {
             let output = match command {
                 Ok(command) => self.run_session_command(session, command).await,
                 Err(err) => Err(err),
@@ -166,13 +178,30 @@ impl AcpRuntime {
         session.client_calls.end_cancelled_turn();
         let daemon_id = session.next_message_id();
         let (outcome, answered) = oneshot::channel();
-        let request = Request::Message {
-            id: daemon_id,
-            content: text,
-            images,
-            system_reminder: None,
-            active_skill: None,
-            no_reply: false,
+        let request = match inbound_a2ui {
+            Some(a2ui_event) => {
+                if content.is_empty() {
+                    content.push(super::super::a2ui::a2ui_embedded_resource(
+                        &a2ui_event.envelope,
+                        &format!("inbound-{daemon_id}"),
+                        0,
+                    ));
+                }
+                Request::A2uiEvent {
+                    id: daemon_id,
+                    envelope: a2ui_event.envelope,
+                    data_model: a2ui_event.data_model,
+                }
+            }
+            None => Request::Message {
+                id: daemon_id,
+                content: text,
+                images,
+                system_reminder: None,
+                active_skill: None,
+                no_reply: false,
+                expected_run_id: None,
+            },
         };
         {
             let _gate = v2.submit_gate.lock().await;

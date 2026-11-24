@@ -6,7 +6,20 @@
 //! replacement retracts text) are the same everywhere and are easy to get wrong
 //! at the call site.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+
+#[path = "transcript_recording.rs"]
+mod recording;
+pub use recording::{OUTPUT_NOT_RECORDED, WARNING_NOT_RECORDED};
+
+#[path = "transcript_turn_usage.rs"]
+mod turn_usage;
+
+#[path = "transcript_a2ui.rs"]
+mod a2ui_ops;
+#[path = "transcript_activity.rs"]
+mod activity;
 
 use crate::tool_expand::{self, ExpandState};
 use crate::tool_line::{self, DEFAULT_OUTPUT_LINES, OutputHead};
@@ -120,6 +133,33 @@ impl ToolCall {
     fn is_call(&self, call_id: &str) -> bool {
         !call_id.is_empty() && self.call_id == call_id
     }
+
+    /// Whether the call has stopped and its line is only a record of what ran.
+    ///
+    /// A call in progress and one waiting for approval are still the work the
+    /// reader follows, so hiding tool activity leaves them on screen.
+    pub(crate) fn finished_activity(&self) -> bool {
+        matches!(
+            self.state,
+            ToolState::Done | ToolState::Failed(_) | ToolState::Settled(_, _)
+        )
+    }
+}
+
+/// What one completed turn cost, drawn under its last line.
+///
+/// The figures are taken once, when the turn ends, and kept with the item: the
+/// renderer never reads a clock or asks the turn again, so a frame costs the
+/// same whether or not the footer is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnMetrics {
+    /// Wall time from the message being sent to the turn ending, in
+    /// milliseconds.
+    pub elapsed_ms: u64,
+    /// Input and output tokens the turn's provider calls reported, added
+    /// together. `None` when no call reported usage, which is not the same as
+    /// a turn that spent none.
+    pub tokens: Option<(u64, u64)>,
 }
 
 /// One line of conversation.
@@ -150,6 +190,99 @@ pub enum Item {
     /// Boxed for the same reason as [`Item::Context`]: the payload behind it is
     /// large, and most items carry a message instead.
     Report(Box<crate::report::Report>),
+    /// Read-only A2UI surface fallback card.
+    A2ui(Box<crate::a2ui::A2uiCard>),
+    /// What one completed turn cost, drawn under it when
+    /// `transcript.turn_usage` is on.
+    TurnUsage(TurnMetrics),
+    /// A request boundary the provider had to serve without its cached prefix.
+    ///
+    /// Drawn under the request it belongs to, and only for an avoidable miss:
+    /// see [`CacheMiss::from_report`] for what counts as one.
+    CacheMiss(CacheMiss),
+}
+
+/// Which part of the cached prompt prefix the harness changed.
+///
+/// The three are exactly the reasons the daemon classifies as harness-caused
+/// (`MissReason::harness_caused` in `crates/base/src/kv_cache_monitor.rs`): the
+/// prompt is the harness's to build, so a change to it there was avoidable. A
+/// provider switch, an expiry or a documented reload is not, and never reaches
+/// this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheCause {
+    /// The system prompt's static part.
+    System,
+    /// The tool definitions sent with the request.
+    Tools,
+    /// A message that was already part of the prefix.
+    Prefix,
+}
+
+impl CacheCause {
+    /// The cause the daemon's stable reason id names, `None` for any other id.
+    ///
+    /// The ids mirror `MissReason::id`; one this client does not know is left
+    /// unclassified rather than drawn as an alarm, because the marker would
+    /// then claim a cause the client cannot check.
+    fn from_reason(reason: &str) -> Option<Self> {
+        match reason {
+            "system_changed" => Some(Self::System),
+            "tools_changed" => Some(Self::Tools),
+            "prefix_changed" => Some(Self::Prefix),
+            _ => None,
+        }
+    }
+
+    /// How the marker names the cause.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "the system prompt changed",
+            Self::Tools => "the tool set changed",
+            Self::Prefix => "an earlier message changed",
+        }
+    }
+}
+
+/// An avoidable prompt-cache miss, as the transcript marks it.
+///
+/// Only the classification and the size of the resend are kept. The prompt text
+/// and the cache's identity never reach the client, and nothing here could hold
+/// them: a mark is the reader's summary of one request boundary, not a record
+/// of what was sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheMiss {
+    /// Which part of the request prefix the harness changed.
+    pub cause: CacheCause,
+    /// Tokens the provider had to be sent again.
+    pub missed_tokens: u64,
+}
+
+impl CacheMiss {
+    /// The mark for one daemon report, or `None` when the report is not an
+    /// avoidable, classified miss.
+    ///
+    /// `harness_caused` and the reason id are both required: the daemon derives
+    /// one from the other, so a report where they disagree cannot be trusted to
+    /// describe an avoidable miss. A documented cause is an intentional
+    /// invalidation (a config or skill reload) and is not an alarm either.
+    pub fn from_report(
+        reason: &str,
+        harness_caused: bool,
+        documented_cause: Option<&str>,
+        missed_tokens: u64,
+    ) -> Option<Self> {
+        let cause = CacheCause::from_reason(reason)?;
+        if !harness_caused || documented_cause.is_some_and(|cause| !cause.trim().is_empty()) {
+            return None;
+        }
+        Some(Self { cause, missed_tokens })
+    }
+
+    /// The one line the marker draws.
+    pub fn summary(&self) -> String {
+        crate::item_lines::cache_miss_summary(self)
+    }
 }
 
 /// The streaming message being assembled.
@@ -176,11 +309,26 @@ struct Reasoned {
 #[derive(Debug)]
 pub struct Transcript {
     items: Vec<Item>,
+    /// The stored message each item came from, aligned with `items`.
+    ///
+    /// Only rows replayed from a harness that reports stored message ids carry
+    /// one; a row drawn from the live stream, or from a harness that reports
+    /// none, holds `None`. Every push and removal goes through
+    /// [`Transcript::push_item`] and [`Transcript::remove_item`] so the two
+    /// vectors cannot drift apart.
+    stored: Vec<Option<String>>,
     streaming: Streaming,
     reasoned: Reasoned,
-    /// Whether reasoning is kept. Off by default, as
-    /// `transcript.show_reasoning` resolves; the option is read at the event,
-    /// so flipping it affects the next delta rather than only the next turn.
+    /// The value `transcript.show_reasoning` last resolved to.
+    setting_show_reasoning: bool,
+    /// A choice made for this session, by `--hide-thinking` or the toggle key.
+    ///
+    /// It outranks the setting until that setting itself changes, so an
+    /// unrelated settings reload does not undo the toggle.
+    session_show_reasoning: Option<bool>,
+    /// Whether reasoning is kept, as the setting and the session choice
+    /// resolve. Off by default; the option is read at the event, so flipping
+    /// it affects the next delta rather than only the next turn.
     show_reasoning: bool,
     /// Rows of a finished call's output kept for the preview, as
     /// `transcript.tool_output_lines` resolves. Zero hides the preview.
@@ -191,12 +339,32 @@ pub struct Transcript {
     /// drawn in full. Kept here rather than on the items so a line stays a plain
     /// description of a call, and bounded in `tool_expand`.
     expand: ExpandState,
+    /// How many times the conversation was replaced.
+    ///
+    /// A clear is not an edit: nothing that was on screen before it is part of
+    /// the conversation after it, and a reader that tracks positions (a
+    /// recording counts the answers it already kept) has to start over.
+    revision: u64,
+    /// Changes whenever a row is added, removed or replaced.
+    ///
+    /// Drawn from one process-wide counter, so a transcript swapped in for a
+    /// replay never repeats the value of the one it replaced. Only tool rows are
+    /// edited in place, and they carry no note key, so a reader that derives
+    /// something from the user and assistant rows can keep it while this holds.
+    items_generation: u64,
     /// The requests this session has decided, newest last.
     ///
     /// A refusal can reach the client after its prompt was answered, and the
     /// row still has to say what happened to the call. Bounded because it is
     /// only ever read for the refusal in hand.
     decided: Vec<(String, Decision)>,
+    /// The turn being measured, between the message being sent and the turn
+    /// ending. `None` when the client is not the one measuring, which is why a
+    /// turn another surface started draws no footer.
+    turn: Option<Turn>,
+    /// Whether a finished turn's time and usage are drawn, as
+    /// `transcript.turn_usage` resolves.
+    turn_usage: bool,
 }
 
 /// When one call started.
@@ -207,17 +375,41 @@ struct Start {
     at: Instant,
 }
 
+/// The turn in progress, while the client is measuring it.
+#[derive(Debug)]
+struct Turn {
+    /// When the message was handed to the harness.
+    started: Instant,
+    /// Input tokens the turn's provider calls reported so far.
+    ///
+    /// Added as they arrive rather than read as a difference of session totals,
+    /// so a counter that resets or moves backwards can never subtract here.
+    input: u64,
+    /// Output tokens the turn's provider calls reported so far.
+    output: u64,
+    /// Whether any call reported usage. A turn that reported none draws no
+    /// token field rather than a misleading zero.
+    reported: bool,
+}
+
 impl Default for Transcript {
     fn default() -> Self {
         Self {
             items: Vec::new(),
+            stored: Vec::new(),
             streaming: Streaming::default(),
             reasoned: Reasoned::default(),
+            setting_show_reasoning: false,
+            session_show_reasoning: None,
             show_reasoning: false,
             tool_output_lines: DEFAULT_OUTPUT_LINES,
             starts: Vec::new(),
             expand: ExpandState::default(),
+            revision: 0,
+            items_generation: next_items_generation(),
             decided: Vec::new(),
+            turn: None,
+            turn_usage: false,
         }
     }
 }
@@ -241,16 +433,30 @@ impl Transcript {
         self.tool_output_lines
     }
 
-    /// Keep, or stop keeping, the model's reasoning.
+    /// Apply the value `transcript.show_reasoning` resolves to.
     ///
-    /// Turning it off drops reasoning already being assembled, because a
-    /// setting the user just switched off must not leave half a thought on
-    /// screen; turning it on keeps what the answer has shown so far.
-    pub fn set_show_reasoning(&mut self, show: bool) {
-        self.show_reasoning = show;
-        if !show {
-            self.reasoned = Reasoned::default();
+    /// A session choice outranks it, so an unrelated settings reload does not
+    /// undo the toggle; a change of the setting itself is a newer choice and
+    /// ends the session choice.
+    pub fn apply_settings_show_reasoning(&mut self, show: bool) {
+        if self.setting_show_reasoning != show {
+            self.setting_show_reasoning = show;
+            self.session_show_reasoning = None;
         }
+        self.reconcile_show_reasoning();
+    }
+
+    /// Keep, or stop keeping, the model's reasoning for the rest of the session.
+    ///
+    /// The choice outranks `transcript.show_reasoning` until that setting
+    /// value changes. Turning reasoning off drops the thought already being
+    /// assembled, because a switch the user just flipped off must not leave
+    /// half a thought on screen; turning it on starts from the next delta,
+    /// because the deltas dropped meanwhile were never kept. The reasoning
+    /// effort the model is asked for is not touched.
+    pub fn set_show_reasoning(&mut self, show: bool) {
+        self.session_show_reasoning = Some(show);
+        self.reconcile_show_reasoning();
     }
 
     /// Whether reasoning is being kept.
@@ -258,9 +464,51 @@ impl Transcript {
         self.show_reasoning
     }
 
+    /// Apply the setting and the session choice to what the transcript keeps.
+    fn reconcile_show_reasoning(&mut self) {
+        let show = self.session_show_reasoning.unwrap_or(self.setting_show_reasoning);
+        if self.show_reasoning == show {
+            return;
+        }
+        self.show_reasoning = show;
+        if !show {
+            self.reasoned = Reasoned::default();
+        }
+    }
+
     /// Every item in display order.
     pub fn items(&self) -> &[Item] {
         &self.items
+    }
+
+    /// Each item's stored message id, aligned with [`Self::items`].
+    pub(crate) fn stored_ids(&self) -> &[Option<String>] {
+        debug_assert_eq!(self.stored.len(), self.items.len(), "stored ids must track items");
+        &self.stored
+    }
+
+    /// See the `items_generation` field.
+    pub(crate) fn items_generation(&self) -> u64 {
+        self.items_generation
+    }
+
+    /// Append an item, recording the stored message it came from.
+    ///
+    /// The only way an item enters the transcript, so `items` and `stored`
+    /// cannot drift apart.
+    fn push_item(&mut self, item: Item, stored: Option<String>) {
+        debug_assert_eq!(self.stored.len(), self.items.len(), "stored ids must track items");
+        self.items.push(item);
+        self.stored.push(stored);
+        self.items_generation = next_items_generation();
+    }
+
+    /// Remove the item at `index`, and the stored message recorded for it.
+    fn remove_item(&mut self, index: usize) -> Item {
+        debug_assert_eq!(self.stored.len(), self.items.len(), "stored ids must track items");
+        self.stored.remove(index);
+        self.items_generation = next_items_generation();
+        self.items.remove(index)
     }
 
     /// The assistant text still streaming, if any.
@@ -277,10 +525,24 @@ impl Transcript {
         Some(&self.streaming.text)
     }
 
+    /// The newest assistant answers, including any text still streaming.
+    pub(crate) fn recent_assistant_text(&self, messages: usize) -> impl Iterator<Item = &str> {
+        let committed = self.items.iter().rev().filter_map(|item| match item {
+            Item::Assistant(text) => Some(text.as_str()),
+            _ => None,
+        });
+        self.open_text().into_iter().chain(committed).take(messages)
+    }
+
     /// Record a user message, closing any partly streamed reply first.
     pub fn push_user(&mut self, text: impl Into<String>) {
+        self.push_user_stored(text.into(), None);
+    }
+
+    /// Record a user message the harness named a stored message for.
+    pub fn push_user_stored(&mut self, text: impl Into<String>, stored: Option<String>) {
         self.finish_stream();
-        self.items.push(Item::User(text.into()));
+        self.push_item(Item::User(text.into()), stored);
     }
 
     /// Record a completed assistant message that was not streamed here.
@@ -288,8 +550,13 @@ impl Transcript {
     /// Reading a stored session back goes through this: the daemon hands over
     /// whole messages, so there are no deltas to accumulate.
     pub fn push_assistant(&mut self, text: impl Into<String>) {
+        self.push_assistant_stored(text.into(), None);
+    }
+
+    /// Record a replayed assistant answer the harness named a stored message for.
+    pub fn push_assistant_stored(&mut self, text: impl Into<String>, stored: Option<String>) {
         self.finish_stream();
-        self.items.push(Item::Assistant(text.into()));
+        self.push_item(Item::Assistant(text.into()), stored);
     }
 
     /// Empty the conversation, keeping the display settings.
@@ -298,7 +565,10 @@ impl Transcript {
     /// reader's settings: the output preview length and the reasoning switch
     /// were chosen for this terminal, not for the session that was open.
     pub fn clear(&mut self) {
+        self.revision += 1;
         self.items.clear();
+        self.items_generation = next_items_generation();
+        self.stored.clear();
         self.streaming = Streaming::default();
         self.reasoned = Reasoned::default();
         self.starts.clear();
@@ -306,6 +576,9 @@ impl Transcript {
         // reuse an id, and text from the old conversation must not be drawn
         // under it.
         self.expand.clear();
+        // The turn being measured belongs to the conversation being replaced,
+        // and the rows its footer would sit under are gone with it.
+        self.turn = None;
     }
 
     /// The kept outputs, for the pane to draw the calls they belong to.
@@ -313,23 +586,15 @@ impl Transcript {
         &self.expand
     }
 
-    /// Show, or hide again, the whole output of the newest cut call.
-    ///
-    /// Answers whether there was anything to toggle: the caller says so when
-    /// there was not, rather than leaving the key silently doing nothing.
-    pub(crate) fn toggle_expand(&mut self) -> bool {
-        self.expand.toggle()
-    }
-
     /// Record an informational line.
     pub fn push_notice(&mut self, text: impl Into<String>) {
         self.finish_stream();
-        self.items.push(Item::Notice(text.into()));
+        self.push_item(Item::Notice(text.into()), None);
     }
 
     /// Display a live notice immediately before any open streaming message.
     pub(crate) fn push_live_notice(&mut self, text: String) {
-        self.items.push(Item::Notice(text));
+        self.push_item(Item::Notice(text), None);
     }
 
     /// Record the `/context` breakdown.
@@ -338,7 +603,7 @@ impl Transcript {
     /// measured together, and a held view scrolls past them as one unit.
     pub fn push_context(&mut self, report: crate::context::ContextReport) {
         self.finish_stream();
-        self.items.push(Item::Context(Box::new(report)));
+        self.push_item(Item::Context(Box::new(report)), None);
     }
 
     /// Record another runtime command's answer.
@@ -347,13 +612,34 @@ impl Transcript {
     /// are one block, measured together and scrolled past as one unit.
     pub fn push_report(&mut self, report: crate::report::Report) {
         self.finish_stream();
-        self.items.push(Item::Report(Box::new(report)));
+        self.push_item(Item::Report(Box::new(report)), None);
     }
 
     /// Record a warning line.
     pub fn push_warning(&mut self, text: impl Into<String>) {
         self.finish_stream();
-        self.items.push(Item::Warning(text.into()));
+        self.push_item(Item::Warning(text.into()), None);
+    }
+
+    /// Record an avoidable cache miss at the boundary of the request it belongs
+    /// to.
+    ///
+    /// The daemon reports the miss immediately after the usage of the request
+    /// that missed, so the caller hands it over while that request's output is
+    /// the newest thing drawn; committing the open stream first is what puts the
+    /// mark under the answer that cost the resend rather than over it.
+    ///
+    /// The same mark twice in a row is one event delivered twice — a replayed
+    /// tail after a reconnect — not two requests: a request that misses always
+    /// draws its own output in between, so nothing in between means nothing
+    /// happened.
+    pub fn push_cache_miss(&mut self, miss: CacheMiss) {
+        self.finish_stream();
+        let item = Item::CacheMiss(miss);
+        if self.items.last() == Some(&item) {
+            return;
+        }
+        self.push_item(item, None);
     }
 
     /// Record a message waiting for the running turn to end.
@@ -362,7 +648,7 @@ impl Transcript {
     /// problem: the text is already accepted and will be sent.
     pub fn push_queued(&mut self, text: impl Into<String>) {
         self.finish_stream();
-        self.items.push(Item::Queued(text.into()));
+        self.push_item(Item::Queued(text.into()), None);
     }
 
     /// Turn the oldest queued line for `text` into the message that was sent.
@@ -376,6 +662,30 @@ impl Transcript {
             .position(|item| matches!(item, Item::Queued(queued) if queued == text));
         if let Some(index) = found {
             self.items[index] = Item::User(text.to_string());
+            self.stored[index] = None;
+            self.items_generation = next_items_generation();
+        }
+    }
+
+    /// Take back the `occurrence`-th queued line for `text`.
+    ///
+    /// A queued message the user deleted or pulled back into the editor will
+    /// never be sent, so the row that announced it must stop saying it will.
+    /// The occurrence is what keeps two messages with the same text apart: the
+    /// queue list knows which of them the user selected, so the row that
+    /// leaves is the one that belongs to it rather than whichever comes first.
+    pub fn retract_queued(&mut self, text: &str, occurrence: usize) {
+        let mut seen = 0;
+        let found = self.items.iter().position(|item| match item {
+            Item::Queued(queued) if queued == text => {
+                let hit = seen == occurrence;
+                seen += 1;
+                hit
+            }
+            _ => false,
+        });
+        if let Some(index) = found {
+            self.remove_item(index);
         }
     }
 
@@ -392,7 +702,7 @@ impl Transcript {
             .iter()
             .rposition(|item| matches!(item, Item::User(sent) if sent == text));
         if let Some(index) = found {
-            self.items.remove(index);
+            self.remove_item(index);
         }
     }
 
@@ -453,7 +763,7 @@ impl Transcript {
                 return;
             }
             if let Some(index) = self.last_assistant_index() {
-                self.items.remove(index);
+                self.remove_item(index);
             }
             return;
         }
@@ -466,6 +776,19 @@ impl Transcript {
     /// A message ended; the next delta starts a new one.
     pub fn text_done(&mut self) {
         self.finish_stream();
+    }
+
+    /// Split a rendered history body into its reasoning and its answer.
+    ///
+    /// The daemon re-renders persisted reasoning with the markup the live
+    /// stream used, and the terminal reads it back with the daemon's own
+    /// helper instead of keeping a second copy of the convention. A body with
+    /// no reasoning markup is all answer, including its leading blank lines.
+    pub(crate) fn split_rendered_assistant(content: &str) -> (Option<String>, String) {
+        match horon_agent_sdk::transcript_text::split_rendered_reasoning(content) {
+            Some((reasoning, answer)) => (Some(reasoning), answer),
+            None => (None, content.to_string()),
+        }
     }
 
     /// Reasoning text arrived for the message being assembled.
@@ -504,7 +827,7 @@ impl Transcript {
         }
         let reasoned = std::mem::take(&mut self.reasoned);
         if !reasoned.text.trim().is_empty() {
-            self.items.push(Item::Reasoning(reasoned.text));
+            self.push_item(Item::Reasoning(reasoned.text), None);
         }
     }
 
@@ -533,7 +856,7 @@ impl Transcript {
             name: name.to_string(),
             at: Instant::now(),
         });
-        self.items.push(Item::Tool(ToolCall::new(call_id, name)));
+        self.push_item(Item::Tool(ToolCall::new(call_id, name)), None);
     }
 
     /// Whether a refusal line names `request_id`.
@@ -691,16 +1014,17 @@ impl Transcript {
     /// id means the call that started most recently, which is what the daemon
     /// says when it sends no id.
     pub fn tool_input(&mut self, call_id: &str, delta: &str) {
+        let Self { starts, items, .. } = self;
         let target = if call_id.is_empty() {
-            self.starts.last().map(|start| start.call_id.clone())
+            let Some(last) = starts.last() else {
+                return;
+            };
+            last.call_id.as_str()
         } else {
-            Some(call_id.to_string())
+            call_id
         };
-        let Some(target) = target else {
-            return;
-        };
-        let Some(call) = self.items.iter_mut().find_map(|item| match item {
-            Item::Tool(call) if call.is_call(&target) => Some(call),
+        let Some(call) = items.iter_mut().rev().find_map(|item| match item {
+            Item::Tool(call) if call.is_call(target) => Some(call),
             _ => None,
         }) else {
             return;
@@ -749,7 +1073,7 @@ impl Transcript {
             // its text is never kept: a key that expanded nothing would be a key
             // that did nothing.
             let draws = !Self::settled(&call.state);
-            self.items.push(Item::Tool(call));
+            self.push_item(Item::Tool(call), None);
             return draws && hides && self.keep_output(call_id, output);
         };
         // A call finishes once, but the same result can reach the client twice
@@ -797,20 +1121,18 @@ impl Transcript {
     /// result belongs to; the newest is wrong, because that is the call still
     /// starting.
     fn call_for(&mut self, call_id: &str, name: &str) -> Option<&mut ToolCall> {
-        let found = self
-            .items
-            .iter()
-            .position(|item| matches!(item, Item::Tool(call) if call.is_call(call_id)));
-        let index: Option<usize> = match found {
-            Some(index) => Some(index),
+        let index: Option<usize> = if !call_id.is_empty() {
+            self.items
+                .iter()
+                .rposition(|item| matches!(item, Item::Tool(call) if call.is_call(call_id)))
+        } else {
             // With no id there is no identity, and calls without ids are
             // sequential, so the oldest unfinished call of that name is the one
             // this result belongs to.
-            None if call_id.is_empty() => self.items.iter().position(|item| match item {
+            self.items.iter().position(|item| match item {
                 Item::Tool(call) => call.state == ToolState::Running && call.name == name,
                 _ => false,
-            }),
-            None => None,
+            })
         };
         let index = index?;
         match self.items.get_mut(index) {
@@ -840,7 +1162,7 @@ impl Transcript {
         }
         let streaming = std::mem::take(&mut self.streaming);
         if !streaming.text.trim().is_empty() {
-            self.items.push(Item::Assistant(streaming.text));
+            self.push_item(Item::Assistant(streaming.text), None);
         }
     }
 
@@ -849,181 +1171,12 @@ impl Transcript {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn deltas_accumulate_and_a_new_message_id_splits() {
-        let mut transcript = Transcript::new();
-        transcript.text_delta(Some("m1"), "one ");
-        transcript.text_delta(Some("m1"), "two");
-        transcript.text_delta(Some("m2"), "three");
-        transcript.finish_stream();
-        assert_eq!(
-            transcript.items(),
-            &[
-                Item::Assistant("one two".to_string()),
-                Item::Assistant("three".to_string())
-            ]
-        );
-    }
-
-    #[test]
-    fn empty_message_is_not_published() {
-        let mut transcript = Transcript::new();
-        transcript.text_delta(Some("m1"), "draft");
-        transcript.text_replace(Some("m1"), "");
-        transcript.finish_stream();
-        assert!(transcript.items().is_empty());
-    }
-
-    #[test]
-    fn tool_done_updates_the_running_line() {
-        let mut transcript = Transcript::new();
-        transcript.tool_start("c1", "bash");
-        transcript.tool_done("c1", "bash", None, None);
-        let items = transcript.items();
-        assert_eq!(items.len(), 1, "{items:?}");
-        let Item::Tool(call) = &items[0] else {
-            panic!("expected one tool line: {items:?}");
-        };
-        assert_eq!(call.name, "bash");
-        assert_eq!(call.state, ToolState::Done);
-    }
-
-    #[test]
-    fn open_text_reports_the_message_until_it_is_committed() {
-        let mut transcript = Transcript::new();
-        assert_eq!(transcript.open_text(), None, "nothing is open yet");
-
-        transcript.text_delta(Some("m1"), "partial");
-        assert_eq!(transcript.open_text(), Some("partial"));
-
-        transcript.text_delta(Some("m1"), " more");
-        assert_eq!(transcript.open_text(), Some("partial more"));
-
-        // The committed item is the same text, so the renderer must stop
-        // drawing the open one or the reply would appear twice.
-        transcript.finish_stream();
-        assert_eq!(transcript.open_text(), None);
-        assert_eq!(transcript.items(), &[Item::Assistant("partial more".to_string())]);
-    }
-
-    #[test]
-    fn open_text_hides_blank_and_retracted_messages() {
-        let mut transcript = Transcript::new();
-        transcript.text_delta(Some("m1"), "  \n\t");
-        assert_eq!(transcript.open_text(), None, "whitespace is never published");
-
-        // Deltas append, so the whitespace that was hidden on its own is now
-        // part of the message; drawing anything but the raw buffer would make
-        // the open row differ from the item `finish_stream` commits.
-        transcript.text_delta(Some("m1"), "draft");
-        assert_eq!(transcript.open_text(), Some("  \n\tdraft"));
-        transcript.text_replace(Some("m1"), "");
-        assert_eq!(transcript.open_text(), None, "a retraction must not be drawn");
-    }
-
-    #[test]
-    fn reasoning_is_dropped_while_the_setting_is_off() {
-        let mut transcript = Transcript::new();
-        transcript.reasoning_delta("thinking about it");
-        assert_eq!(
-            transcript.open_reasoning(),
-            None,
-            "off means the client keeps nothing to draw"
-        );
-        transcript.reasoning_done();
-        assert!(
-            !transcript.items().iter().any(|item| matches!(item, Item::Reasoning(_))),
-            "and nothing reaches the transcript: {:?}",
-            transcript.items()
-        );
-    }
-
-    #[test]
-    fn reasoning_is_kept_apart_from_the_answer_when_the_setting_is_on() {
-        let mut transcript = Transcript::new();
-        transcript.set_show_reasoning(true);
-        transcript.reasoning_delta("first I look");
-        transcript.reasoning_delta(" at the file");
-        assert_eq!(transcript.open_reasoning(), Some("first I look at the file"));
-        transcript.reasoning_done();
-        assert_eq!(transcript.open_reasoning(), None, "a boundary commits it");
-
-        transcript.text_delta(None, "here is the answer");
-        assert_eq!(
-            transcript.open_text(),
-            Some("here is the answer"),
-            "the reasoning never joins the answer"
-        );
-        transcript.text_done();
-
-        let items = transcript.items();
-        assert_eq!(
-            items,
-            &[
-                Item::Reasoning("first I look at the file".to_string()),
-                Item::Assistant("here is the answer".to_string()),
-            ],
-            "reasoning precedes its answer in display order"
-        );
-    }
-
-    #[test]
-    fn a_tool_call_commits_the_reasoning_that_preceded_it() {
-        let mut transcript = Transcript::new();
-        transcript.set_show_reasoning(true);
-        transcript.reasoning_delta("I need to read the file");
-        transcript.tool_start("c1", "read");
-        assert_eq!(transcript.open_reasoning(), None);
-        assert_eq!(
-            transcript.items().first(),
-            Some(&Item::Reasoning("I need to read the file".to_string())),
-            "the thought belongs above the call it caused: {:?}",
-            transcript.items()
-        );
-    }
-
-    #[test]
-    fn turning_reasoning_off_retracts_a_half_written_thought() {
-        let mut transcript = Transcript::new();
-        transcript.set_show_reasoning(true);
-        transcript.reasoning_delta("half a thought");
-        transcript.set_show_reasoning(false);
-        assert_eq!(transcript.open_reasoning(), None);
-        transcript.reasoning_done();
-        assert!(
-            !transcript.items().iter().any(|item| matches!(item, Item::Reasoning(_))),
-            "nothing half-finished stays on screen: {:?}",
-            transcript.items()
-        );
-    }
-
-    #[test]
-    fn blank_reasoning_is_never_published() {
-        let mut transcript = Transcript::new();
-        transcript.set_show_reasoning(true);
-        transcript.reasoning_delta("   ");
-        transcript.reasoning_done();
-        assert!(
-            transcript.items().is_empty(),
-            "whitespace alone is not a thought: {:?}",
-            transcript.items()
-        );
-    }
-
-    #[test]
-    fn tool_done_without_a_start_still_renders() {
-        let mut transcript = Transcript::new();
-        transcript.tool_done("c1", "read", None, Some("no such file"));
-        let items = transcript.items();
-        assert_eq!(items.len(), 1, "{items:?}");
-        let Item::Tool(call) = &items[0] else {
-            panic!("expected one tool line: {items:?}");
-        };
-        assert_eq!(call.name, "read");
-        assert_eq!(call.state, ToolState::Failed("no such file".to_string()));
-    }
+/// A value no transcript in this process has held.
+fn next_items_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
+
+#[cfg(test)]
+#[path = "transcript_tests.rs"]
+mod tests;

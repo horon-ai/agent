@@ -353,6 +353,8 @@ async fn target_aware_reattach_serves_history_without_a_placeholder_prewarm() {
             continue_on_disconnect: false,
             terminal_env: Vec::new(),
             acp: None,
+            history_message_ids: false,
+            a2ui: None,
         },
     )
     .await;
@@ -410,6 +412,7 @@ async fn target_aware_reattach_serves_history_without_a_placeholder_prewarm() {
             system_reminder: None,
             active_skill: None,
             no_reply: false,
+            expected_run_id: None,
         },
     )
     .await;
@@ -612,6 +615,7 @@ async fn fresh_subscribe_and_first_message_confirm_the_context_once() {
             system_reminder: None,
             active_skill: None,
             no_reply: false,
+            expected_run_id: None,
         },
     )
     .await;

@@ -79,6 +79,14 @@ HEALTHY_LINES = [
     "gpu_probe_spawns_without_display=0 gpu_reported=0",
     "STRUCTURAL_PERF section=tool_dispatch source=app-core dispatches=200 small_allocs=2000 "
     "small_alloc_bytes=100000 large_allocs=2000 large_alloc_bytes=200000",
+    "STRUCTURAL_PERF section=packages source=empty turns=2 packages=0 area_reads=0 dir_scans=0 "
+    "area_writes=0 snapshot_builds=0 child_starts=0",
+    "STRUCTURAL_PERF section=packages source=turn-warm turns=1 packages=1 area_reads=2 dir_scans=0 "
+    "area_writes=3 snapshot_builds=1 child_starts=0",
+    "STRUCTURAL_PERF section=packages source=turn-unchanged turns=1 packages=1 area_reads=0 dir_scans=0 "
+    "area_writes=0 snapshot_builds=0 child_starts=0",
+    "STRUCTURAL_PERF section=packages source=call calls=1 area_reads=3 child_starts=1",
+    "STRUCTURAL_PERF section=packages source=call-repeat calls=1 child_starts=0",
 ]
 
 
@@ -767,6 +775,123 @@ class MissingMeasurementTest(unittest.TestCase):
         self.assertEqual(covered, {"page"})
 
 
+class PackageCostTest(unittest.TestCase):
+    """The package section: nothing installed, installed, and actually called."""
+
+    def assert_fails_naming(self, lines, counter, extra_args=()):
+        run = run_gate(lines, extra_args)
+        self.assertEqual(run.code, 1, f"a violated bound must fail the gate:\n{run.stdout}\n{run.stderr}")
+        result = run.result
+        named = {check["counter"] for check in result["checks"] if not check["ok"]}
+        self.assertIn(counter, named, f"the failure must name {counter}, named {sorted(named)}")
+        self.assertIn(counter, run.stderr, "the stderr report must name the counter a human has to fix")
+
+    def test_a_package_free_home_that_reads_a_package_file_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=empty",
+            "STRUCTURAL_PERF section=packages source=empty turns=2 packages=0 area_reads=1 dir_scans=0 "
+            "area_writes=0 snapshot_builds=0 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "area_reads")
+
+    def test_a_package_free_home_that_grows_a_reference_directory_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=empty",
+            "STRUCTURAL_PERF section=packages source=empty turns=2 packages=0 area_reads=0 dir_scans=0 "
+            "area_writes=2 snapshot_builds=0 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "area_writes")
+
+    def test_a_package_free_home_that_installed_a_child_free_turn_fails_on_a_zero_turn_count(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=empty",
+            "STRUCTURAL_PERF section=packages source=empty turns=0 packages=0 area_reads=0 dir_scans=0 "
+            "area_writes=0 snapshot_builds=0 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "turns")
+
+    def test_an_unchanged_turn_that_rebuilt_its_snapshot_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=turn-unchanged",
+            "STRUCTURAL_PERF section=packages source=turn-unchanged turns=1 packages=1 area_reads=0 dir_scans=0 "
+            "area_writes=0 snapshot_builds=1 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "snapshot_builds")
+
+    def test_an_unchanged_turn_that_read_the_catalog_again_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=turn-unchanged",
+            "STRUCTURAL_PERF section=packages source=turn-unchanged turns=1 packages=1 area_reads=1 dir_scans=0 "
+            "area_writes=0 snapshot_builds=0 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "area_reads")
+
+    def test_a_warm_turn_that_measured_nothing_fails_rather_than_passing_on_zeros(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=turn-warm",
+            "STRUCTURAL_PERF section=packages source=turn-warm turns=1 packages=1 area_reads=0 dir_scans=0 "
+            "area_writes=0 snapshot_builds=0 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "area_reads")
+
+    def test_a_turn_that_started_a_package_child_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=turn-unchanged",
+            "STRUCTURAL_PERF section=packages source=turn-unchanged turns=1 packages=1 area_reads=0 dir_scans=0 "
+            "area_writes=0 snapshot_builds=0 child_starts=1",
+        )
+        self.assert_fails_naming(lines, "child_starts")
+
+    def test_one_call_that_started_two_children_fails(self):
+        # The marker keeps `source=call` from also matching `source=call-repeat`:
+        # replacing both would drop a situation instead of violating a bound.
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=call",
+            "STRUCTURAL_PERF section=packages source=call calls=1 area_reads=3 child_starts=2",
+            marker="area_reads=3",
+        )
+        self.assert_fails_naming(lines, "child_starts")
+
+    def test_a_second_call_that_started_another_child_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=call-repeat",
+            "STRUCTURAL_PERF section=packages source=call-repeat calls=1 child_starts=1",
+        )
+        self.assert_fails_naming(lines, "child_starts")
+
+    def test_the_packages_section_missing_fails_instead_of_passing_on_nothing(self):
+        lines = [
+            line
+            for line in HEALTHY_LINES
+            if not line.startswith("STRUCTURAL_PERF section=packages")
+        ]
+        run = run_gate(lines)
+        self.assertEqual(run.code, 2, run.stderr)
+        self.assertIn("packages", run.stderr, "the report must name the section that did not run")
+
+    def test_a_log_without_the_warm_turn_fails_instead_of_passing_on_the_empty_ones(self):
+        # `empty` reports zeros for everything; on its own it certifies nothing
+        # about a turn over an installed package, so the four remaining lines must
+        # not add up to a pass.
+        lines = [
+            line
+            for line in HEALTHY_LINES
+            if not line.startswith("STRUCTURAL_PERF section=packages source=turn-warm")
+        ]
+        run = run_gate(lines)
+        self.assertEqual(run.code, 2, f"a partial package log must not pass:\n{run.stdout}\n{run.stderr}")
+        self.assertIn("turn-warm", run.stderr, "the report must name the situation that did not run")
+
+    def test_an_unknown_package_source_is_refused(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=call-repeat",
+            "STRUCTURAL_PERF section=packages source=unknown calls=1 child_starts=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 2, run.stderr)
+        self.assertIn("unknown source", run.stderr)
+
+
 class BudgetTest(unittest.TestCase):
     def test_the_bounds_file_carries_every_key_the_checks_read(self):
         bounds = gate.load_budget(str(BUDGET_FILE))
@@ -813,6 +938,21 @@ class BudgetTest(unittest.TestCase):
             "tool_dispatch_small_alloc_bytes_per_dispatch_max",
             "tool_dispatch_large_allocs_per_dispatch_max",
             "tool_dispatch_large_alloc_bytes_per_dispatch_max",
+            "packages_empty_area_reads_max",
+            "packages_empty_area_dir_scans_max",
+            "packages_empty_area_writes_max",
+            "packages_empty_area_snapshot_builds_max",
+            "packages_empty_area_child_starts_max",
+            "packages_warm_turn_reads_min",
+            "packages_warm_turn_snapshot_builds_min",
+            "packages_warm_turn_writes_min",
+            "packages_unchanged_turn_reads_max",
+            "packages_unchanged_turn_dir_scans_max",
+            "packages_unchanged_turn_writes_max",
+            "packages_unchanged_turn_snapshot_builds_max",
+            "packages_turn_child_starts_max",
+            "packages_call_child_starts",
+            "packages_call_repeat_child_starts",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 
@@ -965,18 +1105,137 @@ class WorkflowTest(unittest.TestCase):
     def test_it_declares_read_only_permissions(self):
         self.assertIn("permissions:\n  contents: read", self.workflow())
 
+    def test_it_tunes_mold_and_parallel_build_jobs(self):
+        text = self.workflow()
+        self.assertIn('CARGO_BUILD_RUSTC_WRAPPER: ""', text)
+        self.assertIn("apt-get install -y -qq clang mold", text)
+        self.assertIn("-fuse-ld=mold", text)
+        self.assertIn("CARGO_BUILD_JOBS=", text)
+
 
 class MeasurementPlanTest(unittest.TestCase):
-    def test_no_measurement_builds_a_release_binary(self):
+    def test_every_measurement_parses_to_explicit_target_and_filter(self):
         for measurement in gate.MEASUREMENTS:
-            command = gate.measurement_command(measurement)
-            self.assertNotIn("--release", command, f"{measurement['section']} must run in debug")
+            package, kind, target_name, test_filter = gate.parse_measurement_target(measurement)
+            self.assertTrue(package)
+            self.assertIn(kind, ("lib", "test"))
+            self.assertTrue(test_filter)
+            if kind == "test":
+                self.assertTrue(target_name)
 
-    def test_every_measurement_runs_one_test_against_one_target_dir(self):
-        for measurement in gate.MEASUREMENTS:
-            command = gate.measurement_command(measurement)
-            self.assertIn("--test-threads=1", command, "process-wide counters need one test at a time")
-            self.assertIn("--exact", command)
+    def test_unified_compile_command_builds_locked_debug_targets_once(self):
+        cmd = gate.compile_command()
+        self.assertEqual(cmd[:3], ["cargo", "test", "--locked"])
+        self.assertNotIn("--release", cmd, "structural gate measurements must compile in debug")
+        self.assertIn("--lib", cmd)
+        self.assertNotIn("--tests", cmd)
+        for target in ("hash_stream", "e2e", "tool_dispatch_perf", "package_cost"):
+            self.assertIn(target, cmd)
+        self.assertIn("--no-run", cmd)
+        self.assertIn("--message-format=json-render-diagnostics", cmd)
+        lib_only = gate.compile_command(gate.selected_measurements({"page"}))
+        self.assertIn("--lib", lib_only)
+        self.assertNotIn("--test", lib_only)
+        soak_only = gate.compile_command(gate.selected_measurements({"soak"}))
+        self.assertNotIn("--lib", soak_only)
+        self.assertEqual(soak_only[3:7], ["-p", "horon-agent", "--test", "e2e"])
+        with self.assertRaises(gate.GateError):
+            gate.compile_command([])
+
+    def test_parse_artifacts_and_direct_execution_enforce_non_zero_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pkg_dir = root / "crates" / "app-core"
+            pkg_dir.mkdir(parents=True)
+            exe = root / "target" / "debug" / "deps" / "horon_agent_app_core-abc.py"
+            exe.parent.mkdir(parents=True)
+            exe.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, sys\n"
+                "assert os.getcwd().endswith('app-core'), os.getcwd()\n"
+                "for flag in ('--exact', '--nocapture', '--test-threads=1', '--format', 'terse'):\n"
+                "    assert flag in sys.argv, (flag, sys.argv)\n"
+                "assert os.environ.get('CARGO_MANIFEST_DIR', '').endswith('app-core')\n"
+                "assert os.environ.get('CARGO_PKG_NAME') == 'horon-agent-app-core'\n"
+                "assert os.environ.get('CARGO') == 'cargo'\n"
+                "if os.environ.get('FORCE_FAIL') == '1':\n"
+                "    sys.stderr.write('simulated crash\\n')\n"
+                "    sys.exit(2)\n"
+                "sys.stderr.write('STRUCTURAL_PERF section=page events=1000 page_limit=20 warm_replayed=0 warm_flattened=20 warm_index_builds=0 warm_read_bytes=8192 log_bytes=262144\\n')\n"
+                "if os.environ.get('FORCE_ZERO') == '1':\n"
+                "    print('test result: ok. 0 passed; 0 failed')\n"
+                "else:\n"
+                "    print('test result: ok. 1 passed; 0 failed')\n",
+                encoding="utf-8",
+            )
+            exe.chmod(0o755)
+            probe = root / "target" / "debug" / "horon-package-probe"
+            probe.write_text("#!/bin/sh\n", encoding="utf-8")
+            probe.chmod(0o755)
+            stdout = "\n".join([
+                json.dumps({
+                    "reason": "compiler-artifact",
+                    "package_id": f"path+file://{pkg_dir}#horon-agent-app-core@0.1.0",
+                    "manifest_path": str(pkg_dir / "Cargo.toml"),
+                    "target": {"kind": ["bin"], "name": "horon-package-probe"},
+                    "profile": {"test": False},
+                    "executable": str(probe),
+                }),
+                json.dumps({
+                    "reason": "compiler-artifact",
+                    "package_id": f"path+file://{pkg_dir}#horon-agent-app-core@0.1.0",
+                    "manifest_path": str(pkg_dir / "Cargo.toml"),
+                    "target": {"kind": ["lib"], "name": "horon_agent_app_core"},
+                    "profile": {"test": True},
+                    "executable": str(exe),
+                }),
+                json.dumps({
+                    "reason": "compiler-artifact",
+                    "package_id": f"horon-agent-harness-api-server 0.1.0 (path+file://{root}/crates/harness-api-server)",
+                    "manifest_path": str(root / "crates" / "harness-api-server" / "Cargo.toml"),
+                    "target": {"kind": ["lib"], "name": "horon_agent_harness_api_server"},
+                    "profile": {"test": True},
+                    "executable": str(exe),
+                }),
+            ])
+            artifacts = gate.parse_compiled_artifacts(stdout)
+            ctx_m = gate.selected_measurements({"context"})[0]
+            out = gate.run_compiled_measurement(ctx_m, artifacts)
+            self.assertIn("STRUCTURAL_PERF section=page", out)
+            page_m = gate.selected_measurements({"page"})[0]
+            self.assertEqual(gate.select_executable(artifacts, page_m)[0], exe)
+
+            os.environ["FORCE_FAIL"] = "1"
+            try:
+                with self.assertRaises(gate.GateError):
+                    gate.run_compiled_measurement(ctx_m, artifacts)
+            finally:
+                os.environ.pop("FORCE_FAIL", None)
+
+            os.environ["FORCE_ZERO"] = "1"
+            try:
+                with self.assertRaises(gate.GateError):
+                    gate.run_compiled_measurement(ctx_m, artifacts)
+            finally:
+                os.environ.pop("FORCE_ZERO", None)
+
+            with self.assertRaises(gate.GateError):
+                gate.select_executable({}, ctx_m)
+
+    def test_print_plan_emits_unified_compile_and_isolated_per_test_runs(self):
+        import contextlib, io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gate.print_plan()
+        self.assertEqual(rc, 0)
+        lines = buf.getvalue().splitlines()
+        self.assertEqual(lines[0], "# unified compile step")
+        self.assertIn("cargo test --locked", lines[1])
+        run_lines = [line for line in lines if line.startswith("<") or "HORON_AGENT_SOAK_CYCLES=" in line]
+        self.assertEqual(len(run_lines), len(gate.MEASUREMENTS))
+        for line in run_lines:
+            self.assertIn("--exact --nocapture --test-threads=1 --format terse", line)
 
     def test_the_soak_runs_short_and_the_page_check_covers_three_sizes(self):
         soak = [m for m in gate.MEASUREMENTS if m["section"] == "soak"]

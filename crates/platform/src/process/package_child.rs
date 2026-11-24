@@ -1,0 +1,425 @@
+//! Starting one installed package executable as a supervised child.
+//!
+//! A package is user-supplied code, so it does not inherit this process's
+//! environment: the launcher clears it and passes only the operating system's
+//! minimum variables plus the names of the package, its installed root and its
+//! private state directory. Its home and temporary directory point inside that
+//! state directory, so nothing in its environment names the user's home or
+//! credentials. The child still runs with that user's permissions: the same
+//! user's files and network access remain reachable, and this launcher does not
+//! isolate them.
+//!
+//! [`PackageChild`] is the one owner of the child's lifetime. It hands out the
+//! standard streams (std handles, so a Tokio pipeline can adopt them without
+//! another process layer), starts the child inside a stop scope that a
+//! descendant cannot leave, and stops that whole scope as a unit when the
+//! caller cancels it. A descendant that survives the leader is still reached,
+//! because the scope is swept while the leader's exit is being observed: on
+//! Unix the process-group id is only reserved while the leader is unreaped, so
+//! the group is signalled before the reap and never after it; on Windows the
+//! dedicated Job Object is terminated, which also ends anything that outlived
+//! the leader.
+//!
+//! Each platform keeps its promise in its own crate: the Unix implementation
+//! lives here beside the launch, and the Windows one lives in
+//! `horon_agent_platform_windows::package_child` because a Job Object needs the
+//! adapter's Win32 surface. [`PackageChildProcess`] is the contract both answer
+//! to.
+
+use std::ffi::OsString;
+use std::io;
+use std::path::Path;
+#[cfg(unix)]
+use std::process::{Child, Command, Stdio};
+use std::process::{ChildStderr, ChildStdin, ChildStdout, ExitStatus};
+use std::time::Duration;
+
+use horon_agent_platform_api::log::{self, PlatformLogLevel};
+use horon_agent_platform_api::package_child::{PackageChildProcess, PackageChildSpawn};
+
+#[cfg(windows)]
+type Inner = horon_agent_platform_windows::package_child::WindowsPackageChild;
+#[cfg(unix)]
+type Inner = UnixPackageChild;
+
+/// Environment variable naming the installed package root.
+///
+/// The root is also the child's first argument; this variable lets a package
+/// read the same value without parsing its argument list.
+pub const PACKAGE_ROOT_ENV: &str = "HORON_PACKAGE_ROOT";
+/// Environment variable naming the installed package ID.
+pub const PACKAGE_ID_ENV: &str = "HORON_PACKAGE_ID";
+/// Environment variable naming the package kind: `extension` or `plugin`.
+pub const PACKAGE_KIND_ENV: &str = "HORON_PACKAGE_KIND";
+/// Environment variable naming the package's private state directory.
+pub const PACKAGE_STATE_ENV: &str = "HORON_PACKAGE_STATE";
+
+/// How long a child gets between the graceful request and the hard kill.
+///
+/// The wire protocol's `shutdown` request is the graceful path a session uses;
+/// this grace period only covers a child that is being cancelled without one.
+pub const DEFAULT_GRACE: Duration = Duration::from_secs(1);
+
+/// The longest single pause while the grace period runs out.
+#[cfg(unix)]
+const STOP_POLL: Duration = Duration::from_millis(25);
+
+/// The variables a package inherits from the host process.
+///
+/// These carry a search path and the locale the user chose, never a credential
+/// or a home directory. Everything else is either supplied by the launcher or
+/// absent.
+#[cfg(unix)]
+const INHERITED_ENVIRONMENT: &[&str] = &["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ"];
+
+/// The variables a Windows package inherits from the host process.
+#[cfg(windows)]
+const INHERITED_ENVIRONMENT: &[&str] = &[
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "OS",
+];
+
+/// What to start: one installed executable with its package's own directories.
+pub struct PackageChildSpec<'a> {
+    /// Absolute path of the installed executable.
+    pub program: &'a Path,
+    /// Arguments after the program name; the first is the installed root.
+    pub arguments: &'a [OsString],
+    /// Installed copy the child runs from, used as its working directory.
+    pub root: &'a Path,
+    /// Package ID, for the diagnostics the package reports.
+    pub id: &'a str,
+    /// `extension` or `plugin`.
+    pub kind: &'a str,
+    /// Owner-private directory the package may write to.
+    pub state_dir: &'a Path,
+    /// Graceful-stop grace period; [`DEFAULT_GRACE`] unless tuned.
+    pub grace: Duration,
+}
+
+/// Start `spec`'s executable as a child this process owns.
+///
+/// The child is placed in its own process group on Unix and in its own Job
+/// Object on Windows, before any of its code runs, receives piped standard
+/// streams, and sees the activation environment described in the module
+/// documentation.
+pub fn spawn(spec: &PackageChildSpec<'_>) -> io::Result<PackageChild> {
+    let environment = activation_environment(spec);
+    let request = PackageChildSpawn {
+        program: spec.program,
+        arguments: spec.arguments,
+        working_directory: spec.root,
+        environment: &environment,
+    };
+    Ok(PackageChild {
+        child: launch(&request)?,
+        grace: spec.grace,
+    })
+}
+
+/// Start the prepared request with the implementation this platform provides.
+#[cfg(unix)]
+fn launch(request: &PackageChildSpawn<'_>) -> io::Result<Inner> {
+    UnixPackageChild::launch(request)
+}
+
+/// Start the prepared request inside the adapter's dedicated Job Object.
+#[cfg(windows)]
+fn launch(request: &PackageChildSpawn<'_>) -> io::Result<Inner> {
+    horon_agent_platform_windows::package_child::spawn(request)
+}
+
+/// One started package process and the only owner of its lifetime.
+pub struct PackageChild {
+    child: Inner,
+    grace: Duration,
+}
+
+impl PackageChild {
+    /// The leader's process ID; also its process-group ID on a platform with
+    /// process groups.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// The grace period [`PackageChild::terminate`] gives the tree.
+    pub fn grace(&self) -> Duration {
+        self.grace
+    }
+
+    /// Whether the leader's exit was already recorded and its tree swept.
+    pub fn exited(&self) -> bool {
+        self.child.exited()
+    }
+
+    /// Take the child's standard input.
+    ///
+    /// The handle is a std pipe, so a Tokio pipeline can wrap it with
+    /// `tokio::process::ChildStdin::from_std` without a second process layer.
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.take_stdin()
+    }
+
+    /// Take the child's standard output.
+    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.child.take_stdout()
+    }
+
+    /// Take the child's standard error.
+    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
+        self.child.take_stderr()
+    }
+
+    /// Whether the leader has exited, without blocking.
+    ///
+    /// An exit is reported only after the tree has been swept and the leader's
+    /// exit recorded, so a descendant that outlived the leader is already gone
+    /// when this answers `Some`. The exit is remembered: a second call reports
+    /// the same status instead of asking the operating system about a leader that
+    /// is already gone.
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    /// Wait for the leader to exit, sweep its tree and record the exit.
+    ///
+    /// The exit is observed before the leader is released, so a descendant that
+    /// outlived the leader does not survive this call.
+    pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        self.child.wait()
+    }
+
+    /// Stop the child's tree and record the leader's exit.
+    ///
+    /// The tree gets `grace` to exit after the graceful request and is then
+    /// forced down, so a child that ignores the request, and any descendant that
+    /// outlives the leader, still leave no process behind. Calling this after the
+    /// exit was recorded reports that status and stops nothing again.
+    pub fn terminate(&mut self) -> io::Result<ExitStatus> {
+        self.child.terminate(self.grace)
+    }
+}
+
+impl Drop for PackageChild {
+    /// Stop the child when its owner lets go without a shutdown.
+    ///
+    /// The platform type is the lifetime owner, so dropping the value returned by
+    /// [`spawn`] must not leave a package process behind even when the caller
+    /// never called [`PackageChild::terminate`].
+    fn drop(&mut self) {
+        if self.child.exited() {
+            return;
+        }
+        if let Err(error) = self.child.terminate(self.grace) {
+            log::log(
+                PlatformLogLevel::Warn,
+                &format!(
+                    "package child {} could not be stopped on drop: {error}",
+                    self.child.id(),
+                ),
+            );
+        }
+    }
+}
+
+/// Exact environment a package child receives.
+fn activation_environment(spec: &PackageChildSpec<'_>) -> Vec<(OsString, OsString)> {
+    // Inherited host keys + 4 package variables + up to 4 home/temp variables.
+    let mut environment: Vec<(OsString, OsString)> = Vec::with_capacity(INHERITED_ENVIRONMENT.len() + 8);
+    for key in INHERITED_ENVIRONMENT {
+        if let Some(value) = std::env::var_os(key) {
+            environment.push((OsString::from(key), value));
+        }
+    }
+    environment.push((OsString::from(PACKAGE_ID_ENV), OsString::from(spec.id)));
+    environment.push((OsString::from(PACKAGE_KIND_ENV), OsString::from(spec.kind)));
+    environment.push((OsString::from(PACKAGE_ROOT_ENV), spec.root.as_os_str().to_owned()));
+    environment.push((OsString::from(PACKAGE_STATE_ENV), spec.state_dir.as_os_str().to_owned()));
+    push_package_home_environment(&mut environment, spec.state_dir);
+    environment
+}
+
+/// The home and temporary directory a package sees: its own state directory.
+#[cfg(unix)]
+fn push_package_home_environment(environment: &mut Vec<(OsString, OsString)>, state_dir: &Path) {
+    environment.push((OsString::from("HOME"), state_dir.as_os_str().to_owned()));
+    environment.push((OsString::from("TMPDIR"), state_dir.join("tmp").into_os_string()));
+}
+
+/// The Windows equivalents: the profile the child sees is its state directory,
+/// and both temporary-directory variables point inside it.
+#[cfg(windows)]
+fn push_package_home_environment(environment: &mut Vec<(OsString, OsString)>, state_dir: &Path) {
+    let temporary = state_dir.join("tmp").into_os_string();
+    environment.push((OsString::from("USERPROFILE"), state_dir.as_os_str().to_owned()));
+    environment.push((OsString::from("HOME"), state_dir.as_os_str().to_owned()));
+    environment.push((OsString::from("TEMP"), temporary.clone()));
+    environment.push((OsString::from("TMP"), temporary));
+}
+
+/// `ESRCH` is 3 on every supported Unix and is the only error that means the
+/// group holds no process any more; the leader is still this child, so the
+/// group id has not been handed to somebody else.
+#[cfg(unix)]
+fn group_already_gone(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(3)
+}
+
+/// One Unix package child and the process group that owns its tree.
+#[cfg(unix)]
+struct UnixPackageChild {
+    child: Child,
+    status: Option<ExitStatus>,
+}
+
+#[cfg(unix)]
+impl UnixPackageChild {
+    /// Build the launch command with its pipes, cleared environment and group.
+    fn launch(request: &PackageChildSpawn<'_>) -> io::Result<Self> {
+        let mut command = Command::new(request.program);
+        command
+            .args(request.arguments)
+            .current_dir(request.working_directory)
+            .env_clear()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (key, value) in request.environment {
+            command.env(key, value);
+        }
+        super::isolate_process_group(&mut command);
+        Ok(Self {
+            child: command.spawn()?,
+            status: None,
+        })
+    }
+
+    /// Whether the leader has exited, without reaping it.
+    fn leader_exited(&self) -> io::Result<bool> {
+        super::wait_child_exit(self.child.id(), true)
+    }
+
+    /// Sweep the group of a leader that exited but is not reaped yet, then reap it.
+    ///
+    /// Every signal from this owner happens while `std::process::Child` still
+    /// holds the leader's wait state, which is what keeps the process-group id
+    /// reserved. After the reap below that id may name another process, so it is
+    /// never signalled again.
+    fn reap_exited(&mut self) -> io::Result<ExitStatus> {
+        match <crate::Current as crate::PlatformAdapter>::force_stop_exited_process_group(self.child.id()) {
+            Ok(()) => {}
+            Err(error) if group_already_gone(&error) => {}
+            Err(error) => return Err(error),
+        }
+        let status = self.child.wait()?;
+        self.status = Some(status);
+        Ok(status)
+    }
+
+    /// Ask the process group led by `pid` to exit.
+    fn request_stop(&self, pid: u32) -> io::Result<()> {
+        match super::request_graceful_stop(pid) {
+            Ok(_request) => Ok(()),
+            Err(error) if group_already_gone(&error) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Kill the process group led by `pid`.
+    fn kill_group(&self, pid: u32) -> io::Result<()> {
+        match super::force_stop_process_group(pid) {
+            Ok(()) => Ok(()),
+            Err(error) if group_already_gone(&error) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl PackageChildProcess for UnixPackageChild {
+    fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.stdin.take()
+    }
+
+    fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.child.stdout.take()
+    }
+
+    fn take_stderr(&mut self) -> Option<ChildStderr> {
+        self.child.stderr.take()
+    }
+
+    fn exited(&self) -> bool {
+        self.status.is_some()
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        if let Some(status) = self.status {
+            return Ok(Some(status));
+        }
+        if !self.leader_exited()? {
+            return Ok(None);
+        }
+        self.reap_exited().map(Some)
+    }
+
+    fn wait(&mut self) -> io::Result<ExitStatus> {
+        if let Some(status) = self.status {
+            return Ok(status);
+        }
+        let pid = self.child.id();
+        super::wait_child_exit(pid, false)?;
+        self.reap_exited()
+    }
+
+    fn terminate(&mut self, grace: Duration) -> io::Result<ExitStatus> {
+        if let Some(status) = self.status {
+            return Ok(status);
+        }
+        let pid = self.child.id();
+        // Asking the group to exit is best effort; a group that refuses the
+        // request is still killed below, so the refusal is reported and not
+        // treated as the outcome of this call. The leader is unreaped while every
+        // signal is sent, even when it already exited on its own, so a descendant
+        // that ignored the request is still reached.
+        match self.request_stop(pid) {
+            Ok(()) => {}
+            Err(error) => log::log(
+                PlatformLogLevel::Debug,
+                &format!("package child {pid} did not accept the graceful stop request: {error}"),
+            ),
+        }
+        // Give the group the grace period, but stop waiting as soon as the leader
+        // exits: the hard kill below then reaches whatever ignored the request.
+        let deadline = std::time::Instant::now() + grace;
+        loop {
+            if self.leader_exited()? {
+                return self.reap_exited();
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            std::thread::sleep(STOP_POLL.min(deadline - now));
+        }
+        // The leader is still unreaped, so its group id is reserved and the kill
+        // reaches every member, including a descendant that ignored the request.
+        // Because `SIGKILL` is delivered synchronously to the whole group,
+        // `child.wait()` reaps the leader directly without an extra `waitid(WNOWAIT)`.
+        self.kill_group(pid)?;
+        let status = self.child.wait()?;
+        self.status = Some(status);
+        Ok(status)
+    }
+}

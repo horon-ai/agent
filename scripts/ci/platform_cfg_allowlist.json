@@ -8,6 +8,10 @@
       "count": 1,
       "reason": "one `#[cfg(all(test, unix))]` module holding the daemon-launch fixture that runs a `/bin/sh` stand-in daemon."
     },
+    "crates/agent-sdk/src/launch_hosted.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(all(test, unix))]` module holding the hosted-launch tests: a `/bin/sh` stand-in runtime and Unix socket paths exist only on Unix."
+    },
     "crates/agent-sdk/src/lib.rs": {
       "count": 1,
       "reason": "re-export of the Unix-only shared SSH transport types, which do not exist on Windows."
@@ -100,6 +104,10 @@
       "count": 11,
       "reason": "host load, memory and terminal probes chosen at compile time: /proc readers on Linux, sysctlbyname/getloadavg on macOS, GlobalMemoryStatusEx on Windows. The perf tier is cross-platform; each probe is the platform's own measurement API."
     },
+    "crates/app-core/src/server.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(all(test, unix))]` declaration selecting the hosted-tenant test module; its fixtures use 0700 directory modes and symlinks, which only Unix has."
+    },
     "crates/app-core/src/server/client_lifecycle_ack_failure_tests.rs": {
       "count": 1,
       "reason": "read-only directory fixture built from POSIX mode bits."
@@ -119,6 +127,10 @@
     "crates/app-core/src/server/tests.rs": {
       "count": 1,
       "reason": "raw pipe-descriptor readiness test (FromRawFd)."
+    },
+    "crates/app-core/src/tool/agentgrep/locate.rs": {
+      "count": 1,
+      "reason": "the test that a symbolic link out of the searched root is never followed creates the link with `std::os::unix::fs::symlink`, which Windows does not offer without a privilege."
     },
     "crates/app-core/src/tool/bash.rs": {
       "count": 7,
@@ -176,6 +188,10 @@
       "count": 6,
       "reason": "the execute bit `write` grants a newly created shebang file: mode arithmetic and `PermissionsExt` exist only on Unix, and Windows keeps the file exactly as written, so the Unix implementation, its no-op counterpart and their test modules are the whole OS split."
     },
+    "crates/app-core/tests/package_tools.rs": {
+      "count": 3,
+      "reason": "the pre-tool hook tests write chmod'd POSIX shell scripts (`PermissionsExt` mode bits and a `#!/bin/sh` body) and so does their `write_hook` helper; Windows cannot execute them, and the rest of the file compiles and runs there."
+    },
     "crates/base/src/background/tests/finalize.rs": {
       "count": 1,
       "reason": "one `#[cfg(unix)]` test that makes the status directory read-only through Unix mode bits (`PermissionsExt`) to prove a failed status write still finalizes the task once; a Windows read-only attribute does not stop files being created in a directory, so the failure cannot be produced there."
@@ -207,6 +223,10 @@
     "crates/base/src/hooks/pre_request_tests.rs": {
       "count": 13,
       "reason": "the hook cases write /bin/sh scripts because a hook is an external process spawned from a command line; the platform-neutral case proves an unset hook returns None."
+    },
+    "crates/base/src/hosting.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(all(test, unix))]` module testing the container boundary: owner-only modes and symlink refusal exist only on Unix."
     },
     "crates/base/src/import_takeover_tests.rs": {
       "count": 4,
@@ -288,9 +308,17 @@
       "count": 3,
       "reason": "assert POSIX owner-only modes after hardening and symlink refusal of an external auth file."
     },
+    "crates/base/src/workspace_dirs_tests.rs": {
+      "count": 1,
+      "reason": "the dedup test reaches one directory through a symlink as well as through its canonical path, and Windows symlinks need privileges the test fixture cannot assume."
+    },
     "crates/base/tests/loading_probe_contract.rs": {
       "count": 1,
       "reason": "widens directory modes to 0755 to simulate a preflight failure, which needs POSIX mode bits."
+    },
+    "crates/base/tests/package_spawn_windows.rs": {
+      "count": 1,
+      "reason": "whole test file is the native-Windows counterpart of package_spawn.rs (#![cfg(windows)]): the package child's lifetime owner there is a Job Object and the scenarios start real cmd.exe descendants, which only a Windows runner can do. .github/workflows/package-windows.yml runs it on x64 and arm64, and scripts/ci/test_target_allowlist.json keeps it out of the Linux/macOS cohort."
     },
     "crates/base/tests/prompt_guidance_integration.rs": {
       "count": 1,
@@ -336,6 +364,10 @@
       "count": 1,
       "reason": "the parent-death half of the bridge lifecycle test: `parent_pid` is deliberately None on Windows (the platform exposes no parent there), so only the idle window can end a bridge on that platform and there is no parent-gone behaviour to assert."
     },
+    "crates/harness-api-server/src/credential_tests.rs": {
+      "count": 2,
+      "reason": "two Unix-only store tests: a symlinked credential file and a 0644 file exist only where a mode and a symbolic link can be created, and both must prove the store refuses them."
+    },
     "crates/harness-api-server/src/lib.rs": {
       "count": 1,
       "reason": "the `server --stdio` bridge entry point exists only on Unix: it connects to the daemon's Unix socket and has no Windows transport."
@@ -380,6 +412,10 @@
       "count": 7,
       "reason": "the release asset name and SHA-256 pin for each supported target triple (linux/macos/windows/freebsd x x86_64/aarch64); the mapping is the product of the updater."
     },
+    "src/cli/api_bridge.rs": {
+      "count": 2,
+      "reason": "the Unix-only `api-bridge --stdio` transport and the Windows arm that refuses it by name (a named pipe has no stdin/stdout pairing); no OS primitive is used directly."
+    },
     "src/cli/args.rs": {
       "count": 1,
       "reason": "the hidden `server stdio` subcommand exists only on Unix: it pairs the native protocol with an in-process Unix socket, and the bridge itself moved to a named pipe on Windows instead."
@@ -388,17 +424,29 @@
       "count": 2,
       "reason": "tests of the Unix-only `server stdio` subcommand above and of `api-bridge --stdio`, whose stdio transport has no Windows counterpart."
     },
+    "src/cli/cloud_doctor.rs": {
+      "count": 2,
+      "reason": "two `#[cfg(unix)]` test items: a fixture that writes an executable `/bin/sh` script standing in for the remote horon-agent, and the test that runs it. Windows has no `sh` or executable bit to stand in for the cloud host."
+    },
     "src/cli/dispatch.rs": {
-      "count": 3,
-      "reason": "the Unix-only `server stdio` arm, the Unix-only `api-bridge --stdio` transport, and the Windows arm that refuses it by name; no OS primitive is left in the file."
+      "count": 1,
+      "reason": "the Unix-only `server stdio` arm; the api-bridge stdio transport moved to `src/cli/api_bridge.rs` with its Windows refusal."
     },
     "src/cli/mod.rs": {
       "count": 1,
       "reason": "`ssh_transport` bridges the native protocol over tokio::net::UnixStream, so the module exists only on Unix."
     },
+    "src/cli/startup/images.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(unix)]` test that creates a symbolic link out of the generated-images directory to prove it is refused; Windows symlink creation needs privileges the CI runner does not grant."
+    },
     "src/main.rs": {
       "count": 1,
       "reason": "Apple's linker reports the unoptimized `horon-agent` binary's `__eh_frame` over its 16 MB compact-unwind limit; the message exists only for debug links on macOS and is not actionable from source."
+    },
+    "crates/base/src/memory/store/store_tests.rs": {
+      "count": 2,
+      "reason": "the memory wiki's file-safety tests: page files and directories are chmod 0600/0700, and a symlinked page file must not be followed. A hosted Windows runner has neither POSIX modes nor the privilege to create a file symlink, so both cases are Unix-only and the rest of the file runs everywhere."
     }
   },
   "version": 1

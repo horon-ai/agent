@@ -37,18 +37,25 @@ const CAPABILITIES: &[Capability] = &[
     cap("create_session", "createSession"),
     cap("create_session_with_options", "createSession"),
     cap("attach_session", "attachSession"),
+    cap("attach_session_with_options", "attachSession"),
+    cap("configure_a2ui", "configureA2ui"),
+    cap("send_a2ui_event", "sendA2uiEvent"),
     cap("fork_session", "forkSession"),
+    cap("fork_consult", "forkConsult"),
+    cap("fork_session_at", "forkSessionAt"),
     cap("transfer_session", "transferSession"),
     cap("detach_session", "detachSession"),
     cap("send_message", "sendMessage"),
     cap("send_message_with_reminder", "sendMessageWithReminder"),
     cap("send_system_reminder", "sendSystemReminder"),
+    cap("continue_run", "continueRun"),
     cap("send_context_message", "sendContextMessage"),
     cap("list_session_heads", "listSessionHeads"),
     cap("select_session_head", "selectSessionHead"),
     cap("get_history_page", "getHistoryPage"),
     cap("export_session_events", "exportSessionEvents"),
     cap("export_session_markdown", "exportSessionMarkdown"),
+    cap("export_session_html", "exportSessionHtml"),
     cap("import_session_events", "importSessionEvents"),
     cap("export_session_blob", "exportSessionBlob"),
     cap("import_session_blob", "importSessionBlob"),
@@ -76,6 +83,8 @@ const CAPABILITIES: &[Capability] = &[
     cap("list_models", "listModels"),
     cap("get_runtime_info", "getRuntimeInfo"),
     cap("runtime_command", "runtimeCommand"),
+    cap("list_package_commands", "listPackageCommands"),
+    cap("run_package_command", "runPackageCommand"),
     cap("set_api_key", "setApiKey"),
     cap("clear_api_key", "clearApiKey"),
     cap("notify_auth_changed", "notifyAuthChanged"),
@@ -90,11 +99,15 @@ const CAPABILITIES: &[Capability] = &[
     cap("ack_approval", "ackApproval"),
     cap("ack_failover", "ackFailover"),
     cap("todo_state", "todoState"),
+    cap("todo_snapshot", "todoSnapshot"),
+    cap("set_todo_status", "setTodoStatus"),
     cap("ack_todo_follow_up", "ackTodoFollowUp"),
     cap("set_model", "setModel"),
     cap("configure_tools", "configureTools"),
     cap("list_tools", "listTools"),
     cap("get_message_modes", "getMessageModes"),
+    cap("get_effective_settings", "getEffectiveSettings"),
+    cap("package_control", "packageControl"),
     cap("submit_tool_result", "submitToolResult"),
     cap("set_reasoning_effort", "setReasoningEffort"),
     cap("compact", "compact"),
@@ -279,6 +292,11 @@ const RUST_ONLY: &[&str] = &[
     "overflow_error",
     // TS reads `client.socketPath` as a field; Rust exposes it as an accessor.
     "socket_path",
+    // The TypeScript and Python consult forks take the boundary as an optional
+    // second argument on `forkConsult`/`fork_consult`. Rust has no optional
+    // parameter, so the boundary is a second method rather than a new exported
+    // options type for one argument.
+    "fork_consult_at",
 ];
 
 /// Public TypeScript methods not yet represented by an equivalent Rust method.
@@ -324,13 +342,21 @@ const PY_ONLY: &[(&str, &str)] = &[
 fn rust_client_source() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     [
+        "a2ui.rs",
         "client.rs",
+        "consult.rs",
+        "todo_client.rs",
+        "client/package_commands.rs",
+        "client/package_control.rs",
+        "client/session_fork.rs",
         "handoff.rs",
         "structured.rs",
         "export.rs",
         "message_modes.rs",
         "cancellable_work.rs",
+        "effective_settings.rs",
         "reports.rs",
+        "continuation.rs",
     ]
     .into_iter()
     .map(|file| {

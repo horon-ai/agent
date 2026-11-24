@@ -25,6 +25,22 @@ if [[ -n "${JUSTRUST_TEST_BASE_URL:-}" ]]; then
 fi
 install_dir=${JUSTRUST_INSTALL_DIR:-"$HOME/.local/bin"}
 [[ "$install_dir" != *$'\n'* && "$install_dir" != *$'\r'* ]] || fail 'invalid install directory'
+append_github_path() {
+    if [[ -n "${GITHUB_PATH:-}" ]]; then
+        local path_dir
+        path_dir=$(cd -- "$install_dir" && pwd -P)
+        if [[ "$target" == *windows* ]]; then
+            path_dir=$(cygpath -w "$path_dir")
+        fi
+        printf '%s\n' "$path_dir" >> "$GITHUB_PATH"
+    fi
+}
+if [[ "${JUSTRUST_USE_CACHED:-0}" == 1 && -x "$install_dir/$binary" ]] \
+        && "$install_dir/$binary" --version; then
+    append_github_path
+    printf 'Using cached justrust %s (%s) from %s\n' "$version" "$target" "$install_dir"
+    exit 0
+fi
 archive="justrust-$target.tar.gz"
 work=$(mktemp -d)
 staged=''
@@ -86,11 +102,5 @@ cp -- "$work/$binary" "$staged"
 chmod 755 "$staged"
 mv -f -- "$staged" "$install_dir/$binary"
 staged=''
-if [[ -n "${GITHUB_PATH:-}" ]]; then
-    path_dir=$(cd -- "$install_dir" && pwd -P)
-    if [[ "$target" == *windows* ]]; then
-        path_dir=$(cygpath -w "$path_dir")
-    fi
-    printf '%s\n' "$path_dir" >> "$GITHUB_PATH"
-fi
+append_github_path
 printf 'Installed justrust %s (%s) into %s\n' "$version" "$target" "$install_dir"

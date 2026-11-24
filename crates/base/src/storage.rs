@@ -39,5 +39,62 @@ pub fn create_store_dir(path: &Path, recursive: bool) -> std::io::Result<()> {
     horon_agent_platform::create_private_dir(path, recursive)
 }
 
+/// Moves the process cwd for one test and puts it back when dropped, panics
+/// included. The cwd is process-global, so hold `lock_test_env` first and
+/// declare this guard after any temporary directory it points into, so it
+/// drops, and restores the cwd, before that directory is deleted.
+#[cfg(test)]
+pub(crate) struct CwdGuard {
+    original: std::path::PathBuf,
+}
+
+#[cfg(test)]
+impl CwdGuard {
+    pub(crate) fn enter(dir: &Path) -> std::io::Result<Self> {
+        let original = std::env::current_dir()?;
+        std::env::set_current_dir(dir)?;
+        Ok(Self { original })
+    }
+
+    pub(crate) fn change(&self, dir: &Path) -> std::io::Result<()> {
+        std::env::set_current_dir(dir)
+    }
+}
+
+#[cfg(test)]
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        if let Err(error) = std::env::set_current_dir(&self.original) {
+            eprintln!("could not restore cwd {}: {error}", self.original.display());
+        }
+    }
+}
+
+/// Points `HORON_HOME` at a directory for one test and restores the previous
+/// value when dropped, panics included. Hold `lock_test_env` first.
+#[cfg(test)]
+pub(crate) struct HomeEnvGuard {
+    previous: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl HomeEnvGuard {
+    pub(crate) fn set(dir: &Path) -> Self {
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir);
+        Self { previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for HomeEnvGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

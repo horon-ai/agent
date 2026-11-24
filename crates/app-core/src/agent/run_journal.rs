@@ -107,6 +107,136 @@ fn journal_cause(provenance: StopProvenance) -> JournalStopCause {
     }
 }
 
+/// The hidden instruction a continuation carries.
+///
+/// Not user prose: the transcript already holds the prompt this continues, and a
+/// visible second copy would read as the user asking twice. The reminder-only
+/// turn prefixes it with `[auto] ` when it stores the message.
+pub(crate) const CONTINUATION_INSTRUCTION: &str = "The previous model request failed with a transient error and \
+this run was resumed automatically. Continue the task from where it left off. Do not repeat tool calls or edits that \
+already completed, and do not ask the user what to do next.";
+
+/// Whether `request` asks to continue a failed run.
+///
+/// Such a request is acknowledged by the turn that decides it — `ok` once a new
+/// run exists, an error when the run may not be continued — so the connection's
+/// generic ack must not claim it first.
+pub(crate) fn is_continuation_request(request: &crate::protocol::Request) -> bool {
+    matches!(
+        request,
+        crate::protocol::Request::Message {
+            expected_run_id: Some(_),
+            ..
+        }
+    )
+}
+
+/// How the connection that asked for a continuation learns its answer.
+///
+/// An ordinary message is acknowledged when the daemon receives it, because
+/// receiving is all it promises. A continuation promises something narrower and
+/// later: a new run exists for the run it named. So the acknowledgement is held
+/// until [`Agent::continue_run`] has begun that run, and a refusal — which never
+/// begins one — is answered by the rejection path instead.
+pub(crate) struct ContinuationDecision {
+    sender: mpsc::UnboundedSender<ServerEvent>,
+    id: u64,
+}
+
+impl ContinuationDecision {
+    pub(crate) fn new(sender: mpsc::UnboundedSender<ServerEvent>, id: u64) -> Self {
+        Self { sender, id }
+    }
+
+    /// Tell the asking connection that its continuation began a run.
+    fn accept(self) {
+        // A closed channel means the connection went away; the turn it asked
+        // for still runs, and nobody is left to answer.
+        if self.sender.send(ServerEvent::Ack { id: self.id }).is_err() {
+            logging::debug("Retry started after its requesting connection closed");
+        }
+    }
+}
+
+/// What one continuation request did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContinuationOutcome {
+    /// The run was continued; its turn ran to its own end.
+    Continued,
+    /// Nothing ran, and this is the sentence a client shows.
+    Refused(String),
+}
+
+impl Agent {
+    /// Continue the run `expected_run_id` if it may still be continued.
+    ///
+    /// The decision and the new run happen here, under the agent this caller
+    /// already holds, so two clients cannot both act on the same failed run: the
+    /// first begins a run, and the second finds a different current run and is
+    /// refused. The turn itself is the ordinary reminder-only turn, whose
+    /// message carries the system display role, which is what keeps the visible
+    /// history at the one user prompt the failed turn already stored.
+    pub(crate) async fn continue_run(
+        &mut self,
+        expected_run_id: &str,
+        event_tx: mpsc::UnboundedSender<ServerEvent>,
+        report: Option<crate::server::foreground_state::TurnReport>,
+        decision: ContinuationDecision,
+    ) -> ContinuationOutcome {
+        use horon_agent_agent_runtime::{ContinuationVerdict, continuation_verdict};
+        let refusal = |reason: String| ContinuationOutcome::Refused(reason);
+        match continuation_verdict(&self.session.id, expected_run_id) {
+            ContinuationVerdict::Eligible => {}
+            ContinuationVerdict::Stale { current_run_id } => {
+                return refusal(match current_run_id {
+                    Some(current) => format!(
+                        "the run named is no longer current (`{current}` is), so that work has moved on; nothing was started"
+                    ),
+                    None => "the run named is not current in this session; nothing was started".to_string(),
+                });
+            }
+            ContinuationVerdict::InFlight => {
+                return refusal("that run has not stopped, so there is nothing to retry".to_string());
+            }
+            ContinuationVerdict::Ineligible { cause } => {
+                return refusal(format!(
+                    "that run ended as `{}`, which retrying would not change; nothing was started",
+                    cause.as_str()
+                ));
+            }
+        }
+        // Beginning the run here, before the turn, is what closes the race: the
+        // failed run stops being current now, so a second request naming it is
+        // refused even while this turn is still starting.
+        let identity = self.begin_run();
+        note_run_start(&self.session.id, identity, false);
+        // The request is answered only now that a new run exists, because that is
+        // what the caller asked about. Sending it any earlier would confirm a
+        // continuation whose run never began; the refusal paths above return
+        // before this point and are answered with an error instead.
+        decision.accept();
+        let result = self
+            .run_once_streaming_mpsc_with_display_role(
+                "",
+                Vec::new(),
+                Some(CONTINUATION_INSTRUCTION.to_string()),
+                event_tx,
+                None,
+                report,
+            )
+            .await;
+        if let Err(error) = result {
+            // The turn ran and failed again: that is the turn's own outcome,
+            // reported through its events, not a refusal of the continuation.
+            crate::logging::warn(&format!(
+                "continuation of run {expected_run_id} in session {} failed: {error}",
+                self.session.id
+            ));
+        }
+        ContinuationOutcome::Continued
+    }
+}
+
 #[cfg(test)]
 #[path = "run_binding_tests.rs"]
 mod run_binding_tests;
@@ -147,6 +277,9 @@ impl Agent {
             .remove(&self.session.id)
         {
             return run;
+        }
+        if self.session.is_memory_only() {
+            return RunIdentity::new(Self::mint_run_id());
         }
         let identity = RunIdentity::new(Self::mint_run_id());
         let binding = match self.session.next_journal_binding() {
@@ -213,7 +346,7 @@ impl Agent {
     /// A failed commit closes a start that did land, so the journal is not left
     /// holding a live run for a turn that never began.
     pub(super) fn save_first_commit(&mut self) -> Result<()> {
-        if !self.closes_after_run {
+        if !self.closes_after_run || self.session.is_memory_only() {
             return self.save_session();
         }
         let run = self.begin_run();
@@ -274,7 +407,7 @@ impl Agent {
         let mut stop = RunStop::capture(run_id, provenance);
         let session_id = self.session.id.clone();
         let cause = journal_cause(provenance);
-        let binding = if self.closes_after_run {
+        let binding = if self.closes_after_run && !self.session.is_memory_only() {
             match self.session.closing_journal_binding() {
                 Ok(binding) => Some(binding),
                 Err(error) => {
@@ -286,10 +419,13 @@ impl Agent {
             None
         };
         let payload = Payload::RunStopped(RunStopped::with_binding(cause, None, binding.clone()));
-        let handle = dispatch_run_row(&session_id, run_id, payload);
-        // Synchronous join, for the same reason as the start: the turn's tail
-        // must not yield, and the write itself already runs off this thread.
-        let persisted = handle.join().unwrap_or(false);
+        let persisted = if self.session.is_memory_only() {
+            false
+        } else {
+            // Synchronous join, for the same reason as the start: the turn's tail
+            // must not yield, and the write itself already runs off this thread.
+            dispatch_run_row(&session_id, run_id, payload).join().unwrap_or(false)
+        };
         if persisted {
             stop.mark_persisted();
             if let Some(binding) = binding {

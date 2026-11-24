@@ -1,0 +1,320 @@
+---
+title: "Rust 패키지"
+description: "사용자 설치 패키지는 Rust 실행 파일 하나와 선언 파일로 이루어진다. 확장은 extension.toml을 싣고, 플러그인은 extension.toml 하나와 자원 파일을 묶은 plugin.toml을 싣는다. 호스트는 설치된 실행 파일을 자식 프로세스로 띄우고 줄 단위 JSON-RPC 계약 하나로 대화한다."
+---
+
+{/* Generated from docs/runtime/PACKAGES.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
+
+사용자 설치 패키지는 Rust 실행 파일 하나와 선언 파일로 이루어진다. 확장은
+`extension.toml`을 싣고, 플러그인은 `extension.toml` 하나와 자원 파일을 묶은
+`plugin.toml`을 싣는다. 호스트는 설치된 실행 파일을 자식 프로세스로 띄우고 줄 단위
+JSON-RPC 계약 하나로 대화한다. 패키지는 도구 호출과 세션이 부르는 실행형 명령을
+받는다. 작성 SDK와 예제는 배포 에이전트 실행 파일 `horon-agent`의 의존성이
+아니다. 작성자가 엔진 내부 ABI 없이 패키지를 만들고 포장하고 시험하도록 존재한다.
+
+## 상태
+
+`dev`에서는 설치 명령으로 두 패키지 유형을 등록한다. 실행 중인 데몬은 수신함의 완성 폴더를 처리하고 카탈로그 세대를 게시한다. 자식 프로세스 감독기는 Linux, macOS, Windows에서 설치 사본을 실행한다. 세션은 턴마다 스냅샷 하나를 잡으므로 실행 중인 턴은 시작한 세대를 그대로 쓰고 다음 턴과 새 세션은 최신 세대를 본다. 비활성과 제거는 새 로딩을 곧바로 막고 철회되는 세대에 등록된 콜백을 실행한다. 도구·텍스트·MCP·명령 표면은 모두 그 고정된 세대를 읽고, 설치한 패키지와 그 부속 훅 파일이 구독한 관찰 사건은 지금 전달한다.
+
+| 영역 | 상태 | 검사 |
+| --- | --- | --- |
+| 선언 스키마와 네이티브 대상 검사 | 구현됨 | `cargo test -p horon-agent-base --test package_manifest` |
+| 설치 사본과 카탈로그 | 구현됨 | `cargo test -p horon-agent-base --test package_catalog` |
+| 통신 계약, 프레이밍, 기한 | 구현됨 | `cargo test -p horon-agent-app-core --lib extensions::wire::tests` |
+| 작성 SDK: 프레이밍, 교섭, 취소 | 구현됨 | `cargo test -p horon-agent-extension-sdk` |
+| 두 레이아웃의 예제 실행 | 구현됨 | `cargo test -p horon-package-example --test extension_layouts` |
+| `horon package install`과 수신함 동기화 함수 | 구현됨 | `cargo test --locked --test package_cli` |
+| Linux와 macOS의 자식 프로세스 감독 | 구현됨 | `cargo test --locked -p horon-agent-base --test package_spawn` |
+| Windows의 자식 프로세스 감독 | 구현됨 | `.github/workflows/package-windows.yml`(x64·arm64)에서 `cargo test --locked -p horon-agent-base --test package_spawn_windows` |
+| 데몬 카탈로그 제어와 수신함 자동 동기화 | 구현됨 | `cargo test --locked --test harness_roundtrip package_daemon` |
+| 세션 스냅샷과 철회 | 구현됨 | `cargo test --locked -p horon-agent-app-core --test package_session` |
+| 패키지 도구 | 구현됨 | `cargo test --locked -p horon-agent-app-core --test package_tools` |
+| 패키지 스킬·규칙·프롬프트 | 구현됨 | `cargo test --locked -p horon-agent-base --test prompt_guidance_integration` |
+| 패키지 MCP 서버 | 구현됨 | `cargo test --locked -p horon-agent-app-core --test tool_dispatch_boundaries` |
+| 패키지 명령: 목록, 템플릿, 실행형 디스패치 | 구현됨 | `cargo test --locked -p horon-agent-app-core --test package_commands` |
+| 패키지 관찰 사건과 부속 훅 파일 | 구현됨 | `cargo test --locked -p horon-agent-app-core --lib extensions::observer::tests` |
+
+## 두 패키지 유형
+
+두 유형은 Rust 바이너리 하나를 실행하고 같은 도구·명령·사건 이름을 선언한다.
+플러그인은 호스트가 세션에 공급하는 자원 파일을 더한다.
+
+| 유형 | 루트 선언 | 싣는 것 |
+| --- | --- | --- |
+| 확장 | `extension.toml` | 실행 파일만 |
+| 플러그인 | `plugin.toml` | 묶인 `extension.toml` 하나, 자원 파일, 실행 파일 |
+
+## 작성 SDK
+
+`horon-agent-extension-sdk`는 피어 계약 크레이트, `serde`, `serde_json`, `sha2`,
+`toml`에만 의존한다. 에이전트 런타임, `app-core`, 터미널 클라이언트에 의존하지 않고
+게시되지 않는다. 패키지가 엔진 옆에 있는 동안에는 경로 의존성으로 더한다.
+
+```toml
+[dependencies]
+horon-agent-extension-sdk = { path = "../agent/crates/extension-sdk" }
+serde_json = "1"
+```
+
+프로그램은 핸들러 하나와 호출 하나다. `main`은 호스트가 첫 인자로 넘긴 패키지 루트를
+읽고, 선언을 적재하고, 코드와 선언이 같은 표면을 이름 짓는지 확인한 뒤 stdio로
+서비스한다. 예제의 도구, 실행형 명령, 사건 관찰자는
+[src/main.rs](https://github.com/horon-ai/agent/blob/dev/examples/packages/example/src/main.rs)에 있다.
+
+```rust
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    let root = std::env::args_os().nth(1).expect("the host passes the package root");
+    let declaration = Declaration::load(root).expect("the installed declaration");
+    declaration.check(&Example).expect("the code matches the declaration");
+    serve_stdio(Example, declaration).expect("the host closed the stream");
+    ExitCode::SUCCESS
+}
+```
+
+## 선언과 해시
+
+선언은 패키지의 정체성이다. id, 버전, 표시 이름, 프로토콜, 바이너리를 싣는 네이티브
+대상, 도구·명령·사건 이름을 담는다. 설치기가 한 번 검증하고, 호스트는 시동할 때마다
+자식이 보고한 해시를 설치 기록과 대조한다. 해시는 `extension.toml` 원본 바이트의
+SHA-256을 소문자 16진수로 쓴 값이므로, 단독 확장과 같은 바이트를 묶은 플러그인은 같은
+값을 보고한다.
+
+```toml
+schema_version = 1
+id = "hello"
+version = "0.1.0"
+name = "Hello package example"
+protocol = "1.0"
+events = ["turn.start", "turn.end"]
+
+[targets]
+aarch64-apple-darwin = "bin/aarch64-apple-darwin/horon-package-example"
+```
+
+코드와 선언이 어긋난 패키지는 시작하지 않는다. SDK는 핸들러가 없는 선언 도구와 선언에
+없는 핸들러를 거부하고, 명령과 관찰 사건에도 같은 규칙을 적용한다. 그래서 실패는 선언이
+약속하지 않은 호출에 답하는 대신 어긋난 이름을 알려 준다.
+
+## 통신 계약
+
+모든 방향이 JSON-RPC 2.0이고 UTF-8 객체 하나가 한 줄이다. 표준 출력은 프레임만
+나르고, 진단은 표준 오류로 간다. 자식이 요청에 답하고 관찰을 보고하며, 호스트는 답을
+쓰지 않는다.
+
+| 메서드 | 방향 | 응답 |
+| --- | --- | --- |
+| `initialize` | 호스트에서 자식 | 프로토콜 범위, 기능, 선언 해시 |
+| `tool/call` | 호스트에서 자식 | 도구의 JSON 값 |
+| `command/invoke` | 호스트에서 자식 | 실행형 명령의 JSON 값 |
+| `observer/notify` | 양방향 | 없음. id를 싣지 않는다 |
+| `cancel` | 호스트에서 자식 | 없음. 취소된 호출은 아무것도 답하지 않는다 |
+| `shutdown` | 호스트에서 자식 | 빈 결과 하나 뒤 자식이 종료한다 |
+
+`initialize`는 자식이 상태로 답하는 유일한 요청이다. 제안은 패키지 id와 유형을
+이름 짓고, 응답은 양쪽이 공유하는 버전, 양쪽이 제안한 기능과 위의 해시를 보고한다.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":{"min":"1.0","max":"1.0"},"capabilities":["tool/call","command/invoke","observer/notify"],"package_id":"hello","kind":"extension"}}
+```
+
+거부는 JSON-RPC 코드를 쓴다. 호스트가 추측 대신 한 줄을 기록하기 위해서다. 공유하는
+프로토콜 버전이 없으면 `-32001`, `initialize`가 끝나기 전 요청이면 `-32002`, 깨진
+프레임이면 `-32600`, 선언한 모양이 아닌 인자면 `-32602`, 교섭하지 않은 메서드나
+이름이면 `-32601`이다.
+
+## 취소
+
+`cancel` 알림은 요청 id 하나를 이름 짓는다. SDK가 프레임을 자기 스레드에서 읽으므로
+핸들러가 도는 동안 토큰이 바뀐다. 긴 호출은 `Context::is_cancelled`를 확인하고 일찍
+돌아온다. 그러면 서버는 그 id에 아무것도 보내지 않는다. 호스트는 이미 기다리기를
+그쳤고 늦은 답은 등록되지 않은 프레임이 되기 때문이다. 아직 시작하지 않은 호출에 대한
+취소는 그 호출을 시작하지 않게 한다. 호출이 도는 동안 스트림이 끝나면 그 호출을
+취소하고 뒤의 호출은 시작하지 않으므로, 핸들러가 닫힌 연결이 전할 수 없는 취소를
+기다리지 않는다.
+
+## 레이아웃
+
+예제는 바이너리 하나를 두 번 포장하고, 두 레이아웃이 같은 `extension.toml` 바이트를
+실어 해시 하나가 둘을 덮는다.
+
+```text
+package/                     플러그인 루트
+  plugin.toml                묶인 확장을 이름 짓는다
+  extension/extension.toml   단독 선언과 바이트 단위로 같다
+  extension/bin/<target>/    실행 파일
+  resources/                 skills, commands, mcp, rules, prompts
+```
+
+단독 레이아웃은 `extension.toml`과 자체 `bin/<target>/`을 담은 디렉터리다. 설치는
+선언한 파일만 복사하고 모든 경로를 패키지 루트 기준으로 검사하며 링크를 거부한다.
+
+## 대상
+
+지원 대상 키 여섯 개가 릴리스 대상이다. 바이너리를 싣는 대상마다 한 항목을 선언한다.
+설치기는 빠진 산출물, fat Mach-O, 틀린 CPU, 실행 권한이 없는 파일, `.exe` 접미사가
+없는 Windows 바이너리를 거부한다.
+
+| 대상 키 | 플랫폼 |
+| --- | --- |
+| `aarch64-apple-darwin` | Apple 실리콘의 macOS |
+| `x86_64-apple-darwin` | Intel의 macOS |
+| `aarch64-unknown-linux-gnu` | arm64의 Linux |
+| `x86_64-unknown-linux-gnu` | x86-64의 Linux |
+| `aarch64-pc-windows-msvc` | arm64의 Windows |
+| `x86_64-pc-windows-msvc` | x86-64의 Windows |
+
+저장소 루트에서 배포 대상에 맞춰 예제를 빌드하고 선언 파일과 실행파일을 같은 패키지에 넣는다.
+
+```sh
+cargo build --locked --release -p horon-package-example --target aarch64-apple-darwin
+mkdir -p package/bin/aarch64-apple-darwin
+cp examples/packages/example/layouts/extension.toml package/
+cp target/aarch64-apple-darwin/release/horon-package-example package/bin/aarch64-apple-darwin/
+```
+
+같은 빌드로 플러그인을 만들려면 단독 확장 디렉터리를 `extension/` 아래에 넣고 플러그인 선언과 자원 파일을 추가한다.
+
+```sh
+mkdir -p plugin
+cp -R package plugin/extension
+cp examples/packages/example/layouts/plugin.toml plugin/
+cp -R examples/packages/example/layouts/resources plugin/
+```
+
+설치기는 호스트 대상만이 아니라 선언한 모든 대상을 검사하므로, 준비한 패키지는 위 표의
+모든 행에 실행 파일을 담아야 한다. 여섯 대상을 모두 빌드해 넣거나, 설치 전에
+`[targets]`를 실제로 배포하는 대상만 남기십시오. 해시는 설치하는 선언에서 다시
+계산된다.
+
+## 서명과 공증
+
+패키지는 사용자 계정의 파일과 네트워크 권한으로 실행된다. macOS에서는 Developer ID와 강화 런타임으로 실행파일에 서명한다. 디스크 이미지를 공증에 제출하고 상태가 `Accepted`로 바뀌면 이미지에 공증 티켓을 붙인다. [Apple 공증 안내](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)를 참고한다.
+
+```sh
+codesign --force --options runtime --timestamp --sign "Developer ID Application: Example (TEAMID)" package/bin/aarch64-apple-darwin/horon-package-example
+hdiutil create -srcfolder package -format UDZO package.dmg
+xcrun notarytool submit package.dmg --keychain-profile horon --wait
+xcrun stapler staple package.dmg
+```
+
+Windows에서는 포장 전에 실행 파일에 Authenticode로 서명한다(`signtool sign /fd
+SHA256`). Linux 패키지는 서명하지 않고 카탈로그의 SHA-256이 무결성 검사다. 에이전트
+자체의 릴리스 절차는 [설치 안내](/ko/reference/release/install)에 있다. 패키지는 그 릴리스가
+아니라 작성자가 서명하고 배포한다.
+
+## 설치와 관리
+
+`horon package install <dir>`과 수신함 동기화 함수는 같은 카탈로그 설치 경로를 쓴다. 카탈로그는 패키지를 검증하고 복사해 등록한다. 설치는 사용자 계정의 권한으로 패키지를 실행하는 데 동의하는 절차다. 카탈로그는 무결성을 확인할 SHA-256 값을 기록한다. 데몬은 수신함을 확인하고 새 카탈로그 세대를 게시한다. 열린 세션은 다음 턴부터 새 세대를 쓰고, 철회 콜백이 끝난 뒤에 관리 명령에 응답한다.
+
+| 명령 | 효과 |
+| --- | --- |
+| `horon package install <dir> [--project <root>] [--replace]` | 검증하고 복사하고 등록한다 |
+| `horon package list [--kind extension\|plugin]` | 출처, 버전, 범위, 유형, 상태를 보여 준다 |
+| `horon package verify <id>` | 기록된 바이트를 다시 검사한다 |
+| `horon package disable <id>` | 사본을 남기고 적재를 멈춘다 |
+| `horon package remove <id>` | 기록을 철회하고 사용자가 보관한 원본을 남긴다 |
+
+## 설치된 실행파일 시작
+
+실행기는 설치 사본의 참조를 잡고 시작 직전에 기록된 실행파일을 검사한다. 자식은 설치 사본을 작업 디렉터리로 쓰고 패키지 루트의 절대 경로를 첫 인자로 받는다. 실행기는 기존 환경 변수를 비운 뒤 아래 값을 전달한다.
+
+| 변수 | 값 |
+| --- | --- |
+| `HORON_PACKAGE_ROOT`, `HORON_PACKAGE_ID`, `HORON_PACKAGE_KIND` | 설치 루트, 패키지 ID, 패키지 유형 |
+| `HORON_PACKAGE_STATE`, `HOME` | 소유자만 접근하는 패키지 상태 디렉터리 |
+| `TMPDIR`(Unix) | 패키지 상태 디렉터리 아래 `tmp` |
+| `USERPROFILE`, `TEMP`, `TMP`(Windows) | 상태 디렉터리, 그리고 그 아래 `tmp`를 가리키는 두 임시 경로 |
+| `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`(Unix), `PATH`, `PATHEXT`, `SYSTEMROOT`, `SYSTEMDRIVE`, `WINDIR`, `COMSPEC`, `NUMBER_OF_PROCESSORS`, `PROCESSOR_ARCHITECTURE`, `OS`(Windows) | 부모에 값이 있으면 상속 |
+
+공급자 키와 나머지 부모 환경 변수는 전달하지 않는다. 자식은 사용자 계정의 파일과 네트워크 권한으로 실행된다.
+
+자식의 수명은 값 하나가 소유하며, 그 값을 놓는 모든 경로가 트리 전체를 멈춘다. Linux와 macOS에서는 자식이 자기 프로세스
+그룹에서 시작하고, 리더를 아직 거두지 않은 동안 그룹에 신호를 보내므로 리더보다 오래 산 자손까지 닿는다. Windows에서는 자식을 일시
+중단 상태로 전용 Job Object에서 만들고 그 Job에 넣은 뒤에야 재개한다. Job은
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`로 설정하고 탈출 플래그는 두지 않으므로, Job이 자식을 소유하기 전에
+패키지 코드가 실행되지 않고, 패키지 안의 무엇도 Job을 떠날 수 없으며, 취소, 소유자 해제, 호스트 종료 어느 경우든 핸들이 닫히면
+모든 구성원이 종료된다. 종료 상태를 보고한다는 것은 트리를 먼저 쓸어냈다는 뜻이다. 호스트의 Job Object가 프로세스를 더 받을 수 없거나 Windows가 중첩 Job을 지원하지 않으면 자식을 소유할 수 없으므로, 호스트가 멈출 수 없는 프로세스를 시작하는 대신 진단과 함께 실행을 거부한다.
+자식을 시작하는 동안 실행기는 설치된 실행 파일을 읽기 전용으로 열어 두므로, Windows에서는 그 사이에 다른 프로세스가 그 이미지를
+쓰거나 이름을 바꾸거나 지울 수 없다. 실행은 샌드박스가 아니며 자식은 여전히 사용자의 권한으로 실행된다.
+
+## 패키지 명령
+
+패키지는 두 가지 슬래시 명령을 공급하고, 세션은 둘 다 `/id:command`로 부른다. `id`는
+패키지 id이고 `command`는 선언한 이름이다. 플러그인은 `plugin.toml`의 `commands`에
+Markdown 템플릿을 선언하고 파일 이름에서 확장자를 뺀 값이 명령 이름이 된다. 확장과
+플러그인은 `extension.toml`의 `[[commands]]`에 실행형 명령을 선언한다. 두 방식이 같은
+입력 이름 공간을 쓰므로 한 패키지가 같은 이름을 두 번 제공할 수 없다. 한 명령을
+`[[commands]]`와 명령 파일 양쪽에 이름 짓는 설치는 `duplicate public package name`으로
+거부된다.
+
+```toml
+[resources]
+commands = ["resources/commands/review.md"]
+```
+
+```md
+---
+description: Review a file with the package's own instructions.
+argument-hint: <path>
+---
+
+Review $1 and report what you find.
+```
+
+템플릿은 본문 글이다. `$ARGUMENTS`는 앞뒤 공백을 뺀 인자 문자열 전체이고 `$1`…`$9`는
+공백으로 나눈 단어이며, 인자 자체에 든 달러 기호는 복사만 되고 다시 훑지 않는다. 펼친 글은 사용자
+메시지로 제출된다. frontmatter에 `description`이 없는 파일은 본문의 첫 비어 있지 않은
+줄을 60자에서 자르고 말줄임표를 붙인 값을 쓰므로 목록에는 언제나 행 하나가 있다.
+
+실행형 명령은 인자 원문과 공백으로 나눈 단어를 자식의 `command/invoke`로 보내고
+(`{"text": "alpha beta", "args": ["alpha", "beta"]}`) 자식이 답한 값을 돌려받는다.
+자식에 닿기 전에 다음 순서로 도구 정책을 통과한다.
+
+| 검사 | 거부 |
+| --- | --- |
+| 계획 모드 | 계획 모드가 켜져 있으면 프로세스 효과를 거부한다 |
+| 비활성 이름 | `[tools] disabled`나 SDK 비활성 목록의 `ext__<id>__<command>` |
+| 승인 모드 | `write`와 그 위 단계는 먼저 묻고, `off`/`yolo`는 묻지 않는다 |
+| `pre_tool` 훅 | 차단 응답은 호출을 멈추고, 훅은 자식이 받는 페이로드를 본다 |
+
+도구 허용 목록은 일부러 보지 않는다. 허용 목록은 모델이 부를 수 있는 도구를 이름 짓고,
+`/id:command` 줄은 사용자 자신의 요청이기 때문이다. 비활성 목록은 명시적 거부이므로
+본다. 정책 이름은 `ext__<id>__<command>`이며 같은 이름의 패키지 도구가 쓰는 이름과
+같아서 거부 하나가 둘을 함께 덮는다.
+
+두 방식 모두 세션이 고정한 패키지 세대를 읽는다. 그래서 목록과 실행이 같은 세대를
+가리키고, 그 세대에서 빠진 패키지의 명령은 파일을 읽거나 자식을 시작하기 전에 그 항목이
+오래됐다는 메시지와 함께 거부된다. 템플릿이 선언한 경로는 설치된 패키지 루트 안에서만
+해석한다. 절대 경로, `..` 구성 요소, 링크는 설치 때 거부하고, 기록한 길이와 SHA-256은
+사본을 읽을 때마다 다시 검사한다.
+
+터미널 클라이언트와 SDK는 같은 두 동작에 닿는다. 발견은 하네스 API의 `runtime_command`에
+`package_commands`를 실어 보내고, 실행은 `package_command`에 `[id, command, …인자 단어]`를
+싣는다. 응답 페이로드는 [하네스 API](/ko/reference/protocol/harness-api)에 있다. TUI는 이들을
+`/help`의 하네스 구역에 나열하고, `/id:command`는 내장 명령과 명령 파일, 하네스 이름을
+모두 지난 뒤에 찾으므로 설치한 패키지가 다른 출처가 이미 답하는 이름을 가져가지 않는다.
+
+## 예제
+
+`examples/packages/example`이 예제다. 도구(`greet`), 실행형 명령(`hello`),
+Markdown 명령(`greeting`), `turn.start`와 `turn.end` 관찰자, 두 레이아웃의 플러그인
+자원을 담는다. 시험은 실제 파이프 위에서 레이아웃마다 빌드된 바이너리를 시작한다.
+
+```sh
+cargo test --locked -p horon-package-example --test extension_layouts
+cargo run --locked -p horon-package-example -- package
+```
+
+## 한계
+
+| 한계 | 값 |
+| --- | --- |
+| 줄바꿈을 포함한 프레임 하나 | 1 MiB |
+| 선언 파일 | 256 KiB |
+| 양방향 대기 프레임 | 128 |
+| 호스트가 기다리는 요청 | 64 |
+| 호출 하나가 쌓을 수 있는 관찰 보고 | 128 |
+| 명령 템플릿 하나 | 64 KiB |
+| 한 패키지가 선언하는 모든 명령 템플릿 | 256 KiB |

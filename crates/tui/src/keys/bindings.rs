@@ -39,13 +39,39 @@ pub mod ids {
     pub const APP_SCROLL_DOWN: &str = "app.scroll_down";
     /// Follow the end of the conversation again.
     pub const APP_SCROLL_BOTTOM: &str = "app.scroll_bottom";
-    /// Show the whole output of the newest tool call whose preview was cut, and
-    /// the preview again on the next press.
+    /// Show the whole output of the selected tool call whose preview was cut,
+    /// and the preview again on the next press.
     pub const APP_EXPAND_TOOL: &str = "app.expand_tool";
+    /// Draw or hide the record of finished tool calls for this session.
+    pub const APP_TOGGLE_TOOL_ACTIVITY: &str = "app.toggle_tool_activity";
     /// Step to the next reasoning-effort level, wrapping at the last one.
     pub const APP_CYCLE_EFFORT: &str = "app.cycle_effort";
     /// Open the list of models this session can switch to.
     pub const APP_PICK_MODEL: &str = "app.pick_model";
+    /// Copy the whole draft to the terminal clipboard.
+    pub const APP_COPY_DRAFT: &str = "app.copy_draft";
+    /// Copy the line the cursor is on to the terminal clipboard.
+    pub const APP_COPY_LINE: &str = "app.copy_line";
+    /// Copy the newest answer to the terminal clipboard.
+    pub const APP_COPY_LAST: &str = "app.copy_last";
+    /// Copy the newest answer's last code block to the terminal clipboard.
+    pub const APP_COPY_CODE: &str = "app.copy_code";
+    /// Step forward to the next model in `models.shortlist`, wrapping.
+    pub const APP_CYCLE_MODEL: &str = "app.cycle_model";
+    /// Step backward to the previous model in `models.shortlist`, wrapping.
+    pub const APP_CYCLE_MODEL_BACK: &str = "app.cycle_model_back";
+    /// Paint the whole screen again, discarding the frame the terminal holds.
+    pub const APP_REPAINT: &str = "app.repaint";
+    /// Show or hide the model's reasoning for the rest of the session.
+    pub const APP_TOGGLE_THINKING: &str = "app.toggle_thinking";
+    /// Continue the last failed turn of this session.
+    pub const APP_RETRY_TURN: &str = "app.retry_turn";
+    /// Put this session in read-only plan mode.
+    pub const APP_PLAN_MODE: &str = "app.plan_mode";
+    /// Start or finish on-device voice input.
+    pub const APP_VOICE: &str = "app.voice";
+    /// Toggle opt-in real-time live voice mode or active capture.
+    pub const APP_LIVE_VOICE: &str = "app.live_voice";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -76,8 +102,12 @@ pub mod ids {
     pub const EDITOR_HISTORY_NEXT: &str = "editor.history_next";
     /// Complete the slash command being typed.
     pub const EDITOR_COMPLETE: &str = "editor.complete";
+    /// Fill the draft with the local suggestion shown after the caret.
+    pub const EDITOR_ACCEPT_SUGGESTION: &str = "editor.accept_suggestion";
     /// Search the drafts sent before this one.
     pub const EDITOR_HISTORY_SEARCH: &str = "editor.history_search";
+    /// Hand the draft to `VISUAL` or `EDITOR` and load what it saves.
+    pub const EDITOR_EXTERNAL: &str = "editor.external";
     /// Approve a parked tool call once.
     pub const PROMPT_ALLOW: &str = "prompt.allow";
     /// Approve a parked tool call and every later call like it.
@@ -132,6 +162,9 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_SUBMIT, Scope::App, &["enter"]),
     ActionSpec::new(ids::APP_CANCEL, Scope::App, &["ctrl+c"]),
     ActionSpec::new(ids::APP_INTERRUPT, Scope::App, &["esc"]),
+    // `ctrl+d` follows the draft at this key alone: the app deletes forward
+    // while the draft has text and only leaves from an empty one. A file that
+    // moves the action to another key gets the plain leave back there.
     ActionSpec::new(ids::APP_QUIT, Scope::App, &["ctrl+d"]),
     // The transcript's own keys: `up` and `down` stay with the draft and its
     // history, so the view moves on their shifted forms and on the page keys.
@@ -143,12 +176,55 @@ pub const ACTIONS: &[ActionSpec] = &[
     // The key a cut tool preview names: reading the rest of one call's output
     // is the one thing the transcript cannot do with the scroll keys alone.
     ActionSpec::new(ids::APP_EXPAND_TOOL, Scope::App, &["ctrl+o"]),
+    // The prose-only view: the record of finished calls goes, the work in
+    // progress and the approvals it needs stay. The letter is free in the
+    // shipped map, so no action loses a key to it.
+    ActionSpec::new(ids::APP_TOGGLE_TOOL_ACTIVITY, Scope::App, &["alt+t"]),
     // `shift+tab` walks the effort ladder upwards. `tab` alone still completes
     // the draft: an exact binding is looked up before an unshifted one, and the
     // shift on the event stops `tab` from answering it.
     ActionSpec::new(ids::APP_CYCLE_EFFORT, Scope::App, &["shift+tab"]),
     // The model list, one keystroke away from the draft being typed.
     ActionSpec::new(ids::APP_PICK_MODEL, Scope::App, &["alt+p"]),
+    // Copying is on a key because it is asked for while reading: `alt+shift+c`
+    // and `alt+shift+l` are the keys the reference client puts here, and their
+    // shifted characters arrive lower-cased, so the bindings are `alt+c` and
+    // `alt+l`. A terminal that does not report option as meta sends a character
+    // instead, which is why `/copy` reaches the same three targets.
+    ActionSpec::new(ids::APP_COPY_CODE, Scope::App, &["alt+c"]),
+    ActionSpec::new(ids::APP_COPY_LAST, Scope::App, &["alt+l"]),
+    ActionSpec::new(ids::APP_COPY_DRAFT, Scope::App, &["alt+d"]),
+    // The draft is one message in the editor; a line of it is the unit a user
+    // copies out of a long one, so it has its own key rather than a mode.
+    ActionSpec::new(ids::APP_COPY_LINE, Scope::App, &["alt+k"]),
+    // Two steps through a shortlist of the user's own, forward and backward.
+    // `ctrl+p` is free of the editor's own keys, and `ctrl+alt+p` is the same
+    // letter with one modifier more, which every terminal reports apart from
+    // `ctrl+p`; either can be rebound in `keybindings.toml`.
+    ActionSpec::new(ids::APP_CYCLE_MODEL, Scope::App, &["ctrl+p"]),
+    ActionSpec::new(ids::APP_CYCLE_MODEL_BACK, Scope::App, &["ctrl+alt+p"]),
+    // The one key that changes nothing: it throws away the frame Ratatui kept,
+    // so a screen another program wrote over is drawn again in full. It answers
+    // before every surface and takes no key from one, because only the frames
+    // are discarded, not the state they show. `ctrl+l` is the key a shell uses
+    // for the same repair.
+    ActionSpec::new(ids::APP_REPAINT, Scope::App, &["ctrl+l"]),
+    // Reasoning display for this session: the draft keeps every letter, so the
+    // toggle has to be a control key.
+    ActionSpec::new(ids::APP_TOGGLE_THINKING, Scope::App, &["ctrl+t"]),
+    // Continuing the turn that just failed is asked for while reading why it
+    // failed, so it takes a key rather than a command alone. `alt+r` is
+    // unclaimed by the rest of the map and is the letter for a retry.
+    ActionSpec::new(ids::APP_RETRY_TURN, Scope::App, &["alt+r"]),
+    // Read-only plan mode, the same as `/plan on`. `alt+m` is free in the shipped map.
+    ActionSpec::new(ids::APP_PLAN_MODE, Scope::App, &["alt+m"]),
+    // On-device voice input. `ctrl+space` is free in the shipped map; a
+    // terminal that does not report it leaves `/voice` as the entry point, and
+    // the key can be rebound in `keybindings.toml`.
+    ActionSpec::new(ids::APP_VOICE, Scope::App, &["ctrl+space"]),
+    // Opt-in real-time voice session toggle. `ctrl+l` stays `app.repaint` (#482),
+    // and `alt+v` is unclaimed in the shipped map (remappable in `keybindings.toml`).
+    ActionSpec::new(ids::APP_LIVE_VOICE, Scope::App, &["alt+v"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
     ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),
@@ -168,9 +244,20 @@ pub const ACTIONS: &[ActionSpec] = &[
     ),
     ActionSpec::new(ids::EDITOR_KILL_TO_START, Scope::Editor, &["ctrl+u"]),
     ActionSpec::new(ids::EDITOR_KILL_TO_END, Scope::Editor, &["ctrl+k"]),
-    ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w"]),
+    // Two spellings, both of them the word the cursor just left: `ctrl+w` is
+    // the one the editor grew with, `alt+backspace` is the one the terminals
+    // and the other clients send for the same intent.
+    ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w", "alt+backspace"]),
     ActionSpec::new(ids::EDITOR_COMPLETE, Scope::Editor, &["tab"]),
+    // The one key that puts a ghost suggestion into the draft. It is a
+    // modifier on the arrow that already moves by a character, so it cannot be
+    // reached by a slip while typing.
+    ActionSpec::new(ids::EDITOR_ACCEPT_SUGGESTION, Scope::Editor, &["ctrl+right"]),
     ActionSpec::new(ids::EDITOR_HISTORY_SEARCH, Scope::Editor, &["ctrl+r"]),
+    // The draft leaves the client for the length of one edit. `ctrl+g` is
+    // unclaimed by the rest of the map, so the key adds a surface without
+    // taking one away.
+    ActionSpec::new(ids::EDITOR_EXTERNAL, Scope::Editor, &["ctrl+g"]),
     ActionSpec::new(ids::PROMPT_ALLOW, Scope::Prompt, &["y"]),
     ActionSpec::new(ids::PROMPT_ALLOW_ALWAYS, Scope::Prompt, &["a"]),
     ActionSpec::new(ids::PROMPT_DENY, Scope::Prompt, &["n"]),

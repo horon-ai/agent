@@ -44,6 +44,7 @@ fn format_content_block_for_relevance(block: &crate::message::ContentBlock) -> O
         crate::message::ContentBlock::Image { .. } => Some("[Image]".to_string()),
         crate::message::ContentBlock::Audio { .. } => Some("[audio]".to_string()),
         crate::message::ContentBlock::OpenAICompaction { .. } => Some("[OpenAI native compaction]".to_string()),
+        a2ui @ crate::message::ContentBlock::A2ui { .. } => a2ui.a2ui_text_card(),
     }
 }
 
@@ -80,6 +81,9 @@ fn format_content_block_for_extraction(block: &crate::message::ContentBlock) -> 
         crate::message::ContentBlock::Image { .. } => Some("[Image]".to_string()),
         crate::message::ContentBlock::Audio { .. } => Some("[audio]".to_string()),
         crate::message::ContentBlock::OpenAICompaction { .. } => Some("[OpenAI native compaction]".to_string()),
+        a2ui @ crate::message::ContentBlock::A2ui { .. } => a2ui
+            .a2ui_text_card()
+            .map(|text| truncate_chars(&text, MEMORY_CONTEXT_MAX_BLOCK_CHARS)),
     }
 }
 

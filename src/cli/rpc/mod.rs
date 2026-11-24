@@ -11,6 +11,8 @@
 
 use anyhow::Result;
 
+#[cfg(test)]
+mod a2ui_tests;
 mod adapter;
 mod command;
 mod frame;

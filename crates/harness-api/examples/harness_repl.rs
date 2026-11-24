@@ -44,6 +44,7 @@ fn run_session<R: BufRead, W: Write>(mut client: HarnessClient<R, W>, message: &
         .send(ApiRequest::CreateSession {
             working_dir: None,
             system_prompt: None,
+            a2ui: None,
         })
         .expect("create session");
     let session_id = loop {
@@ -61,6 +62,7 @@ fn run_session<R: BufRead, W: Write>(mut client: HarnessClient<R, W>, message: &
             images: vec![],
             system_reminder: None,
             no_reply: false,
+            expected_run_id: None,
         })
         .expect("send message");
 

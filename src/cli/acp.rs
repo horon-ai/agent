@@ -16,6 +16,9 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 
+mod a2ui;
+#[cfg(test)]
+mod a2ui_tests;
 mod auth;
 mod client_router;
 mod connection;

@@ -476,6 +476,10 @@ fn imported_message_text(blocks: &[ContentBlock], truncate_blocks: bool) -> (Str
                 changed = true;
                 format!("[Imported audio: {format}]")
             }
+            a2ui @ ContentBlock::A2ui { .. } => {
+                changed = true;
+                a2ui.a2ui_text_card().unwrap_or_else(|| "[Imported A2UI]".to_string())
+            }
         };
 
         let text = if truncate_blocks {
@@ -818,6 +822,10 @@ fn finalize_imported_session(
     created_at: Timestamp,
     updated_at: Option<Timestamp>,
 ) -> Result<Session> {
+    if transcript::preview_only() {
+        normalize_imported_history(&mut session, true);
+        return Ok(session);
+    }
     // Never overwrite a horon-agent-side continuation with a shorter external
     // transcript. This protection applies to every importer, not only Claude.
     if crate::session::session_exists(&session.id)
@@ -1267,6 +1275,11 @@ mod takeover;
 pub(crate) use takeover::remove_prepared_takeover_session;
 pub use takeover::take_over_live_claude_session;
 mod text;
+mod transcript;
+pub use transcript::{
+    TranscriptFormat, TranscriptPreview, import as import_transcript, preview as preview_transcript,
+    preview_and_import as preview_and_import_transcript,
+};
 
 #[cfg(test)]
 #[path = "import_tests.rs"]

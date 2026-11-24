@@ -31,6 +31,7 @@ cases through a ConPTY with `pywinpty`, which the Windows job installs.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import hashlib
 import json
 import os
@@ -45,6 +46,7 @@ import tempfile
 import threading
 import time
 import traceback
+import unicodedata
 
 POSIX = os.name != "nt"
 if POSIX:
@@ -69,9 +71,15 @@ MOCK_SERVER = os.path.join(REPO_ROOT, "scripts", "perf", "mock_llm_server.py")
 
 # How long a single expected screen costs before the run fails. The first draw
 # waits on the daemon, the provider probe, and the harness bridge, so it gets the
-# larger budget; keystroke round trips are local.
+# larger budget. A keystroke round trip is local, but a loaded runner can stall a
+# redraw for tens of seconds, so a step gets twice the budget it once had.
 STARTUP_TIMEOUT = 90.0
-STEP_TIMEOUT = 45.0
+STEP_TIMEOUT = 90.0
+# A keystroke is sent only after the client has stopped drawing for
+# `SETTLE_QUIET` seconds (at most `SETTLE_LIMIT` seconds of waiting). Typing into
+# a redraw loses the keys, which showed up as a screen that never appeared.
+SETTLE_QUIET = 0.4
+SETTLE_LIMIT = 4.0
 # Budget for a launch whose stdio is a pipe and which therefore has to start the
 # daemon itself. It has to exceed the product's own readiness budget
 # (`READY_POLL_TIMEOUT`, 120 s on Windows, where a spawned server is polled
@@ -95,12 +103,15 @@ APPROVAL_PROMPT = "approval needed"
 # The client draws a tool call as its name and status, not its output, so the
 # approved retry is proven by the status line plus the file the command writes
 # (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
-APPROVAL_RESOLVED = "approval approved"
 # The status line draws `provider/model` from `ApiEvent::ModelInfo`, which the
 # harness sends over the session event stream once the bridge is serving this
 # client, so seeing it means the client is past its first frame and talking to
 # a live bridge.
 SESSION_READY = "mock/mock-model"
+# `Preset::Default` places `Status` before `Model` separated by `" · "`
+# (`SymbolPreset::Unicode`), so an idle turn at 120x40 renders this prefix on
+# the live status row on both POSIX and Windows.
+IDLE_STATUS = f"idle · {SESSION_READY}"
 TOOL_FILE = "tui-smoke.txt"
 TOOL_FILE_TEXT = "retry"
 # The sequences the client writes when it gives the terminal back (#431). A
@@ -133,6 +144,376 @@ def contains(raw: str, needle: str) -> bool:
     return WHITESPACE.sub(" ", needle) in screen_text(raw)
 
 
+def _char_cell_width(ch: str) -> int:
+    if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+        return 0
+    if unicodedata.east_asian_width(ch) in ("W", "F"):
+        return 2
+    return 1
+
+
+class TerminalScreen:
+    """Minimal VT100/ANSI screen grid for matching ratatui's differential redraws.
+
+    Full-screen clients such as `ratatui` diff each frame against the previous
+    one cell-by-cell and emit cursor moves (`CSI row;col H`) to skip any cell
+    whose character and style already match what is on screen. Stripping escape
+    sequences from the raw PTY byte stream splits words whenever an earlier
+    frame happened to leave a matching glyph at that column (for instance
+    `/tmp/htui-XXXXXXXX` sharing `t`, `c`, or `h` with `nothing matches that
+    filter` on row 19). Applying the stream to a virtual grid keeps composed
+    rows intact while recording which transcript offset touched each row so
+    `since=` waits stay scoped to fresh output.
+    """
+
+    def __init__(self, rows: int = 40, cols: int = 120) -> None:
+        self.rows = rows
+        self.cols = cols
+        self._main = self._blank_grid()
+        self._alt = self._blank_grid()
+        self._main_dirty = [-1] * rows
+        self._alt_dirty = [-1] * rows
+        self._use_alt = False
+        self._row = 0
+        self._col = 0
+        self._pending_wrap = False
+        self._saved: dict[bool, tuple[int, int]] = {False: (0, 0), True: (0, 0)}
+        self._state = "normal"
+        self._csi = ""
+        self._offset = 0
+        self._last_offset = -1
+        self._touched: set[int] = set()
+        self._row_events: list[tuple[int, str]] = []
+        self._block_events: list[tuple[int, str]] = []
+
+    def _blank_grid(self) -> list[list[str]]:
+        return [[" "] * self.cols for _ in range(self.rows)]
+
+    @property
+    def _grid(self) -> list[list[str]]:
+        return self._alt if self._use_alt else self._main
+
+    @property
+    def _dirty(self) -> list[int]:
+        return self._alt_dirty if self._use_alt else self._main_dirty
+
+    def _row_text(self, row: int) -> str:
+        return WHITESPACE.sub(" ", "".join(self._grid[row])).strip()
+
+    def _commit_touched(self, *, record_block: bool = False) -> None:
+        if not self._touched:
+            return
+        rows = sorted(self._touched)
+        self._touched.clear()
+        stamp = self._last_offset
+        lines: list[str] = []
+        for row in rows:
+            self._dirty[row] = stamp
+            text = self._row_text(row)
+            if text:
+                self._row_events.append((stamp, text))
+                lines.append(text)
+        if record_block and len(lines) > 1:
+            self._block_events.append((stamp, WHITESPACE.sub(" ", " ".join(lines))))
+
+    def _set_cursor(self, row: int, col: int) -> None:
+        new_row = max(0, min(self.rows - 1, row))
+        new_col = max(0, min(self.cols - 1, col))
+        if new_row != self._row:
+            self._commit_touched()
+        self._row = new_row
+        self._col = new_col
+        self._pending_wrap = False
+
+    def _line_feed(self) -> None:
+        self._commit_touched()
+        self._pending_wrap = False
+        if self._row + 1 < self.rows:
+            self._row += 1
+        else:
+            grid = self._grid
+            dirty = self._dirty
+            grid.pop(0)
+            grid.append([" "] * self.cols)
+            dirty.pop(0)
+            dirty.append(self._last_offset)
+            self._touched.add(self._row)
+
+    def _put_char(self, ch: str) -> None:
+        width = _char_cell_width(ch)
+        if width == 0:
+            return
+        if self._pending_wrap:
+            self._col = 0
+            self._line_feed()
+        if width == 2 and self._col == self.cols - 1:
+            self._grid[self._row][self._col] = " "
+            self._touched.add(self._row)
+            self._col = 0
+            self._line_feed()
+        row_cells = self._grid[self._row]
+        row_cells[self._col] = ch
+        if width == 2 and self._col + 1 < self.cols:
+            row_cells[self._col + 1] = ""
+        self._touched.add(self._row)
+        self._dirty[self._row] = self._last_offset
+        if self._col + width >= self.cols:
+            self._col = self.cols - 1
+            self._pending_wrap = True
+        else:
+            self._col += width
+
+    def _erase_in_line(self, mode: int) -> None:
+        row_cells = self._grid[self._row]
+        if mode == 0:
+            start, end = self._col, self.cols
+        elif mode == 1:
+            start, end = 0, self._col + 1
+        elif mode == 2:
+            start, end = 0, self.cols
+        else:
+            return
+        for c in range(start, end):
+            row_cells[c] = " "
+        self._touched.add(self._row)
+        self._dirty[self._row] = self._last_offset
+
+    def _erase_in_display(self, mode: int) -> None:
+        self._commit_touched(record_block=True)
+        grid = self._grid
+        if mode == 0:
+            self._erase_in_line(0)
+            for r in range(self._row + 1, self.rows):
+                grid[r] = [" "] * self.cols
+                self._dirty[r] = self._last_offset
+        elif mode == 1:
+            for r in range(0, self._row):
+                grid[r] = [" "] * self.cols
+                self._dirty[r] = self._last_offset
+            self._erase_in_line(1)
+        elif mode in (2, 3):
+            for r in range(self.rows):
+                grid[r] = [" "] * self.cols
+                self._dirty[r] = self._last_offset
+
+    def _switch_alt(self, enable: bool) -> None:
+        if enable == self._use_alt:
+            return
+        self._commit_touched(record_block=True)
+        if enable:
+            self._saved[False] = (self._row, self._col)
+            self._use_alt = True
+            self._alt = self._blank_grid()
+            self._alt_dirty = [-1] * self.rows
+            self._row = 0
+            self._col = 0
+            self._pending_wrap = False
+        else:
+            self._use_alt = False
+            self._row, self._col = self._saved.get(False, (0, 0))
+            self._pending_wrap = False
+
+    def _handle_csi(self, params: str, final: str) -> None:
+        private = params.startswith("?")
+        raw_params = params[1:] if private else params
+        parts = raw_params.split(";") if raw_params else []
+
+        def param(index: int, default: int) -> int:
+            if index >= len(parts) or not parts[index]:
+                return default
+            digits = "".join(ch for ch in parts[index] if ch.isdigit())
+            return int(digits) if digits else default
+
+        if private:
+            if final in ("h", "l"):
+                enable = final == "h"
+                for item in parts:
+                    if item in ("1049", "1047", "47"):
+                        self._switch_alt(enable)
+            return
+
+        if final in ("H", "f"):
+            self._set_cursor(param(0, 1) - 1, param(1, 1) - 1)
+        elif final == "A":
+            self._set_cursor(self._row - max(1, param(0, 1)), self._col)
+        elif final == "B":
+            self._set_cursor(self._row + max(1, param(0, 1)), self._col)
+        elif final == "C":
+            self._set_cursor(self._row, self._col + max(1, param(0, 1)))
+        elif final == "D":
+            self._set_cursor(self._row, self._col - max(1, param(0, 1)))
+        elif final == "E":
+            self._set_cursor(self._row + max(1, param(0, 1)), 0)
+        elif final == "F":
+            self._set_cursor(self._row - max(1, param(0, 1)), 0)
+        elif final in ("G", "`"):
+            self._set_cursor(self._row, param(0, 1) - 1)
+        elif final == "d":
+            self._set_cursor(param(0, 1) - 1, self._col)
+        elif final == "J":
+            self._erase_in_display(param(0, 0))
+        elif final == "K":
+            self._erase_in_line(param(0, 0))
+        elif final == "X":
+            count = max(1, param(0, 1))
+            row_cells = self._grid[self._row]
+            for c in range(self._col, min(self.cols, self._col + count)):
+                row_cells[c] = " "
+            self._touched.add(self._row)
+            self._dirty[self._row] = self._last_offset
+        elif final == "P":
+            count = max(1, param(0, 1))
+            row_cells = self._grid[self._row]
+            tail = row_cells[self._col + count :]
+            row_cells[self._col :] = tail + [" "] * (self.cols - self._col - len(tail))
+            self._touched.add(self._row)
+            self._dirty[self._row] = self._last_offset
+        elif final == "@":
+            count = max(1, param(0, 1))
+            row_cells = self._grid[self._row]
+            row_cells[self._col :] = ([" "] * count + row_cells[self._col :])[: self.cols - self._col]
+            self._touched.add(self._row)
+            self._dirty[self._row] = self._last_offset
+        elif final == "L":
+            self._commit_touched(record_block=True)
+            count = min(self.rows - self._row, max(1, param(0, 1)))
+            grid = self._grid
+            dirty = self._dirty
+            for _ in range(count):
+                grid.insert(self._row, [" "] * self.cols)
+                grid.pop()
+                dirty.insert(self._row, self._last_offset)
+                dirty.pop()
+        elif final == "M":
+            self._commit_touched(record_block=True)
+            count = min(self.rows - self._row, max(1, param(0, 1)))
+            grid = self._grid
+            dirty = self._dirty
+            for _ in range(count):
+                grid.pop(self._row)
+                grid.append([" "] * self.cols)
+                dirty.pop(self._row)
+                dirty.append(self._last_offset)
+        elif final == "S":
+            self._commit_touched(record_block=True)
+            count = min(self.rows, max(1, param(0, 1)))
+            grid = self._grid
+            dirty = self._dirty
+            for _ in range(count):
+                grid.pop(0)
+                grid.append([" "] * self.cols)
+                dirty.pop(0)
+                dirty.append(self._last_offset)
+        elif final == "T":
+            self._commit_touched(record_block=True)
+            count = min(self.rows, max(1, param(0, 1)))
+            grid = self._grid
+            dirty = self._dirty
+            for _ in range(count):
+                grid.insert(0, [" "] * self.cols)
+                grid.pop()
+                dirty.insert(0, self._last_offset)
+                dirty.pop()
+        elif final == "s":
+            self._saved[self._use_alt] = (self._row, self._col)
+        elif final == "u":
+            row, col = self._saved.get(self._use_alt, (0, 0))
+            self._set_cursor(row, col)
+
+    def feed(self, text: str) -> None:
+        for ch in text:
+            self._last_offset = self._offset
+            self._offset += 1
+            state = self._state
+            if state == "normal":
+                if ch == "\x1b":
+                    self._state = "esc"
+                elif ch == "\r":
+                    self._col = 0
+                    self._pending_wrap = False
+                elif ch in ("\n", "\x0b", "\x0c"):
+                    self._line_feed()
+                elif ch == "\b":
+                    self._col = max(0, self._col - 1)
+                    self._pending_wrap = False
+                elif ch == "\t":
+                    next_stop = min(self.cols - 1, ((self._col // 8) + 1) * 8)
+                    self._col = next_stop
+                    self._pending_wrap = False
+                elif ord(ch) >= 32:
+                    self._put_char(ch)
+            elif state == "esc":
+                if ch == "[":
+                    self._state = "csi"
+                    self._csi = ""
+                elif ch == "]":
+                    self._state = "osc"
+                elif ch in ("P", "X", "^", "_"):
+                    self._state = "st"
+                elif ch in ("(", ")", "*", "+"):
+                    self._state = "charset"
+                elif ch == "7":
+                    self._saved[self._use_alt] = (self._row, self._col)
+                    self._state = "normal"
+                elif ch == "8":
+                    row, col = self._saved.get(self._use_alt, (0, 0))
+                    self._set_cursor(row, col)
+                    self._state = "normal"
+                else:
+                    self._state = "normal"
+            elif state == "charset":
+                self._state = "normal"
+            elif state == "csi":
+                if "\x40" <= ch <= "\x7e":
+                    self._handle_csi(self._csi, ch)
+                    self._csi = ""
+                    self._state = "normal"
+                else:
+                    self._csi += ch
+            elif state == "osc":
+                if ch == "\x07":
+                    self._state = "normal"
+                elif ch == "\x1b":
+                    self._state = "osc_esc"
+            elif state == "osc_esc":
+                self._state = "normal" if ch == "\\" else ("osc_esc" if ch == "\x1b" else "osc")
+            elif state == "st":
+                if ch == "\x1b":
+                    self._state = "st_esc"
+            elif state == "st_esc":
+                self._state = "normal" if ch == "\\" else ("st_esc" if ch == "\x1b" else "st")
+        self._commit_touched(record_block=True)
+
+    def live_contains(self, needle: str, *, since: int = 0) -> bool:
+        """Check only live grid rows modified at or after `since`, ignoring overwritten history."""
+        target = WHITESPACE.sub(" ", needle)
+        dirty = self._dirty
+        active_lines = [self._row_text(r) for r in range(self.rows) if dirty[r] >= since]
+        return bool(active_lines) and target in WHITESPACE.sub(" ", " ".join(active_lines))
+
+    def contains(self, needle: str, *, since: int = 0) -> bool:
+        if self.live_contains(needle, since=since):
+            return True
+        target = WHITESPACE.sub(" ", needle)
+        for offset, text in reversed(self._row_events):
+            if offset < since:
+                break
+            if target in text:
+                return True
+        for offset, text in reversed(self._block_events):
+            if offset < since:
+                break
+            if target in text:
+                return True
+        return False
+
+    def render(self) -> str:
+        lines = ["".join(row).rstrip() for row in self._grid]
+        while lines and not lines[-1]:
+            lines.pop()
+        return "\n".join(lines)
+
+
 def log(message: str) -> None:
     print(f"[tui-pty] {message}", flush=True)
 
@@ -162,7 +543,7 @@ def start_mock_server(retry_denied: bool) -> tuple[subprocess.Popen, str]:
 # ---------------------------------------------------------------------------
 
 
-def write_config(home: str, base_url: str) -> str:
+def write_config(home: str, base_url: str, approval_mode: str = "write") -> str:
     """An isolated HORON_HOME whose only provider is the mock server.
 
     `approval_mode = "write"` is what makes the first tool call ask: the turn
@@ -186,7 +567,7 @@ id = "mock-model"
 context_window = 128000
 
 [tools]
-approval_mode = "write"
+approval_mode = "{approval_mode}"
 """
     with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as handle:
         handle.write(config)
@@ -298,7 +679,11 @@ class PosixTerminal:
 
     def __init__(self, argv: list[str], cwd: str, env: dict) -> None:
         self.argv = argv
+        self.cwd = cwd
+        self.home = env.get("HORON_HOME", "")
+        self.runtime_dir = env.get("HORON_AGENT_RUNTIME_DIR", "")
         self.transcript = ""
+        self.screen = TerminalScreen(rows=40, cols=120)
         self.master, slave = pty.openpty()
         # A fresh PTY reports a 0x0 window, and a full-screen client draws
         # nothing into a zero area, so the size is set before the child starts.
@@ -315,10 +700,36 @@ class PosixTerminal:
         )
         os.close(slave)
 
-    def read_until(self, needle: str, timeout: float, what: str) -> None:
+    def append(self, text: str) -> None:
+        self.transcript += text
+        self.screen.feed(text)
+
+    def _drain_master(self, window: float = 0.05) -> None:
+        while True:
+            readable, _, _ = select.select([self.master], [], [], window)
+            if not readable:
+                break
+            try:
+                chunk = os.read(self.master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            self.append(chunk.decode("utf-8", "replace"))
+
+    def _read_until(
+        self,
+        matcher: Callable[..., bool],
+        needle: str,
+        timeout: float,
+        what: str,
+        *,
+        since: int = 0,
+    ) -> None:
         deadline = time.monotonic() + timeout
+        early_exit: int | None = None
         while time.monotonic() < deadline:
-            if contains(self.transcript, needle):
+            if matcher(needle, since=since):
                 return
             readable, _, _ = select.select([self.master], [], [], 0.1)
             if readable:
@@ -328,11 +739,53 @@ class PosixTerminal:
                     break
                 if not chunk:
                     break
-                self.transcript += chunk.decode("utf-8", "replace")
-        if not contains(self.transcript, needle):
-            raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{self.transcript}")
+                self.append(chunk.decode("utf-8", "replace"))
+            early_exit = self.process.poll()
+            if early_exit is not None:
+                self._drain_master(0.05)
+                break
+        if not matcher(needle, since=since):
+            code = early_exit if early_exit is not None else self.process.poll()
+            state = f"exited {code}" if code is not None else f"still running after {timeout:.1f}s"
+            raise Failure(
+                f"{what}: never saw {needle!r}\n"
+                + format_failure_diagnostics(
+                    phase=what,
+                    state=state,
+                    cwd=self.cwd,
+                    home=self.home,
+                    runtime_dir=self.runtime_dir,
+                    rendered=self.screen.render(),
+                    transcript=self.transcript,
+                )
+            )
+
+    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
+        self._read_until(self.screen.contains, needle, timeout, what, since=since)
+
+    def read_until_live(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
+        """Wait until `needle` is present on the live screen grid (not overwritten history)."""
+        self._read_until(self.screen.live_contains, needle, timeout, what, since=since)
+
+    def settle(self) -> None:
+        """Wait until the client stops drawing, so a keystroke never lands in a redraw."""
+        deadline = time.monotonic() + SETTLE_LIMIT
+        quiet_since = time.monotonic()
+        while time.monotonic() < deadline and time.monotonic() - quiet_since < SETTLE_QUIET:
+            readable, _, _ = select.select([self.master], [], [], 0.05)
+            if not readable:
+                continue
+            try:
+                chunk = os.read(self.master, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            self.append(chunk.decode("utf-8", "replace"))
+            quiet_since = time.monotonic()
 
     def send(self, keys: str) -> None:
+        self.settle()
         os.write(self.master, keys.encode())
 
     def wait(self, timeout: float) -> int:
@@ -352,7 +805,7 @@ class PosixTerminal:
                         master_open = False
                     else:
                         if chunk:
-                            self.transcript += chunk.decode("utf-8", "replace")
+                            self.append(chunk.decode("utf-8", "replace"))
                         else:
                             master_open = False
             else:
@@ -371,10 +824,21 @@ class PosixTerminal:
                         break
                     if not chunk:
                         break
-                    self.transcript += chunk.decode("utf-8", "replace")
+                    self.append(chunk.decode("utf-8", "replace"))
                 return code
         self.process.kill()
-        raise Failure(f"process did not exit within {timeout}s\n--- transcript ---\n{self.transcript}")
+        raise Failure(
+            f"process did not exit within {timeout}s\n"
+            + format_failure_diagnostics(
+                phase="wait",
+                state=f"timed out after {timeout:.1f}s",
+                cwd=self.cwd,
+                home=self.home,
+                runtime_dir=self.runtime_dir,
+                rendered=self.screen.render(),
+                transcript=self.transcript,
+            )
+        )
 
     def close(self) -> None:
         if self.process.poll() is None:
@@ -404,7 +868,11 @@ class WindowsTerminal:
                 "pywinpty is not installed, so no ConPTY is available: "
                 f"{CONPTY_IMPORT_ERROR or 'import failed'}"
             )
+        self.cwd = cwd
+        self.home = env.get("HORON_HOME", "")
+        self.runtime_dir = env.get("HORON_AGENT_RUNTIME_DIR", "")
         self.transcript = ""
+        self.screen = TerminalScreen(rows=40, cols=120)
         self._lock = threading.Lock()
         # A list, not a command line: `spawn` splits a string with
         # `shlex.split(posix=False)`, which keeps the quotes and then fails to
@@ -425,32 +893,92 @@ class WindowsTerminal:
                 return
             with self._lock:
                 self.transcript += chunk
+                self.screen.feed(chunk)
 
-    def read_until(self, needle: str, timeout: float, what: str) -> None:
+    def _read_until(
+        self,
+        matcher: Callable[..., bool],
+        needle: str,
+        timeout: float,
+        what: str,
+        *,
+        since: int = 0,
+    ) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self._lock:
-                if contains(self.transcript, needle):
+                if matcher(needle, since=since):
                     return
+            if not self.process.isalive() or not self._reader.is_alive():
+                self._reader.join(timeout=0.5)
+                break
             time.sleep(0.05)
         with self._lock:
+            if matcher(needle, since=since):
+                return
+            rendered = self.screen.render()
             text = self.transcript
         # An empty transcript has two very different causes: a client that is
         # still starting (it has drawn nothing yet) and one that died before its
         # first write. The console cannot tell them apart, the process can.
         state = "still running" if self.process.isalive() else f"exited {self.process.exitstatus!r}"
-        raise Failure(f"{what}: never saw {needle!r} (client {state})\n--- transcript ---\n{text}")
+        raise Failure(
+            f"{what}: never saw {needle!r} (client {state})\n"
+            + format_failure_diagnostics(
+                phase=what,
+                state=f"client {state}",
+                cwd=self.cwd,
+                home=self.home,
+                runtime_dir=self.runtime_dir,
+                rendered=rendered,
+                transcript=text,
+            )
+        )
+
+    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
+        self._read_until(self.screen.contains, needle, timeout, what, since=since)
+
+    def read_until_live(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
+        """Wait until `needle` is present on the live screen grid (not overwritten history)."""
+        self._read_until(self.screen.live_contains, needle, timeout, what, since=since)
+
+    def settle(self) -> None:
+        """Wait until the console stops growing, so a keystroke never lands in a redraw."""
+        deadline = time.monotonic() + SETTLE_LIMIT
+        quiet_since = time.monotonic()
+        with self._lock:
+            size = len(self.transcript)
+        while time.monotonic() < deadline and time.monotonic() - quiet_since < SETTLE_QUIET:
+            time.sleep(0.05)
+            with self._lock:
+                grown = len(self.transcript) != size
+                size = len(self.transcript)
+            if grown:
+                quiet_since = time.monotonic()
 
     def send(self, keys: str) -> None:
+        self.settle()
         try:
             self.process.write(keys)
         except EOFError as closed:
             # The client left before it could be typed at: say what it printed
             # and how it ended, which is the whole diagnosis on a runner whose
             # console dies with it.
+            self._reader.join(timeout=0.5)
+            with self._lock:
+                rendered = self.screen.render()
+                text = self.transcript
             raise Failure(
-                f"the client was gone before it could be typed at ({closed}; "
-                f"exitstatus={self.process.exitstatus})\n--- transcript ---\n{self.transcript}"
+                f"the client was gone before it could be typed at ({closed})\n"
+                + format_failure_diagnostics(
+                    phase="send",
+                    state=f"exitstatus={self.process.exitstatus!r}",
+                    cwd=self.cwd,
+                    home=self.home,
+                    runtime_dir=self.runtime_dir,
+                    rendered=rendered,
+                    transcript=text,
+                )
             ) from closed
 
     def wait(self, timeout: float) -> int:
@@ -465,8 +993,20 @@ class WindowsTerminal:
             time.sleep(0.05)
         self.close()
         with self._lock:
+            rendered = self.screen.render()
             text = self.transcript
-        raise Failure(f"process did not exit within {timeout}s\n--- transcript ---\n{text}")
+        raise Failure(
+            f"process did not exit within {timeout}s\n"
+            + format_failure_diagnostics(
+                phase="wait",
+                state=f"timed out after {timeout:.1f}s",
+                cwd=self.cwd,
+                home=self.home,
+                runtime_dir=self.runtime_dir,
+                rendered=rendered,
+                transcript=text,
+            )
+        )
 
     def close(self) -> None:
         try:
@@ -487,27 +1027,117 @@ def Terminal(argv: list[str], cwd: str, env: dict):
 # ---------------------------------------------------------------------------
 
 
-def prime_server(launch: Launch, cwd: str, env: dict) -> subprocess.Popen:
-    """Start the daemon the client needs and keep a handle on it.
+def read_file_tail(path: str, limit: int = 80) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return ""
+    return "".join(lines[-limit:]).strip()
+
+
+def windows_pipe_name(socket_path: str) -> str:
+    stem = "".join(ch for ch in os.path.splitext(os.path.basename(socket_path))[0]
+                   if ch.isalnum() or ch in "-_")[:32] or "horon-agent"
+    digest = hashlib.sha256(socket_path.replace("\\", "/").lower().encode()).hexdigest()
+    return "\\\\.\\pipe\\%s-%s" % (stem, digest[:16])
+
+
+def endpoint_ready(env: dict[str, str]) -> bool:
+    """Return True when the daemon's IPC endpoint accepts or signals readiness."""
+    socket_path = env.get("HORON_AGENT_SOCKET") or os.path.join(
+        env.get("HORON_AGENT_RUNTIME_DIR", ""), "horon-agent.sock"
+    )
+    if not socket_path:
+        return False
+    if POSIX:
+        if not os.path.exists(socket_path):
+            return False
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.settimeout(0.5)
+            probe.connect(socket_path)
+            return True
+        except OSError:
+            return False
+        finally:
+            probe.close()
+    import ctypes
+
+    pipe_name = windows_pipe_name(socket_path)
+    kernel32 = getattr(ctypes, "windll", None)
+    if kernel32 is None:
+        return False
+    if kernel32.kernel32.WaitNamedPipeW(pipe_name, 0) != 0:
+        return True
+    # ERROR_SEM_TIMEOUT (121) indicates the named pipe exists with busy instances.
+    return ctypes.GetLastError() == 121
+
+
+def wait_for_server_ready(
+    server: subprocess.Popen,
+    probe: Callable[[], bool],
+    stderr_path: str,
+    cwd: str,
+    home: str,
+    runtime_dir: str,
+    timeout: float = STARTUP_TIMEOUT,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        code = server.poll()
+        if code is not None:
+            stderr_tail = read_file_tail(stderr_path)
+            raise Failure(
+                f"[phase=prime_server] daemon exited early with status {code}"
+                + (f"\n--- daemon stderr ---\n{stderr_tail}" if stderr_tail else "")
+                + f"\n--- diagnostics ---\n{case_diagnostics(cwd, home, runtime_dir=runtime_dir)}"
+            )
+        if probe():
+            return
+        if time.monotonic() >= deadline:
+            server.terminate()
+            try:
+                server.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                server.kill()
+            stderr_tail = read_file_tail(stderr_path)
+            raise Failure(
+                f"[phase=prime_server] daemon endpoint did not become ready within {timeout:.1f}s"
+                + (f"\n--- daemon stderr ---\n{stderr_tail}" if stderr_tail else "")
+                + f"\n--- diagnostics ---\n{case_diagnostics(cwd, home, runtime_dir=runtime_dir)}"
+            )
+        time.sleep(0.05)
+
+
+def prime_server(launch: Launch, cwd: str, env: dict, timeout: float = STARTUP_TIMEOUT) -> subprocess.Popen:
+    """Start the daemon the client needs and poll its IPC endpoint until ready.
 
     The launcher is what starts the server on a terminal, but on Windows its
     console is gone before the client finishes, so the client is started
     directly and the server is started here with the documented `serve`
-    subcommand. The launcher's own piped run is not usable for this: it starts
-    the server and then waits on its own first-run work, and the case already
-    covers that path as the headless message check.
+    subcommand. Stderr is captured so early exits or bind failures report why
+    immediately instead of failing silently later.
     """
-    server = subprocess.Popen(
-        [launch.argv0, "serve"],
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    stderr_path = os.path.join(cwd, "prime-server-stderr.log")
+    with open(stderr_path, "w", encoding="utf-8", errors="replace") as stderr_handle:
+        server = subprocess.Popen(
+            [launch.argv0, "serve"],
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_handle,
+        )
+    wait_for_server_ready(
+        server,
+        lambda: endpoint_ready(env),
+        stderr_path,
+        cwd,
+        env.get("HORON_HOME", ""),
+        env.get("HORON_AGENT_RUNTIME_DIR", ""),
+        timeout=timeout,
     )
-    # The daemon binds its endpoint after it has read its settings; a pause
-    # saves a client that would otherwise dial before it is up.
-    time.sleep(5.0)
     return server
 
 
@@ -518,6 +1148,8 @@ def daemon_log_tail(home: str, limit: int = 60) -> str:
     place the daemon says what it did: whether it bound, which provider it
     loaded, and why a session was refused.
     """
+    if not home:
+        return "(no HORON_HOME set)"
     directory = os.path.join(home, "logs")
     try:
         names = sorted(name for name in os.listdir(directory) if name.endswith(".log"))
@@ -539,10 +1171,7 @@ def pipe_state(socket_path: str) -> str:
     """
     if POSIX:
         return "(unix socket, binding is a pathname)"
-    stem = "".join(ch for ch in os.path.splitext(os.path.basename(socket_path))[0]
-                   if ch.isalnum() or ch in "-_")[:32] or "horon-agent"
-    digest = hashlib.sha256(socket_path.replace("\\", "/").lower().encode()).hexdigest()
-    name = "\\\\.\\pipe\\%s-%s" % (stem, digest[:16])
+    name = windows_pipe_name(socket_path)
     try:
         # Opening read+write is what the launcher's probe does; the instance is
         # only taken for the instant this handle lives.
@@ -552,9 +1181,9 @@ def pipe_state(socket_path: str) -> str:
         return f"{name}: {error}"
 
 
-def case_diagnostics(case_root: str, home: str) -> str:
+def case_diagnostics(case_root: str, home: str, runtime_dir: str | None = None) -> str:
     """Everything a launch that never finished leaves behind, for one message."""
-    run_dir = os.path.join(case_root, "run")
+    run_dir = runtime_dir or os.path.join(case_root, "run")
     try:
         listing = sorted(os.listdir(run_dir))
     except OSError as error:
@@ -567,6 +1196,29 @@ def case_diagnostics(case_root: str, home: str) -> str:
     )
 
 
+def format_failure_diagnostics(
+    *,
+    phase: str,
+    state: str,
+    cwd: str,
+    home: str,
+    runtime_dir: str = "",
+    rendered: str = "",
+    transcript: str = "",
+) -> str:
+    parts = [f"[phase={phase}] ({state})"]
+    if rendered:
+        parts.append(f"--- rendered screen ---\n{rendered}")
+    parts.append(f"--- transcript ---\n{transcript}")
+    if cwd:
+        stderr_tail = read_file_tail(os.path.join(cwd, "prime-server-stderr.log"))
+        if stderr_tail:
+            parts.append(f"--- prime-server stderr ---\n{stderr_tail}")
+    if cwd or home or runtime_dir:
+        parts.append(f"--- diagnostics ---\n{case_diagnostics(cwd, home, runtime_dir=runtime_dir)}")
+    return "\n".join(parts)
+
+
 def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     try:
         return _happy_path(launch, case_root, base_url)
@@ -574,24 +1226,482 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def side_question_smoke(terminal: Terminal, home: str, parent_session: str) -> None:
+    from pathlib import Path
+
+    originals = set(Path(home).glob("sessions/*/events.jsonl"))
+    parent_path = Path(home, "sessions", parent_session, "events.jsonl")
+    if parent_path not in originals:
+        raise Failure(
+            f"expected saved parent session {parent_session}, got {sorted(path.parent.name for path in originals)}"
+        )
+    question = "side fixture question"
+    terminal.send(f"/side {question}\r")
+    terminal.read_until("Side question", STEP_TIMEOUT, "separate panel opened")
+    terminal.read_until("side-fixture-answer", STEP_TIMEOUT, "read-only child answered")
+    if question in parent_path.read_text(encoding="utf-8"):
+        raise Failure("the side question entered the parent history")
+    children = list(set(Path(home).glob("sessions/*/events.jsonl")) - originals)
+    if len(children) != 1 or question not in children[0].read_text(encoding="utf-8"):
+        raise Failure("expected the side question in a saved child session")
+    terminal.send("\x1b")
+    time.sleep(0.15)
+    dismissed = len(terminal.transcript)
+    terminal.send("/rename\r")
+    terminal.read_until("enter a title without control characters", STEP_TIMEOUT, "parent composer restored", since=dismissed)
+
+
+def retry_turn_smoke(terminal: Terminal, home: str, base_url: str) -> None:
+    from pathlib import Path
+    from urllib.request import Request, urlopen
+
+    def set_fixture(ready: bool) -> None:
+        request = Request(base_url + "/__retry_fixture", data=json.dumps({"ready": ready}).encode(),
+                          headers={"Content-Type": "application/json"})
+        with urlopen(request, timeout=5) as response:
+            if not json.load(response)["ok"]:
+                raise Failure("could not change the retry fixture state")
+
+    prompt = "[tui:retry-proof] count this user prompt once"
+    set_fixture(False)
+    start = len(terminal.transcript)
+    terminal.send(f"{prompt}\r")
+    terminal.read_until("TUI retry fixture provider failure", STEP_TIMEOUT, "provider refused the first attempt",
+                        since=start)
+    time.sleep(0.15)
+    set_fixture(True)
+    start = len(terminal.transcript)
+    terminal.send("/retry\r")
+    terminal.read_until("retry-fixture-recovered", STEP_TIMEOUT, "continued the failed request", since=start)
+    terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "retry turn settled", since=start)
+    start = len(terminal.transcript)
+    terminal.send("/retry\r")
+    terminal.read_until("nothing was started", STEP_TIMEOUT, "completed work is not retried", since=start)
+
+    matching = [line for path in Path(home).glob("sessions/*/events.jsonl")
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if '"kind":"message_appended"' in line and prompt in line]
+    if len(matching) != 1:
+        raise Failure(f"expected one stored user prompt across retry, found {len(matching)}")
+
+
+def todo_edit_smoke(terminal: Terminal, home: str) -> None:
+    from pathlib import Path
+
+    events = [path for path in Path(home).glob("sessions/*/events.jsonl")
+              if TOOL_FILE in path.read_text(encoding="utf-8")]
+    if len(events) != 1:
+        raise Failure(f"expected a single active session, got {len(events)}")
+    session_id = events[0].parent.name
+    todo = Path(home, "todos", f"{session_id}.json")
+    todo.parent.mkdir(exist_ok=True)
+    rows = [{"id": f"todo-{i}", "content": f"fixture item {i:02}", "status": "pending", "priority": "medium"}
+            for i in range(1, 13)]
+    todo.write_text(json.dumps(rows), encoding="utf-8")
+    # Writing the fixture out of process does not emit TodoChanged. Attaching
+    # reloads the saved snapshot through the same path as a real reconnect.
+    attach_start = len(terminal.transcript)
+    terminal.send(f"/resume {session_id}\r")
+    terminal.read_until("0/12 complete", STEP_TIMEOUT, "seeded todo snapshot loaded", since=attach_start)
+    picker_start = len(terminal.transcript)
+    terminal.send("/todo\r")
+    terminal.read_until("fixture item 01", STEP_TIMEOUT, "full todo picker is loaded", since=picker_start)
+    rows[0]["status"] = "in_progress"
+    rows[0]["content"] = "externally updated todo"
+    todo.write_text(json.dumps(rows), encoding="utf-8")
+    refusal_start = len(terminal.transcript)
+    terminal.send("\r")
+    terminal.read_until("externally updated todo", STEP_TIMEOUT, "stale edit refreshed the current list", since=refusal_start)
+    if json.loads(todo.read_text(encoding="utf-8"))[0]["status"] != "in_progress":
+        raise Failure("stale todo edit overwrote the newer list")
+    terminal.send("\r")
+    deadline = time.monotonic() + STEP_TIMEOUT
+    while time.monotonic() < deadline:
+        updated = json.loads(todo.read_text(encoding="utf-8"))[0]
+        if updated["status"] == "completed":
+            break
+        readable, _, _ = select.select([terminal.master], [], [], 0.05)
+        if readable:
+            chunk = os.read(terminal.master, 65536)
+            if not chunk:
+                break
+            terminal.append(chunk.decode("utf-8", "replace"))
+    updated = json.loads(todo.read_text(encoding="utf-8"))[0]
+    if updated["status"] != "completed" or updated["content"] != "externally updated todo":
+        raise Failure(f"the refreshed edit did not preserve the updated todo: {updated!r}")
+    terminal.send("\x1b")
+
+
+
+def git(root: str, env: dict[str, str], *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=root, env=env, text=True, timeout=STEP_TIMEOUT)
+
+
+def git_fixture(root: str, env: dict[str, str]) -> None:
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    git(root, env, "init", "-qb", "main")
+    git(root, env, "config", "user.email", "smoke@example.invalid")
+    git(root, env, "config", "user.name", "TUI Smoke Test")
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(root, name), "w", encoding="utf-8") as handle:
+            handle.write("original\n")
+    git(root, env, "add", "--", "a.txt", "b.txt")
+    git(root, env, "commit", "-qm", "base")
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(root, name), "a", encoding="utf-8") as handle:
+            handle.write(f"new {name}\n")
+    git(root, env, "add", "--", "a.txt")
+
+
+def staged_review_smoke(terminal: Terminal, root: str, env: dict[str, str]) -> None:
+    terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready for staged review")
+    before = git(root, env, "rev-parse", "HEAD")
+    terminal.send("/diff\r")
+    terminal.read_until("what /commit would include", STEP_TIMEOUT, "staged diff")
+    terminal.read_until("left alone by /commit", STEP_TIMEOUT, "unstaged diff")
+    terminal.send("/commit Reviewed test change\r")
+    terminal.read_until("nothing was committed yet", STEP_TIMEOUT, "commit starts as a review")
+    if git(root, env, "rev-parse", "HEAD") != before:
+        raise Failure("review moved HEAD before confirmation")
+    git(root, env, "add", "--", "b.txt")
+    terminal.send("/commit --yes\r")
+    terminal.read_until("the staged index changed", STEP_TIMEOUT, "stale review refused")
+    if git(root, env, "rev-parse", "HEAD") != before:
+        raise Failure("confirming a stale review moved HEAD")
+    git(root, env, "restore", "--staged", "--", "b.txt")
+    fresh_start = len(terminal.transcript)
+    terminal.send("/commit Quartz\r")
+    terminal.read_until("Quartz", STEP_TIMEOUT, "fresh review", since=fresh_start)
+    confirmed_start = len(terminal.transcript)
+    terminal.send("/commit --yes\r")
+    terminal.read_until("not pushed", STEP_TIMEOUT, "local commit confirmed", since=confirmed_start)
+    subject = git(root, env, "log", "-1", "--format=%s").strip()
+    if subject != "Quartz":
+        raise Failure(f"expected the fresh review's subject, got {subject!r}")
+    changed = git(root, env, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines()
+    if changed != ["a.txt"] or git(root, env, "diff", "--name-only").splitlines() != ["b.txt"]:
+        raise Failure("the commit did not preserve the reviewed staging boundary")
+
+
+def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> str:
+    from pathlib import Path
+
+    originals = set(Path(home).glob("sessions/*/events.jsonl"))
+    parents = [path for path in originals if TOOL_FILE in path.read_text(encoding="utf-8")]
+    if len(parents) != 1:
+        raise Failure(f"expected one session containing the approved tool call, found {parents}")
+    parent = parents[0].parent.name
+    child_result = subprocess.run([launch.argv0, "run", "swarm fixture result"], cwd=root,
+                                  env={**env, "HORON_AGENT_TOOL_PROFILE": "none"},
+                                  capture_output=True, text=True, timeout=STEP_TIMEOUT)
+    children = {path.parent.name for path in Path(home).glob("sessions/*/events.jsonl") if path not in originals}
+    if child_result.returncode != 0 or len(children) != 1:
+        raise Failure(f"expected one recorded child: {child_result.stdout}\n{child_result.stderr}")
+    child = next(iter(children))
+    snapshot = Path(env["HORON_AGENT_RUNTIME_DIR"], "durable-state", "swarm", "smoke.json")
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text(json.dumps({"updated_at_unix_ms": int(time.time() * 1000) + 600_000, "members": [{
+        "session_id": child,
+        "report_back_to_session_id": parent,
+        "task_label": "Fixture child",
+        "status": "completed",
+    }]}), encoding="utf-8")
+    terminal.send("/swarm\r")
+    terminal.read_until("Swarm children", STEP_TIMEOUT, "swarm picker opened")
+    terminal.read_until("Fixture child", STEP_TIMEOUT, "completed direct child listed")
+
+    def completed_subscriptions(session_id: str) -> int:
+        marker = f"request_kind=subscribe session_id={session_id} "
+        return sum("phase=handled " in line and marker in line for line in daemon_log_tail(home, limit=5000).splitlines())
+
+    def select_session(session_id: str) -> None:
+        previous = completed_subscriptions(session_id)
+        attach_start = len(terminal.transcript)
+        terminal.send("\r")
+        terminal.read_until(f"resumed {session_id}", STEP_TIMEOUT, f"TUI applied session {session_id}", since=attach_start)
+        deadline = time.monotonic() + STEP_TIMEOUT
+        while time.monotonic() < deadline:
+            if completed_subscriptions(session_id) > previous:
+                return
+            time.sleep(0.05)
+        raise Failure(f"the daemon did not attach to session {session_id}\n{daemon_log_tail(home)}")
+
+    select_session(child)
+    picker_start = len(terminal.transcript)
+    terminal.send("/swarm\r")
+    terminal.read_until("parent:", STEP_TIMEOUT, "parent return row", since=picker_start)
+    select_session(parent)
+    return parent
+
+
+def voice_fixture(case_root: str, home: str, env: dict[str, str]) -> None:
+    tool_dir = os.path.join(case_root, "voice-bin")
+    os.makedirs(tool_dir)
+    scripts = {
+        "ffmpeg": 'for last in "$@"; do :; done\ndd if=/dev/zero of="$last" bs=1600 count=2 2>/dev/null',
+        "arecord": 'for last in "$@"; do :; done\ndd if=/dev/zero of="$last" bs=1600 count=2 2>/dev/null',
+        "whisper-cli": 'while [ "$1" != -of ]; do shift; done\nprintf "hello from voice\\n" > "$2.txt"',
+        "say": 'cat "$2" > "$(dirname "$0")/played"',
+        "espeak-ng": 'cat "$2" > "$(dirname "$0")/played"',
+    }
+    for name, script in scripts.items():
+        path = os.path.join(tool_dir, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(f"#!/bin/sh\n{script}\n")
+        os.chmod(path, 0o700)
+    models = os.path.join(home, "models")
+    os.makedirs(models, exist_ok=True)
+    with open(os.path.join(models, "ggml-tiny.en.bin"), "wb") as handle:
+        handle.truncate(1024 * 1024 + 1)
+    env["PATH"] = tool_dir + os.pathsep + env.get("PATH", os.defpath)
+
+
+def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None:
+    from urllib.request import urlopen
+
+    def request_count() -> int:
+        with urlopen(base_url.removesuffix("/v1") + "/__stats", timeout=5) as response:
+            return json.load(response)["request_count"]
+
+    terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before local voice input")
+    count = request_count()
+    before_consent = len(terminal.transcript)
+    terminal.send("/voice\r")
+    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent", since=before_consent)
+    terminal.send("/voice consent\r")
+    capture_start = len(terminal.transcript)
+    terminal.send("/voice\r")
+    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text after consent", since=capture_start)
+    if request_count() != count:
+        raise Failure("voice input sent a request before the user submitted the draft")
+    terminal.send("\x15")
+    terminal.send("/voice say local playback proof\r")
+    played = os.path.join(case_root, "voice-bin", "played")
+    deadline = time.monotonic() + STEP_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            with open(played, encoding="utf-8") as handle:
+                if handle.read().strip() == "local playback proof":
+                    break
+        except FileNotFoundError:
+            pass
+        readable, _, _ = select.select([terminal.master], [], [], 0.05)
+        if readable:
+            chunk = os.read(terminal.master, 65536)
+            terminal.append(chunk.decode("utf-8", "replace"))
+    else:
+        raise Failure(f"the local player did not receive the requested text\n--- transcript ---\n{terminal.transcript}")
+    if request_count() != count:
+        raise Failure("local playback sent a model request")
+
+
+def context_request_smoke(terminal: Terminal, home: str, base_url: str) -> None:
+    from pathlib import Path
+    from urllib.request import urlopen
+
+    marker = "[tui:context-proof]"
+
+    def send(label: str, has_original: bool) -> None:
+        prompt = f"{marker} {label}"
+        start = len(terminal.transcript)
+        terminal.send(f"{prompt}\r")
+        terminal.read_until(f"context-verified-{label.rsplit(' ', 1)[-1]}", STEP_TIMEOUT, f"reply to {label}", since=start)
+        terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, f"turn ended for {label}", since=start)
+        with urlopen(base_url + "/__stats", timeout=5) as response:
+            requests = json.load(response)["requests"]
+        request = next(
+            (entry for entry in reversed(requests) if prompt in entry.get("context_proof_prompt", "")),
+            None,
+        )
+        if request is None:
+            raise Failure(f"the mock recorded no model request for {label}")
+        if request["context_proof_contains_original"] != has_original:
+            raise Failure(f"model request for {label} had original={not has_original}, expected {has_original}")
+
+    send("original", True)
+    terminal.send("/clear\r")
+    send("after display clear", True)
+    start = len(terminal.transcript)
+    terminal.send("/clear-context\r")
+    terminal.read_until("previous conversation remains", STEP_TIMEOUT, "reset model context", since=start)
+    send("after context reset", False)
+    if not any(f"{marker} original" in path.read_text(encoding="utf-8")
+               for path in Path(home).glob("sessions/*/events.jsonl")):
+        raise Failure("the original user message disappeared from the saved event log")
+
+
+def configure_mcp_probe(home: str, case_root: str) -> str:
+    fixture = os.path.join(REPO_ROOT, "scripts", "perf", "fixtures", "bench_mcp_server.py")
+    calls = os.path.join(case_root, "mcp-tool-called")
+    wrapper = os.path.join(case_root, "mcp_probe_fixture.py")
+    with open(wrapper, "w", encoding="utf-8") as handle:
+        handle.write(
+            "import json, pathlib, runpy, sys\n"
+            "handle = runpy.run_path(sys.argv[1])['handle']\n"
+            "for line in sys.stdin:\n"
+            "    request = json.loads(line)\n"
+            "    if request.get('method') == 'tools/call':\n"
+            "        pathlib.Path(sys.argv[2]).touch()\n"
+            "    response = handle(request)\n"
+            "    if response is not None:\n"
+            "        print(json.dumps(response), flush=True)\n"
+        )
+    server = {"command": sys.executable, "args": [wrapper, fixture, calls]}
+    for path, name in ((os.path.join(home, "mcp.json"), "trusted-fixture"),
+                       (os.path.join(case_root, ".mcp.json"), "denied-fixture")):
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"mcpServers": {name: server}}, handle)
+    return calls
+
+
+def model_preset_case(launch: Launch, case_root: str, base_url: str) -> str:
+    home = write_config(launch.home, base_url)
+    with open(os.path.join(home, "config.toml"), "a", encoding="utf-8") as handle:
+        handle.write('''
+[[providers.mock.models]]
+id = "preset-model"
+context_window = 128000
+
+[model_presets.quality]
+model = "preset-model"
+effort = "high"
+roles = { swarm = "preset-model", review = "mock-model", judge = "mock-model", memory = "inherit", ambient = "mock-model" }
+
+[model_presets.rejected]
+model = "mock-model"
+roles = { swarm = "missing-model" }
+
+[model_presets.unknown_role]
+model = "mock-model"
+roles = { unknown = "mock-model" }
+''')
+    terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=horon_env(case_root, home))
+    try:
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready for model presets")
+        start = len(terminal.transcript)
+        terminal.send("/modelpreset preview quality\r")
+        terminal.read_until("preset-model", STEP_TIMEOUT, "model preset preview", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/modelpreset apply quality\r")
+        terminal.read_until("Applied model preset 'quality'", STEP_TIMEOUT, "model preset applied", since=start)
+        for name, error in (("rejected", "unavailable in the active provider profile"),
+                            ("unknown_role", "Unknown model preset role")):
+            start = len(terminal.transcript)
+            terminal.send(f"/modelpreset apply {name}\r")
+            terminal.read_until(error, STEP_TIMEOUT, "invalid preset refused", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/info\r")
+        terminal.read_until("preset-model", STEP_TIMEOUT, "preset model survived refused changes", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/agents\r")
+        terminal.read_until("inherit", STEP_TIMEOUT, "preset role overrides applied", since=start)
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure("model preset session failed to exit cleanly")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    if POSIX:
+        env.pop("HORON_AGENT_API_SOCKET", None)
+    git_fixture(case_root, env)
+    if POSIX:
+        env["HORON_AGENT_HOOK_TURN_END"] = "true"
+        voice_fixture(case_root, home, env)
+    archive_label = "archive-pty-fixture"
+    seeded = subprocess.run(
+        [launch.argv0, "run", archive_label],
+        cwd=case_root,
+        env={**env, "HORON_AGENT_TOOL_PROFILE": "none"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=STEP_TIMEOUT,
+        text=True,
+    )
+    if seeded.returncode != 0:
+        raise Failure(f"could not seed a saved session to archive\n{seeded.stdout}")
+    tool_calls = configure_mcp_probe(home, case_root)
+    env["HORON_AGENT_WORKSPACE_TRUST"] = "deny"
     server = prime_server(launch, case_root, env) if not POSIX else None
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before the context commands")
+        terminal.send("/compact\r")
+        terminal.read_until("nothing to compact", STEP_TIMEOUT, "empty context is unchanged after compaction")
+        start = len(terminal.transcript)
+        terminal.send("/clear-context\r")
+        terminal.read_until(
+            "previous conversation remains in saved history",
+            STEP_TIMEOUT,
+            "daemon confirmed reset",
+            since=start,
+        )
+
+        terminal.send("/mcp\r")
+        terminal.read_until("trusted-fixture", STEP_TIMEOUT, "trusted MCP server listed")
+        terminal.send("/mcp probe trusted-fixture\r")
+        terminal.read_until("Transport: stdio", STEP_TIMEOUT, "MCP probe transport")
+        terminal.read_until("1 available", STEP_TIMEOUT, "MCP probe capability and tool count")
+        terminal.send("/mcp probe denied-fixture\r")
+        terminal.read_until("not in the trusted MCP configuration", STEP_TIMEOUT, "untrusted MCP probe refused")
+        if os.path.exists(tool_calls):
+            raise Failure(f"MCP inspection invoked a fixture tool\n--- transcript ---\n{terminal.transcript}")
+
+        name = "PTY review session"
+        terminal.send(f"/rename {name}\r")
+        terminal.read_until("session title updated", STEP_TIMEOUT, "saved session title")
+        terminal.send("/rename\r")
+        terminal.read_until("enter a title without control characters", STEP_TIMEOUT, "empty title refusal")
+        if POSIX:
+            terminal.send("/new\r")
+            terminal.read_until("a new session session_", STEP_TIMEOUT, "switch away from the renamed session")
+            picker_start = len(terminal.transcript)
+            terminal.send("/resume\r")
+            terminal.read_until("Resume session", STEP_TIMEOUT, "session picker")
+            terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
+            terminal.send(f"{name}\r")
+            terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
+            terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before observing work")
+            terminal.send("/observations\r")
+            terminal.read_until("recording  no", STEP_TIMEOUT, "observation recording defaults off")
+            terminal.send("/observations on\r")
+            terminal.read_until("recording  yes", STEP_TIMEOUT, "observation recording enabled explicitly")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before listing tools")
+        terminal.send("/tools\r")
+        terminal.read_until("Session tools", STEP_TIMEOUT, "tool picker")
+        terminal.read_until("tier unknown", STEP_TIMEOUT, "unreported loading tier")
+        terminal.send("bash\r")
+        if contains(terminal.transcript, APPROVAL_PROMPT) or os.path.exists(os.path.join(case_root, TOOL_FILE)):
+            raise Failure(f"browsing tools started a call\n--- transcript ---\n{terminal.transcript}")
+        if POSIX:
+            staged_review_smoke(terminal, case_root, env)
+        else:
+            terminal.send("/diff\r")
+            terminal.read_until("workspace is not this machine's", STEP_TIMEOUT, "explicit socket refused local Git")
+        if POSIX:
+            voice_input_smoke(terminal, case_root, base_url)
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and
         # `approval_mode = "write"` parks that call: the prompt arrives before
         # any reply text, so the answer has to come first.
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
+        reply_start = len(terminal.transcript)
         terminal.send("y")
-        terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
-        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply after approval", since=reply_start)
+        terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before reading session usage", since=reply_start)
+        stats_start = len(terminal.transcript)
+        terminal.send("/stats\r")
+        terminal.read_until("Requests:", STEP_TIMEOUT, "session usage counters", since=stats_start)
+        terminal.read_until("Estimated cost: unknown", STEP_TIMEOUT, "unknown cost is preserved", since=stats_start)
         written = os.path.join(case_root, TOOL_FILE)
         try:
             with open(written, encoding="utf-8") as handle:
@@ -600,11 +1710,137 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        # The reply text streams before the turn ends, so `/pin` (and the
+        # `/switch` that follows it) would be refused while the turn is still
+        # running on a slow host. Wait for idle from the same `reply_start`.
+        terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before pinning", since=reply_start)
+        pin_start = len(terminal.transcript)
+        terminal.send("/pin\r")
+        pin_path = os.path.join(home, "tui-pins.json")
+        if POSIX:
+            terminal.read_until(f"pinned {name}", STEP_TIMEOUT, "pin the active session", since=pin_start)
+        else:
+            deadline = time.monotonic() + STEP_TIMEOUT
+            while not os.path.isfile(pin_path) and time.monotonic() < deadline:
+                time.sleep(0.05)
+        if not os.path.isfile(pin_path):
+            raise Failure(f"pin command did not persist a local pin file\n--- transcript ---\n{terminal.transcript}")
+        with open(pin_path, encoding="utf-8") as handle:
+            pins = [session_id for ids in json.load(handle)["scopes"].values() for session_id in ids]
+        if len(pins) != 1 or not os.path.isdir(os.path.join(home, "sessions", pins[0])):
+            raise Failure(f"expected one saved session to be pinned, got {pins!r}")
+        if POSIX:
+            terminal.send("/switch\r")
+            terminal.read_until("(pinned)", STEP_TIMEOUT, "pinned session appears in the picker")
+            terminal.send("\x10")
+            terminal.send("\x1b")
+            terminal.read_until("unpinned ", STEP_TIMEOUT, "unpin from the session picker")
+        if POSIX:
+            observations_start = len(terminal.transcript)
+            terminal.send("/observations\r")
+            terminal.read_until("turn_end", STEP_TIMEOUT, "the current session reports its turn-end hook", since=observations_start)
+            terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before seeding the todo list", since=reply_start)
+            todo_edit_smoke(terminal, home)
+            retry_turn_smoke(terminal, home, base_url)
+            # The swarm smoke finds the parent by the approved tool call, so it
+            # runs before the fork below: a branch inherits that call, and two
+            # sessions holding it would make the parent ambiguous.
+            context_request_smoke(terminal, home, base_url)
+            # The swarm run comes first: its child starts fresh, while the side
+            # question's child inherits the parent history and would make the
+            # parent lookup below ambiguous.
+            parent_session = swarm_picker_smoke(terminal, launch, home, case_root, env)
+            side_question_smoke(terminal, home, parent_session)
+            boundary_start = len(terminal.transcript)
+            terminal.send("tui-fork-boundary-proof\r")
+            terminal.read_until("fork-boundary-ready", STEP_TIMEOUT, "the later parent message has a reply")
+            terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "boundary turn ended", since=boundary_start)
+            terminal.send("/fork\r")
+            terminal.read_until("Fork from a message", STEP_TIMEOUT, "choose a saved message boundary")
+            filter_start = len(terminal.transcript)
+            terminal.send("tui-fork-boundary-proof")
+            terminal.read_until("the branch keeps", STEP_TIMEOUT, "saved boundary selected", since=filter_start)
+            fork_start = len(terminal.transcript)
+            terminal.send("\r")
+            terminal.read_until("resumed session_", STEP_TIMEOUT, "the fork was saved and attached", since=fork_start)
+            return_picker = len(terminal.transcript)
+            terminal.send("/fork")
+            terminal.read_until("/fork", STEP_TIMEOUT, "return command reached the composer", since=return_picker)
+            return_picker = len(terminal.transcript)
+            terminal.send("\r")
+            terminal.read_until("back to", STEP_TIMEOUT, "the fork menu can return to the parent", since=return_picker)
+            parent_start = len(terminal.transcript)
+            terminal.send("\r")
+            terminal.read_until("attaching to", STEP_TIMEOUT, "return to the parent", since=parent_start)
+            terminal.read_until(f"resumed {parent_session}", STEP_TIMEOUT, "parent session reattached", since=parent_start)
+            terminal.read_until_live(SESSION_READY, STEP_TIMEOUT, "parent session ready before archiving", since=parent_start)
+        else:
+            terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
+        archive_picker_start = len(terminal.transcript)
+        terminal.send("/resume\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list", since=archive_picker_start)
+        filter_start = len(terminal.transcript)
+        terminal.send(archive_label)
+        terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
+        archive_start = len(terminal.transcript)
+        terminal.send("\x01")
+        terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive", since=archive_start)
+        archive_path = os.path.join(home, "sdk-archive.json")
+        with open(archive_path, encoding="utf-8") as handle:
+            archived_ids = json.load(handle)["sessions"]
+        if len(archived_ids) != 1:
+            raise Failure(f"expected one explicitly archived session, got {archived_ids!r}")
+        archived_id = next(iter(archived_ids))
+        recent_start = len(terminal.transcript)
+        terminal.send("/resume\r")
+        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
+        recent_filter = len(terminal.transcript)
+        terminal.send(archive_label)
+        terminal.read_until("nothing match", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        archived_start = len(terminal.transcript)
+        terminal.send("/archived\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "archived session loaded", since=archived_start)
+        restore_start = len(terminal.transcript)
+        terminal.send("\r")
+        terminal.read_until("to the recent list", STEP_TIMEOUT, "daemon confirmed restoration", since=restore_start)
+        with open(archive_path, encoding="utf-8") as handle:
+            if archived_id in json.load(handle)["sessions"]:
+                raise Failure(f"restored session {archived_id} remained archived")
+        recent_start = len(terminal.transcript)
+        terminal.send("/resume\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "restored session returned to recent list", since=recent_start)
+        terminal.send("\x1b")
+        time.sleep(0.15)
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
         if code != 0:
             raise Failure(f"happy path exited {code}\n--- transcript ---\n{terminal.transcript}")
+        if POSIX and f"\x1b]0;horon · {name}" not in terminal.transcript:
+            raise Failure(f"window title did not change to {name!r}\n--- transcript ---\n{terminal.transcript}")
+        if POSIX:
+            previous_log = daemon_log_tail(home, limit=2000)
+            resumed = Terminal([launch.argv0, "--continue"], cwd=case_root, env=env)
+            try:
+                resumed.read_until("Continuing session session_", STARTUP_TIMEOUT, "named continued session")
+                resumed.read_until(SESSION_READY, STEP_TIMEOUT, "continued session ready")
+                # Memorable names can hold a hyphen (`session_t-rex_<digits>_<hex>`).
+                selected = re.search(r"Continuing session (session_[A-Za-z0-9_-]+)", resumed.transcript)
+                if selected is None:
+                    raise Failure(f"continue did not print a session ID\n{resumed.transcript}")
+                attached = r"phase=resume_(?:restored|live_attach)_done"
+                receipt = rf"{attached} .*target_session_id={re.escape(selected[1])}(?:\s|$)"
+                current_log = daemon_log_tail(home, limit=2000)
+                if len(re.findall(receipt, current_log)) <= len(re.findall(receipt, previous_log)):
+                    raise Failure(f"continue did not restore session {selected[1]}\n{resumed.transcript}")
+                resumed.send("/quit\r")
+                if resumed.wait(STEP_TIMEOUT) != 0:
+                    raise Failure(f"continue launch did not exit cleanly\n{resumed.transcript}")
+                return terminal.transcript + resumed.transcript
+            finally:
+                resumed.close()
         return terminal.transcript
     finally:
         terminal.close()
@@ -854,8 +2090,8 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
 
 # Case 5 scans `/proc` or `ps` for the case's bridge processes and 6-8 send the
 # client a POSIX signal: only a POSIX host can drive either.
-POSIX_ONLY_CASES = {5, 6, 7, 8}
-ALL_CASES = tuple(range(1, 9))
+POSIX_ONLY_CASES = {5, 6, 7, 8, 9, 10}
+ALL_CASES = tuple(range(1, 11))
 DEFAULT_CASES = {"windows": (1, 2), "posix": ALL_CASES}
 def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) -> str:
     """A client killed by a signal still gives the terminal back (#431).
@@ -897,6 +2133,49 @@ def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) 
         terminal.close()
 
 
+def title_disabled_case(launch: Launch, root: str, from_flag: bool) -> str:
+    """The opt-out keeps the shell title in place from startup through exit."""
+    if launch.tui is None:
+        raise Failure("the title opt-out needs the TUI binary")
+    config = os.path.join(root, "title.toml")
+    with open(config, "w", encoding="utf-8") as handle:
+        handle.write(f"[title]\nenabled = {str(from_flag).lower()}\nstate = true\n")
+    argv = [launch.tui, "--config", config]
+    if from_flag:
+        argv.append("--no-title")
+    env = horon_env(root, launch.home)
+    env.pop("HORON_TUI_TITLE_ENABLED", None)
+    # A client started before its harness bridge accepts connections reports
+    # "harness connection closed" once. Only that startup message is retried,
+    # once; every other failure and every later assertion stays strict.
+    for attempt in (1, 2):
+        api_socket = os.path.join(
+            root,
+            "run",
+            f"horon-agent-api-title-{'flag' if from_flag else 'cfg'}-{attempt}.sock",
+        )
+        attempt_env = {**env, "HORON_AGENT_API_SOCKET": api_socket}
+        terminal = Terminal(argv, cwd=root, env=attempt_env)
+        try:
+            try:
+                terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready with title disabled")
+            except Failure:
+                if attempt == 1 and any(
+                    marker in terminal.transcript
+                    for marker in ("harness connection closed", "cannot reach the harness")
+                ):
+                    continue
+                raise
+            terminal.send("/quit\r")
+            code = terminal.wait(STEP_TIMEOUT)
+            if code != 0 or any(seq in terminal.transcript for seq in ("\x1b[22;2t", TITLE_POP, "\x1b]0;", "\x1b]2;")):
+                raise Failure(f"title opt-out failed (exit {code})\n--- transcript ---\n{terminal.transcript}")
+            return terminal.transcript
+        finally:
+            terminal.close()
+    raise Failure("title opt-out session never started")
+
+
 def selected_cases(requested: str | None) -> set[int]:
     """The cases to run, defaulting to what this platform can drive."""
     if requested:
@@ -913,6 +2192,78 @@ def selected_cases(requested: str | None) -> set[int]:
     return set(DEFAULT_CASES["posix" if POSIX else "windows"])
 
 
+def empty_tool_picker(launch: Launch, root: str, base_url: str) -> str:
+    home = write_config(os.path.join(root, "home"), base_url)
+    with open(os.path.join(home, "config.toml"), "a", encoding="utf-8") as handle:
+        handle.write('profile = "none"\n')
+    env = horon_env(root, home)
+    env.pop("HORON_AGENT_TOOL_PROFILE", None)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal(launch.client_argv(root), cwd=root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "empty-profile session ready")
+        terminal.send("/tools\r")
+        terminal.read_until("are enabled for this session", STEP_TIMEOUT, "empty tool picker")
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        terminal.send("/quit\r")
+        code = terminal.wait(STEP_TIMEOUT)
+        if code != 0:
+            raise Failure(f"empty tool picker exited {code}\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
+def background_jobs_case(launch: Launch, case_root: str, base_url: str) -> str:
+    home = write_config(launch.home, base_url, "yolo")
+    env = horon_env(case_root, home)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "background job session ready")
+        terminal.send("[tui:jobs] start\r")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "both background jobs started")
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure("the original background job client did not exit")
+        sessions = [name for name in os.listdir(os.path.join(home, "sessions"))
+                    if os.path.isfile(os.path.join(home, "sessions", name, "events.jsonl"))]
+        if len(sessions) != 1 or launch.tui is None:
+            raise Failure(f"expected a single resumable job session, got {sessions}")
+        terminal.close()
+        terminal = Terminal([launch.tui, "--session", sessions[0], "--cwd", case_root], cwd=case_root, env=env)
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "session reattached with live jobs")
+        terminal.send("/jobs\r")
+        terminal.read_until("Background jobs", STEP_TIMEOUT, "current session jobs")
+        terminal.read_until("job-one", STEP_TIMEOUT, "first job listed")
+        terminal.read_until("job-two", STEP_TIMEOUT, "second job listed")
+        terminal.send("job-two")
+        terminal.read_until("output-two", STEP_TIMEOUT, "bounded output of selected job")
+        terminal.send("\x1b[3~")
+        terminal.send("\x1b")
+        terminal.read_until("cancelling background job", STEP_TIMEOUT, "cancel accepted")
+        remaining_start = len(terminal.transcript)
+        terminal.send("/jobs\r")
+        terminal.read_until("job-one", STEP_TIMEOUT, "remaining job list loaded", since=remaining_start)
+        terminal.send("job-one")
+        terminal.read_until("output-one", STEP_TIMEOUT, "other job remains available", since=remaining_start)
+        terminal.send("\x1b[3~")
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        refreshed = len(terminal.transcript)
+        terminal.send("/jobs\r")
+        terminal.read_until("running no background work", STEP_TIMEOUT, "both cancelled jobs have exited", since=refreshed)
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure(f"background job client did not exit\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def run_build_layout(
     agent: str, tui: str, root: str, base_url: str, transcript: str | None, cases: set[int]
 ) -> int:
@@ -920,6 +2271,35 @@ def run_build_layout(
         log("case 1: bare horon hands a terminal over to horon-tui")
         launch = build_launch(os.path.join(root, "happy"), agent, tui)
         text = happy_path(launch, os.path.join(root, "happy"), base_url)
+        if POSIX:
+            if TITLE_POP not in text or "\x1b[22;2t" not in text or "\x1b]0;horon" not in text:
+                raise Failure(f"default title was not set and restored\n--- transcript ---\n{text}")
+            for from_flag in (True, False):
+                source = "--no-title" if from_flag else "title.enabled=false"
+                text += f"\n--- {source} ---\n" + title_disabled_case(launch, os.path.join(root, "happy"), from_flag)
+                log(f"{source}: no title or title stack sequences")
+            text += "\n--- empty tool profile ---\n" + empty_tool_picker(launch, os.path.join(root, "empty-tools"), base_url)
+            jobs_root = os.path.join(root, "jobs")
+            jobs_launch = build_launch(jobs_root, agent, tui)
+            text += "\n--- background jobs ---\n" + background_jobs_case(jobs_launch, jobs_root, base_url)
+            goal_root = os.path.join(root, "goal")
+            goal_launch = build_launch(goal_root, agent, tui)
+            home = write_config(goal_launch.home, base_url)
+            env = horon_env(goal_root, home)
+            env.pop("HORON_NO_TUI", None)
+            argv = goal_launch.client_argv(goal_root) + ["--goal", "Verify startup objective", "--goal-budget", "1200"]
+            terminal = Terminal(argv, cwd=goal_root, env=env)
+            try:
+                terminal.read_until("Verify startup objective", STARTUP_TIMEOUT, "startup goal appears")
+                terminal.read_until("1200", STEP_TIMEOUT, "startup token ceiling appears")
+                terminal.send("/goal 2400 Reject duplicate objective\r")
+                terminal.read_until("already has an active goal", STEP_TIMEOUT, "startup goal stays attached")
+                terminal.send("/quit\r")
+                if terminal.wait(STEP_TIMEOUT) != 0:
+                    raise Failure(f"goal client did not exit\n--- transcript ---\n{terminal.transcript}")
+                text += "\n--- startup goal ---\n" + terminal.transcript
+            finally:
+                terminal.close()
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:
                 handle.write(text)
@@ -980,6 +2360,30 @@ def run_build_layout(
         case_root = os.path.join(root, f"signal-{signal.Signals(signum).name.lower()}")
         signal_teardown_case(build_launch(case_root, agent, tui), case_root, base_url, signum)
         log(f"case {index} passed")
+    if 9 in cases:
+        log("case 9: preview and apply a named model preset, then refuse invalid choices")
+        case_root = os.path.join(root, "model-preset")
+        text = model_preset_case(build_launch(case_root, agent, tui), case_root, base_url)
+        if transcript:
+            with open(transcript, "a", encoding="utf-8") as handle:
+                handle.write("\n--- model preset ---\n" + text)
+        log("case 9 passed")
+    if 10 in cases:
+        log("case 10: the terminal names the active launch profile")
+        case_root = os.path.join(root, "profile")
+        launch = build_launch(case_root, agent, tui)
+        home = write_config(launch.home, base_url)
+        env = horon_env(case_root, home)
+        env["HORON_PROFILE"] = "work"
+        terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
+        try:
+            terminal.read_until("profile: work", STEP_TIMEOUT, "active profile shown")
+            terminal.send("/quit\r")
+            if terminal.wait(STEP_TIMEOUT) != 0:
+                raise Failure("profile session failed to exit cleanly")
+        finally:
+            terminal.close()
+        log("case 10 passed")
     return 0
 
 

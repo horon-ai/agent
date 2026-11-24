@@ -50,6 +50,8 @@ pub struct SshConnectOptions {
     /// Ignore `~/.ssh/config` and the system SSH config (`-F /dev/null`). The
     /// destination must then be a literal hostname or address.
     pub isolated_config: bool,
+    /// Optional A2UI v1.0 renderer capabilities offered as the connection default.
+    pub a2ui: Option<horon_agent_harness_api::A2uiSessionCapabilities>,
 }
 
 impl Default for SshConnectOptions {
@@ -67,6 +69,7 @@ impl Default for SshConnectOptions {
             identity_file: None,
             known_hosts_file: None,
             isolated_config: false,
+            a2ui: None,
         }
     }
 }

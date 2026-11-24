@@ -60,13 +60,64 @@ struct StreamRule {
 }
 
 impl StreamRule {
-    fn watches_text(&self) -> bool {
-        self.text
+    fn matches_text(&self, window: &str) -> bool {
+        self.text && self.pattern.is_match(window)
+    }
+
+    fn compile(entry: &crate::config::StreamRuleConfig) -> anyhow::Result<Self> {
+        let id = entry.id.trim();
+        let pattern = entry.pattern.trim();
+        if id.is_empty() || pattern.is_empty() {
+            anyhow::bail!("the id and pattern must both be nonempty");
+        }
+        let pattern =
+            regex::Regex::new(pattern).map_err(|error| anyhow::anyhow!("the pattern does not compile ({error})"))?;
+        let (mut text, mut tool_any, mut tool_names) = (entry.scope.is_empty(), false, HashSet::new());
+        for scope in &entry.scope {
+            let scope = scope.trim();
+            if scope.is_empty() || scope.eq_ignore_ascii_case("text") {
+                text = true;
+            } else if scope.eq_ignore_ascii_case("tool") {
+                tool_any = true;
+            } else if let Some(name) = scope.strip_prefix("tool:").or_else(|| scope.strip_prefix("tool.")) {
+                let name = name.trim();
+                if !name.is_empty() {
+                    tool_names.insert(name.to_ascii_lowercase());
+                }
+            } else {
+                anyhow::bail!("unknown scope '{scope}' (use text, tool, or tool:<name>)");
+            }
+        }
+        let paths = entry
+            .paths
+            .iter()
+            .map(|path| {
+                glob::Pattern::new(path)
+                    .map_err(|error| anyhow::anyhow!("the path glob '{path}' does not compile ({error})"))
+            })
+            .collect::<anyhow::Result<_>>()?;
+        Ok(Self {
+            id: id.to_owned(),
+            pattern,
+            body: entry.body.clone(),
+            text,
+            tool_any,
+            tool_names,
+            paths,
+            delivery: entry.delivery,
+            repeat: entry.repeat,
+        })
     }
 
     fn watches_tool(&self, tool: &str) -> bool {
         if self.tool_any {
             return true;
+        }
+        if self.tool_names.is_empty() {
+            return false;
+        }
+        if tool.bytes().all(|byte| !byte.is_ascii_uppercase()) {
+            return self.tool_names.contains(tool);
         }
         let lowered = tool.to_ascii_lowercase();
         self.tool_names.contains(lowered.as_str())
@@ -75,6 +126,29 @@ impl StreamRule {
     fn tracks_repeat(&self) -> bool {
         self.repeat != crate::config::StreamRuleRepeat::Turn
     }
+}
+
+/// Validate configured rules and report text matches for an isolated sample.
+/// The preview has no session ledger and never emits rule bodies or actions.
+pub fn preview_stream_rules(
+    entries: &[crate::config::StreamRuleConfig],
+    sample: Option<&str>,
+) -> anyhow::Result<Vec<(String, crate::config::StreamRuleDelivery)>> {
+    use anyhow::Context;
+
+    let window = sample.map(lookback_window);
+    let mut ids = HashSet::new();
+    let mut matches = Vec::new();
+    for entry in entries {
+        let rule = StreamRule::compile(entry).with_context(|| format!("stream rule {:?}", entry.id))?;
+        if !ids.insert(entry.id.trim()) {
+            anyhow::bail!("duplicate stream rule ID {:?}", entry.id);
+        }
+        if window.is_some_and(|window| rule.matches_text(window)) {
+            matches.push((rule.id, rule.delivery));
+        }
+    }
+    Ok(matches)
 }
 
 /// One rule that matched, with the body the caller injects.
@@ -182,72 +256,10 @@ impl TurnStreamRules {
                 logging::debug(&format!("Stream rule '{id}' is suppressed by its repeat policy"));
                 continue;
             }
-            let compiled = match regex::Regex::new(pattern) {
-                Ok(compiled) => compiled,
-                Err(error) => {
-                    logging::warn(&format!(
-                        "Ignoring stream rule '{id}': the pattern does not compile ({error})"
-                    ));
-                    continue;
-                }
-            };
-
-            let (mut text, mut tool_any, mut tool_names) = (false, false, HashSet::new());
-            if entry.scope.is_empty() {
-                text = true;
+            match StreamRule::compile(entry) {
+                Ok(rule) => rules.push(rule),
+                Err(error) => logging::warn(&format!("Ignoring stream rule '{id}': {error}")),
             }
-            let mut unknown_scope = None;
-            for scope in &entry.scope {
-                let scope = scope.trim();
-                if scope.is_empty() || scope.eq_ignore_ascii_case("text") {
-                    text = true;
-                } else if scope.eq_ignore_ascii_case("tool") {
-                    tool_any = true;
-                } else if let Some(name) = scope.strip_prefix("tool:").or_else(|| scope.strip_prefix("tool.")) {
-                    let name = name.trim();
-                    if !name.is_empty() {
-                        tool_names.insert(name.to_ascii_lowercase());
-                    }
-                } else {
-                    unknown_scope = Some(scope.to_string());
-                }
-            }
-            if let Some(scope) = unknown_scope {
-                logging::warn(&format!(
-                    "Ignoring stream rule '{id}': unknown scope '{scope}' (use text, tool, or tool:<name>)"
-                ));
-                continue;
-            }
-
-            let mut paths = Vec::with_capacity(entry.paths.len());
-            let mut bad_glob = None;
-            for path in &entry.paths {
-                match glob::Pattern::new(path) {
-                    Ok(compiled) => paths.push(compiled),
-                    Err(error) => {
-                        bad_glob = Some((path.clone(), error));
-                        break;
-                    }
-                }
-            }
-            if let Some((path, error)) = bad_glob {
-                logging::warn(&format!(
-                    "Ignoring stream rule '{id}': the path glob '{path}' does not compile ({error})"
-                ));
-                continue;
-            }
-
-            rules.push(StreamRule {
-                id: id.to_string(),
-                pattern: compiled,
-                body: entry.body.clone(),
-                text,
-                tool_any,
-                tool_names,
-                paths,
-                delivery: entry.delivery,
-                repeat: entry.repeat,
-            });
         }
         Self {
             rules,
@@ -278,12 +290,16 @@ impl TurnStreamRules {
         if self.rules.is_empty() {
             return None;
         }
-        let window = lookback_window(text);
+        let mut window: Option<&str> = None;
         let hit = self.rules.iter().find(|rule| {
-            rule.watches_text()
-                && rule.delivery == crate::config::StreamRuleDelivery::Interrupt
-                && !self.matched.contains(&rule.id)
-                && rule.pattern.is_match(window)
+            if !rule.text
+                || rule.delivery != crate::config::StreamRuleDelivery::Interrupt
+                || self.matched.contains(&rule.id)
+            {
+                return false;
+            }
+            let window = *window.get_or_insert_with(|| lookback_window(text));
+            rule.pattern.is_match(window)
         })?;
         let hit = StreamRuleHit {
             id: hit.id.clone(),
@@ -305,22 +321,25 @@ impl TurnStreamRules {
             return Vec::new();
         }
         let window = lookback_window(text);
-        let hits: Vec<StreamRuleHit> = self
-            .rules
-            .iter()
-            .filter(|rule| {
-                rule.watches_text()
-                    && rule.delivery == crate::config::StreamRuleDelivery::Passive
-                    && !self.matched.contains(&rule.id)
-                    && rule.pattern.is_match(window)
-            })
-            .map(|rule| StreamRuleHit {
-                id: rule.id.clone(),
-                body: rule.body.clone(),
-            })
-            .collect();
-        for hit in &hits {
-            self.mark_fired(&hit.id);
+        let mut hits = Vec::new();
+        for rule in &self.rules {
+            if rule.delivery == crate::config::StreamRuleDelivery::Passive
+                && !self.matched.contains(&rule.id)
+                && rule.matches_text(window)
+            {
+                let hit = StreamRuleHit {
+                    id: rule.id.clone(),
+                    body: rule.body.clone(),
+                };
+                Self::record_rule_fired(
+                    &mut self.matched,
+                    &mut self.fired,
+                    &hit.id,
+                    rule.tracks_repeat(),
+                    self.current_turn,
+                );
+                hits.push(hit);
+            }
         }
         hits
     }
@@ -333,19 +352,27 @@ impl TurnStreamRules {
         if self.rules.is_empty() {
             return None;
         }
-        let serialized = serde_json::to_string(input).unwrap_or_default();
+        let mut serialized: Option<String> = None;
         let rule = self.rules.iter().find(|rule| {
-            !self.matched.contains(&rule.id)
-                && rule.watches_tool(tool)
-                && self.tool_path_matches(rule, input)
-                && rule.pattern.is_match(&serialized)
+            if self.matched.contains(&rule.id) || !rule.watches_tool(tool) || !self.tool_path_matches(rule, input) {
+                return false;
+            }
+            let text = serialized.get_or_insert_with(|| serde_json::to_string(input).unwrap_or_default());
+            rule.pattern.is_match(text)
         })?;
         let hit = StreamRuleHit {
             id: rule.id.clone(),
             body: rule.body.clone(),
         };
         let delivery = rule.delivery;
-        self.mark_fired(&hit.id);
+        let tracks_repeat = rule.tracks_repeat();
+        Self::record_rule_fired(
+            &mut self.matched,
+            &mut self.fired,
+            &hit.id,
+            tracks_repeat,
+            self.current_turn,
+        );
         Some(match delivery {
             crate::config::StreamRuleDelivery::Interrupt => ToolRuleAction::Block(hit),
             crate::config::StreamRuleDelivery::Passive => ToolRuleAction::Passive(hit),
@@ -368,22 +395,27 @@ impl TurnStreamRules {
 
     /// Record that this rule's body was injected, spending one injection.
     pub(super) fn record_injection(&mut self, hit: &StreamRuleHit) {
-        self.matched.insert(hit.id.clone());
         self.injections += 1;
-        self.mark_fired(&hit.id);
+        let tracked = self
+            .rules
+            .iter()
+            .find(|rule| rule.id == hit.id)
+            .is_some_and(StreamRule::tracks_repeat);
+        Self::record_rule_fired(&mut self.matched, &mut self.fired, &hit.id, tracked, self.current_turn);
     }
 
     /// Mark a rule spent for this turn and remember the ledger write its repeat
     /// policy needs.
-    fn mark_fired(&mut self, id: &str) {
-        self.matched.insert(id.to_string());
-        let tracked = self
-            .rules
-            .iter()
-            .find(|rule| rule.id == id)
-            .is_some_and(StreamRule::tracks_repeat);
-        if tracked {
-            self.fired.push((id.to_string(), self.current_turn));
+    fn record_rule_fired(
+        matched: &mut HashSet<String>,
+        fired: &mut Vec<(String, u32)>,
+        id: &str,
+        tracks_repeat: bool,
+        current_turn: u32,
+    ) {
+        matched.insert(id.to_owned());
+        if tracks_repeat {
+            fired.push((id.to_owned(), current_turn));
         }
     }
 

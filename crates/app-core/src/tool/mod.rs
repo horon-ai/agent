@@ -1,3 +1,4 @@
+pub(crate) mod a2ui;
 pub(crate) mod acp_session;
 mod agentgrep;
 pub mod ambient;
@@ -20,12 +21,16 @@ pub(crate) mod client_fs;
 mod codemode;
 mod communicate;
 mod config_edit_notice;
+mod consult;
+pub(crate) use consult::{mark_session_consult_policy, session_is_consult};
 mod context_notes;
 mod conversation_search;
+pub mod diagnostics_list;
 mod discover;
 mod discover_secrets;
 mod edit;
 mod edit_stats;
+pub(crate) mod eval;
 mod file_diff;
 pub(crate) mod file_lock;
 pub(crate) mod generate_image;
@@ -47,16 +52,19 @@ mod monitor;
 mod name_suggestions;
 pub(crate) mod nested_agents;
 pub(crate) mod new_context;
+pub(crate) mod package_tool;
 mod patch;
 pub mod path_policy;
 mod path_suffix;
 pub(crate) mod permission_bridge;
 pub(crate) mod post_tool_feedback;
+pub mod preview;
 mod read;
 mod read_selector;
 pub(crate) mod read_state;
 pub(crate) mod repair_event;
 mod replace;
+pub mod run_approval;
 pub(crate) mod sdk;
 pub(crate) mod serde_coerce;
 pub(crate) mod session_mcp;
@@ -71,6 +79,7 @@ use tool_names::is_fixed_mcp_tool;
 pub(crate) use tool_names::{tool_name_is_allowed, tool_name_is_disabled};
 mod toolbox;
 pub(crate) use self::toolbox::session_can_reach;
+pub(crate) use a2ui::A2UI_TOOL;
 mod undo;
 mod user_response;
 mod webfetch;
@@ -80,6 +89,7 @@ pub(crate) mod yield_result;
 
 use crate::compaction::CompactionManager;
 use crate::provider::Provider;
+use crate::server::session_notes;
 use crate::skill::SkillRegistry;
 use anyhow::Result;
 use futures::future::BoxFuture;
@@ -117,6 +127,7 @@ pub(crate) fn forget_session_caches(session_id: &str) {
     ask_bridge::forget_session(session_id);
     read_state::forget_session(session_id);
     checkpoint::forget_session(session_id);
+    eval::forget_session(session_id);
     horon_agent_session_types::repair_record::forget_session(session_id);
     // A structured-result child that never reached the completion path (or whose
     // last status update was missed) must not leave its schema slot behind.
@@ -226,6 +237,8 @@ struct SessionToolPolicy {
     /// that read it - `toolbox` and the `mcp` management tool - hold a registry
     /// and cannot reach the session's own state.
     listed_mcp_surface: bool,
+    /// A read-only consult child: no client tool configuration can widen its stored allow list.
+    consult: bool,
     owner: Option<u64>,
 }
 
@@ -388,7 +401,10 @@ async fn run_gated_pre_tool_hook(
 ) -> crate::hooks::GateDecision {
     let queue_budget = hook_serial_queue_budget();
     match acquire_hook_serial(queue_budget).await {
-        Some(_serial) => crate::hooks::run_pre_tool_gate(session_id, working_dir, tool_name, input_json).await,
+        Some(_serial) => {
+            session_notes::note_hook(session_id, "pre_tool", Some(tool_name));
+            crate::hooks::run_pre_tool_gate(session_id, working_dir, tool_name, input_json).await
+        }
         None => {
             crate::logging::warn(&format!(
                 "pre_tool hook gate still busy after {}ms; allowing tool '{tool_name}' for session {session_id} without running the gate (fail-open)",
@@ -419,6 +435,8 @@ impl Drop for SessionToolPolicyRegistration {
         {
             policies.remove(&self.session_id);
             sdk::remove_session(&self.session_id);
+            eval::forget_session(&self.session_id);
+            crate::extensions::package_snapshot::forget_session(&self.session_id);
         }
     }
 }
@@ -457,9 +475,8 @@ pub(crate) fn register_session_tool_policy(
         Arc::new(SessionToolPolicy {
             allowed_tools,
             disabled_tools,
-            load_tiers: None,
-            listed_mcp_surface: false,
             owner: Some(owner),
+            ..Default::default()
         }),
     );
     SessionToolPolicyRegistration {
@@ -521,9 +538,7 @@ pub(crate) fn set_session_tool_policy(
         Arc::new(SessionToolPolicy {
             allowed_tools,
             disabled_tools,
-            load_tiers: None,
-            listed_mcp_surface: false,
-            owner: None,
+            ..Default::default()
         }),
     );
 }
@@ -555,7 +570,7 @@ fn session_tool_policy_shared(session_id: &str) -> Option<Arc<SessionToolPolicy>
         .unwrap_or_else(|e| e.into_inner())
         .get(session_id)
         .cloned();
-    let Some(config) = sdk::config(session_id) else {
+    let Some(config) = sdk::config(session_id).filter(|_| !stored.as_deref().is_some_and(|p| p.consult)) else {
         return stored;
     };
     let mut policy = stored.map_or_else(SessionToolPolicy::default, Arc::unwrap_or_clone);
@@ -1094,6 +1109,13 @@ impl Registry {
                 codemode::CodemodeTool::new(registry.downgrade()),
             );
         }
+        if eval::enabled()
+            && construction_allow
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(eval::NAME))
+        {
+            Self::insert_tool(&mut tools_map, eval::NAME, eval::EvalTool::new(registry.downgrade()));
+        }
         Self::insert_tool(&mut tools_map, "undo", undo::UndoTool::new());
         Self::insert_tool(&mut tools_map, "ask", ask::AskTool::new());
         if undo::redo_enabled() {
@@ -1404,14 +1426,8 @@ impl Registry {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         serde_json::to_string(input).unwrap_or_default().hash(&mut hasher);
-        // The working directory is part of the decision: `rm build` in one
-        // directory is not the same request as in another, and an approval must
-        // not carry across.
-        ctx.working_dir
-            .as_ref()
-            .map(|dir| dir.display().to_string())
-            .unwrap_or_default()
-            .hash(&mut hasher);
+        // Bind approval to the exact path, even if it contains non-UTF-8 bytes.
+        ctx.working_dir.hash(&mut hasher);
         format!("{session_id}|{tool}|{:x}", hasher.finish())
     }
 
@@ -1480,10 +1496,15 @@ impl Registry {
                 // fresh request, which also wrote the denied id back into the
                 // queue as if it were still pending.
                 if decision.approved {
-                    Self::open_approval_requests()
+                    let mut open = Self::open_approval_requests()
                         .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .remove(&key);
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if resolved_name == eval::NAME && open.get(&key) != Some(&request_id) {
+                        return Some(
+                            "Python eval approval was already consumed. Request approval for a new cell.".into(),
+                        );
+                    }
+                    open.remove(&key);
                 }
                 // Clear the prompt a client was shown for this request. Emitting
                 // only the pending event would leave it waiting on a decision
@@ -1612,12 +1633,11 @@ impl Registry {
         let is_dual_confirm = prompt.is_dual_confirm;
         let input = prompt.input;
         let now = horon_agent_time::Timestamp::now();
-        // A scoped answer ("allow this file", "allow this folder") is written by
-        // whoever records the decision, and that writer has only the queued
-        // request to read: it cannot ask the registry for effects. So the
-        // capability travels in the context, and only when a grant could mean
-        // something.
-        let grant_capability = crate::approval_grants::GrantCapability::from_effects(effects);
+        // The approver sees this queued request without the registry's effects.
+        // Carry scoped-grant capability only for tools that accept grants.
+        let grant_capability = (resolved_name != eval::NAME)
+            .then(|| crate::approval_grants::GrantCapability::from_effects(effects))
+            .flatten();
         PermissionRequest {
             id,
             action: resolved_name.to_string(),
@@ -1626,6 +1646,8 @@ impl Registry {
                 "This tool belongs to a class the configuration lists as requiring a second \
                  confirmation, so it asks even when approval mode is off."
                     .to_string()
+            } else if resolved_name == eval::NAME {
+                eval::APPROVAL_REASON.to_owned()
             } else {
                 format!("The configured approval mode asks before {resolved_name} runs.")
             },
@@ -1842,14 +1864,9 @@ impl Registry {
         if !crate::hooks::hook_configured("post_tool") {
             return;
         }
-        crate::hooks::dispatch_observer(Self::post_tool_event(
-            "post_tool",
-            resolved_name,
-            input,
-            ctx,
-            result.as_ref(),
-            latency_ms,
-        ));
+        session_notes::note_hook(&ctx.session_id, "post_tool", Some(resolved_name));
+        let event = Self::post_tool_event("post_tool", resolved_name, input, ctx, result.as_ref(), latency_ms);
+        crate::hooks::dispatch_observer(event);
     }
 
     /// Run the synchronous `post_tool_feedback` hooks after a successful tool
@@ -1868,6 +1885,7 @@ impl Registry {
         if !crate::hooks::hook_configured("post_tool_feedback") {
             return;
         }
+        session_notes::note_hook(&ctx.session_id, "post_tool_feedback", Some(resolved_name));
         let event = Self::post_tool_event("post_tool_feedback", resolved_name, input, ctx, Ok(output), latency_ms);
         let input_json = input.to_string();
         let feedback = {
@@ -1944,7 +1962,7 @@ impl Registry {
     }
 
     /// Execute a tool by name
-    pub async fn execute(&self, name: &str, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
+    pub async fn execute(&self, name: &str, input: Value, mut ctx: ToolContext) -> Result<ToolOutput> {
         // Mark this call in-flight for the whole execution so the missing
         // tool-output repair paths do not mistake a slow tool for an
         // interrupted one and inject a duplicate synthetic result. See
@@ -1953,6 +1971,7 @@ impl Registry {
         let resolved_name = Self::resolve_tool_name_for_session(&ctx.session_id, name);
         crate::crash::record_tool_operation(resolved_name, &input);
         let is_custom = sdk::custom(&ctx.session_id, resolved_name);
+        let is_eval = !is_custom && resolved_name == eval::NAME;
         // `toolbox` is policy-transparent: it runs a tool on this session's
         // behalf, and the inner `Registry::execute` inside it applies plan mode,
         // approval, and the tool hooks to that tool with that tool's own name
@@ -2013,18 +2032,20 @@ impl Registry {
                 }
             }
         };
+        if is_eval {
+            ctx.working_dir = Some(eval::working_dir(&ctx).await?);
+        }
 
         let working_dir = ctx.working_dir.as_ref().map(|dir| dir.display().to_string());
-        // The dispatch clock starts before the hooks. A transformer or gate that
-        // queues on `HOOK_SERIAL` or runs long is time the caller waited, and
-        // starting at `Tool::execute` made that wait invisible.
+        // Include time spent waiting for and running hooks in dispatch latency.
         let dispatch_started_at = std::time::Instant::now();
-        // User-configured input transformer: may replace the tool input before
-        // anything reads it, so it is serialized with the other awaited hooks;
-        // see `HOOK_SERIAL`. It is skipped entirely when not configured, and for
-        // the dispatcher, whose payload the target's own transformer rewrites.
+        // Serialize input transforms with other hooks. The dispatcher leaves
+        // its payload for the target's own transformer.
         let input = if policy_on_self {
             let _serial = HOOK_SERIAL.lock().await;
+            if crate::hooks::hook_configured("pre_tool_transform") {
+                session_notes::note_hook(&ctx.session_id, "pre_tool_transform", Some(resolved_name));
+            }
             crate::hooks::transform_tool_input(&ctx.session_id, working_dir.as_deref(), resolved_name, input).await
         } else {
             input
@@ -2046,15 +2067,14 @@ impl Registry {
         // external gate as if it had been dispatched. The command-risk hard
         // refusal inside `bash` is untouched; this only decides whether the user
         // must answer first. The dispatcher asks nothing on its own behalf: the
-        // inner call applies the same mode to the tool it runs, so one prompt
-        // names that tool and its arguments.
+        // inner call applies the same mode to the tool it runs, so one prompt names it.
         let refusal = if policy_on_self {
-            // An ACP connection may set the mode for the turns it starts; every other
-            // turn, including a desktop or daemon turn on the same session, keeps the
-            // configured mode.
+            // An ACP connection may set the mode for its own turns; any other turn keeps the configured mode.
             let approval_effects = plan_effects.unwrap_or(ToolEffects::write());
-            let approval_mode =
-                approval_override::get(&ctx.session_id).unwrap_or(crate::config::config().tools.approval_mode);
+            let approval_mode = run_approval::stricter(
+                &ctx.session_id,
+                approval_override::get(&ctx.session_id).unwrap_or(crate::config::config().tools.approval_mode),
+            );
             let dual_confirm = crate::config::config().tools.dual_confirm_classes.clone();
             let danger = crate::approval::danger_class(resolved_name, &input, ctx.working_dir.as_deref());
             // Explicit `[[tools.bash_patterns]]` rules are the user's own policy,
@@ -2084,26 +2104,34 @@ impl Registry {
                 crate::tool::path_policy::named_paths(resolved_name, &input, ctx.working_dir.as_deref());
             let restricted =
                 crate::approval_grants::restricted_match(resolved_name, &input, ctx.working_dir.as_deref());
-            let evaluation = crate::approval::evaluate_and_audit(
-                crate::approval::ApprovalCall {
-                    tool: resolved_name,
-                    effects: approval_effects,
-                    mode: approval_mode,
-                    dual_confirm: &dual_confirm,
-                    danger,
-                    bash_pattern: bash_pattern.as_ref(),
-                    paths: &approval_paths,
-                    restricted: restricted.as_deref(),
-                },
-                &ctx.tool_call_id,
-            );
+            let evaluation = if is_eval {
+                crate::approval::ApprovalEvaluation::RequiresApproval {
+                    reason: eval::APPROVAL_REASON.to_owned(),
+                    is_dual_confirm: false,
+                }
+            } else {
+                crate::approval::evaluate_and_audit(
+                    crate::approval::ApprovalCall {
+                        tool: resolved_name,
+                        effects: approval_effects,
+                        mode: approval_mode,
+                        dual_confirm: &dual_confirm,
+                        danger,
+                        bash_pattern: bash_pattern.as_ref(),
+                        paths: &approval_paths,
+                        restricted: restricted.as_deref(),
+                    },
+                    &ctx.tool_call_id,
+                )
+            };
             // A scoped grant answers a call the mode would otherwise ask about.
             // It never answers a dual-confirm class, a restricted path, a bash
             // pattern verdict, or a call that mutates nothing a grant can name.
             let evaluation = match evaluation {
                 crate::approval::ApprovalEvaluation::RequiresApproval {
                     is_dual_confirm: false, ..
-                } if restricted.is_none()
+                } if !is_eval
+                    && restricted.is_none()
                     && bash_pattern.is_none()
                     && crate::approval_grants::covered(
                         resolved_name,
@@ -2156,47 +2184,46 @@ impl Registry {
             return Err(ToolRejected(refusal).into());
         }
 
-        // User-configured pre_tool gate: external policy hook that can block
-        // this call (exit 2). Skipped entirely when not configured.
-        //
-        // `restore_then_gate` is what makes the gate review the command that will
-        // actually run: a gate reading `«SECRET:...»` approves a command nobody
-        // executes, because the tool itself always gets the restored input.
+        // Review the exact payload this tool will receive. Eval runs the
+        // approved Python source without restoring secret placeholders.
         let gate_started_at = std::time::Instant::now();
         let input = if policy_on_self && crate::hooks::hook_configured("pre_tool") {
             let gate_session = ctx.session_id.clone();
             let gate_cwd = working_dir.clone();
             let gate_tool = resolved_name.to_string();
-            let (restored, decision) =
+            let (execution_input, decision) = if is_eval {
+                let payload = serde_json::to_string(&input)?;
+                let decision = run_gated_pre_tool_hook(&gate_session, gate_cwd.as_deref(), &gate_tool, &payload).await;
+                (input, decision)
+            } else {
                 crate::secrets::restore_then_gate(input, &ctx.session_id, move |payload| async move {
-                    // Serialized with `pre_tool_transform` and `post_tool_feedback`;
-                    // see `HOOK_SERIAL`. The wait for the gate is bounded, so a
-                    // session queued behind a wedged hook is released instead of
-                    // blocked forever; the gate is fail-open on timeout, so an
-                    // expired queue wait allows the call with a warning.
                     run_gated_pre_tool_hook(&gate_session, gate_cwd.as_deref(), &gate_tool, &payload).await
                 })
-                .await;
+                .await
+            };
             if let crate::hooks::GateDecision::Block { reason } = decision {
-                let mut fields = lifecycle::fields("blocked", name, resolved_name, &restored, &ctx);
+                let mut fields = lifecycle::fields("blocked", name, resolved_name, &execution_input, &ctx);
                 fields.push(("block_reason", lifecycle::FieldValue::Text(&reason)));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
                 return Err(ToolRejected(format!("Tool call blocked by pre_tool hook: {reason}")).into());
             }
-            restored
-        } else {
+            execution_input
+        } else if !is_eval {
             crate::secrets::restore_tool_input(input, &ctx.session_id)
+        } else {
+            input
         };
         let hook_gate_ms = elapsed_ms(gate_started_at);
 
-        // Input and context stay as they are from here on, so the lifecycle
-        // fields are built once: lent to the start line, relabelled below.
+        // Input and context stay as they are from here on: the lifecycle fields are built once, lent to the start line.
+        crate::extensions::observer::tool_before(&ctx, resolved_name);
         let mut fields = lifecycle::fields("start", name, resolved_name, &input, &ctx);
         crate::logging::event_info("TOOL_LIFECYCLE", lifecycle::borrowed(&fields));
 
         let execute_started_at = std::time::Instant::now();
         let result = tool.execute(input.clone(), ctx.clone()).await;
         let execute_ms = elapsed_ms(execute_started_at);
+        crate::extensions::observer::tool_after(&ctx, resolved_name, result.is_ok(), execute_ms);
 
         // The `post_tool` observer fires as soon as the tool returns, before the
         // feedback and guard stages exist, so its DURATION_MS stays the execute
@@ -2246,15 +2273,14 @@ impl Registry {
         // overflow guard's existing path.
         if resolved_name != "read"
             && !accept_large_output
-            && output.output.len() > artifacts::GENERIC_CONDENSE_BUDGET_BYTES
-        {
-            let text = std::mem::take(&mut output.output);
-            output.output = artifacts::condense_for_context(
+            && let Some(preview) = artifacts::condense_preview(
                 &ctx.session_id,
                 resolved_name,
-                text,
+                &output.output,
                 artifacts::GENERIC_CONDENSE_BUDGET_BYTES,
-            );
+            )
+        {
+            output.output = preview;
             output.verdict = Some(ToolVerdict::after_cut(output.verdict));
         }
         output = self.guard_context_overflow(name, output, accept_large_output).await;
@@ -2512,6 +2538,13 @@ impl Registry {
         }
         msg.push_str(&format!(" Available tools: {}.", names.join(", ")));
         ToolRejected(msg).into()
+    }
+
+    /// Disable PTYs on this registry's built-in shell tool, if enabled.
+    pub async fn disable_bash_pty(&self) {
+        if let Some(tool) = self.tools.write().await.get_mut("bash") {
+            *tool = Arc::new(bash::BashTool::without_pty());
+        }
     }
 
     /// Register a tool dynamically (for MCP tools, etc.)
@@ -3107,32 +3140,6 @@ impl Registry {
 }
 
 #[cfg(test)]
-mod mcp_allow_list_tests {
-    use super::{tool_name_is_allowed, tool_name_is_disabled};
-    use std::collections::HashSet;
-
-    #[test]
-    fn allowing_mcp_also_allows_dynamic_server_tools() {
-        let allowed = HashSet::from(["mcp".to_string()]);
-
-        assert!(tool_name_is_allowed(&allowed, "mcp"));
-        assert!(tool_name_is_allowed(&allowed, "mcp__filesystem__read_file"));
-        assert!(!tool_name_is_allowed(&allowed, "mcpish"));
-        assert!(!tool_name_is_allowed(&allowed, "bash"));
-    }
-
-    #[test]
-    fn disabling_mcp_also_disables_dynamic_server_tools() {
-        let disabled = HashSet::from(["mcp".to_string()]);
-
-        assert!(tool_name_is_disabled(&disabled, "mcp"));
-        assert!(tool_name_is_disabled(&disabled, "mcp__filesystem__read_file"));
-        assert!(!tool_name_is_disabled(&disabled, "mcpish"));
-        assert!(!tool_name_is_disabled(&disabled, "bash"));
-    }
-}
-
-#[cfg(test)]
 mod activator_clone;
 #[cfg(test)]
 mod ask_registry_tests;
@@ -3146,6 +3153,8 @@ mod concurrency_class_tests;
 mod context_condense_perf_tests;
 #[cfg(test)]
 mod lazy_activation;
+#[cfg(test)]
+mod mcp_allow_list_tests;
 #[cfg(test)]
 #[path = "monitor_tests.rs"]
 mod monitor_tool;

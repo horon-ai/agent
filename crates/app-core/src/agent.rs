@@ -5,6 +5,7 @@ mod advisor;
 #[path = "agent/advisor_tests.rs"]
 mod advisor_tests;
 mod compaction;
+mod consult;
 mod conversation_reset;
 mod degradation_event;
 #[cfg(test)]
@@ -23,6 +24,7 @@ mod goal_continuation;
 mod goal_continuation_tests;
 mod handoff_compaction;
 pub use handoff_compaction::HandoffOutcome;
+pub(crate) mod hosted_notice;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;
@@ -53,25 +55,29 @@ mod pruning_tests;
 mod request_messages;
 #[cfg(test)]
 pub(crate) use request_messages::request_extra_clone_counters;
+pub use request_messages::tool_result_trim;
 pub(crate) use request_messages::{join_request_messages, record_request_extra_clone};
 mod response_recovery;
 mod resume_commit;
 mod rewind_summary;
 pub use rewind_summary::RewindSummaryOutcome;
 mod round_budget;
-mod run_journal;
+pub(crate) mod run_journal;
+mod session_hooks;
 mod session_replication;
 mod stable_hash;
 pub(crate) use stable_hash::{stable_hash_json, stable_hash_str, stable_json_len};
 pub(crate) use turn_failover::active_profile_fallback_models;
+mod a2ui;
 #[cfg(test)]
 #[path = "agent/soft_interrupt_commit_tests.rs"]
 mod soft_interrupt_commit_tests;
 mod status;
-mod stream_rules;
+pub mod stream_rules;
 mod streaming;
 #[cfg(test)]
 mod streaming_clone_compaction_tests;
+mod swarm_budget;
 mod tool_markup_recovery;
 mod tool_result_aging;
 mod tool_round;
@@ -90,6 +96,10 @@ mod turn_start_tests;
 #[path = "agent/turn_state_transition_tests.rs"]
 mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
+pub use turn_streaming_mpsc::prose_repeat;
+#[cfg(test)]
+#[path = "agent/a2ui_tests.rs"]
+mod a2ui_tests;
 mod usage;
 mod utils;
 #[cfg(test)]
@@ -137,7 +147,6 @@ pub use horon_agent_agent_runtime::{
 use interrupts::{InFlightGuard, NoToolCallOutcome, PostToolInterruptOutcome};
 
 const HORON_AGENT_NATIVE_TOOLS: &[&str] = &["communicate"];
-static RECOVERED_TEXT_WRAPPED_TOOL_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static HORON_AGENT_REPO_SOURCE_STATE: LazyLock<(Option<String>, Option<bool>)> = LazyLock::new(|| {
     crate::build::get_repo_dir()
         .map(|repo_dir| {
@@ -302,6 +311,9 @@ impl Agent {
     ) -> Option<ServerEvent> {
         let effective = self.effective_context_tokens_from_usage(input, cache_read, cache_creation);
         let miss = self.kv_cache_monitor.finish_request(effective, cache_read)?;
+        if !crate::config::config().features.kv_cache_miss_notices {
+            return None;
+        }
         logging::warn(&format!(
             "KV_CACHE_MISS session={} reason={} harness_caused={} missed={} expected={} read={} documented={:?}",
             self.session.id,
@@ -426,18 +438,13 @@ pub struct Agent {
     last_serving_model: Option<String>,
     /// Pending swarm alerts to inject into the next turn
     pending_alerts: Vec<String>,
-    /// Transient reminder injected into provider requests for the current turn only.
-    /// Not persisted to session history.
+    /// Turn-local provider reminder, omitted from session history.
     current_turn_system_reminder: Option<String>,
-    /// Loop detection for the current turn: a repeated identical call is warned
-    /// once, refused on the following repeats, and ends the turn after two
-    /// refusals. Reset at the start of every turn, so a loop the model broke
-    /// last turn starts clean.
+    /// Per-turn guard that warns, then refuses identical tool calls and stops after two refusals.
     loop_guard: loop_guard::LoopGuard,
-    /// Progress and exit state of the current (or most recent) turn. Both turn
-    /// loops replace it at turn start and advance it through the recovery
-    /// helpers, so no loop owns a private copy of a recovery counter.
+    /// Shared state for turn progress, exit and recovery counters.
     turn_state: TurnState,
+    swarm_budget: Option<swarm_budget::ChildBudget>,
     /// Tool call ids observed in the current session transcript.
     tool_call_ids: HashSet<String>,
     /// Tool result ids observed in the current session transcript.
@@ -548,22 +555,25 @@ pub struct Agent {
     /// resolution (available rungs, pinned effort, movement rules) happens at
     /// turn start so it reads the state that is current for that turn.
     armed_effort_keyword: Option<magic_keywords::EffortKeyword>,
-    /// True when the session's reasoning effort has been explicitly pinned
-    /// (via `SetReasoningEffort`). This prevents keyword overrides from
-    /// lowering the effort below the pinned value.
+    /// True when the effort was explicitly pinned (`SetReasoningEffort`), so
+    /// keyword overrides cannot lower it below the pinned value.
     reasoning_effort_pinned: bool,
     /// True when this agent runs inside the persistent serve/api-bridge daemon.
     /// Idle background compaction only starts here; a one-shot `run` leaves it
     /// false so it never compacts a transcript nobody will resume.
     persistent_runtime: bool,
-    /// Opted-in advisor worker, created on the session's first completed tool
-    /// round. `None` until then, after a disable, or when `[advisor]` is off.
+    /// Opted-in advisor worker, created on the first completed tool round; `None` before that, after a disable, or when off.
     advisor: Option<advisor::Handle>,
     /// Number of main-session messages the advisor has already been fed.
     advisor_cursor: usize,
-    /// User-turn index at which a blocker interrupt was last delivered, so the
-    /// configured immune window can route later notes to the reminder slot.
+    /// User-turn index of the last blocker interrupt, so the immune window can route later notes to the reminder slot.
     advisor_blocker_turn: Option<usize>,
+    /// This session's `/advisor` or `--advisor` choice; `None` follows `[advisor] enabled`. Not persisted.
+    advisor_enabled: Option<bool>,
+    /// Client-negotiated A2UI session capabilities; `None` until enabled for the session.
+    a2ui_capabilities: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities>,
+    /// Per-turn A2UI streaming and deferred block emission state.
+    a2ui_turn: a2ui::TurnA2uiState,
 }
 
 impl Agent {
@@ -616,17 +626,15 @@ impl Agent {
         // dispatcher that reaches them, so an operator who removed `toolbox`
         // gets every core tool eager again instead of tools nothing can call.
         let core_listed = default_core_profile && tool_config.toolbox_reachable();
-        let allowed_tools = Self::without_unreachable_dispatcher(tool_config, allowed_tools, core_listed);
+        let allowed_tools = consult::narrow(tool_config, &session, allowed_tools, core_listed);
         let load_tiers = tool_config.load_tiers(allowed_tools.as_ref(), core_listed);
         let working_dir = session.working_dir.as_deref().map(std::path::Path::new);
         let agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
         let static_prompt_sources = crate::prompt::StaticPromptSources::load(working_dir);
         let initial_provider_model = provider.model();
-        let tool_policy_registration =
-            crate::tool::register_session_tool_policy(&session.id, allowed_tools.clone(), disabled_tools.clone());
+        let registration = consult::register(&session, &allowed_tools, &disabled_tools);
         let secret_vault_registration = crate::secrets::register_session_vault(&session.id);
-        // The dispatcher must read the same frozen tier snapshot the tool list
-        // uses, not a later configuration reload.
+        // Dispatch reads the same frozen tier snapshot as the tool list.
         crate::tool::register_session_load_tiers(&session.id, load_tiers.clone());
         let mut agent = Self {
             provider,
@@ -636,7 +644,7 @@ impl Agent {
             active_skill: None,
             allowed_tools,
             disabled_tools,
-            _tool_policy_registration: tool_policy_registration,
+            _tool_policy_registration: registration,
             _secret_vault_registration: secret_vault_registration,
             mcp_tools_mode: tool_config.mcp_tools,
             load_tiers,
@@ -653,6 +661,7 @@ impl Agent {
             current_turn_system_reminder: None,
             loop_guard: loop_guard::LoopGuard::new(),
             turn_state: TurnState::new(),
+            swarm_budget: None,
             tool_call_ids: HashSet::new(),
             tool_result_ids: HashSet::new(),
             tool_output_scan_index: 0,
@@ -691,6 +700,9 @@ impl Agent {
             advisor: None,
             advisor_cursor: 0,
             advisor_blocker_turn: None,
+            advisor_enabled: None,
+            a2ui_capabilities: None,
+            a2ui_turn: a2ui::TurnA2uiState::default(),
         };
         agent.restore_failover_budget();
         agent.refresh_prompt_skills_snapshot();
@@ -839,21 +851,6 @@ impl Agent {
         }
     }
 
-    fn current_skills_snapshot(&self) -> Arc<SkillRegistry> {
-        // Global skills come from the process-wide shared registry; the
-        // project-local overlay is composed fresh from this session's
-        // workspace root so per-repo skills are session-scoped, immediately
-        // visible, and never leak across sessions (issue #457).
-        let global = self
-            .registry
-            .skills()
-            .try_read()
-            .map(|skills| Arc::new(skills.clone()))
-            .unwrap_or_else(|_| self.skills.clone());
-        let working_dir = self.session.working_dir.as_deref().map(std::path::Path::new);
-        Arc::new(SkillRegistry::effective_for_working_dir(&global, working_dir))
-    }
-
     pub fn available_skill_names(&self) -> Vec<String> {
         self.current_skills_snapshot()
             .list()
@@ -891,7 +888,11 @@ impl Agent {
         parent_id: Option<String>,
         narrowed_tools: Option<HashSet<String>>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true, narrowed_tools)
+        let budget = parent_id.as_ref().and_then(|_| swarm_budget::ChildBudget::configured());
+        let mut agent =
+            Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true, narrowed_tools);
+        agent.swarm_budget = budget;
+        agent
     }
 
     /// Whether a session's allow-list is the untouched default `core` profile. An explicit list,
@@ -1640,22 +1641,6 @@ impl Agent {
         self.clear_pending_resume();
         self.persist_soft_interrupt_snapshot();
         self.session.mark_closed();
-    }
-
-    /// Fire a session lifecycle observer hook (`session_start`/`session_end`).
-    /// No-op when the hook is not configured.
-    pub(crate) fn fire_session_lifecycle_hook(&self, event_name: &'static str, source: &str) {
-        if !crate::hooks::hook_configured(event_name) {
-            return;
-        }
-        let mut event = crate::hooks::HookEvent::new(event_name)
-            .session_id(self.session.id.clone())
-            .field("SOURCE", source)
-            .field("MODEL", self.provider_model());
-        if let Some(cwd) = self.working_dir() {
-            event = event.cwd(cwd);
-        }
-        crate::hooks::dispatch_observer(event);
     }
 
     pub fn mark_crashed(&mut self, message: Option<String>) {

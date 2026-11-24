@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use horon_agent_sdk::api::{ApiEvent, PermissionDecision};
+use horon_agent_sdk::api::{ApiEvent, ApiRequest, HandoffCompaction, PermissionDecision};
 use horon_agent_sdk::{
     ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, RuntimeCommand, SessionInfo,
 };
@@ -23,11 +23,24 @@ use time::{OffsetDateTime, UtcOffset};
 
 use crate::context::ContextReport;
 
+mod daemon_settings;
+mod export;
+mod jobs;
 mod messages;
+mod package_commands;
+mod retry;
 mod runtime;
 mod sessions;
+mod side;
 mod skills;
 mod steer;
+mod swarm;
+
+#[cfg(test)]
+mod jobs_tests;
+
+#[cfg(test)]
+mod package_tests;
 
 #[cfg(test)]
 mod runtime_tests;
@@ -39,9 +52,15 @@ mod steer_tests;
 mod sessions_tests;
 
 #[cfg(test)]
+mod side_tests;
+
+#[cfg(test)]
 mod skills_tests;
 
+pub use jobs::BackgroundJobRow;
 pub use messages::{Command, Incoming};
+pub use package_commands::PackageOutcome;
+pub use swarm::SwarmRow;
 
 /// How long the bridge waits for a command before it pumps the event stream
 /// again. Short enough that keystrokes feel instant.
@@ -97,6 +116,23 @@ pub struct SkillRow {
     pub allowed_tools: Vec<String>,
 }
 
+/// One recorded boundary the fork picker offers, as the bridge built it.
+///
+/// `boundary` is the stored message id the daemon will resolve, never an index:
+/// a message that has since left the session's head comes back as an error
+/// rather than forking the wrong prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForkRow {
+    /// The stored message id the fork request carries.
+    pub boundary: String,
+    /// What the row reads as: the first line of the message it forks before.
+    pub label: String,
+    /// A short second column naming the message's place in the history.
+    pub detail: String,
+    /// Lines the preview pane shows while this row is selected.
+    pub preview: Vec<String>,
+}
+
 /// A session the bridge attached to, and what the client needs to show it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachedSession {
@@ -131,6 +167,30 @@ pub struct Runtime {
     pub events: Receiver<Incoming>,
     /// One-line description of what the client is attached to.
     pub description: String,
+    /// The directory the session was opened in, as the daemon reports it.
+    ///
+    /// A create answers with the directory it was asked for, so `--cwd` and
+    /// the session keep one workspace; a resume answers with the directory the
+    /// session already has. `None` when the daemon names none, and the launch
+    /// directory is used instead.
+    pub workspace: Option<String>,
+    /// Whether the session runs on this machine.
+    ///
+    /// True only for the client's own daemon. `connect_options` in
+    /// [`crate::run`] leaves `--socket` unset, so `HoronAgentClient::connect`
+    /// resolves `api_socket_path()` — this user's runtime directory
+    /// (`crates/harness-api/src/sockets.rs`) — and its `ensure_runtime` starts
+    /// that daemon here. An explicit socket, or one the
+    /// `HORON_AGENT_API_SOCKET` override names, may be an SSH forward or a
+    /// remote bridge instead, and the paths in that session's report belong to
+    /// the other machine.
+    pub local: bool,
+    /// The endpoint this connection reached, which scopes client-local state.
+    ///
+    /// Session ids need only be unique inside one daemon, so a pin stored for
+    /// one endpoint must never be read as naming a session of another. The
+    /// socket the connection used is that name.
+    pub scope: String,
 }
 
 /// Connect, attach to or create a session, and start the bridge thread.
@@ -147,6 +207,11 @@ pub struct Runtime {
 /// client and daemon built against different protocol versions, and a session
 /// id the daemon does not have.
 pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Option<&str>) -> Result<Runtime, String> {
+    // Read before the options are consumed by the connection: an explicit
+    // socket names an endpoint the client did not start, and a forwarded one
+    // speaks for a harness on another machine. Only the default resolution is
+    // this user's own daemon, because `ensure_runtime` launches it here.
+    let local = options.socket_path.is_none() && std::env::var_os("HORON_AGENT_API_SOCKET").is_none();
     let socket = options
         .socket_path
         .clone()
@@ -175,6 +240,7 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
             .map_err(|error| format!("the harness refused a new session: {error}"))?,
     };
     let session_id = session.session_id.clone();
+    let workspace = session.working_dir.clone();
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     let description = format!("{} · {}", socket.display(), session_id);
@@ -188,6 +254,9 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
         commands: command_tx,
         events: event_rx,
         description,
+        workspace,
+        local,
+        scope: socket.display().to_string(),
     })
 }
 
@@ -246,9 +315,15 @@ fn run_worker(
     // A failure is one notice and nothing else: the identity event that follows
     // the connect fills the same fields, and a status line that stays blank is
     // better than a client that cannot start.
+    // The model the first report names is kept: an identity event that names it
+    // again says nothing about the route, so it costs no second report.
+    let mut usage_model = None;
     match runtime::read(&client, &session_id) {
         Ok(None) => {}
         Ok(Some(incoming)) => {
+            if let Incoming::RuntimeInfo { model, .. } = &incoming {
+                usage_model = model.clone();
+            }
             if events.send(incoming).is_err() {
                 return;
             }
@@ -265,27 +340,64 @@ fn run_worker(
     if !report_skills(&events, skills::read(&client, &session_id, false)) {
         return;
     }
+    // The commands the installed packages supply, read for the same reason: a
+    // listed name resolves before the user types it, and `/help` lists the
+    // section without a round trip.
+    if !report_package_commands(&events, package_commands::read(&client, &session_id)) {
+        return;
+    }
     if !report_todos(&events, &client, &session_id) {
+        return;
+    }
+    // The cumulative totals, the route's window and the spend estimate, read
+    // once here rather than per frame. A harness that does not serve the report
+    // is skipped before the request, so a segment it cannot fill stays empty
+    // instead of warning on every start.
+    if !report_usage(&events, &client, &session_id) {
         return;
     }
     loop {
         // The connection flag is read by the pump so a dead transport is
         // reported even while the client sits idle with nothing to send.
         let mut refresh_todos = false;
+        let mut refresh_usage = false;
         let step = pump(
             &events,
             |timeout| {
                 stream.next_result_timeout(timeout).inspect(|event| {
-                    refresh_todos |=
-                        matches!(event, Some(ApiEvent::TodoChanged { session_id: owner }) if owner == &session_id);
+                    match event {
+                        Some(ApiEvent::TodoChanged { session_id: owner }) if owner == &session_id => {
+                            refresh_todos = true
+                        }
+                        // A model change moves the route, and with it the
+                        // window the percentage divides by and the price the
+                        // estimate was made at. The event reaches the UI on its
+                        // own; this is the one place the reading is refreshed.
+                        // An identity event that names the model already read
+                        // (an effort change, a repeat after an attach) says
+                        // nothing new about the route, so it costs no request.
+                        Some(ApiEvent::ModelInfo {
+                            session_id: owner,
+                            model,
+                            ..
+                        }) if owner == &session_id && *model != usage_model => {
+                            usage_model = model.clone();
+                            refresh_usage = true
+                        }
+                        Some(_) | None => {}
+                    }
                 })
             },
             || client.is_closed(),
             &session_id,
         );
-        if !matches!(step, Step::UiGone | Step::Closed) && refresh_todos && !report_todos(&events, &client, &session_id)
-        {
-            return;
+        if !matches!(step, Step::UiGone | Step::Closed) {
+            if refresh_todos && !report_todos(&events, &client, &session_id) {
+                return;
+            }
+            if refresh_usage && !report_usage(&events, &client, &session_id) {
+                return;
+            }
         }
         match step {
             Step::UiGone | Step::Closed => return,
@@ -298,14 +410,14 @@ fn run_worker(
                         _ => None,
                     };
                     let description = describe(&command);
-                    // The two commands that change the session answer here
-                    // rather than in `serve`, because each also moves the
-                    // connection the worker holds. Both subscribe before the
-                    // request leaves: the daemon publishes the new session's
-                    // identity (provider, model, reasoning effort) while the
-                    // request is in flight, and a stream opened after the
-                    // answer would drop it. An attach retargets the one
-                    // connection; a create gets a connection of its own,
+                    // The commands that create or move a session answer here
+                    // rather than in `serve`, because each also touches the
+                    // connection the worker holds. The create and the attach
+                    // subscribe before the request leaves: the daemon publishes
+                    // the new session's identity (provider, model, reasoning
+                    // effort) while the request is in flight, and a stream
+                    // opened after the answer would drop it. An attach retargets
+                    // the one connection; a create gets a connection of its own,
                     // because the daemon answers a second subscribe on one
                     // connection with the session it already has. A failed dial
                     // or create moves nothing, which keeps the session the
@@ -314,17 +426,43 @@ fn run_worker(
                     // Whether the answer moves the worker to another session,
                     // which is also when the skills of the one left behind stop
                     // being the client's.
-                    let resets_session = matches!(&command, Command::NewSession { .. } | Command::Attach(_));
+                    let resets_session = matches!(
+                        &command,
+                        Command::NewSession { .. } | Command::Attach(_) | Command::Fork(_)
+                    );
+                    let applies_preset = matches!(&command, Command::Runtime { command: horon_agent_sdk::RuntimeCommand::ModelPreset, arguments } if arguments.first().is_some_and(|action| action == "apply"));
                     let served = match command {
                         Command::NewSession { working_dir } => {
                             match sessions::created(&dial, working_dir.as_deref(), &socket) {
-                                Ok((fresh, next, attached)) => {
+                                Ok((fresh, next, attached, working_dir)) => {
                                     client = fresh;
                                     sessions::follow(&attached, next, &mut session_id, &mut stream);
-                                    Ok(Some(Incoming::Attached(Box::new(attached))))
+                                    Ok(Some(Incoming::Attached {
+                                        session: Box::new(attached),
+                                        working_dir,
+                                    }))
                                 }
                                 Err(error) => Err(error),
                             }
+                        }
+                        // A side question is the one command whose answer does
+                        // not return here: the worker keeps following the
+                        // parent while a second thread drives the child, and
+                        // every result of it arrives as a `Side*` delivery.
+                        Command::SideQuestion { id, question, boundary } => {
+                            // Refused before any fork, so an older daemon can
+                            // never hand back a wide child under a read-only
+                            // request it does not understand.
+                            if !client.supports("consult_fork_v1") {
+                                side::fail(
+                                    &events,
+                                    id,
+                                    "this harness cannot create a read-only side session; update the daemon",
+                                );
+                            } else {
+                                side::start(&session_id, id, dial.clone(), question, boundary, events.clone());
+                            }
+                            Ok(None)
                         }
                         Command::Attach(id) => {
                             // Unfiltered for the same reason as the start-up
@@ -334,10 +472,26 @@ fn run_worker(
                             // output. `pump` keeps only the answer's session.
                             let next = client.events(None);
                             match sessions::resumed(&client, &id, &socket) {
-                                Ok(attached) => {
+                                Ok((attached, working_dir)) => {
                                     sessions::follow(&attached, next, &mut session_id, &mut stream);
-                                    Ok(Some(Incoming::Attached(Box::new(attached))))
+                                    Ok(Some(Incoming::Attached {
+                                        session: Box::new(attached),
+                                        working_dir,
+                                    }))
                                 }
+                                Err(error) => Err(error),
+                            }
+                        }
+                        // The daemon resolves the boundary against the source
+                        // it is attached to and refuses a stale one before any
+                        // session exists, so a refusal leaves `session_id` and
+                        // `stream` on the source.
+                        Command::Fork(boundary) => {
+                            match sessions::forked(&client, &boundary, &mut session_id, &mut stream, &socket) {
+                                Ok((attached, working_dir)) => Ok(Some(Incoming::Attached {
+                                    session: Box::new(attached),
+                                    working_dir,
+                                })),
                                 Err(error) => Err(error),
                             }
                         }
@@ -346,16 +500,40 @@ fn run_worker(
                     match served {
                         Ok(None) => {}
                         Ok(Some(incoming)) => {
+                            // The attach answer carries the model the new
+                            // session runs, so the identity event that follows
+                            // it names a model already known and costs no
+                            // second report.
+                            if let Incoming::Attached { session, .. } = &incoming {
+                                usage_model = session.model.clone();
+                            }
                             if events.send(incoming).is_err() {
+                                return;
+                            }
+                            if applies_preset
+                                && let Ok(Some(info)) = runtime::read(&client, &session_id)
+                                && events.send(info).is_err()
+                            {
                                 return;
                             }
                             // Read against the connection and the id the worker
                             // holds now, never the ones captured before the
                             // request: a create replaced the client, and an
                             // attach moved the id.
+                            if resets_session && !report_skills(&events, skills::read(&client, &session_id, false)) {
+                                return;
+                            }
+                            // The package commands belong to the session too:
+                            // the new one supplies its own set, so the list is
+                            // read against it before the client offers any.
                             if resets_session
-                                && (!report_skills(&events, skills::read(&client, &session_id, false))
-                                    || !report_todos(&events, &client, &session_id))
+                                && !report_package_commands(&events, package_commands::read(&client, &session_id))
+                            {
+                                return;
+                            }
+                            if resets_session
+                                && (!report_todos(&events, &client, &session_id)
+                                    || !report_usage(&events, &client, &session_id))
                             {
                                 return;
                             }
@@ -469,14 +647,30 @@ fn report_todos(events: &Sender<Incoming>, client: &HoronAgentClient, session_id
     if !client.supports("todo_state") || !client.supports(horon_agent_sdk::api::CAPABILITY_LIVE_TODO_V1) {
         return true;
     }
-    let incoming = match client.todo_state(session_id) {
-        Ok(snapshot) => Incoming::Todos {
+    let incoming = match client.todo_snapshot(session_id) {
+        Ok((snapshot, revision)) => Incoming::Todos {
             session_id: session_id.to_owned(),
             items: snapshot.todos,
+            revision,
         },
         Err(error) => Incoming::Notice(format!("could not read the todo list: {error}")),
     };
     events.send(incoming).is_ok()
+}
+
+/// Send the spending the runtime reported, reporting whether the UI is still
+/// listening.
+///
+/// A harness that does not serve the report is silent rather than warning: the
+/// read happens on the client's own behalf, not because the user asked, and a
+/// status segment that cannot be filled is no reason to put a line in the
+/// transcript. A daemon that answers with a value nobody recorded sends an
+/// empty snapshot, which the segment hides.
+fn report_usage(events: &Sender<Incoming>, client: &HoronAgentClient, session_id: &str) -> bool {
+    match runtime::usage(client, session_id) {
+        Some(snapshot) => events.send(Incoming::Usage(snapshot)).is_ok(),
+        None => true,
+    }
 }
 
 /// Send the skill list the client did not ask for, reporting whether the UI is
@@ -492,6 +686,24 @@ fn report_skills(events: &Sender<Incoming>, result: Result<Option<Incoming>, Err
         Ok(None) => true,
         Err(error) => {
             let notice = Incoming::Notice(format!("could not list the skills: {error}"));
+            events.send(notice).is_ok()
+        }
+    }
+}
+
+/// Send the package command list the client reads for itself, reporting whether
+/// the UI is still listening.
+///
+/// A harness without the capability answered `None`, which is a session that
+/// supplies no package command rather than a failure. Any other refusal is one
+/// notice: the read was the client's own, not a command the user gave, so it
+/// must not settle state belonging to their requests.
+fn report_package_commands(events: &Sender<Incoming>, result: Result<Option<Incoming>, Error>) -> bool {
+    match result {
+        Ok(Some(incoming)) => events.send(incoming).is_ok(),
+        Ok(None) => true,
+        Err(error) => {
+            let notice = Incoming::Notice(format!("could not list the package commands: {error}"));
             events.send(notice).is_ok()
         }
     }
@@ -544,14 +756,49 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             let (models, current) = client.list_models(session_id)?;
             Ok(Some(Incoming::Models { models, current }))
         }
-        Command::Sessions { working_dir } => {
-            let rows = session_rows(client, session_id, working_dir.as_deref())?;
-            Ok(Some(Incoming::Sessions(rows)))
+        Command::Sessions { working_dir, archived } => {
+            let rows = session_rows(client, session_id, working_dir.as_deref(), archived)?;
+            Ok(Some(if archived {
+                Incoming::ArchivedSessions(rows)
+            } else {
+                Incoming::Sessions(rows)
+            }))
         }
+        Command::Tools => client.list_tools(session_id).map(|tools| Some(Incoming::Tools(tools))),
+        Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
+        // The fork list reads the session's own history once, when the user
+        // opens it: the rows are stored message ids, so a boundary that has
+        // since left the session's head is refused by the daemon instead of
+        // forking the wrong place.
+        Command::Forks => {
+            let messages = client.get_history(session_id)?;
+            Ok(Some(Incoming::Forks(sessions::boundaries(&messages))))
+        }
+        // `/swarm` shows this session's own children; the rows are narrowed to
+        // its lineage before they leave the bridge, so the list cannot name a
+        // session outside the swarm it belongs to.
+        Command::Swarm => Ok(Some(Incoming::Swarm(swarm::rows(client, session_id)?))),
         // `/skills` asked for this list, so every failure is shown: a harness
         // that does not know the command is an answer the user can act on,
         // unlike the quiet read the client makes for itself.
         Command::Skills { announce } => skills::read(client, session_id, announce),
+        // `/jobs` asked for this list, so a harness that does not serve it is
+        // an answer rather than a silent skip: the rows are the point of the
+        // request.
+        Command::BackgroundJobs => jobs::read(client, session_id).map(Some),
+        // The report is the harness's own renderer output, so `/export` asks it
+        // for the document and only writes the file here.
+        Command::Export { path } => export::run(client, session_id, &path).map(|message| Some(Incoming::Info(message))),
+        Command::CancelBackgroundTerminal(call_id) => jobs::cancel(client, session_id, &call_id).map(Some),
+        // The daemon's allow-listed settings, read when the screen asks. A
+        // server too old to answer is a state the screen explains, never an
+        // error the worker reports.
+        Command::DaemonSettings => daemon_settings::read(client, session_id),
+        // The run id is read from the daemon first, so a refusal is the daemon's
+        // own sentence rather than the worker's generic failure.
+        Command::Retry => Ok(Some(retry::retry(client, session_id).unwrap_or_else(|error| {
+            Incoming::RetryRefused(format!("could not continue the failed turn: {error}"))
+        }))),
         // The effort is answered here rather than in `apply` because the level
         // on the status line comes from the runtime report, not from the set
         // request: the harness stores the level and answers with the state it
@@ -561,7 +808,42 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // client matches that against the messages it is holding, so one
         // refusal restores exactly the messages it was about.
         Command::Steer(text) => Ok(Some(steer::send(client, session_id, &text))),
+        // The edit belongs to the session whose list the user saw. A command
+        // that outlived an attach is not applied to the session the worker
+        // moved to; nothing is guessed about the list the new session holds.
+        Command::SetTodoStatus {
+            session_id: owner,
+            expected_revision,
+            id,
+            status,
+        } => {
+            if owner != session_id {
+                return Ok(Some(Incoming::Notice(
+                    "the session changed before the todo change was sent; nothing was edited".to_string(),
+                )));
+            }
+            let edit = client.set_todo_status(session_id, &expected_revision, &id, &status)?;
+            Ok(Some(Incoming::TodoEdit {
+                session_id: session_id.to_owned(),
+                applied: edit.applied,
+                refusal: edit.refusal,
+                items: edit.state.todos,
+                revision: edit.revision,
+                id,
+                status,
+            }))
+        }
         Command::Runtime { command, arguments } => runtime::command(client, session_id, command, arguments),
+        // A package command is a request of its own: the answer decides whether
+        // the client sends a message (a template) or shows a report (an
+        // executable command), so it never travels as a typed line.
+        Command::PackageCommand {
+            package_id,
+            command,
+            arguments,
+            display,
+        } => package_commands::run(client, session_id, &package_id, &command, &arguments, &display).map(Some),
+        Command::Stats => runtime::stats(client, session_id).map(Some),
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
     }
 }
@@ -573,17 +855,61 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Model(name) => client
             .set_model(session_id, &name)
             .map(|()| Some(format!("model set to {name}"))),
+        Command::Context(crate::commands::ContextCommand::Clear) => client
+            .clear(session_id)
+            .map(|()| Some("model context cleared; previous conversation remains in saved history".to_owned())),
+        Command::Context(crate::commands::ContextCommand::Compact) => {
+            client.compact_handoff(session_id).map(|outcome| {
+                let message = match outcome {
+                    HandoffCompaction::Committed { covered } => {
+                        format!("model context compacted: summarized {covered} messages")
+                    }
+                    HandoffCompaction::NothingToCover => {
+                        "model context unchanged: there is nothing to compact".to_owned()
+                    }
+                    HandoffCompaction::ProviderError { detail } => {
+                        format!("model context unchanged: compaction failed: {detail}")
+                    }
+                    HandoffCompaction::Cancelled => "model context unchanged: compaction was cancelled".to_owned(),
+                };
+                Some(message)
+            })
+        }
+        Command::Rename(title) => client.rename_session(session_id, Some(title)).map(|()| None),
+        Command::Archive { session_id, archived } => {
+            if archived {
+                client.archive_session(&session_id)?;
+                Ok(Some("session archived; open /archived to restore it".to_owned()))
+            } else {
+                client.restore_session(&session_id)?;
+                Ok(Some("session restored to the recent list".to_owned()))
+            }
+        }
         // Answered before they reach this point: they carry a structure rather
         // than a line. The attach retargets the connection the worker holds and
         // a create replaces it, so neither can produce a line here.
         Command::Effort(_)
         | Command::Models
         | Command::Sessions { .. }
+        | Command::Tools
+        | Command::Forks
+        | Command::CheckSessions(_)
+        | Command::Swarm
         | Command::Skills { .. }
+        | Command::BackgroundJobs
+        | Command::Export { .. }
+        | Command::CancelBackgroundTerminal(_)
+        | Command::DaemonSettings
+        | Command::Retry
         | Command::Steer(_)
+        | Command::SetTodoStatus { .. }
         | Command::Runtime { .. }
+        | Command::PackageCommand { .. }
+        | Command::Stats
         | Command::NewSession { .. }
-        | Command::Attach(_) => Ok(None),
+        | Command::Attach(_)
+        | Command::SideQuestion { .. }
+        | Command::Fork(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
         Command::Approval {
             request_id,
@@ -620,15 +946,34 @@ fn describe(command: &Command) -> &'static str {
     match command {
         Command::Text(_) => "could not send the message",
         Command::Runtime { .. } => "could not run the command",
+        Command::PackageCommand { .. } => "could not run the package command",
+        Command::Stats => "could not read session token usage",
+        Command::Context(crate::commands::ContextCommand::Clear) => "could not clear model context",
+        Command::Context(crate::commands::ContextCommand::Compact) => "could not compact model context",
         Command::Model(_) => "could not switch the model",
         Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
+        Command::Tools => "could not list the session tools",
+        Command::Forks => "could not list the recorded messages",
+        Command::Archive { archived: true, .. } => "could not archive the session",
+        Command::Archive { archived: false, .. } => "could not restore the session",
+        Command::CheckSessions(_) => "could not check the noted sessions",
+        Command::Swarm => "could not list the swarm children",
         Command::Skills { .. } => "could not list the skills",
+        Command::BackgroundJobs => "could not list the background jobs",
+        Command::Export { .. } => "could not write the HTML report",
+        Command::CancelBackgroundTerminal(_) => "could not cancel the background terminal",
+        Command::DaemonSettings => "could not read the daemon settings",
         Command::Steer(_) => "could not send the queued messages into the turn",
+        Command::SetTodoStatus { .. } => "could not change the todo list",
         Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",
+        Command::SideQuestion { .. } => "could not start the side question",
+        Command::Fork(_) => "could not fork the session",
+        Command::Rename(_) => "could not rename the session",
         Command::Cancel => "could not cancel the turn",
+        Command::Retry => "could not continue the failed turn",
         Command::Approval { .. } => "could not answer the approval",
         Command::Ask { .. } => "could not answer the question",
     }
@@ -642,9 +987,35 @@ const LABEL_CHARS: usize = 80;
 /// The stored history is read once per session: a row's label, when the record
 /// carries no title, and its preview both come from those messages, so the list
 /// costs one read per row rather than one per thing a row shows.
-fn session_rows(client: &HoronAgentClient, current: &str, working_dir: Option<&str>) -> Result<Vec<SessionRow>, Error> {
-    let mut sessions = client.list_sessions()?;
-    sessions.retain(|session| in_directory(session, working_dir));
+fn session_rows(
+    client: &HoronAgentClient,
+    current: &str,
+    working_dir: Option<&str>,
+    archived: bool,
+) -> Result<Vec<SessionRow>, Error> {
+    let mut sessions = if archived {
+        match client
+            .request(ApiRequest::ListSessions {
+                include_archived: true,
+                limit: None,
+            })?
+            .event
+        {
+            ApiEvent::Sessions { sessions } => sessions,
+            ApiEvent::Error { code, message, details } => {
+                return Err(Error::new(ErrorKind::Harness(code), message).with_details(details));
+            }
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::UnexpectedReply,
+                    "the daemon did not return a session list",
+                ));
+            }
+        }
+    } else {
+        client.list_sessions()?
+    };
+    sessions.retain(|session| session.archived == archived && in_directory(session, working_dir));
     sessions.sort_by_key(|session| std::cmp::Reverse(activity(session)));
     let mut rows = Vec::with_capacity(sessions.len());
     for session in &sessions {
@@ -665,6 +1036,60 @@ fn session_rows(client: &HoronAgentClient, current: &str, working_dir: Option<&s
         });
     }
     Ok(rows)
+}
+
+/// What one existence probe found.
+enum Probe {
+    /// The session still has a readable conversation or a stored event log.
+    Exists,
+    /// The session is gone: nothing readable and no event log either.
+    Gone,
+    /// The harness could not answer, so the notes must stay.
+    Unverified,
+}
+
+/// Which of `sessions` the harness no longer stores.
+///
+/// Archiving is reversible, so an archived session is kept. The tail read is
+/// asked first because it serves a single-file record from an earlier release
+/// as well as a current folder; an empty tail is then checked against the event
+/// log, which a current session always has and a deleted one loses. A harness
+/// too old for either answer counts as unverified rather than gone, so a
+/// missing capability can never delete notes.
+fn sessions_checked(client: &HoronAgentClient, sessions: &[String]) -> Incoming {
+    let mut gone = Vec::new();
+    let mut unverified = 0;
+    for session in sessions {
+        match probe_session(client, session) {
+            Probe::Exists => {}
+            Probe::Gone => gone.push(session.clone()),
+            Probe::Unverified => unverified += 1,
+        }
+    }
+    Incoming::SessionsChecked { gone, unverified }
+}
+
+/// Whether one session is still stored.
+///
+/// `peek_session` answers without attaching and reads a single-file record from
+/// an earlier release too, but it cannot tell "no such session" from "no
+/// conversation": both are an empty tail. The history page can tell them apart,
+/// because a stored session has an event log and a deleted one does not.
+fn probe_session(client: &HoronAgentClient, session: &str) -> Probe {
+    match client.peek_session(session, Some(1)) {
+        Ok(messages) if !messages.is_empty() => Probe::Exists,
+        Ok(_) => match client.get_history_page(session, None, None, Some(1)) {
+            Ok(_) => Probe::Exists,
+            Err(error) if matches!(&error.kind, ErrorKind::UnknownSession { .. }) => Probe::Gone,
+            Err(_) => Probe::Unverified,
+        },
+        // The tail read answers an unknown id with an empty history rather
+        // than an error, but a harness that does report one still means gone.
+        // (A single-file record from an earlier release is read above, so the
+        // difference never hides a session that can still be resumed.)
+        Err(error) if matches!(&error.kind, ErrorKind::UnknownSession { .. }) => Probe::Gone,
+        Err(_) => Probe::Unverified,
+    }
 }
 
 /// The second column of a session row: when it was last written, or what it is
@@ -759,348 +1184,4 @@ pub fn default_socket() -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn connecting_to_a_missing_socket_reports_a_sentence() {
-        let missing = std::env::temp_dir().join("horon-tui-bridge-missing.sock");
-        let options = ConnectOptions {
-            socket_path: Some(missing),
-            ensure_runtime: false,
-            request_timeout: Some(Duration::from_millis(200)),
-            ..ConnectOptions::default()
-        };
-        let message = match connect(options, None, None) {
-            Ok(_) => panic!("a missing socket must not connect"),
-            Err(message) => message,
-        };
-        assert!(!message.is_empty());
-    }
-
-    #[test]
-    fn default_socket_is_named() {
-        assert!(!default_socket().as_os_str().is_empty());
-    }
-
-    fn delta(index: usize) -> ApiEvent {
-        ApiEvent::TextDelta {
-            session_id: "s1".into(),
-            text: index.to_string(),
-            message_id: Some("m1".into()),
-        }
-    }
-
-    fn burst(count: usize) -> std::collections::VecDeque<ApiEvent> {
-        (0..count).map(delta).collect()
-    }
-
-    /// The text of every forwarded event, in the order the UI receives them.
-    fn forwarded_text(received: &Receiver<Incoming>) -> Vec<String> {
-        received
-            .try_iter()
-            .map(|incoming| match incoming {
-                Incoming::Event(event) => match *event {
-                    ApiEvent::TextDelta { text, .. } => text,
-                    other => panic!("unexpected event: {other:?}"),
-                },
-                other => panic!("unexpected incoming: {other:?}"),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn one_pass_forwards_a_burst_in_order_up_to_the_batch_bound() {
-        let (events, received) = mpsc::channel();
-        let mut queue = burst(EVENT_BATCH * 2);
-
-        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1");
-
-        assert_eq!(step, Step::Flowing);
-        let text = forwarded_text(&received);
-        assert_eq!(text.len(), EVENT_BATCH, "one pass must stop at the bound");
-        let expected: Vec<String> = (0..EVENT_BATCH).map(|index| index.to_string()).collect();
-        assert_eq!(text, expected, "the pass reordered or dropped events");
-
-        // The rest arrives on the next pass, in the same order.
-        assert_eq!(
-            pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1"),
-            Step::Flowing
-        );
-        let text = forwarded_text(&received);
-        assert_eq!(text.len(), EVENT_BATCH);
-        let expected: Vec<String> = (EVENT_BATCH..EVENT_BATCH * 2).map(|index| index.to_string()).collect();
-        assert_eq!(text, expected);
-    }
-
-    #[test]
-    fn a_burst_never_blocks_a_keystroke_for_a_command_poll() {
-        // A command queued before the burst must still be taken as soon as the
-        // pass ends, rather than after one COMMAND_POLL per forwarded event.
-        let (events, received) = mpsc::channel();
-        let (commands, incoming) = mpsc::channel();
-        commands.send(Command::Cancel).expect("queue the command");
-        let mut queue = burst(EVENT_BATCH * 3);
-
-        assert_eq!(
-            pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1"),
-            Step::Flowing
-        );
-        assert_eq!(forwarded_text(&received).len(), EVENT_BATCH);
-
-        match take_command(&incoming, true) {
-            CommandPoll::Command(Command::Cancel) => {}
-            other => panic!("a queued command was not taken: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn an_idle_pass_waits_on_the_stream_and_forwards_nothing() {
-        // With nothing ready the pass must wait for the stream rather than poll
-        // it forever; this one timeout is what keeps an idle client off the CPU.
-        let (events, received) = mpsc::channel();
-        let mut timeouts = Vec::new();
-        let step = pump(
-            &events,
-            |timeout| {
-                timeouts.push(timeout);
-                Ok::<_, Error>(None)
-            },
-            || false,
-            "s1",
-        );
-
-        assert_eq!(step, Step::Idle);
-        assert_eq!(timeouts, vec![EVENT_POLL]);
-        assert!(forwarded_text(&received).is_empty());
-    }
-
-    #[test]
-    fn a_burst_polls_instead_of_blocking_after_the_first_event() {
-        // Blocking again between events would cap throughput at one event per
-        // EVENT_POLL, which is the defect the batch exists to remove.
-        let (events, _received) = mpsc::channel();
-        let mut queue = burst(3);
-        let mut timeouts = Vec::new();
-
-        let step = pump(
-            &events,
-            |timeout| {
-                timeouts.push(timeout);
-                Ok::<_, Error>(queue.pop_front())
-            },
-            || false,
-            "s1",
-        );
-
-        assert_eq!(step, Step::Flowing);
-        assert_eq!(
-            timeouts,
-            vec![EVENT_POLL, Duration::ZERO, Duration::ZERO, Duration::ZERO],
-            "reads after the first event must not block"
-        );
-    }
-
-    #[test]
-    fn a_stream_error_still_ends_the_bridge() {
-        let (events, received) = mpsc::channel();
-
-        let step = pump(
-            &events,
-            |_| Err::<Option<ApiEvent>, _>(Error::new(ErrorKind::EventBufferOverflow, "behind")),
-            || false,
-            "s1",
-        );
-
-        assert_eq!(step, Step::Closed);
-        let messages: Vec<Incoming> = received.try_iter().collect();
-        assert_eq!(messages.len(), 1);
-        match &messages[0] {
-            Incoming::Closed(reason) => assert!(reason.contains("behind"), "reason was {reason}"),
-            other => panic!("expected a closed bridge, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn the_ui_dropping_its_receiver_stops_the_worker_quietly() {
-        let (events, received) = mpsc::channel();
-        drop(received);
-        let mut queue = burst(2);
-
-        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1");
-
-        assert_eq!(step, Step::UiGone, "no receiver is not a failure to report");
-    }
-
-    #[test]
-    fn a_closed_connection_is_reported_once_without_polling_the_dead_stream() {
-        // The SDK answers `Ok(None)` for ever on a closed stream, so without
-        // the closed check this pass would return Idle and the worker would go
-        // round again: a dead connection must cost exactly one read and one
-        // notice, not a spin.
-        let (events, received) = mpsc::channel();
-        let mut reads = 0;
-
-        let step = pump(
-            &events,
-            |_| {
-                reads += 1;
-                Ok::<_, Error>(None)
-            },
-            || true,
-            "s1",
-        );
-
-        assert_eq!(step, Step::Closed);
-        assert_eq!(reads, 1, "the dead stream was read again");
-        let messages: Vec<Incoming> = received.try_iter().collect();
-        assert_eq!(messages.len(), 1, "the closed notice was sent more than once");
-        match &messages[0] {
-            Incoming::Closed(reason) => assert_eq!(reason, CONNECTION_CLOSED),
-            other => panic!("expected a closed connection, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_live_connection_that_timed_out_is_not_mistaken_for_a_closed_one() {
-        let (events, received) = mpsc::channel();
-
-        let step = pump(&events, |_| Ok::<_, Error>(None), || false, "s1");
-
-        assert_eq!(step, Step::Idle);
-        assert!(received.try_iter().next().is_none(), "a timeout is not a disconnection");
-    }
-
-    #[test]
-    fn an_event_of_another_session_is_not_forwarded() {
-        // The subscription is unfiltered because the daemon rewrites a typed
-        // prefix to the full id; the pass applies the filter against the id the
-        // answer named. An event that names no session (a pong, an error) is
-        // about the connection and still reaches the client.
-        let (events, received) = mpsc::channel();
-        let mut queue = burst(0);
-        queue.push_back(ApiEvent::TextDelta {
-            session_id: "s2".into(),
-            text: "another session".into(),
-            message_id: None,
-        });
-        queue.push_back(ApiEvent::Pong);
-        queue.push_back(delta(0));
-
-        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1");
-
-        assert_eq!(step, Step::Flowing);
-        let forwarded: Vec<Incoming> = received.try_iter().collect();
-        assert_eq!(forwarded.len(), 2, "a foreign event was forwarded: {forwarded:?}");
-        match &forwarded[0] {
-            Incoming::Event(event) => {
-                assert!(matches!(event.as_ref(), ApiEvent::Pong), "unexpected event: {event:?}");
-            }
-            other => panic!("unexpected incoming: {other:?}"),
-        }
-        match &forwarded[1] {
-            Incoming::Event(event) => match &**event {
-                ApiEvent::TextDelta { session_id, text, .. } => {
-                    assert_eq!(session_id.as_str(), "s1");
-                    assert_eq!(text.as_str(), "0");
-                }
-                other => panic!("unexpected event: {other:?}"),
-            },
-            other => panic!("unexpected incoming: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_closed_command_channel_stops_the_worker() {
-        let (commands, incoming) = mpsc::channel::<Command>();
-        drop(commands);
-
-        assert!(matches!(take_command(&incoming, true), CommandPoll::Disconnected));
-        assert!(matches!(take_command(&incoming, false), CommandPoll::Disconnected));
-    }
-
-    /// A session record as the daemon serialises one; only the two fields
-    /// without a default are required, so this is what a record whose metadata
-    /// never filled in looks like on the wire.
-    fn record(json: &str) -> SessionInfo {
-        serde_json::from_str(json).expect("a session record")
-    }
-
-    #[test]
-    fn a_session_with_no_metadata_still_reads_as_a_row() {
-        let bare = record(r#"{"session_id":"session_ant_1794809866522","status":"idle"}"#);
-        assert_eq!(title_of(&bare), None, "a record with no title named one");
-        assert_eq!(detail(&bare), "idle", "a record with no time said nothing about itself");
-        assert_eq!(activity(&bare), None);
-        // It cannot be placed in another directory, so it is not hidden from
-        // the list of the directory the client is in.
-        assert!(in_directory(&bare, Some("/tmp")));
-    }
-
-    #[test]
-    fn a_blank_title_is_no_title_and_a_long_one_is_cut() {
-        let blank = record(r#"{"session_id":"a","status":"idle","title":"   "}"#);
-        assert_eq!(title_of(&blank), None);
-        let long = record(&format!(
-            r#"{{"session_id":"a","status":"idle","title":"{}"}}"#,
-            "t".repeat(LABEL_CHARS + 20)
-        ));
-        let title = title_of(&long).expect("a titled session");
-        assert_eq!(title.chars().count(), LABEL_CHARS);
-    }
-
-    #[test]
-    fn the_newest_session_comes_first_and_undated_ones_last() {
-        let older = record(r#"{"session_id":"older","status":"idle","updated_at_ms":1000}"#);
-        let newer = record(r#"{"session_id":"newer","status":"idle","last_active_at_ms":2000}"#);
-        let bare = record(r#"{"session_id":"bare","status":"idle"}"#);
-        let mut sessions = [bare.clone(), older.clone(), newer.clone()];
-        sessions.sort_by_key(|session| std::cmp::Reverse(activity(session)));
-        let order: Vec<&str> = sessions.iter().map(|session| session.session_id.as_str()).collect();
-        assert_eq!(order, vec!["newer", "older", "bare"]);
-    }
-
-    #[test]
-    fn a_row_time_reads_as_a_local_moment() {
-        let stamped = record(r#"{"session_id":"a","status":"idle","updated_at_ms":1794809866522}"#);
-        let detail = detail(&stamped);
-        assert_eq!(detail.len(), 11, "the row time is not a date and a time: {detail}");
-        assert!(detail.contains(':'), "the row time has no clock: {detail}");
-        assert_eq!(moment(1794809866522).as_deref(), Some(detail.as_str()));
-    }
-
-    #[test]
-    fn a_directory_is_matched_through_another_spelling_and_only_then() {
-        let temp = tempfile::tempdir().expect("a directory");
-        let real = temp.path().join("work");
-        std::fs::create_dir_all(&real).expect("create the directory");
-        // The same directory under a different string, on every OS: only
-        // resolving both sides can tell that the two are one place.
-        let alias = real.join("..").join("work");
-
-        assert!(same_path(
-            real.to_str().expect("a path"),
-            real.to_str().expect("a path")
-        ));
-        assert!(!same_path("/one/place", "/another/place"));
-        assert!(
-            same_path(real.to_str().expect("a path"), alias.to_str().expect("a path")),
-            "a working directory spelled another way was treated as another one"
-        );
-
-        let here: SessionInfo = serde_json::from_value(serde_json::json!({
-            "session_id": "a",
-            "status": "idle",
-            "working_dir": real.to_str().expect("a path"),
-        }))
-        .expect("a session record");
-        let elsewhere = record(r#"{"session_id":"b","status":"idle","working_dir":"/somewhere/else"}"#);
-        let wanted = real.to_str().expect("a path");
-        assert!(in_directory(&here, Some(wanted)));
-        assert!(!in_directory(&elsewhere, Some(wanted)));
-        assert!(
-            in_directory(&elsewhere, None),
-            "a client with no directory hid sessions"
-        );
-    }
-}
+mod tests;

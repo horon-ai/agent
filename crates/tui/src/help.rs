@@ -17,6 +17,154 @@ use crate::commands::{Entry, Group, Registry};
 use crate::keys::{ACTIONS, Bindings, ids};
 use crate::theme::{Symbols, Theme};
 
+/// Program usage, printed by `--help` and after an argument error.
+pub const USAGE: &str = "\
+horon-tui - terminal client for the horon-agent harness
+
+Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
+                 [--add-dir <dir>]... [--config <file>]... [--gallery[=<scene>]]
+                 [--plan] [--goal <objective> --goal-budget <tokens>]
+                 [--motion <full|reduced|static>]
+                 [--spinner-interval <ms>] [--max-fps <n>]
+                 [--hide-thinking] [--no-title]
+
+Options:
+  --socket <path>           Harness API socket to connect to (default: the
+                            resolved harness socket for this user)
+  --session <id>            Attach to an existing session instead of creating one
+  --plan                    Start a newly created session in read-only plan mode
+  --goal <objective>        Attach a goal when creating a new session
+  --goal-budget <tokens>    Set the new goal's token ceiling
+  --cwd <dir>               Working directory for a newly created session
+  --add-dir <dir>           Extra workspace directory for the session; must
+                            exist, and repeats add several (repeatable)
+  --config <file>           Extra settings file, read after the global and
+                            project files and before the environment
+                            (repeatable)
+  --gallery[=<scene>]       Draw the built-in fixtures through the renderer and
+                            leave; no socket is opened and no session is read.
+                            Scenes: conversation, tools, error, prompt,
+                            unicode (default: conversation)
+  --motion <mode>           full, reduced or static; overrides the `motion`
+                            setting for this launch
+  --spinner-interval <ms>   Milliseconds one spinner frame stays, 40 to 2000;
+                            overrides `motion.spinner_interval`
+  --max-fps <n>             Most frames a second a streaming turn draws, 1 to
+                            240; overrides `motion.max_fps`
+  --hide-thinking           Hide the model's reasoning for this session,
+                            whatever `transcript.show_reasoning` says; ctrl+t
+                            toggles it again
+  --no-title                Leave the terminal window title alone for this launch
+  -V, --version             Print the version and exit
+  -h, --help                Print this help and exit
+
+Gallery keys:
+  n, Right, Tab     show the next fixture
+  p, Left, BackTab  show the previous fixture
+  q, Esc, Ctrl-C    leave
+
+Keys:
+  Enter          send the typed message
+  Alt-Enter      start a new line (Ctrl-J does the same; most terminals
+                 send Shift-Enter as a plain Enter, which sends)
+  Tab            complete the slash command, or fill a @path from the workspace
+  Ctrl-Right     fill the draft with the local suggestion shown after the caret
+  Ctrl-G         edit the draft in $VISUAL or $EDITOR, then load the saved text
+  Esc            send the queued messages into the running turn, or
+                 interrupt it when nothing is queued
+  Ctrl-C         cancel a running turn, or leave when nothing is running
+  Ctrl-D         delete at the cursor, or leave with an empty idle draft
+  Ctrl-U, Ctrl-K delete from the start or the end of the line to the cursor
+  Ctrl-W, Alt-Backspace  delete the word before the cursor
+  Ctrl-R         search the drafts sent before this one
+  PgUp, PgDn     scroll the transcript one page
+  Shift-Up/Down  scroll the transcript one row
+  Ctrl-End       follow the end of the conversation again
+  Ctrl-L         redraw the screen without changing the draft or selection
+  Ctrl-O         show or hide the whole output of the selected cut tool call
+  Alt-T          hide or show the record of finished tool calls
+  Shift-Tab      step to the next reasoning effort
+  Ctrl-T         show or hide the model's reasoning for this session
+  Alt-M          put this session in read-only plan mode, like /plan on
+  Ctrl-Space     start or finish on-device voice input; /voice has the rest
+                 (consent, stop, cancel, say <text>, read, status)
+  Alt-V          toggle opt-in real-time live voice mode or capture; /live
+                 has the rest (Ctrl-L stays redraw; remappable in keybindings.toml)
+  Alt-P          pick the model this session uses
+  Ctrl-P         step forward through models.shortlist (Ctrl-Alt-P moves back)
+  Alt-D          copy the draft to the terminal clipboard
+  Alt-K          copy the line under the cursor to the terminal clipboard
+  Alt-L          copy the last answer to the terminal clipboard
+  Alt-C          copy the newest code block to the terminal clipboard
+  While a replay plays, space pauses, left/right seek five seconds,
+  +/- change the speed, home/end jump to the start or the end, and esc
+  stops it.
+  Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
+  the keys in force. Copying uses the terminal's OSC 52 sequence: a
+  terminal or a multiplexer that does not take it keeps the text on
+  screen for selection. HORON_TUI_OSC52=0 turns copying off, and
+  HORON_TUI_OSC52=1 sends it anyway for a multiplexer or ssh session that
+  was configured to forward it.
+
+Commands:
+  /help          list the commands (built-in, harness, command files),
+                 the skills and the keys in force; /help <command>
+                 describes one of them
+  /archived      list archived sessions in this directory; Enter restores one
+  /artifact [id] open a retained artifact of this session in $VISUAL or
+                 $EDITOR, as a private copy; with no id, list them
+  /clear         clear only the transcript pane
+  /clear-context start fresh model context and keep the saved conversation
+  /commit [msg]  review the staged set and commit it after a second line; never pushes
+  /compact       summarize older model context and keep the saved conversation
+  /copy [last|code]
+                 open the list of recent answers and code blocks, or copy
+                 the last answer or the newest code block
+  /diff          show the staged and unstaged changes in the session's workspace
+  /effort        set the reasoning effort, or pick one from the ladder
+  /exit          leave, the same as /quit
+  /export <path> write this session's transcript as a standalone offline HTML report
+  /fork          start a separate session from a saved history point
+  /jobs          list this session's background work, and cancel a terminal
+                 with Delete
+  /keys          list the keys in force and what each does
+  /links         list the http(s) links in recent answers and open one
+  /live [consent|forget|start|talk|end|stop|reconnect|leave|status]
+                 opt-in real-time voice session adapter with text fallback
+  /mcp [probe <server>] list trusted MCP servers or test one connection
+  /model [name]  pick a model from a list, or switch to the one named
+  /new           start a new session in this directory
+  /note [action] note, list or remove a local note on a transcript message
+  /pin [id]      keep a session at the top of the session list, or pin the
+                 one attached
+  /queue         edit, remove or reorder the messages waiting for the turn to end
+  /quit          leave
+  /record [path] record the conversation to a local file (stop, status)
+  /rename <title> save a title for the current session
+  /replay [path] play a recording, or the newest one (stop)
+  /resume [id]   replay a stored session, or pick one from the list
+  /settings      open the settings screen, generated from the registry
+  /side [question]
+                 ask a separate read-only session a question
+  /skills        list the skills the harness reports, and put one in the
+                 draft
+  /stats         show the attached session's recorded token usage
+  /swarm         list this session's swarm children and parent, and attach to one
+  /switch [id]   move to another stored session, or pick one from the list
+  /tools         browse the current session's enabled tools
+  /unpin [id]    take a session out of the pinned group
+  /voice [consent|forget|stop|cancel|say <text>|read|status]
+                 on-device speech: consent to capture, dictate into the
+                 draft (not sent), or speak text locally
+  //text         send the literal message /text
+
+Local shell (runs in this terminal, in the client's working directory; never
+sent to the model, the session or the daemon):
+  !command       run command and keep its output in the transcript
+  !!command      run command without keeping the command or its output
+                 (exit status is still shown); a command is stopped after 10s
+";
+
 /// Rows the popup may show at once.
 ///
 /// A full list of commands would cover the conversation it is being typed
@@ -45,7 +193,11 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_INTERRUPT,
         "interrupt the running turn, or send queued messages into it",
     ),
-    (ids::APP_QUIT, "leave"),
+    (ids::APP_RETRY_TURN, "continue the last failed turn"),
+    (
+        ids::APP_QUIT,
+        "leave; ctrl+d deletes at the cursor while the draft has text",
+    ),
     (ids::APP_SCROLL_PAGE_UP, "hold the transcript one page higher"),
     (
         ids::APP_SCROLL_PAGE_DOWN,
@@ -56,13 +208,52 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     (ids::APP_SCROLL_BOTTOM, "follow the end of the conversation again"),
     (
         ids::APP_EXPAND_TOOL,
-        "show the whole output of the newest cut tool call, or hide it again",
+        "show the whole output of the selected cut tool call, or hide it again",
+    ),
+    (
+        ids::APP_TOGGLE_TOOL_ACTIVITY,
+        "hide or show the record of finished tool calls",
     ),
     (
         ids::APP_CYCLE_EFFORT,
         "step to the next reasoning effort, wrapping at the last one",
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
+    (ids::APP_COPY_DRAFT, "copy the draft to the terminal clipboard"),
+    (
+        ids::APP_COPY_LINE,
+        "copy the line under the cursor to the terminal clipboard",
+    ),
+    (ids::APP_COPY_LAST, "copy the last answer to the terminal clipboard"),
+    (
+        ids::APP_COPY_CODE,
+        "copy the newest code block to the terminal clipboard",
+    ),
+    (
+        ids::APP_CYCLE_MODEL,
+        "switch to the next model in models.shortlist, wrapping at the last one",
+    ),
+    (
+        ids::APP_CYCLE_MODEL_BACK,
+        "switch to the previous model in models.shortlist, wrapping at the first one",
+    ),
+    (
+        ids::APP_REPAINT,
+        "paint the whole screen again, keeping the draft, the selection and the view",
+    ),
+    (
+        ids::APP_TOGGLE_THINKING,
+        "show or hide the model's reasoning for this session",
+    ),
+    (
+        ids::APP_PLAN_MODE,
+        "put this session in read-only plan mode, like /plan on",
+    ),
+    (ids::APP_VOICE, "start or finish on-device voice input"),
+    (
+        ids::APP_LIVE_VOICE,
+        "toggle opt-in real-time live voice mode or capture",
+    ),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
     (ids::EDITOR_LEFT, "move the cursor one character left"),
@@ -88,9 +279,17 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     (ids::EDITOR_DELETE_WORD, "delete the word before the cursor"),
     (
         ids::EDITOR_COMPLETE,
-        "fill the popup's selected command, or complete the prefix",
+        "fill the popup's selected command, complete the prefix, or fill a workspace path",
+    ),
+    (
+        ids::EDITOR_ACCEPT_SUGGESTION,
+        "fill the draft with the local suggestion shown after the caret",
     ),
     (ids::EDITOR_HISTORY_SEARCH, "search the drafts sent before this one"),
+    (
+        ids::EDITOR_EXTERNAL,
+        "edit the draft in $VISUAL or $EDITOR, then load the saved text",
+    ),
     (ids::PROMPT_ALLOW, "approve the parked tool call once"),
     (
         ids::PROMPT_ALLOW_ALWAYS,
@@ -104,18 +303,47 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
 /// The line that explains one built-in UI command.
 pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
-        "clear" => "clear the transcript",
+        "archived" => "list archived sessions in this directory; Enter restores one",
+        "artifact" => "open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy",
+        "clear" => "clear only the transcript pane",
+        "clear-context" => "start fresh model context and keep the saved conversation",
+        "commit" => "review the staged set and commit exactly it after a second line; never pushes",
+        "compact" => "summarize older model context and keep the saved conversation",
+        "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
+        "diff" => "show the staged and unstaged changes in the session's workspace",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
+        "export" => "write this session's transcript as a standalone offline HTML report (/export <path>)",
+        "fork" => "start a separate session from a saved history point",
         "help" => "list the commands and the keys in force",
+        "jobs" => "list the background work this session is running, and cancel a terminal",
+        "stats" => "show the attached session's recorded token usage",
         "keys" => "list the keys in force and what each does",
+        "links" => "list the http(s) links in recent answers and open one",
+        "live" => "opt-in real-time voice session adapter (consent, start, talk, end, stop, reconnect, leave, status)",
+        "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
+        "note" => "note, list or remove a local note on a transcript message",
+        "pin" => "keep a session at the top of the list, or pin the attached one",
+        "unpin" => "take a session out of the pinned group",
+        "queue" => "edit, remove or reorder the messages waiting for the turn to end",
+        "todo" => "show every todo in the session and mark one done, open or cancelled",
         "quit" => "leave",
+        "record" => "record the conversation to a local file, or stop (stop, status)",
+        "rename" => "save a title for the current session",
+        "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
+        "retry" => "continue the last failed turn of this session, keeping its one prompt",
         "settings" => "open the settings screen",
+        "side" => {
+            "ask a read-only side session about this conversation (also /btw; --at <id> forks before a stored message), then esc back"
+        }
         "skills" => "list the skills the harness reports, and put one in the draft",
+        "swarm" => "list this session's swarm children and the parent it returns to, and attach to one",
         "switch" => "move to another stored session, or pick one from the list",
+        "tools" => "browse the current session's enabled tools without running them",
+        "voice" => "on-device speech input and playback (consent, stop, cancel, say, read, status)",
         _ => "",
     }
 }
@@ -169,20 +397,26 @@ pub(crate) fn detail(entries: &[Entry], name: &str) -> Option<String> {
 /// not know still lists: it simply shows without a description.
 pub(crate) fn harness_description(name: &str) -> &'static str {
     match name {
+        "advisor" => "show the session advisor, or turn it on or off with /advisor on|off",
         "agents" => "list the agent models, and switch one for this session or every session",
         "auth" => "show the login status and the provider profiles",
         "autojudge" => "turn the automatic judge on or off",
         "autoreview" => "turn the automatic review on or off",
         "context" => "show what is filling the context window",
+        "dirs" => "list the session's extra workspace directories, or add and remove one",
         "continue" => "resume every paused session",
         "fast" => "switch the provider's fast (priority) service tier",
+        "goal" => "attach a goal with /goal <token-budget> <objective>",
         "info" => "show the session, provider and usage details",
         "initiatives" => "list the open initiatives",
         "judge" => "spawn a judge that checks the work against the request",
         "logout" => "drop the stored provider credentials",
         "memory" => "show the memory status; `memory extract` schedules an extraction",
+        "modelpreset" => "list, preview or apply a named set of model choices",
+        "trim" => "preview or apply a request-only trim of old tool results",
         "overnight" => "run the overnight work queue",
         "plan" => "enter or leave plan mode",
+        "observations" => "show, enable, disable or clear work and hook notes for this session",
         "productivity" => "generate the productivity report",
         "refresh_model_list" => "re-read the provider's model catalog",
         "remote" => "show or change the remote access settings",

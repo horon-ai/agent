@@ -107,6 +107,9 @@ impl SettingSpec {
 
 const SYMBOLS: &[&str] = &["unicode", "nerd", "ascii"];
 const STATUSLINE_PRESETS: &[&str] = &["default", "minimal", "custom"];
+const CHANGE_PALETTES: &[&str] = &["theme", "accessible"];
+const STATUSLINE_SEPARATORS: &[&str] = &["preset", "dot", "bar"];
+const STATUSLINE_BACKGROUNDS: &[&str] = &["theme", "terminal"];
 
 /// Every setting the client knows.
 ///
@@ -137,6 +140,78 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Glyphs",
             label: "Symbol set",
             description: "Unicode, Nerd Font or plain ASCII glyphs.",
+        },
+    },
+    SettingSpec {
+        id: "motion.preset",
+        kind: SettingKind::Enum(super::motion::MODES),
+        env: "HORON_TUI_MOTION_PRESET",
+        default: DefaultValue::Text("full"),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Motion",
+            label: "Motion",
+            description: "Full animates the spinner, reduced freezes it, static draws no spinner and adds no frames.",
+        },
+    },
+    SettingSpec {
+        id: "motion.spinner_interval",
+        kind: SettingKind::Number,
+        env: "HORON_TUI_MOTION_SPINNER_INTERVAL",
+        default: DefaultValue::Number(super::motion::DEFAULT_SPINNER_INTERVAL),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Motion",
+            label: "Spinner interval",
+            description: "Milliseconds one spinner frame stays, 40 to 2000.",
+        },
+    },
+    SettingSpec {
+        id: "motion.max_fps",
+        kind: SettingKind::Number,
+        env: "HORON_TUI_MOTION_MAX_FPS",
+        default: DefaultValue::Number(super::motion::DEFAULT_MAX_FPS),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Motion",
+            label: "Max FPS",
+            description: "Most frames a second a streaming turn draws, 1 to 240.",
+        },
+    },
+    SettingSpec {
+        id: "appearance.changes",
+        kind: SettingKind::Enum(CHANGE_PALETTES),
+        env: "HORON_TUI_CHANGES",
+        default: DefaultValue::Text("theme"),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Colour",
+            label: "Change colours",
+            description: "Additions and removals in the theme's own pair, or an accessible pair that stays apart for colour-vision differences.",
+        },
+    },
+    SettingSpec {
+        id: "title.enabled",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TITLE_ENABLED",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Window",
+            label: "Manage window title",
+            description: "Let Horon name the terminal window. Changes apply on the next launch.",
+        },
+    },
+    SettingSpec {
+        id: "title.state",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TITLE_STATE",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Window",
+            label: "Title state",
+            description: "Append running, waiting or idle to the window title; off keeps the session name alone.",
         },
     },
     SettingSpec {
@@ -196,7 +271,55 @@ pub const REGISTRY: &[SettingSpec] = &[
             tab: "Status line",
             group: "Segments",
             label: "Context window",
-            description: "Tokens the model can hold, used for the context percentage; 0 hides the segment.",
+            description: "Tokens the model can hold, overriding what the runtime reports for the context percentage; 0 uses the runtime's window.",
+        },
+    },
+    SettingSpec {
+        id: "statusline.separator",
+        kind: SettingKind::Enum(STATUSLINE_SEPARATORS),
+        env: "HORON_TUI_STATUSLINE_SEPARATOR",
+        default: DefaultValue::Text("preset"),
+        ui: UiMeta {
+            tab: "Status line",
+            group: "Style",
+            label: "Separator",
+            description: "Mark between the parts: the glyph set's own (`preset`), a dot, or a bar.",
+        },
+    },
+    SettingSpec {
+        id: "statusline.background",
+        kind: SettingKind::Enum(STATUSLINE_BACKGROUNDS),
+        env: "HORON_TUI_STATUSLINE_BACKGROUND",
+        default: DefaultValue::Text("theme"),
+        ui: UiMeta {
+            tab: "Status line",
+            group: "Style",
+            label: "Background",
+            description: "The theme's bottom-line colour, or the terminal's own background unpainted.",
+        },
+    },
+    SettingSpec {
+        id: "terminal.progress",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TERMINAL_PROGRESS",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Terminal",
+            label: "Tab progress",
+            description: "Report a turn's progress to the terminal's tab and taskbar (OSC 9;4), where the terminal supports it.",
+        },
+    },
+    SettingSpec {
+        id: "terminal.program_status",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TERMINAL_PROGRAM_STATUS",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Terminal",
+            label: "Program status",
+            description: "Report working, waiting, done and failed states to the terminal (OSC 7501), where the terminal supports it.",
         },
     },
     SettingSpec {
@@ -212,6 +335,18 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "editor.suggestions",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_EDITOR_SUGGESTIONS",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Suggestions",
+            label: "Local suggestions",
+            description: "Offer a ghost completion of the draft from drafts sent before this one; nothing leaves the client.",
+        },
+    },
+    SettingSpec {
         id: "transcript.tool_output_lines",
         kind: SettingKind::Number,
         env: "HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES",
@@ -221,6 +356,19 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Content",
             label: "Tool output lines",
             description: "Rows of a finished tool call's output shown under its line; 0 hides the preview.",
+        },
+    },
+    SettingSpec {
+        id: "transcript.show_tool_activity",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Show tool activity",
+            description: "Draw the record of finished tool calls; off keeps a call that is running or waiting \
+                          for approval visible.",
         },
     },
     SettingSpec {
@@ -257,6 +405,139 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Content",
             label: "Markdown",
             description: "Render the model's Markdown; off draws its text with the markers as typed.",
+        },
+    },
+    SettingSpec {
+        id: "transcript.turn_usage",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_TURN_USAGE",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Turn usage",
+            description: "Show each completed turn's elapsed time and token usage under it; off hides the footer.",
+        },
+    },
+    SettingSpec {
+        id: "transcript.work_notes",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_WORK_NOTES",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Work notes",
+            description: "Show a few live notes about tools and background jobs while a turn runs; off keeps \
+                          the transcript unchanged.",
+        },
+    },
+    SettingSpec {
+        id: "transcript.visual_blocks",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Visual blocks",
+            description: "Draw a diagram fence's one-line flow; off draws the fence as typed.",
+        },
+    },
+    SettingSpec {
+        id: "models.shortlist",
+        kind: SettingKind::Array,
+        env: "HORON_TUI_MODELS_SHORTLIST",
+        default: DefaultValue::List(&[]),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Models",
+            label: "Cycle list",
+            description: "Model ids the cycle keys step through, in this order; leave empty to disable cycling.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_enabled",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_VOICE_LIVE_ENABLED",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live voice enabled",
+            description: "Opt in to /live real-time voice sessions; off leaves only keyboard input and /voice.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_adapter",
+        kind: SettingKind::Text,
+        env: "HORON_TUI_VOICE_LIVE_ADAPTER",
+        default: DefaultValue::Text(""),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live adapter",
+            description: "External live-audio adapter label (for example `command`); empty leaves live mode disabled.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_endpoint",
+        kind: SettingKind::Text,
+        env: "HORON_TUI_VOICE_LIVE_ENDPOINT",
+        default: DefaultValue::Text(""),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live endpoint",
+            description: "User-configured live voice URL (`ws://`, `wss://`, `http://`, `https://`, `unix://`); no built-in third-party endpoint.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_api_key_env",
+        kind: SettingKind::Text,
+        env: "HORON_TUI_VOICE_LIVE_API_KEY_ENV",
+        default: DefaultValue::Text(""),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live key env",
+            description: "Environment variable name holding the credential passed to `voice.live_command` as HORON_LIVE_API_KEY.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_model",
+        kind: SettingKind::Text,
+        env: "HORON_TUI_VOICE_LIVE_MODEL",
+        default: DefaultValue::Text(""),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live model",
+            description: "Optional model id forwarded to the external live voice adapter.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_command",
+        kind: SettingKind::Array,
+        env: "HORON_TUI_VOICE_LIVE_COMMAND",
+        default: DefaultValue::List(&[]),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live command",
+            description: "Executable and arguments of the opt-in JSONL live voice adapter subprocess.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_fallback_to_text",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_VOICE_LIVE_FALLBACK",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Text fallback",
+            description: "Return seamlessly to the text composer and attached session when live audio stops or disconnects.",
         },
     },
 ];

@@ -46,6 +46,24 @@ Main sources in the code:
 - `crates/base/src/runtime_memory_log.rs`
 - `crates/app-core/src/server/debug_server_state.rs`
 
+### User-installed packages
+
+A package adds memory only after something asks for it. A home with no package area
+keeps no catalog, no snapshot and no reference directory, so a session start and every
+turn on that home pay nothing: the structural gate checks that two turns read no package
+file, scan no directory, write nothing and start no child
+(`python3 scripts/perf/check_structural.py --only packages`). An installed package is not
+loaded into memory either until a turn captures the catalog generation: the turn keeps one
+snapshot (the records it may load, sorted by ID) and one lease that pins the copies it
+captured, and those live only as long as the turns that hold them. A child process is
+memory of its own and exists only after a call or an observation the package subscribed
+to.
+
+The measured memory of the three situations is the peak process-tree RSS in
+`python3 scripts/perf/package_workloads.py` (nothing installed, installed and never
+called, one real call), recorded per OS beside the turn time. Read the ratio within one
+OS, never an absolute across OSes.
+
 Terminal UI surfaces such as `:debug memory` and `:debug markdown:memory` do not exist in this build. The terminal client
 `horon-tui` renders the assistant's Markdown while it draws and keeps no cache of rendered rows, sources, highlights or
 images, so the caps that hung off those caches have no counterpart here and were lowered in this document for the same
@@ -196,17 +214,18 @@ per-session idle window state is cleared too.
 
 ### What is released
 
-`hibernate_idle_caches` drops only these two things.
+`hibernate_idle_caches` releases the following.
 
 - **provider projection**: through `release_provider_messages_cache()` it clears `provider_messages_cache`,
   the prefix hash cache, the cache length, and their memory profile counters. It resets the cache mode to `Full`, so the
   next `provider_messages()` rebuilds them instead of sending an empty transcript.
 - **the tool output index**: it replaces `tool_call_ids` and `tool_result_ids` with new `HashSet`s instead of `clear()` so the
   allocation itself is released, and resets `tool_output_scan_index` to 0.
+- **The Python eval kernel**, if the session started one. The next cell starts with fresh state.
 
 ### What is kept
 
-Release touches only derived caches and never persistent or original state.
+Release keeps persistent and original session state.
 
 - The original transcript and event originals (`events.jsonl`, `blobs/`), and the resident active context
 - The frozen system prompt and the locked tool surface (`listed_tools_index`). The next turn does not renegotiate the tool list.

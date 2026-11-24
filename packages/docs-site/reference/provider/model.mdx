@@ -37,7 +37,13 @@ Effort maps per wire. `openai-compatible` sends `reasoning_effort`, and `openai-
 
 Each wire appears in the model routes under its own `api_method` value from the table above. The runtime identity stays `openai-compatible` or `openai-compatible:<profile>` for all four, so stored sessions, the harness API and the SDK see one provider name.
 
-`prompt_cache_key` applies to `openai-compatible` and `openai-responses` only. `extra_body` keys are merged into the top level of every request body on all four wires. The model list comes from the profile's static `[[providers.<name>.models]]` array; no wire asks the endpoint for a list.
+`prompt_cache_key` applies to `openai-compatible` and `openai-responses` only. `extra_body` keys are merged into the top level of every request body on all four wires. By default, the model list uses the profile's static `[[providers.<name>.models]]` array.
+
+`horon model list --profile <name> --search <text>` filters the configured list by profile and by a case-insensitive substring in the model ID. Add `--refresh` to fetch `GET /models` for matching `openai-compatible` and `openai-responses` profiles using their configured authentication. The report identifies each profile and whether it refreshed, failed, or uses an unsupported wire. Failed and unsupported profiles retain their configured models in the report. `--json` includes the model source and reason per profile. Refresh results apply to that command and leave `config.toml` unchanged.
+
+### Tool parameter schemas
+
+A tool's `parameters` is sent as JSON Schema narrowed to the selected wire's dialect. Unsupported keywords are reported as `schema_keyword_dropped`. Both OpenAI wires require an object at the root. A root `anyOf` or `oneOf` of object alternatives becomes a single object with the fields the alternatives advertise and the requirements shared by all object alternatives. A property already declared at the root keeps that declaration. A field declared only in the alternatives keeps its different schemas under a property-level `anyOf`. The request uses `strict: false` and reports the removed root combiner. The tool still enforces conditional requirements at execution, such as the `label` required by `swarm`'s `spawn` action.
 
 ```toml
 # Chat Completions, the default
@@ -112,10 +118,32 @@ input = ["text", "image"]
 | `extra_body` | A top-level JSON object merged into the top level of every request body on all four wires. Use it for backend-only fields such as `chat_template_kwargs`. |
 | `requires_api_key` | States whether a key is needed. Set it to `false` where there is no key, as with a local endpoint. |
 | `prompt_cache_key` | Decides whether a lineage-stable `prompt_cache_key` goes into the request body. `true` always sends it, `false` never does, and leaving it empty sends it only for `api.openai.com` and `openrouter.ai` hosts. Set it to `false` when a gateway with a strict schema returns 400 for the unknown field. |
+| `stream_first_event_timeout_secs` | Optional positive seconds from sending an attempt to the first meaningful event. The HTTP response-header timeout also applies. |
+| `stream_idle_timeout_secs` | Optional positive seconds without meaningful progress once the stream starts. Each meaningful event restarts the idle timer. |
+| `max_in_flight_requests` | Optional maximum concurrent model and image requests in this process for this named profile, from 1 to 65,535. Leave it unset to allow requests without a profile queue. |
+
+Both limits apply to all four wires. Keepalives and usage-only updates do not start a stream or reset its idle timer. Each setting enables its own timer, and the existing retry limits apply to both timeout errors.
+
+The request limit is shared across sessions and models on one profile. When it is full, a request waits before connecting and can be cancelled while waiting. A streaming request holds its slot until the stream ends or is dropped. Restart the agent process to apply a changed limit.
 
 A single `default_model` line is enough to make calls. The `models` array tells the agent context size and input modalities, which helps model selection and compaction estimates.
 
 A model's `reasoning_effort` is applied when that model becomes active. The session reports the level before the first request and the request carries it, so the status line draws `provider/model · high` without anyone running `/effort`, and the field is filled on whichever wire the profile speaks (the second column of [Wire protocols](#wire-protocols)). An explicit `/effort`, `shift+tab`, or a client `set_reasoning_effort` overrides the configured level and stays in force; a switch to another model then adopts the level that model declares, and a model that declares none keeps the effort already in force. A session restored from storage keeps the effort it recorded even when the configuration names a different level.
+
+`horon run --thinking <effort>` overrides the selected model's effort for the run. `--service-tier <tier>` applies to OpenAI Chat Completions and Responses. Use `priority` (also `fast`), `off` to omit the request field, or `ultrafast` for a supported model. The command rejects unsupported values before sending the prompt. These flags leave the profile configuration unchanged.
+
+## Session model presets
+
+Add a named preset to `config.toml` and use `/modelpreset preview focus` to inspect it before `/modelpreset apply focus` changes the current session.
+
+```toml
+[model_presets.focus]
+model = "daily-model"
+effort = "high"
+roles = { swarm = "worker-model", review = "daily-model" }
+```
+
+Each field is optional. `roles` accepts the session targets `swarm`, `review`, `judge`, `memory` and `ambient`. A role value of `inherit` uses the session model where the workload supports inheritance. Models must be available in the current provider profile and effort must be supported by the resulting session model. An invalid preset leaves the current choices in force.
 
 ## Model roles
 
@@ -170,6 +198,10 @@ An empty string counts as unset at every step. `aux` walks the same chain, so a 
 
 `image` stops at step 3: it has no inherited roles and does not take a profile or provider text default. An image request sent to a chat model cannot succeed, so an unset `roles.image` means image generation is not configured, which the tool reports, rather than a call that always fails at the endpoint. This is the only role where a text default is not a valid substitute, and `ModelRole::accepts_text_default` states it once.
 
+### Auxiliary calls stay in the active profile
+
+Every auxiliary workload resolves its model inside the profile the session runs under: the `advisor` forks the session's provider and only changes its model, `prewalk` accepts a model id or `role:<name>` from that profile, and `judge`, `aux`, `plan` and `image` read that profile's `roles`. A role value that looks like another profile's model, such as `beta/aux-model`, is sent as a model id to the active profile's own endpoint with its own credential. No auxiliary call selects a second profile, so none of them contacts another profile's endpoint, and `[ambient] provider` is not read to choose a provider. This is model-provider routing only: it says nothing about shell commands, MCP servers or other network access. `crates/base/src/provider/aux_boundary_tests.rs` checks it against two local servers.
+
 ### Fallback and failover order
 
 The ordered list that #73 adds is `fallback_models = ["m2", "m3"]` on `[providers.<name>]`, not on a role, and it applies to whichever model the role resolved to. Recovery enters these steps in this fixed order, and each is entered only after the one before it is exhausted.
@@ -180,9 +212,15 @@ The ordered list that #73 adds is `fallback_models = ["m2", "m3"]` on `[provider
 
 The switch lasts for the rest of the turn and the next turn starts again from the role's model. Non-retryable errors (401, invalid request, context overflow) never start the chain. Reason: the steps differ in what they cost to take. A model switch keeps the endpoint, the credential, and the cache host; an account switch changes the credential; a provider switch changes the endpoint. Cheapest first means a rate limit is absorbed without losing prompt-cache locality, and putting the list on the profile keeps it from naming a model on another endpoint, which the placement rule above forbids.
 
+### Previewing the failover order
+
+`horon provider failover [--json]` prints the order the current configuration produces: the retry budget, then same-provider account failover, cross-provider failover and the unattended switch. A step that cannot run says which setting excludes it. The command reads configuration only. It sends no model request, changes no account, quota or provider selection, and prints no credential.
+
+This build assigns no accounts across a set of inputs, so there is no distribution to preview. The preview shows the real failover order instead. Quota cooldowns and which saved accounts are available at this moment are held in memory by a running daemon, so the preview does not show them. `fallback_models` is not a setting in this build yet, so the preview does not list it.
+
 ### Who implements it
 
-#73 writes the shared type: the `roles` table flattened into `NamedProviderConfig` in `crates/config-types/src/named_provider.rs:150-151` and one resolution function that every caller uses. #70 adds only its own `[prewalk]` section and calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). Reason: #73 changes `NamedProviderConfig` in any case and is a declared dependency of #70 (`depends_on: [73, 112]`), so two implementations would drift; the `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
+#73 writes the shared type: the `roles` table flattened into `NamedProviderConfig` in `crates/config-types/src/named_provider.rs` and one resolution function that every caller uses. #70 adds only its own `[prewalk]` section and calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). Reason: #73 changes `NamedProviderConfig` in any case and is a declared dependency of #70 (`depends_on: [73, 112]`), so two implementations would drift; the `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
 
 An unset role configuration behaves exactly as the build does today: no `roles` table, no new key, the model chosen by the existing chain, and no extra attempt.
 
@@ -192,7 +230,7 @@ The build's rule is that one model path serves models: a turn posts to the endpo
 
 - It posts `POST {base_url}/images/generations` with a JSON body, or `POST {base_url}/images/edits` with a multipart body, on the **same** profile: same base URL, same credential, same `auth`, same `extra_body`.
 - Only a profile of type `openai-compatible` or `openai-responses` accepts this route. A profile on the Anthropic or Gemini wire cannot serve it, because neither wire carries an Images endpoint: the tool still registers when `roles.image` names a model, and each call fails with an error naming the profile and its type instead of sending a request to a URL that cannot answer (`crates/base/src/provider/external.rs` `image_endpoint`).
-- There is still one provider runtime, no second router and no plugin host. `crates/provider-openai/src/images.rs` is a request builder beside `chat/`, not a runtime.
+- One provider runtime sends requests directly. `crates/provider-openai/src/images.rs` builds image requests beside `chat/`. Planned user-installed Rust packages sit outside the model path.
 - The model comes from `roles.image`, and the tool is registered only when that entry exists **and** `[tools] generate_image = true`. Both conditions are required: the switch alone would advertise a tool whose every call fails, and the role alone would register it for a session that never asked.
 - A call declares `WRITE | NETWORK`, so `approval_mode = "write"` asks first and an unattended run does not spend money without approval.
 - The model never receives image bytes. Files land in `~/.horon/generated-images/` and the result names paths, sizes and MIME types, which keeps a call at a few hundred tokens instead of megabytes in the context and the stored event log.
@@ -231,6 +269,7 @@ from = "plan-model"
 | --- | --- |
 | `enabled` | Whether a session hands off at all. Off by default. |
 | `into` | The execution model: a bare model id, or `role:<name>`. Required when `enabled = true`; a section without a usable value fails config validation with an error naming `prewalk.into`. |
+| `planning` | Optional. The model a new session plans on: a bare model id or `role:<name>`. It is applied once, before the session's first assistant message, so a model chosen later, a resumed session and a session already handed off are left alone, and the handoff to `into` then starts from this model. It needs `enabled = true`, and a value the profile does not offer keeps the session model and logs why. |
 | `from` | Applicability only. When set, the session hands off just if it currently runs this model. It never names a model to return to, and leaving it out applies to every session. |
 
 The handoff point depends on plan mode. With `[tools] plan_mode` off it is the first successful `todo` write that left at least one item; with plan mode on it is plan approval, so a todo list written during planning never switches the model out from under the plan. The switch takes the same path as `/model`, so `session.model` stores the execution model and every later request, including after a resume or a restore, runs on it.
@@ -238,6 +277,18 @@ The handoff point depends on plan mode. With `[tools] plan_mode` off it is the f
 The decision is one replay event, `prewalk` in the stored session, and that event is what makes the handoff one-shot across processes: a session that already carries one never decides again. A refused `into` is recorded the same way — an unknown model, a `role:` name outside `default`, `plan` and `aux`, or a role that resolves to nothing — so the session keeps its current model, one warning is logged, and later rounds do not repeat it. An `into` that resolves to the model the session already runs records the decision without switching.
 
 `role:<name>` resolves through the active profile's role chain described above, which is why a profile that only sets `default_model` can hand off to `into = "role:aux"` and get that same model. `crates/app-core/src/agent/prewalk.rs` holds the decision, and the acceptance cases live in `crates/app-core/src/agent/prewalk_tests.rs`.
+
+### Launch overrides
+
+`--role <name>=<model>` overrides one role for this launch only, and `--prewalk <into>` or `--no-prewalk` does the same for the handoff. Repeat `--role` to set several roles. The supported names are `default`, `plan`, `aux`, `judge` and `image`; an unknown name, an empty model, or a model the active `[providers.<name>].models` list does not offer fails before the first request is sent.
+
+`--role default=<model>` names the session model, which is the resolution slot `--model` fills, and passing both with different values fails instead of silently preferring one. Every other role is rewritten inside the active profile, chosen by `--provider-profile` or `[provider] default_provider`. `--no-prewalk` turns the handoff off even when `[prewalk]` enabled it, and it wins over a `--prewalk` on the same command line.
+
+The overrides are process-scoped. They set `HORON_AGENT_MODEL_ROLE_DEFAULT`, `HORON_AGENT_MODEL_ROLE_PLAN`, `HORON_AGENT_MODEL_ROLE_AUX`, `HORON_AGENT_MODEL_ROLE_JUDGE`, `HORON_AGENT_MODEL_ROLE_IMAGE`, `HORON_AGENT_PREWALK_ENABLED` and `HORON_AGENT_PREWALK_INTO`, which the config loader reads before anything resolves a role; a settings save reads the file layer only, so none of them is written back. `horon run` reports each effective value on stderr, for example `launch override: role plan -> plan-model (this invocation only)`, and `--quiet` suppresses that line.
+
+`--no-context-files` skips `AGENTS.md` discovery (project and global) and `--no-rules` skips imported foreign rules, `.horon/prompt-overlay.md` and `.horon/preferred-tools.md` (project and `~/.horon`), for that launch only. The base system prompt and the policy-owned sections always apply, a skipped source is simply not read so no extra file or tool access is granted, and a run without either flag is unchanged. The flags set `HORON_AGENT_NO_CONTEXT_FILES=1` and `HORON_AGENT_NO_RULES=1` for the process, and `horon run` names the sources that were present and skipped on stderr, for example `launch override: --no-context-files skips project AGENTS.md (this invocation only)`.
+
+`--skills <patterns>` keeps only the skills whose names match, for that launch only: a comma-separated list of names or patterns where `*` matches any run of characters, repeatable, at most 32 patterns of 64 bytes each using letters, digits, `-`, `_`, `/`, `:` and `*`. `--no-skills` hides every skill and wins over `--skills`. The filter sits in the skill registry's listing and lookup, so a hidden skill is absent from the prompt, from the picker and from a model's load request and slash invocation alike. A skill must match by both the name it is stored under and the name in its frontmatter, so a namespaced alias of a hidden skill stays hidden. The flags set `HORON_AGENT_SKILLS` and `HORON_AGENT_NO_SKILLS=1` for the process, so they cover a run, `repl` or `acp` session this process hosts and not a session served by an already running daemon. A bad pattern fails before the first request, and without either flag discovery is unchanged.
 
 ## Prompt cache key
 
@@ -267,6 +318,8 @@ Key files get narrowed permissions when read. You can also write the key value d
 ## Creating a profile
 
 `provider add` writes the same table into `config.toml` and stores the key received on `--api-key-stdin` in the key file.
+
+`horon provider diagnose` checks every `[providers.<name>]` profile without a model call. It reports `no_providers`, `invalid_base_url`, `missing_credential` (no `api_key_env`, or the variable is unset), or `configured`, and exits 1 when anything needs attention. Add `--check` to request each endpoint's model list with the configured credentials, which reports `reachable` or `unreachable`. Output never contains a key or an upstream response body. Use `--json` for structured output.
 
 ```bash
 printf '%s' "$MY_GW_KEY" | horon provider add my-gw \

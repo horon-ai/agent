@@ -185,8 +185,10 @@ fn the_new_methods_send_the_protocol_requests_and_read_typed_replies() {
                     state: snapshot_state.clone(),
                     messages: vec![HistoryMessage {
                         response_stats: None,
+                        answer: None,
                         role: "user".into(),
                         content: "hi".into(),
+                        message_id: None,
                     }],
                     next_history_cursor: None,
                     truncated: *tail == Some(1) || max_bytes.is_some(),

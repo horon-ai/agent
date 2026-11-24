@@ -262,6 +262,9 @@ impl Agent {
     }
 
     pub fn persist_soft_interrupt_snapshot(&self) {
+        if self.session.is_memory_only() {
+            return;
+        }
         let pending = match self.soft_interrupt_queue.lock() {
             Ok(queue) => queue.clone(),
             Err(_) => {

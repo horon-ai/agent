@@ -122,6 +122,7 @@ fn recover_loaded_crashed_sessions(mut crashed: Vec<Session>) -> Result<Vec<Stri
         new_session.route_api_method = old.route_api_method.clone();
         new_session.model = old.model.clone();
         new_session.improve_mode = old.improve_mode;
+        new_session.consult = old.consult;
         new_session.is_debug = old.is_debug;
         new_session.saved = old.saved;
         new_session.save_label = old.save_label.clone();

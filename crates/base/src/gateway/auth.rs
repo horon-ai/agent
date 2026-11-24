@@ -55,7 +55,11 @@ pub(super) fn extract_ws_auth(
     })
 }
 
-pub(crate) fn parse_bearer_token(header_value: &str) -> Option<&str> {
+/// The token of a `Bearer <token>` Authorization value, if it has that shape.
+///
+/// Shared with the harness API's TCP exposure so both transports accept the
+/// same header instead of two slightly different grammars.
+pub fn parse_bearer_token(header_value: &str) -> Option<&str> {
     let mut parts = header_value.split_whitespace();
     let scheme = parts.next()?;
     if !scheme.eq_ignore_ascii_case("bearer") {
@@ -82,7 +86,8 @@ pub(crate) fn parse_query_token(query: &str) -> Option<&str> {
     None
 }
 
-pub(crate) fn is_valid_hex_token(token: &str) -> bool {
+/// Whether `token` is the 64-hex-character bearer token this build issues.
+pub fn is_valid_hex_token(token: &str) -> bool {
     token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit())
 }
 

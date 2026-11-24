@@ -9,9 +9,10 @@ use horon_agent_harness_api::HandoffCompaction;
 use serde_json::{Value, json};
 
 fn state_with_session() -> BridgeState {
-    let mut state = BridgeState::default();
-    state.session_id = Some("s1".into());
-    state
+    BridgeState {
+        session_id: Some("s1".into()),
+        ..BridgeState::default()
+    }
 }
 
 /// Send one `compact` request and return the legacy id the daemon sees.

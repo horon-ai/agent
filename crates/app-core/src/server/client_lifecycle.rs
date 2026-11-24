@@ -1,6 +1,6 @@
 use super::client_actions::{
-    NotifySessionContext, handle_archive_session, handle_compact, handle_notify_session, handle_rename_session,
-    handle_set_feature, handle_set_session_saved, handle_split, handle_transfer,
+    NotifySessionContext, dispatch_split, handle_archive_session, handle_compact, handle_notify_session,
+    handle_rename_session, handle_set_feature, handle_set_session_saved, handle_set_todo_status, handle_transfer,
 };
 use super::client_ask::{
     handle_ask_response, handle_ask_response_with_receipt, handle_permission_decision, spawn_ask_forwarder,
@@ -29,6 +29,7 @@ use super::comm_sync::{
     CommResyncPlanContext, handle_comm_plan_status, handle_comm_read_context, handle_comm_resync_plan,
     handle_comm_status, handle_comm_summary,
 };
+use super::foreground_state::HistoryIds;
 use super::provider_control::{
     handle_invalidate_openai_usage, handle_notify_auth_changed, handle_set_model, handle_set_reasoning_effort,
     try_available_models_catalog,
@@ -75,6 +76,8 @@ struct ProcessingMessage {
     active_skill: Option<String>,
     /// Present when the sending connection negotiated ACP v2.
     v2: Option<AcpV2Message>,
+    /// Run this continues instead of starting new work, checked under the agent lock.
+    expected_run_id: Option<String>,
 }
 
 const V2_MESSAGE_QUEUED: u8 = 0;
@@ -499,7 +502,11 @@ pub(super) async fn handle_client(
         }
 
         match decode_request(&line) {
-            Ok(request) => {
+            Ok(mut request) => {
+                if let Some(event) = super::package_control::reply(&mut request).await {
+                    write_direct_event(&writer, &event).await?;
+                    continue;
+                }
                 if request.is_lightweight_control_request() {
                     let keep_connection_open = matches!(request, Request::Ping { .. });
                     handle_lightweight_control_request(
@@ -585,12 +592,17 @@ pub(super) async fn handle_client(
     let mut model_usage_updates_enabled = false;
     let mut supports_user_response = false;
     let mut supports_ask_requests = false;
+    let mut a2ui_capabilities: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities> = None;
     let mut ask_installation: Option<(String, u64)> = None;
     let mut acp_installation: Option<(String, u64)> = None;
     // Set by a Subscribe whose ACP options negotiated protocol v2. The event
     // forwarder reads it for every event, so a re-subscribe that drops v2 stops
     // the v2-only events at once.
     let acp_v2 = Arc::new(AtomicBool::new(false));
+    // Set by a Subscribe that asked for stored message ids on history rows
+    // without negotiating ACP. Independent of `acp_v2`: it changes nothing but
+    // whether a row names the stored message it came from.
+    let history_message_ids = Arc::new(AtomicBool::new(false));
     // The latest v2 `message` request, kept after its turn ends so a late
     // withdrawal is answered "already inserted" rather than "unknown".
     let mut last_v2_message: Option<AcpV2Message> = None;
@@ -967,6 +979,12 @@ pub(super) async fn handle_client(
                 }
             }
         };
+        if let Some(event) = super::package_control::reply(&mut request).await {
+            if write_direct_event(&writer, &event).await.is_err() {
+                break;
+            }
+            continue;
+        }
         let request_decoded_at = Instant::now();
         let request_id = request.id();
         let request_kind = request_type_from_line(&line);
@@ -1221,38 +1239,15 @@ pub(super) async fn handle_client(
             continue;
         }
 
-        // Send ack
-        let ack = ServerEvent::Ack { id: request.id() };
-        let json = encode_event(&ack);
-        {
+        // A continuation is acked by the turn that decides it, and a refusal is
+        // answered there with an error, so the generic ack never claims it.
+        if !crate::agent::run_journal::is_continuation_request(&request) {
+            let json = encode_event(&ServerEvent::Ack { id: request.id() });
             let ack_start = Instant::now();
-            let mut w = writer.lock().await;
-            if w.write_all(json.as_bytes()).await.is_err() {
-                if request_lifecycle_logged {
-                    let mut fields =
-                        server_request_lifecycle_fields(ServerRequestLifecycleFields {
-                            phase: "ack_write_failed",
-                            request_id,
-                            request_kind: &request_kind,
-                            client_session_id: &client_session_id,
-                            client_connection_id: &client_connection_id,
-                            client_instance_id: current_client_instance_id.as_deref(),
-                            client_is_processing,
-                            message_id: processing_message_id,
-                            processing_session_id: processing_session_id.as_deref(),
-                            line_bytes: line.len(),
-                        });
-                    fields.push((
-                        "ack_write_ms".to_string(),
-                        ack_start.elapsed().as_millis().to_string(),
-                    ));
-                    crate::logging::event_warn("SERVER_REQUEST_LIFECYCLE", fields);
-                }
-                break;
-            }
+            let failed = writer.lock().await.write_all(json.as_bytes()).await.is_err();
             if request_lifecycle_logged {
                 let mut fields = server_request_lifecycle_fields(ServerRequestLifecycleFields {
-                    phase: "acked",
+                    phase: if failed { "ack_write_failed" } else { "acked" },
                     request_id,
                     request_kind: &request_kind,
                     client_session_id: &client_session_id,
@@ -1263,16 +1258,24 @@ pub(super) async fn handle_client(
                     processing_session_id: processing_session_id.as_deref(),
                     line_bytes: line.len(),
                 });
-                fields.push((
-                    "ack_write_ms".to_string(),
-                    ack_start.elapsed().as_millis().to_string(),
-                ));
-                fields.push((
-                    "since_decode_ms".to_string(),
-                    request_decoded_at.elapsed().as_millis().to_string(),
-                ));
-                crate::logging::event_info("SERVER_REQUEST_LIFECYCLE", fields);
+                fields.push(("ack_write_ms".to_string(), ack_start.elapsed().as_millis().to_string()));
+                if failed {
+                    crate::logging::event_warn("SERVER_REQUEST_LIFECYCLE", fields);
+                } else {
+                    fields.push(("since_decode_ms".to_string(), request_decoded_at.elapsed().as_millis().to_string()));
+                    crate::logging::event_info("SERVER_REQUEST_LIFECYCLE", fields);
+                }
             }
+            if failed {
+                break;
+            }
+        }
+
+        if matches!(
+            super::a2ui::preprocess_a2ui_request(&mut request, &agent, client_is_processing, &client_event_tx).await,
+            super::a2ui::A2uiPreprocess::Handled
+        ) {
+            continue;
         }
 
         // Legacy/direct clients can send a prompt without Subscribe. Their
@@ -1295,7 +1298,13 @@ pub(super) async fn handle_client(
         let sdk_session_before_request = client_session_id.clone();
         match request {
             Request::ConfigureTools { .. } | Request::ListTools { .. } | Request::ToolResult { .. } => unreachable!("SDK controls dispatched before acknowledgment"),
-            Request::ClientResponse { .. } | Request::DeleteSession { .. } => unreachable!("dispatched earlier"),
+            Request::ClientResponse { .. }
+            | Request::DeleteSession { .. }
+            | Request::PackageControl { .. }
+            | Request::ConfigureA2ui { .. }
+            | Request::A2uiEvent { .. } => {
+                unreachable!("dispatched earlier")
+            }
             Request::Message {
                 id,
                 content,
@@ -1303,6 +1312,7 @@ pub(super) async fn handle_client(
                 system_reminder,
                 active_skill,
                 no_reply,
+                expected_run_id,
             } => {
                 if no_reply {
                     append_context_message(
@@ -1339,6 +1349,7 @@ pub(super) async fn handle_client(
                         system_reminder,
                         active_skill,
                         v2: v2_message.clone(),
+                        expected_run_id,
                     },
                     &client_session_id,
                     Some(&client_connection_id),
@@ -1462,6 +1473,7 @@ pub(super) async fn handle_client(
                             system_reminder: None,
                             active_skill: None,
                             v2: None,
+                            expected_run_id: None,
                         },
                         &client_session_id,
                         Some(&client_connection_id),
@@ -1603,7 +1615,10 @@ pub(super) async fn handle_client(
                             &server_name,
                             &server_icon,
                             None,
-                            acp_v2.load(Ordering::Acquire),
+                            HistoryIds::for_connection(
+                                acp_v2.load(Ordering::Acquire),
+                                history_message_ids.load(Ordering::Acquire),
+                            ),
                         )
                         .await
                         .is_err()
@@ -1664,7 +1679,10 @@ pub(super) async fn handle_client(
                             &server_name,
                             &server_icon,
                             None,
-                            acp_v2.load(Ordering::Acquire),
+                            HistoryIds::for_connection(
+                                acp_v2.load(Ordering::Acquire),
+                                history_message_ids.load(Ordering::Acquire),
+                            ),
                         )
                         .await
                         .is_err()
@@ -1738,6 +1756,8 @@ pub(super) async fn handle_client(
                 continue_on_disconnect: requested_continuation,
                 terminal_env,
                 acp: acp_options,
+                history_message_ids: requested_history_message_ids,
+                a2ui: requested_a2ui,
             } => {
                 if let Err(message) =
                     validated_subscribe_working_dir(
@@ -1773,12 +1793,14 @@ pub(super) async fn handle_client(
                 continue_on_disconnect = requested_continuation;
                 supports_user_response = requested_user_response;
                 supports_ask_requests = requested_ask_requests;
+                a2ui_capabilities = requested_a2ui;
                 // Read before the attach below writes History, which carries
-                // stored message ids only for a v2 connection.
+                // stored message ids only for a connection that asked for them.
                 acp_v2.store(
                     acp_options.as_ref().is_some_and(|options| options.protocol_version == Some(2)),
                     Ordering::Release,
                 );
+                history_message_ids.store(requested_history_message_ids, Ordering::Release);
                 active_terminal_env = terminal_env;
                 current_client_instance_id = client_instance_id.clone();
                 {
@@ -1833,7 +1855,10 @@ pub(super) async fn handle_client(
                                 &event_history,
                                 &event_counter,
                                 &swarm_event_tx,
-                                acp_v2.load(Ordering::Acquire),
+                                HistoryIds::for_connection(
+                                    acp_v2.load(Ordering::Acquire),
+                                    history_message_ids.load(Ordering::Acquire),
+                                ),
                             ),
                         )
                         .await?;
@@ -1956,6 +1981,7 @@ pub(super) async fn handle_client(
                     supports_user_response,
                 )
                 .await;
+                super::a2ui::apply_or_defer_a2ui_capabilities(&agent, a2ui_capabilities.clone()).await;
                 // The installation follows the session this connection is
                 // attached to now, not the one it had before a re-subscribe.
                 if let Some((session, token)) = ask_installation.take() {
@@ -2030,7 +2056,10 @@ pub(super) async fn handle_client(
                     &server_name,
                     &server_icon,
                     None,
-                    acp_v2.load(Ordering::Acquire),
+                    HistoryIds::for_connection(
+                        acp_v2.load(Ordering::Acquire),
+                        history_message_ids.load(Ordering::Acquire),
+                    ),
                 )
                 .await
                 .is_err()
@@ -2134,7 +2163,10 @@ pub(super) async fn handle_client(
                         &event_history,
                         &event_counter,
                         &swarm_event_tx,
-                        acp_v2.load(Ordering::Acquire),
+                        HistoryIds::for_connection(
+                            acp_v2.load(Ordering::Acquire),
+                            history_message_ids.load(Ordering::Acquire),
+                        ),
                     ),
                 )
                 .await?;
@@ -2152,6 +2184,7 @@ pub(super) async fn handle_client(
                     supports_user_response,
                 )
                 .await;
+                super::a2ui::apply_or_defer_a2ui_capabilities(&agent, a2ui_capabilities.clone()).await;
                 session_control = refresh_session_control_handle(
                     &client_session_id,
                     &agent,
@@ -2205,8 +2238,7 @@ pub(super) async fn handle_client(
                 if let Some(target_session_id) = target_session_id {
                     let target_agent = { sessions.read().await.get(&target_session_id).cloned() };
                     if let Some(target_agent) = target_agent {
-                        handle_set_reasoning_effort(id, effort, &target_agent, &client_event_tx)
-                            .await;
+                        handle_set_reasoning_effort(id, effort, &target_agent, &client_event_tx).await;
                     } else {
                         let _ = client_event_tx.send(ServerEvent::ReasoningEffortChanged {
                             id,
@@ -2240,6 +2272,10 @@ pub(super) async fn handle_client(
                     &client_event_tx,
                 )
                 .await;
+            }
+
+            Request::SetTodoStatus { id, expected_revision, todo_id, status } => {
+                handle_set_todo_status(id, expected_revision, todo_id, status, &client_session_id, &client_event_tx);
             }
 
             Request::ArchiveSession {
@@ -2315,8 +2351,8 @@ pub(super) async fn handle_client(
                 handle_invalidate_openai_usage(id, account_label, &client_event_tx).await;
             }
 
-            Request::Split { id } => {
-                handle_split(id, &client_session_id, &agent, &client_event_tx).await;
+            Request::Split { .. } | Request::SplitAt { .. } => {
+                dispatch_split(request, &client_session_id, &agent, &client_event_tx).await;
             }
 
             Request::Transfer { id } => {
@@ -2441,6 +2477,14 @@ pub(super) async fn handle_client(
                 let _ = client_event_tx.send(reply);
             }
 
+            // The allow-listed settings this daemon loaded. Answered here
+            // because the configuration and the environment that overrode it
+            // belong to this process; a bridge reading its own copy could
+            // report values the session never ran with. A closed receiver means
+            // the client left while the reply was built, which its own close
+            // path reports.
+            Request::GetEffectiveSettings { id } => drop(client_event_tx.send(super::effective_settings::event(id))),
+
             Request::PermissionDecision {
                 id,
                 request_id,
@@ -2482,6 +2526,11 @@ pub(super) async fn handle_client(
                         let data = serde_json::json!({"refreshed": true, "models": guard.available_models_for_switching(), "routes": guard.model_routes()});
                         return Ok((data, "Provider model catalog refreshed.".into()));
                     }
+                    if parsed == horon_agent_harness_api::RuntimeCommand::Mcp {
+                        let directory = agent.try_lock().map_err(|_| anyhow::anyhow!("Session is busy. Retry /mcp after the current turn."))?
+                            .working_dir().map(std::path::PathBuf::from);
+                        return super::runtime_commands::mcp::inspect(directory.as_deref(), &args).await;
+                    }
                     if parsed == horon_agent_harness_api::RuntimeCommand::Swarm {
                         if let Some(enabled) = super::runtime_commands::boolean_action(&args, swarm_enabled, false)? {
                             if reject_if_agent_busy_for_request(id, "runtime_command", &client_session_id, client_is_processing, &agent, &client_event_tx).await {
@@ -2499,6 +2548,12 @@ pub(super) async fn handle_client(
                         let data = serde_json::json!({"enabled": swarm_enabled, "config_default": crate::config::config().features.swarm,
                             "swarm_id": member.and_then(|m| m.swarm_id.as_deref()), "role": member.map(|m| &m.role)});
                         return Ok((data.clone(), serde_json::to_string_pretty(&data)?));
+                    }
+                    // A per-session status view must answer while the turn that
+                    // it describes still holds the agent lock, so it comes from
+                    // the notes registry instead of the agent.
+                    if parsed == horon_agent_harness_api::RuntimeCommand::Observations {
+                        return super::session_notes::command(&client_session_id, &args);
                     }
                     let mut guard = agent.try_lock().map_err(|_| anyhow::anyhow!("Session is busy. Retry this runtime command after the current turn."))?;
                     super::runtime_commands::execute(&mut guard, parsed, &args, swarm_enabled, serde_json::Value::Null).await
@@ -3165,7 +3220,14 @@ pub(super) async fn handle_client(
                     .as_ref()
                     .is_some_and(|(session, _)| session == &client_session_id);
                 let configs = if acp_attached {
-                    crate::tool::session_mcp::server_configs(servers)
+                    // The process policy decides whether this editor's servers
+                    // may start at all; an unreadable policy refuses the list.
+                    match crate::hosting::current() {
+                        Ok(policy) => crate::tool::session_mcp::server_configs(policy, servers),
+                        Err(error) => Err(format!(
+                            "MCP servers are refused: the hosting policy could not be resolved: {error}"
+                        )),
+                    }
                 } else {
                     Err(crate::tool::approval_override::NOT_ACP_MESSAGE.to_string())
                 };
@@ -3602,6 +3664,7 @@ async fn start_processing_message(
         system_reminder,
         active_skill,
         v2,
+        expected_run_id,
     } = message;
     if server_reload_starting() {
         crate::logging::info(&format!(
@@ -3715,6 +3778,9 @@ async fn start_processing_message(
             lock
         });
         let locked = &mut agent;
+        let continuation_decision = expected_run_id
+            .as_ref()
+            .map(|_| crate::agent::run_journal::ContinuationDecision::new(rejection_tx.clone(), id));
         let turn = async move {
             let agent = &mut ***locked;
             let (start_message_index, pending_queue) = match prepared {
@@ -3731,13 +3797,24 @@ async fn start_processing_message(
                 }
             };
             agent.arm_effort_keywords(&content);
-            // Ownership is claimed only once this turn holds the agent, and the
-            // guard drops before that lock is released. Claiming earlier left a
-            // window in which a daemon wake turn could take the idle agent and
-            // run its tools under this connection's claim (bridges, approval
-            // override). The guard drops when the turn ends, fails, or is
-            // aborted, so no later turn inherits it.
+            // Claim ownership under the agent lock so a daemon wake turn cannot
+            // inherit this connection's bridges or approval override. The claim
+            // ends before the agent is unlocked, including on failure and abort.
             let _turn_ownership = crate::tool::acp_session::claim_turn(&claim_session_id, turn_owner.as_deref());
+            if let (Some(expected_run_id), Some(decision)) = (expected_run_id.as_deref(), continuation_decision) {
+                // Decide under the agent lock so one failed run starts at most one retry.
+                return match agent
+                    .continue_run(expected_run_id, event_tx, Some(report), decision)
+                    .await
+                {
+                    crate::agent::run_journal::ContinuationOutcome::Continued => TurnBegin::Ran {
+                        result: Ok(()),
+                        start_message_index,
+                        pending_queue,
+                    },
+                    crate::agent::run_journal::ContinuationOutcome::Refused(refusal) => TurnBegin::Rejected(refusal),
+                };
+            }
             let result =
                 process_locked_message_streaming_mpsc(agent, &content, images, system_reminder, event_tx, Some(report))
                     .await;
@@ -4321,87 +4398,7 @@ pub(super) async fn process_locked_message_streaming_mpsc(
     result
 }
 
-/// Clear the durable `pending_event` of the approval a client just acked.
-///
-/// A record that is already gone is success, not an error: the ack can arrive
-/// after the runner cleaned the record up, and failing the client would only
-/// make it retry an ack that has nothing left to clear. Only `pending_event`
-/// changes; the decision fields the resume classifier reads stay untouched.
-fn handle_approval_ack(id: u64, request_id: String, client_event_tx: &mpsc::UnboundedSender<ServerEvent>) {
-    let cleared = crate::ambient::BlockedApprovalStore::open_default()
-        .and_then(|store| store.update_with(&request_id, |record| record.pending_event = None));
-    match cleared {
-        Ok(record_found) => {
-            crate::logging::event_info(
-                "server_approval_ack",
-                vec![
-                    ("id", id.to_string()),
-                    ("request_id", request_id),
-                    ("record_found", record_found.to_string()),
-                ],
-            );
-            let _ = client_event_tx.send(ServerEvent::Ack { id });
-        }
-        Err(error) => {
-            crate::logging::warn(&format!(
-                "approval ack for request {request_id} could not be applied: {error}"
-            ));
-            let _ = client_event_tx.send(ServerEvent::Error {
-                id,
-                message: format!("approval ack could not be applied: {error}"),
-                retry_after_secs: None,
-            });
-        }
-    }
-}
-
-/// Drop the durable failover announcement a client just acked.
-///
-/// The announcement is scoped to the attached session, and the whole switch key
-/// has to match: an ack naming a different chain, route or attempt leaves every
-/// entry in place. A clear that genuinely could not run (the lock stayed held,
-/// or the rewrite failed) is answered with `Error`, never with `Ack`: an `Ack`
-/// tells the client to stop retrying, which would leave the entry on disk and
-/// re-deliver it on every attach and restart. `Ok(0)` — nothing matched — is
-/// still success, because retrying an ack with nothing left to clear cannot help.
-fn handle_failover_ack(
-    id: u64,
-    session_id: &str,
-    chain_id: String,
-    from: String,
-    to: String,
-    attempt: u32,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    let cleared = super::state::try_clear_acked_failover_event(session_id, &chain_id, &from, &to, attempt);
-    match cleared {
-        Ok(removed) => {
-            crate::logging::event_info(
-                "server_failover_ack",
-                vec![
-                    ("id", id.to_string()),
-                    ("session_id", session_id.to_string()),
-                    ("chain_id", chain_id),
-                    ("from", from),
-                    ("to", to),
-                    ("attempt", attempt.to_string()),
-                    ("removed", removed.to_string()),
-                ],
-            );
-            let _ = client_event_tx.send(ServerEvent::Ack { id });
-        }
-        Err(error) => {
-            crate::logging::warn(&format!(
-                "failover ack for chain {chain_id} attempt {attempt} could not be applied: {error}"
-            ));
-            let _ = client_event_tx.send(ServerEvent::Error {
-                id,
-                message: format!("failover ack could not be applied: {error}"),
-                retry_after_secs: None,
-            });
-        }
-    }
-}
+use super::client_lifecycle_acks::{handle_approval_ack, handle_failover_ack};
 
 #[cfg(test)]
 #[path = "client_lifecycle_ack_tests.rs"]
@@ -4421,3 +4418,7 @@ mod tests;
 #[cfg(test)]
 #[path = "client_target_attach_tests.rs"]
 mod target_attach_tests;
+
+#[cfg(test)]
+#[path = "client_lifecycle_tests/a2ui.rs"]
+mod a2ui_tests;

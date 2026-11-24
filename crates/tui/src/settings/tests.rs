@@ -205,6 +205,28 @@ fn settings_mouse_scroll_is_on_until_a_layer_turns_it_off() {
 }
 
 #[test]
+fn settings_title_state_is_off_until_a_layer_turns_it_on() {
+    let fixture = Fixture::new();
+    let (settings, warnings) = fixture.resolve(&fixture.sources(), &[]);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    // A window named after its session is what every existing setup sees; the
+    // turn state is a decoration a reader asks for, so it stays off by default.
+    assert_eq!(settings.boolean("title.state"), Some(false));
+
+    fixture.write(&fixture.global(), "[title]\nstate = true\n");
+    let (settings, warnings) = fixture.resolve(&fixture.sources(), &[]);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(settings.boolean("title.state"), Some(true));
+
+    let (settings, _) = fixture.resolve(&fixture.sources(), &[("HORON_TUI_TITLE_STATE", "off")]);
+    assert_eq!(settings.boolean("title.state"), Some(false));
+    assert_eq!(
+        settings.provenance("title.state").map(Provenance::label).as_deref(),
+        Some("env HORON_TUI_TITLE_STATE")
+    );
+}
+
+#[test]
 fn settings_unknown_key_warns_and_is_ignored() {
     let fixture = Fixture::new();
     fixture.write(
@@ -515,4 +537,43 @@ fn settings_defaults_cover_the_registry() {
         );
     }
     assert_eq!(settings.iter().count(), REGISTRY.len());
+}
+
+#[test]
+fn a_daemon_row_names_the_layer_that_supplied_its_value() {
+    let row = |source, origin: Option<&str>| DaemonRow {
+        key: "tools.profile".into(),
+        label: "Tool profile".into(),
+        value: "full".into(),
+        source,
+        origin: origin.map(str::to_string),
+    };
+    assert_eq!(
+        row(horon_agent_sdk::api::SettingSource::Cli, Some("--tool-profile")).source_label(),
+        "cli --tool-profile",
+        "a flag is named as the user typed it, not as the variable it becomes"
+    );
+    assert_eq!(
+        row(
+            horon_agent_sdk::api::SettingSource::Env,
+            Some("HORON_AGENT_TOOL_PROFILE")
+        )
+        .source_label(),
+        "env HORON_AGENT_TOOL_PROFILE"
+    );
+    assert_eq!(
+        row(horon_agent_sdk::api::SettingSource::Default, None).source_label(),
+        "daemon default"
+    );
+}
+
+#[test]
+fn a_daemon_read_that_failed_reports_no_rows_and_no_reading_state() {
+    let failed = DaemonSettings::Failed("broken pipe".into());
+    assert!(failed.rows().is_empty(), "a failed read has no rows to show");
+    assert_ne!(
+        failed.notice(),
+        DaemonSettings::Unknown.notice(),
+        "a finished read must not read as one still in flight"
+    );
 }

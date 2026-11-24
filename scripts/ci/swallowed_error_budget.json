@@ -86,11 +86,6 @@
       "let_underscore": 1,
       "unwrap_or_default": 0
     },
-    "crates/app-core/src/agent/tool_markup_recovery.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/app-core/src/agent/tools.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
@@ -113,7 +108,7 @@
     },
     "crates/app-core/src/agent/turn_streaming_mpsc.rs": {
       "dot_ok": 0,
-      "let_underscore": 76,
+      "let_underscore": 71,
       "unwrap_or_default": 2
     },
     "crates/app-core/src/agent/utils.rs": {
@@ -1442,7 +1437,7 @@
       "unwrap_or_default": 1
     },
     "crates/provider-openai/src/stream.rs": {
-      "dot_ok": 3,
+      "dot_ok": 2,
       "let_underscore": 0,
       "unwrap_or_default": 6
     },

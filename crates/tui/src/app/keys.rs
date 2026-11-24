@@ -1,10 +1,11 @@
 //! Keystroke, paste and mouse handling: the key map in force decides what a key
 //! means, a live prompt or overlay gets the key first, and nothing is swallowed.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use super::{Action, App};
 use crate::keys::{self, Key};
+use crate::overlays::picker::Kind;
 use crate::overlays::settings::Outcome;
 use crate::prompts::{Prompt, Response};
 use crate::scroll;
@@ -18,17 +19,64 @@ impl App {
     /// decides what each key means; a printable character that no action claims
     /// is inserted, so a text field cannot lose a letter to a binding.
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // A key means the user is at the client: a mark a finished or failed
+        // turn left on the terminal tab has been seen, so it goes before this
+        // key changes the state the next report carries.
+        self.note_user_attention();
         // The popup is read against the draft on screen, before this key
         // changes it, and brought up to date again after it: a key that moved
-        // the draft leaves a list that belongs to the text it left behind.
-        self.sync_slash();
+        // the draft leaves a list that belongs to the text it left behind. A
+        // replay is not editing that draft — no key reaches it — so the lists
+        // stay closed while the recording is on screen.
+        if !self.replaying() {
+            self.sync_slash();
+            self.sync_suggestions();
+        }
         let action = self.handle_key(key);
-        self.sync_slash();
+        if !self.replaying() {
+            self.sync_slash();
+            self.sync_suggestions();
+        }
         action
     }
 
     /// What one keystroke does, with the popup already in line with the draft.
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The repaint key answers before every surface, and it takes no other
+        // key from them: it changes nothing on screen, so a picker, the
+        // settings screen or a prompt must not swallow it, and none of their
+        // own keys may be claimed in exchange. What it throws away is the
+        // frame the terminal holds, not the state it shows.
+        if Key::from_event(key)
+            .is_some_and(|pressed| self.bindings.resolve_editing(&pressed) == Some(keys::ids::APP_REPAINT))
+        {
+            self.request_repaint();
+            return None;
+        }
+        // A replay owns the keyboard while it plays: its keys move the playback,
+        // and a letter must not reach the draft behind the recording. The two
+        // keys that leave the client still leave it.
+        if self.replaying() && self.replay_key(key) {
+            return None;
+        }
+        // A side question owns every key while it is open: it is a reading
+        // surface, and `esc` there returns to the conversation instead of
+        // interrupting the parent's turn. It sits above the picker because it
+        // is opened from the draft, where no list can be open.
+        if self.side.is_some() {
+            return self.side_key(key);
+        }
+        // The queue list is a list whose rows are edited rather than chosen,
+        // so it is answered before the generic picker that would read `enter`
+        // as a choice. It still owns every key while it is open.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Queue) {
+            return self.queue_panel_key(key);
+        }
+        // The job list is the same shape: `delete` acts on the selected row,
+        // and every other key stays the list's own.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Jobs) {
+            return self.job_panel_key(key);
+        }
         // A list sits at the top of the precedence order: while it is open no
         // key reaches the settings screen, a prompt, the slash popup, the
         // scroll keys, the history or the draft underneath it.
@@ -45,6 +93,12 @@ impl App {
                 Outcome::Change(change) => {
                     self.pending_change = Some(change);
                     self.overlay = Some(overlay);
+                }
+                // The daemon tab asked for its values again. The screen stays
+                // open, showing what it already has until the answer lands.
+                Outcome::Reload => {
+                    self.overlay = Some(overlay);
+                    return Some(Action::DaemonSettings);
                 }
             }
             return None;
@@ -68,6 +122,7 @@ impl App {
                         (false, _) => Decision::Denied,
                     };
                     self.transcript.decide_request(&request_id, decision);
+                    self.scroll.reflow();
                     self.transcript
                         .push_notice(approval_answer_line(&covered, approved, always));
                     return Some(Action::Approval {
@@ -83,24 +138,29 @@ impl App {
                     return Some(Action::Ask { ask_id, answers });
                 }
                 None => {
-                    // A prompt owns every key, but not the two that end the
-                    // session. An approval outlives its turn, so a swallowed
-                    // Ctrl-C would leave a prompt on screen with no way out of
-                    // the client; the prompt still answers its own keys first,
-                    // which is what keeps `esc` on the approval.
-                    let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
+                    // The prompt handles its own keys first. Ctrl+C and an
+                    // explicit quit binding can still leave the parked prompt.
+                    let pressed = Key::from_event(key);
+                    let bound = pressed
+                        .as_ref()
+                        .and_then(|pressed| self.bindings.resolve_editing(pressed));
                     match bound {
                         Some(keys::ids::APP_CANCEL) if self.pending_turn => {
                             self.withdraw_prompts("the turn was cancelled");
                             return self.cancel_turn();
                         }
+                        Some(keys::ids::APP_QUIT) if pressed.is_some_and(is_ctrl_d) => return None,
                         Some(keys::ids::APP_CANCEL | keys::ids::APP_QUIT) => return Some(Action::Quit),
                         // The transcript still scrolls while a prompt waits:
                         // reading further back neither answers the prompt nor
                         // reaches the draft, and these keys are not in the
-                        // prompt's scope, so the prompt stays answerable.
+                        // prompt's scope, so the prompt stays answerable. The
+                        // copy keys are the same: reading an earlier answer is
+                        // what an approval prompt makes the user do.
                         Some(action) => {
-                            self.apply_scroll(action);
+                            if !self.copy_action(action) {
+                                self.apply_scroll(action);
+                            }
                             return None;
                         }
                         _ => return None,
@@ -109,8 +169,23 @@ impl App {
             }
         }
 
+        // A capture, a recognition or a playback takes `esc` before the popup
+        // and the editor: the key that means "not this" ends the voice activity,
+        // and the draft it was going to change stays as it was. A live prompt
+        // has already taken every key above, and a prompt arriving cancels the
+        // capture before it gets here.
+        if key.code == KeyCode::Esc && self.voice.phase() != crate::voice::Phase::Idle {
+            self.cancel_voice();
+            return None;
+        }
+        if key.code == KeyCode::Esc && self.voice.live.phase() == crate::voice::live::LivePhase::Capturing {
+            self.cancel_live_voice();
+            return None;
+        }
+
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
-        let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
+        let pressed = Key::from_event(key);
+        let bound = pressed.and_then(|pressed| self.bindings.resolve_editing(&pressed));
         // The popup sits above the editor and below the prompt, so while it is
         // open the keys that pick a row are its own: `up` and `down` move the
         // selection instead of the history, `esc` closes the list rather than
@@ -148,6 +223,21 @@ impl App {
                 }
             }
         }
+        // A ghost suggestion sits above the editor and below the popup: the
+        // accept key fills the rest of the draft, and `esc` puts the offer away
+        // instead of interrupting the turn. Every other key reaches the editor,
+        // and the sync after this key withdraws an offer the changed draft no
+        // longer matches.
+        if self.suggestion_available() {
+            if key.code == KeyCode::Esc || bound == Some(keys::ids::APP_INTERRUPT) {
+                self.suggestions.dismiss();
+                return None;
+            }
+            if bound == Some(keys::ids::EDITOR_ACCEPT_SUGGESTION) {
+                self.accept_suggestion();
+                return None;
+            }
+        }
         match bound {
             Some(keys::ids::APP_SUBMIT) => {
                 // `editor.submit_on_enter = false` disconnects the send key, so
@@ -174,6 +264,8 @@ impl App {
                 // The draft is remembered before it is resolved: a slash line
                 // that turns out to be an error is still a line the user typed.
                 self.history.record(&text);
+                // The candidates belonged to the token that was just sent.
+                self.path_cycle = None;
                 return self.submit(&text);
             }
             Some(keys::ids::EDITOR_COMPLETE) => {
@@ -184,6 +276,10 @@ impl App {
                 self.open_history_search();
                 return None;
             }
+            // Only an idle screen reaches this arm: a prompt, an overlay and a
+            // picker each take every key before the map is read, so the editor
+            // is never opened on top of a question waiting for an answer.
+            Some(keys::ids::EDITOR_EXTERNAL) => return Some(Action::EditDraft),
             Some(keys::ids::APP_CANCEL) => {
                 // Cancel whenever a turn is actually running, which includes
                 // the stretch after a mid-turn error: the daemon has not
@@ -203,13 +299,82 @@ impl App {
                 }
                 return None;
             }
-            Some(keys::ids::APP_QUIT) => return Some(Action::Quit),
+            Some(keys::ids::APP_QUIT) => {
+                // `ctrl+d` on this key answers the draft before the session:
+                // with text in front of it, the cursor eats the character it
+                // sits on, and at the end of the draft there is nothing to eat,
+                // so the draft is kept. Only an empty draft leaves, and only
+                // while no turn is running: a key meant for the draft must not
+                // end work in progress. A file that moves `app.quit` to another
+                // key keeps the plain leave there, since this branch then
+                // answers a key that is not `ctrl+d`.
+                if pressed.is_some_and(is_ctrl_d) {
+                    if !self.input.is_empty() {
+                        self.history.reset();
+                        self.input.delete();
+                        return None;
+                    }
+                    if self.pending_turn {
+                        return None;
+                    }
+                }
+                return Some(Action::Quit);
+            }
             Some(keys::ids::APP_EXPAND_TOOL) => {
                 self.expand_tool();
                 return None;
             }
+            Some(keys::ids::APP_TOGGLE_TOOL_ACTIVITY) => {
+                self.toggle_tool_activity();
+                return None;
+            }
             Some(keys::ids::APP_CYCLE_EFFORT) => return self.cycle_effort(),
             Some(keys::ids::APP_PICK_MODEL) => return self.pick_model(),
+            // Copying reads what is already on screen and edits nothing: it
+            // returns before the editor, so the draft, its history and the
+            // caret stay exactly where they were, and `alt+c` does not type a
+            // `c` into the message being written.
+            Some(keys::ids::APP_COPY_DRAFT) => {
+                self.copy_draft();
+                return None;
+            }
+            Some(keys::ids::APP_COPY_LINE) => {
+                self.copy_line();
+                return None;
+            }
+            Some(keys::ids::APP_COPY_LAST) => {
+                self.copy_last_answer();
+                return None;
+            }
+            Some(keys::ids::APP_COPY_CODE) => {
+                self.copy_newest_code();
+                return None;
+            }
+            Some(keys::ids::APP_CYCLE_MODEL) => return self.cycle_model(true),
+            Some(keys::ids::APP_CYCLE_MODEL_BACK) => return self.cycle_model(false),
+            Some(keys::ids::APP_RETRY_TURN) => return self.retry_turn(),
+            Some(keys::ids::APP_TOGGLE_THINKING) => {
+                self.toggle_thinking();
+                return None;
+            }
+            Some(keys::ids::APP_PLAN_MODE) => {
+                if self.disconnected {
+                    self.warn("the harness connection is gone; plan mode cannot change");
+                    return None;
+                }
+                return Some(Action::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Plan,
+                    arguments: vec!["on".into()],
+                });
+            }
+            Some(keys::ids::APP_VOICE) => {
+                self.toggle_voice();
+                return None;
+            }
+            Some(keys::ids::APP_LIVE_VOICE) => {
+                self.toggle_live_voice();
+                return None;
+            }
             // Every edit ends a walk through the history: the draft on screen
             // is being changed, and a later `down` must not replace the change
             // with the entry the walk started from.
@@ -269,7 +434,7 @@ impl App {
     /// keystrokes would be. Otherwise the whole text lands in the draft as one
     /// edit, with its line breaks kept.
     pub fn on_paste(&mut self, text: &str) {
-        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() {
+        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() || self.side.is_some() {
             return;
         }
         self.history.reset();
@@ -291,25 +456,69 @@ impl App {
             keys::ids::APP_SCROLL_BOTTOM => self.scroll.to_bottom(),
             _ => return false,
         }
+        self.select_tool_in_view();
         true
     }
 
-    /// Show the whole output of the newest cut tool call, or the preview again.
+    /// Make the tool call on screen the one the expand key acts on.
+    ///
+    /// The view is the selection: scrolling to an earlier result makes that
+    /// result the one `ctrl+o` opens, and following the end selects the newest
+    /// kept call again. The row arithmetic lives here because the scrollback
+    /// owns the heights and the offset; the transcript owns which item sits at
+    /// a row.
+    fn select_tool_in_view(&mut self) {
+        if self.scroll.is_following() {
+            self.transcript.select_newest_tool();
+            return;
+        }
+        // Without a measurement from a held frame there is no row to map, and
+        // the selection is left where it was rather than guessed.
+        let Self {
+            scroll,
+            transcript,
+            viewport_height,
+            ..
+        } = self;
+        let (Some(heights), Some(view)) = (scroll.heights(), *viewport_height) else {
+            return;
+        };
+        let view = usize::from(view.saturating_sub(1).max(1));
+        let open = scroll.open_heights();
+        let total = heights.iter().sum::<usize>() + open[0] + open[1];
+        let top = total.saturating_sub(scroll.offset()).saturating_sub(view);
+        transcript.select_tool_at(heights, top, view);
+    }
+
+    /// Draw or hide the record of finished tool calls for this session.
+    ///
+    /// The setting is persisted from `/settings`; this key is the quick look
+    /// the conversation needs while a turn runs, so it changes what this client
+    /// draws now and leaves the file alone.
+    fn toggle_tool_activity(&mut self) {
+        let show = !self.transcript.show_tool_activity();
+        self.transcript.set_tool_activity(show);
+        // Rows appeared or went away without output arriving: the held view
+        // keeps the row it was reading instead of jumping.
+        self.scroll.reflow();
+        self.select_tool_in_view();
+    }
+
+    /// Show the whole output of the selected cut tool call, or the preview.
     ///
     /// With nothing to expand the key says so, because a key that silently does
     /// nothing reads as a broken key rather than an empty one.
     fn expand_tool(&mut self) {
+        // The frame just drawn knows where the view sits; a scroll key pressed
+        // before that frame cannot select a result it had no measurement for,
+        // so the press settles the selection again here.
+        self.select_tool_in_view();
         if self.transcript.toggle_expand() {
-            // The height of one block just changed, and a held view keeps its
-            // place from heights counted before the press: they are dropped so
-            // the next held frame recounts instead of trusting them.
-            self.scroll.invalidate();
-            // The view then goes back to the end. The newest kept call is
-            // usually at the end of what has been drawn, but not always: a
-            // message may have arrived after it, so this is a guess that the
-            // changed block is near the bottom, not a guarantee that the next
-            // frames show the expansion in full.
-            self.scroll.to_bottom();
+            // The height of one block just changed without output arriving:
+            // the held view is recounted and moved by the difference, which
+            // keeps the row on screen where it was instead of jumping to the
+            // end of the conversation.
+            self.scroll.reflow();
         } else {
             self.transcript.push_notice(crate::tool_expand::NOTHING_TO_EXPAND);
         }
@@ -323,21 +532,27 @@ impl App {
         usize::from(self.viewport_height.unwrap_or(24).saturating_sub(1).max(1))
     }
 
-    /// Take a mouse event into the transcript view.
+    /// Take a mouse event into the transcript view or the draft.
     ///
-    /// Only the wheel is used, and only while `transcript.mouse_scroll` holds
-    /// the capture that makes the terminal report it: a client with no
-    /// focusable regions has nothing for a click to mean, and the settings
-    /// screen covers the pane the wheel would move.
+    /// The wheel is used only while `transcript.mouse_scroll` holds the capture
+    /// that makes the terminal report it, and the settings screen covers the
+    /// pane the wheel would move. A left click in the draft places the caret at
+    /// the cell it covered on the last frame; a click elsewhere on screen has
+    /// nothing to mean.
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
-        if !self.mouse_scroll || self.overlay.is_some() || self.picker.is_some() {
+        if !self.mouse_scroll || self.overlay.is_some() || self.picker.is_some() || self.side.is_some() {
             return;
         }
         match mouse.kind {
             MouseEventKind::ScrollUp => self.scroll.up(scroll::WHEEL_ROWS),
             MouseEventKind::ScrollDown => self.scroll.down(scroll::WHEEL_ROWS),
-            _ => {}
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.input.place_caret(mouse.column, mouse.row);
+                return;
+            }
+            _ => return,
         }
+        self.select_tool_in_view();
     }
 
     /// Move up: through the lines of the draft, then back through the history.
@@ -361,6 +576,16 @@ impl App {
             self.input.set_text(&entry);
         }
     }
+}
+
+/// Whether a keystroke is the shipped `ctrl+d`.
+///
+/// Only this spelling carries the draft-aware meaning; `app.quit` on any other
+/// key leaves exactly as it always did. Shift on a character never reaches
+/// [`Key`] (the terminal sends the character itself), and alt makes it another
+/// key, which keeps `alt+ctrl+d` out of the draft branch.
+fn is_ctrl_d(key: Key) -> bool {
+    key.code == keys::Code::Char('d') && key.ctrl && !key.alt
 }
 
 /// The draft with the backslash that asks for another line taken off.

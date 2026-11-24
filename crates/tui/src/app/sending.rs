@@ -1,8 +1,17 @@
 //! Getting a submitted line to the harness, and what happens when it
 //! cannot be sent: the queue, the in-flight slot, refusals and the turn start.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 use super::{Action, App, Message, PendingSteer};
 use crate::commands::Invocation;
+use crate::overlays::picker::{Kind, Outcome, Picker, Row};
+
+/// The title the queue list is drawn with.
+const QUEUE_TITLE: &str = "Queued messages";
+
+/// What the queue list says when it holds nothing.
+const QUEUE_EMPTY: &str = "no messages are waiting for the turn to end";
 
 impl App {
     /// A message the bridge could not deliver.
@@ -15,6 +24,9 @@ impl App {
     /// lost: otherwise the client would keep saying it is ready to send.
     pub fn send_failed(&mut self, text: &str, message: &str, lost: bool) {
         self.pending_turn = false;
+        // The turn never reached the harness, so there is no completed turn to
+        // measure; a later end-of-turn frame must not describe this one.
+        self.transcript.discard_turn();
         self.session_status = Some("idle".to_string());
         let display = self.take_in_flight(text);
         // Only the line this send drew is taken back: another message with the
@@ -61,10 +73,23 @@ impl App {
     /// A message the harness refused holds the queue until the next turn ends
     /// or the user submits again, so a refused send cannot loop.
     pub fn take_queued(&mut self) -> Option<Action> {
+        // A package command's expansion was drawn and marked as a turn the
+        // moment its answer arrived, exactly as a typed message is; only its
+        // send was left for this pass, because the delivery that produced it
+        // holds no command sender.
+        if let Some(action) = self.package_send.take() {
+            return Some(action);
+        }
+        if let Some(text) = self.voice.live.take_pending_send() {
+            return Some(Action::Send(text));
+        }
         if self.pending_turn || self.disconnected {
             return None;
         }
         if let Some(model) = self.model_after_turn.take() {
+            // The cycle keys step from here until an answer names the model,
+            // exactly as one sent straight away does.
+            self.model_requested = Some(model.clone());
             return Some(Action::Model(model));
         }
         if let Some(level) = self.effort_after_turn.take() {
@@ -80,7 +105,206 @@ impl App {
         self.queue.remove(0);
         self.transcript.promote_queued(&message.display);
         self.in_flight = Some(message.clone());
+        // The open list loses the row that just left; with nothing behind it
+        // the list closes rather than swallowing the next key.
+        self.refresh_queue_panel(0);
         Some(self.start_turn(message.text))
+    }
+
+    /// Open the list of messages waiting for the running turn to end.
+    ///
+    /// The list holds only the queue: the message the bridge already has, the
+    /// messages a steer handed to the running turn, and the prompts asking for
+    /// a decision are not waiting for this turn, and editing them would break
+    /// an answer the harness is still going to give.
+    pub(crate) fn open_queue(&mut self) -> Option<Action> {
+        if self.queue.is_empty() {
+            self.transcript.push_notice(QUEUE_EMPTY);
+            return None;
+        }
+        self.picker = Some(Picker::new(Kind::Queue, QUEUE_TITLE, self.queue_rows(), QUEUE_EMPTY));
+        None
+    }
+
+    /// One keystroke inside the queue list.
+    ///
+    /// The list is the generic one with three keys of its own: `enter` takes
+    /// the row back into the editor, `delete` drops it, and `alt+up` or
+    /// `alt+down` moves it past its neighbour. Everything else — the filter,
+    /// the arrows, the pages — is the list's own, and `esc` closes without
+    /// changing the queue.
+    pub(crate) fn queue_panel_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // A turn boundary or a refused send can change the queue between keys:
+        // the rows are read again first, and the list closes when the last
+        // message has left it.
+        self.sync_queue_panel();
+        if !self.queue_panel_open() {
+            return None;
+        }
+        match key.code {
+            KeyCode::Esc => self.picker = None,
+            KeyCode::Enter => self.edit_queued(),
+            KeyCode::Delete => self.remove_queued(),
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => self.move_queued(-1),
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => self.move_queued(1),
+            _ => {
+                // `enter` and `esc` never reach the list: the rows are edited
+                // here rather than chosen, and closing means "change nothing".
+                let mut picker = self.picker.take()?;
+                if picker.on_key(key) == Outcome::Handled {
+                    self.picker = Some(picker);
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether the open list is the queue's.
+    fn queue_panel_open(&self) -> bool {
+        self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Queue)
+    }
+
+    /// The row under the cursor, as an index into the queue.
+    fn selected_queue_index(&self) -> Option<usize> {
+        let index = self.picker.as_ref()?.selected_index()?;
+        (index < self.queue.len()).then_some(index)
+    }
+
+    /// One row per queued message, in the order the messages will be sent.
+    ///
+    /// The row's value is its place in the queue rather than its text: two
+    /// messages can say the same thing, and the one the user selected is the
+    /// one they must be able to take back. Its second column counts the row in
+    /// that order, so a moved message says where it now sits.
+    fn queue_rows(&self) -> Vec<Row> {
+        let total = self.queue.len();
+        self.queue
+            .iter()
+            .enumerate()
+            .map(|(index, message)| {
+                let lines: Vec<String> = message.display.split('\n').map(str::to_string).collect();
+                let label = message
+                    .display
+                    .split_once('\n')
+                    .map_or(message.display.as_str(), |(first, _)| first);
+                Row::new(label.to_owned(), index.to_string())
+                    .with_detail(format!("{}/{}", index + 1, total))
+                    .with_preview(lines)
+                    .with_search(vec![message.display.clone()])
+            })
+            .collect()
+    }
+
+    /// Read the queue again into the open list, keeping `keep` selected.
+    ///
+    /// The list closes once the queue is empty: an empty panel would swallow
+    /// every key and say nothing about the session underneath it.
+    fn refresh_queue_panel(&mut self, keep: usize) {
+        if !self.queue_panel_open() {
+            return;
+        }
+        if self.queue.is_empty() {
+            self.picker = None;
+            return;
+        }
+        let rows = self.queue_rows();
+        let keep = keep.min(self.queue.len() - 1);
+        if let Some(picker) = self.picker.as_mut() {
+            picker.replace_rows(rows, keep);
+        }
+    }
+
+    /// Bring the open list in line with the queue, cursor and all.
+    fn sync_queue_panel(&mut self) {
+        let keep = self.selected_queue_index().unwrap_or(0);
+        self.refresh_queue_panel(keep);
+    }
+
+    /// Take the row under the cursor out of the queue and back into the editor.
+    ///
+    /// The message was never sent, so its row is taken back and no action
+    /// leaves: the user edits the text and submits it when it is ready. The
+    /// editor is the only place that holds a message, so a draft already there
+    /// is not overwritten; the message stays queued until that draft is sent or
+    /// cleared, and the warning says so.
+    fn edit_queued(&mut self) {
+        if !self.input.is_empty() {
+            // The list covers the transcript, so the only way the reason can
+            // be read is with the list closed; the queue itself is unchanged.
+            self.picker = None;
+            self.warn("the editor already holds a draft; send or clear it before editing the queue");
+            return;
+        }
+        let Some(index) = self.selected_queue_index() else {
+            return;
+        };
+        let occurrence = self.queued_occurrence(index);
+        let message = self.queue.remove(index);
+        self.transcript.retract_queued(&message.display, occurrence);
+        // The line the user typed goes back, not the body a command file
+        // expands to: an edit has to show what they wrote, and submitting it
+        // again resolves the same line.
+        self.input.set_text(&message.display);
+        self.picker = None;
+    }
+
+    /// How many messages ahead of `index` carry the same line.
+    ///
+    /// A queued row holds the text rather than an identity, so two messages
+    /// saying the same thing are told apart by their place: the second `same`
+    /// owns the second `same` row.
+    fn queued_occurrence(&self, index: usize) -> usize {
+        let Some(message) = self.queue.get(index) else {
+            return 0;
+        };
+        self.steer_pending
+            .iter()
+            .filter(|pending| self.carried_into(pending))
+            .flat_map(|pending| pending.messages.iter())
+            .chain(&self.queue[..index])
+            .filter(|earlier| earlier.display == message.display)
+            .count()
+    }
+
+    /// Drop the row under the cursor from the queue.
+    ///
+    /// Only that message goes, and only its own waiting row: two messages with
+    /// the same text are still two queue entries, each with the row that
+    /// announced it.
+    fn remove_queued(&mut self) {
+        let Some(index) = self.selected_queue_index() else {
+            return;
+        };
+        let occurrence = self.queued_occurrence(index);
+        let message = self.queue.remove(index);
+        self.transcript.retract_queued(&message.display, occurrence);
+        // The cursor stays on the row that took its place, or on the last row
+        // when the removed one was the last; an emptied queue closes the list.
+        self.refresh_queue_panel(index);
+    }
+
+    /// Move the row under the cursor one place earlier or later.
+    ///
+    /// The message travels past the row drawn next to it, which is not the
+    /// next index when a filter hides rows between them: it is taken out and
+    /// put back beside that neighbour, so the hidden messages keep their own
+    /// order. Only the queue changes — a waiting row in the conversation keeps
+    /// the place it was typed in, and each is promoted there when its message
+    /// is sent, so moving a message never draws it twice. The message under the
+    /// cursor is the one that moved, and the cursor stays on it.
+    fn move_queued(&mut self, steps: isize) {
+        let Some(index) = self.selected_queue_index() else {
+            return;
+        };
+        let Some(neighbour) = self.picker.as_ref().and_then(|picker| picker.neighbour_index(steps)) else {
+            return;
+        };
+        if neighbour >= self.queue.len() {
+            return;
+        }
+        let message = self.queue.remove(index);
+        self.queue.insert(neighbour, message);
+        self.refresh_queue_panel(neighbour);
     }
 
     /// Put a message that was not sent back where the user can see it.
@@ -95,6 +319,9 @@ impl App {
         }
         self.transcript.push_queued(text);
         self.queue.push(Message::new(text.to_string(), None));
+        // The open list gains the message the refusal put back, in the place
+        // it will be sent from.
+        self.sync_queue_panel();
     }
 
     /// Resolve one submitted line and turn it into an action.
@@ -116,11 +343,67 @@ impl App {
                 }
                 Some(Action::Runtime { command, arguments })
             }
+            // A package command is asked of the harness, which decides whether
+            // it expands into a message or runs as its own command. The typed
+            // line travels with the request so the expansion is drawn as it.
+            Invocation::Package {
+                package_id,
+                command,
+                arguments,
+                display,
+            } => {
+                if self.disconnected {
+                    self.refuse(text);
+                    return None;
+                }
+                Some(Action::PackageCommand {
+                    package_id,
+                    command,
+                    arguments,
+                    display,
+                })
+            }
             Invocation::Error(message) => {
                 self.warn(message);
                 None
             }
         }
+    }
+
+    /// `/retry` and `alt+r`: ask the daemon to continue its last failed run.
+    pub(crate) fn retry_turn(&mut self) -> Option<Action> {
+        if self.disconnected {
+            self.warn("retry: the connection to the harness is gone, so no turn can be continued");
+            return None;
+        }
+        // A retry that started a turn is already the answer to a second press:
+        // the daemon refuses a continuation for a run that moved on, and asking
+        // it again would only add a refusal the user already saw.
+        if self.pending_turn {
+            self.warn("retry: a turn is running, so there is no failed turn to continue");
+            return None;
+        }
+        // Retrying is an action the user took, so like a sent message it clears
+        // the mark a finished turn left on the tab.
+        self.note_user_attention();
+        self.pending_turn = true;
+        self.transcript.begin_turn();
+        self.session_status = Some("generating".to_string());
+        Some(Action::Retry)
+    }
+
+    /// The retry that was asked for ran nothing.
+    ///
+    /// The press claimed a turn on screen, so the claim is given back: the turn
+    /// is not running, the status returns to idle, and the sentence says which
+    /// requirement the request failed. Without this the client would keep
+    /// drawing a turn that never started, and the next `esc` would try to cancel
+    /// it.
+    pub(crate) fn retry_refused(&mut self, message: &str) {
+        self.pending_turn = false;
+        self.transcript.discard_turn();
+        self.session_status = Some("idle".to_string());
+        self.warn(message);
     }
 
     /// Send a message now, or queue it while a turn is running.
@@ -129,7 +412,7 @@ impl App {
     /// processing a message", which loses the text and shows the user an
     /// error for doing something ordinary. The message is kept instead and
     /// sent when the turn ends.
-    fn send_or_queue(&mut self, text: String, display: Option<String>) -> Option<Action> {
+    pub(crate) fn send_or_queue(&mut self, text: String, display: Option<String>) -> Option<Action> {
         // An explicit submit is the user asking again, so a refusal that was
         // holding the queue back no longer blocks this message.
         self.resend_held = false;
@@ -143,8 +426,14 @@ impl App {
         // answer are drawn below the window until `ctrl+end`. The commands that
         // hold the view on purpose (`/keys`) never reach this function.
         self.scroll.to_bottom();
+        // A line the user typed reaches the recording when it is accepted, not
+        // when the draft is edited: an unsent draft never becomes an event. The
+        // whole line is kept, not the body a command file expands to, because
+        // the line is what the conversation showed.
         if self.pending_turn {
             self.transcript.push_queued(message.display.clone());
+            self.record_new_assistants();
+            self.record_event(crate::recording::Event::User(message.display.clone()));
             self.queue.push(message);
             return None;
         }
@@ -152,6 +441,8 @@ impl App {
         // the conversation reads in the order things were typed, and a line
         // that was never delivered does not survive the refusal.
         self.transcript.push_user(message.display.clone());
+        self.record_new_assistants();
+        self.record_event(crate::recording::Event::User(message.display.clone()));
         self.in_flight = Some(message.clone());
         Some(self.start_turn(message.text))
     }
@@ -191,6 +482,9 @@ impl App {
             session_id: self.session_id.clone(),
             messages: std::mem::take(&mut self.queue),
         });
+        // The queue went with the steer: the open list closes rather than
+        // offering rows whose messages the running turn may already have.
+        self.refresh_queue_panel(0);
         Some(Action::Steer(text))
     }
 
@@ -289,6 +583,9 @@ impl App {
         let mut restored = pending.messages;
         restored.append(&mut self.queue);
         self.queue = restored;
+        // The messages are in front again, in their own order: an open list
+        // reads them from the top so the refusal and the queue agree.
+        self.refresh_queue_panel(0);
     }
 
     /// Put a steer the connection lost back in front of the queue.
@@ -317,6 +614,7 @@ impl App {
         }
         restored.append(&mut self.queue);
         self.queue = restored;
+        self.refresh_queue_panel(0);
     }
 
     /// Say that a message went nowhere, and put it back in front of the user.
@@ -327,7 +625,13 @@ impl App {
 
     /// Mark a turn as running and hand the text to the bridge.
     fn start_turn(&mut self, text: String) -> Action {
+        // The user just acted, so the mark a finished or failed turn left on
+        // the tab has been seen and the next report is the running turn.
+        self.note_user_attention();
         self.pending_turn = true;
+        // Measured from the moment the message is handed to the bridge, so the
+        // footer describes the whole turn rather than only its last request.
+        self.transcript.begin_turn();
         self.session_status = Some("generating".to_string());
         Action::Send(text)
     }
@@ -351,3 +655,7 @@ fn joined_text(messages: &[Message]) -> String {
     }
     body
 }
+
+#[cfg(test)]
+#[path = "retry_tests.rs"]
+mod retry_tests;

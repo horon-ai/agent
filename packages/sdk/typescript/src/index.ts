@@ -21,8 +21,10 @@ export { bundledHoronAgentBinary, platformBinaryPackage } from "./binary.js";
 export { HoronAgentClient, unixSocketTransport } from "./client.js";
 export type { SdkTool, SessionToolsOptions, ToolExecutionContext, ToolResult } from "./tools.js";
 export type {
+  A2uiEnvelopeEvent,
   ApprovalAckReceipt,
   AssistantTextMessage,
+  AttachSessionOptions,
   ConnectOptions,
   CreateSessionOptions,
   FailoverAckReceipt,

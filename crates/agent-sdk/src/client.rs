@@ -31,6 +31,8 @@ use std::time::Duration;
 // budget; re-exported here so every path that named it keeps working.
 pub use crate::connect_options::ConnectOptions;
 
+mod session_fork;
+
 /// Options fixed when a session is created.
 #[derive(Clone, Debug, Default)]
 pub struct CreateSessionOptions {
@@ -43,6 +45,8 @@ pub struct CreateSessionOptions {
     /// overrides it with an empty prompt. Immutable after creation and persisted
     /// by the runtime for resume.
     pub system_prompt: Option<String>,
+    /// Optional A2UI v1.0 renderer capabilities for the created session.
+    pub a2ui: Option<horon_agent_harness_api::A2uiSessionCapabilities>,
 }
 
 /// A duplex byte transport. Lets tests and future WebSockets plug in.
@@ -716,6 +720,7 @@ impl HoronAgentClient {
             supports_ask_requests: false,
             request_timeout: options.request_timeout,
             ensure_runtime: false,
+            a2ui: options.a2ui.clone(),
         };
         // A remote connection has no local socket path. Do not resolve the
         // user's local configuration just to manufacture one.
@@ -767,6 +772,7 @@ impl HoronAgentClient {
             client_name: options.client_name.clone(),
             request_timeout: options.request_timeout,
             ensure_runtime: false,
+            a2ui: None,
         };
         let mut client = Self::connect(connect)?;
         client.instance_home = Some(instance.horon_agent_home.clone());
@@ -846,6 +852,7 @@ impl HoronAgentClient {
                     .iter()
                     .map(|capability| (*capability).to_owned())
                     .collect(),
+                a2ui: options.a2ui.clone(),
             },
             hello_timeout,
         )?;
@@ -1120,10 +1127,12 @@ impl HoronAgentClient {
     /// Create a session with optional full system prompt replacement.
     /// See [`CreateSessionOptions::system_prompt`] for override semantics.
     pub fn create_session_with_options(&self, options: CreateSessionOptions) -> Result<SessionInfo> {
+        crate::a2ui::require_if_configured(self, options.a2ui.as_ref(), "create_session with a2ui")?;
         match self
             .request_ok(ApiRequest::CreateSession {
                 working_dir: options.working_dir,
                 system_prompt: options.system_prompt,
+                a2ui: options.a2ui,
             })?
             .event
         {
@@ -1133,15 +1142,7 @@ impl HoronAgentClient {
     }
 
     pub fn attach_session(&self, session_id: &str) -> Result<SessionInfo> {
-        match self
-            .request_ok(ApiRequest::AttachSession {
-                session_id: session_id.to_string(),
-            })?
-            .event
-        {
-            ApiEvent::Attached { session } => Ok(session),
-            other => Err(unexpected("attached", &other)),
-        }
+        self.attach_session_with_options(session_id, crate::a2ui::AttachSessionOptions::default())
     }
 
     /// Clone a session's complete persisted context into a new idle session.
@@ -1149,18 +1150,6 @@ impl HoronAgentClient {
         match self
             .request_ok(ApiRequest::TransferSession {
                 session_id: session_id.into(),
-            })?
-            .event
-        {
-            ApiEvent::SessionForked { session } => Ok(session),
-            other => Err(unexpected("session_forked", &other)),
-        }
-    }
-
-    pub fn fork_session(&self, session_id: &str) -> Result<SessionInfo> {
-        match self
-            .request_ok(ApiRequest::ForkSession {
-                session_id: session_id.to_string(),
             })?
             .event
         {
@@ -1185,6 +1174,7 @@ impl HoronAgentClient {
             system_reminder: Some(reminder.to_string()),
             images: Vec::new(),
             no_reply: false,
+            expected_run_id: None,
         })
     }
 
@@ -1202,6 +1192,7 @@ impl HoronAgentClient {
             system_reminder: None,
             images: Vec::new(),
             no_reply: true,
+            expected_run_id: None,
         })
         .map(drop)
     }
@@ -1246,6 +1237,7 @@ impl HoronAgentClient {
                 .map(str::to_owned),
             images,
             no_reply: false,
+            expected_run_id: None,
         })?;
         if let (Some(stream), Some(timeout)) = (stream, wait_for_accept) {
             let deadline = std::time::Instant::now() + timeout;
@@ -1598,32 +1590,6 @@ impl HoronAgentClient {
     }
 
     /// Read safe filesystem metadata for a path under the session root.
-    /// The session's persisted todo state for the auto-poke and quality-gate
-    /// policy. Requires the `todo_state` capability.
-    pub fn todo_state(&self, session_id: &str) -> Result<horon_agent_todo_policy::TodoSnapshot> {
-        match self
-            .request_ok(ApiRequest::GetTodoState {
-                session_id: session_id.to_string(),
-            })?
-            .event
-        {
-            ApiEvent::TodoState { state, .. } => Ok(state),
-            other => Err(unexpected("todo_state", &other)),
-        }
-    }
-
-    /// Apply a follow-up decision's persistent effects. A no-op when empty.
-    pub fn ack_todo_follow_up(&self, session_id: &str, effects: horon_agent_todo_policy::TodoEffects) -> Result<()> {
-        if effects.is_empty() {
-            return Ok(());
-        }
-        self.request_ok(ApiRequest::AckTodoFollowUp {
-            session_id: session_id.to_string(),
-            effects,
-        })
-        .map(drop)
-    }
-
     pub fn file_status(&self, session_id: &str, path: &str) -> Result<FileStatus> {
         match self
             .request_ok(ApiRequest::FileStatus {
@@ -2329,6 +2295,15 @@ impl HoronAgentClient {
                     result.stop_reason = Some(reason);
                     result.stop_message = Some(message);
                 }
+                ApiEvent::A2uiEnvelope {
+                    tool_call_id,
+                    sequence,
+                    envelope,
+                    fallback_text,
+                    ..
+                } => {
+                    crate::a2ui::push_envelope(&mut result, tool_call_id, sequence, envelope, fallback_text);
+                }
                 ApiEvent::TurnDone { .. } => {
                     text_stream.finish(&mut result);
                     return Ok(result);
@@ -2348,6 +2323,8 @@ impl HoronAgentClient {
     }
 }
 
+mod package_commands;
+mod package_control;
 mod types;
 pub use types::*;
 
@@ -2447,6 +2424,7 @@ fn start_global_child(parent: &HoronAgentClient, control: &Arc<GlobalEventContro
     let connection = if let Some(options) = &parent.ssh_options {
         let mut options = options.clone();
         options.client_name = format!("{}/global-events", parent.inner.client_name);
+        options.a2ui = None;
         #[cfg(unix)]
         let shared = parent.shared_ssh_transport();
         #[cfg(unix)]
@@ -2475,6 +2453,7 @@ fn start_global_child(parent: &HoronAgentClient, control: &Arc<GlobalEventContro
             client_name: format!("{}/global-events", parent.inner.client_name),
             request_timeout: parent.inner.request_timeout,
             ensure_runtime: false,
+            a2ui: None,
         })
     };
     let child = match connection {
@@ -2645,6 +2624,7 @@ fn event_session(event: &ApiEvent) -> Option<&str> {
         | BackgroundProgress { session_id, .. }
         | BackgroundOutput { session_id, .. }
         | TodoChanged { session_id }
+        | A2uiEnvelope { session_id, .. }
         | MessageAccepted { session_id, .. }
         | PermissionRequest { session_id, .. }
         | SessionStatus { session_id, .. }

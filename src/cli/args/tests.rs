@@ -1,3 +1,4 @@
+use super::provider_args::ProviderTypeArg;
 use super::*;
 use crate::cli::provider_init::ProviderChoice;
 
@@ -134,7 +135,7 @@ fn remote_working_dir_option_parses() {
 fn model_list_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "model", "list", "--json", "--verbose"]).unwrap();
     match args.command {
-        Some(Command::Model(ModelCommand::List { json, verbose })) => {
+        Some(Command::Model(ModelCommand::List { json, verbose, .. })) => {
             assert!(json);
             assert!(verbose);
         }
@@ -233,7 +234,9 @@ fn rpc_subcommand_wins_over_the_mode_flag() {
 fn run_json_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "run", "--json", "hello"]).unwrap();
     match args.command {
-        Some(Command::Run { json, ndjson, message }) => {
+        Some(Command::Run {
+            json, ndjson, message, ..
+        }) => {
             assert!(json);
             assert!(!ndjson);
             assert_eq!(message, "hello");
@@ -246,7 +249,9 @@ fn run_json_subcommand_parses() {
 fn run_ndjson_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "run", "--ndjson", "hello"]).unwrap();
     match args.command {
-        Some(Command::Run { json, ndjson, message }) => {
+        Some(Command::Run {
+            json, ndjson, message, ..
+        }) => {
             assert!(!json);
             assert!(ndjson);
             assert_eq!(message, "hello");
@@ -450,7 +455,7 @@ fn api_bridge_socket_flags_do_not_collide() {
     assert_eq!(args.socket.as_deref(), Some("/tmp/daemon.sock"));
     assert!(matches!(
         args.command,
-        Some(Command::ApiBridge { api_socket: Some(ref path), stdio: false }) if path == "/tmp/api.sock"
+        Some(Command::ApiBridge { api_socket: Some(ref path), stdio: false, .. }) if path == "/tmp/api.sock"
     ));
 
     // The bare form must resolve both paths from the environment.
@@ -459,7 +464,8 @@ fn api_bridge_socket_flags_do_not_collide() {
         bare.command,
         Some(Command::ApiBridge {
             api_socket: None,
-            stdio: false
+            stdio: false,
+            ..
         })
     ));
 
@@ -473,7 +479,8 @@ fn api_bridge_socket_flags_do_not_collide() {
                 Some(_),
                 Some(Command::ApiBridge {
                     api_socket: None,
-                    stdio: false
+                    stdio: false,
+                    ..
                 })
             ))
         ),
@@ -500,12 +507,46 @@ fn api_stdio_accepts_alias_and_daemon_socket_but_not_api_socket() {
             args.command,
             Some(Command::ApiBridge {
                 api_socket: None,
-                stdio: true
+                stdio: true,
+                ..
             })
         ));
         assert!(
             Args::try_parse_from(["horon-agent", command, "--stdio", "--api-socket", "/isolated/api.sock",]).is_err(),
             "stdio must not silently ignore an API socket override"
         );
+    }
+}
+
+#[test]
+fn run_parses_a2ui_flag_and_repeatable_catalogs() {
+    let args = Args::try_parse_from([
+        "horon-agent",
+        "run",
+        "--a2ui",
+        "--a2ui-catalog",
+        "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+        "--a2ui-catalog",
+        "https://example.com/custom.json",
+        "Build status card",
+    ])
+    .expect("parse run --a2ui with catalogs");
+    match args.command {
+        Some(Command::Run {
+            model_overrides,
+            message,
+            ..
+        }) => {
+            assert!(model_overrides.a2ui);
+            assert_eq!(
+                model_overrides.a2ui_catalog,
+                vec![
+                    "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+                    "https://example.com/custom.json",
+                ]
+            );
+            assert_eq!(message, "Build status card");
+        }
+        other => panic!("expected Run command, got {other:?}"),
     }
 }

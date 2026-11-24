@@ -24,6 +24,7 @@ const AGENTGREP_FOREGROUND_BUDGET: Duration = Duration::from_secs(5);
 
 mod args;
 mod context;
+mod locate;
 
 use self::args::{
     build_find_args, build_grep_args_with_note, build_outline_args, build_smart_args_and_query, resolve_search_root,
@@ -73,6 +74,8 @@ struct AgentGrepInput {
     debug_score: Option<bool>,
     #[serde(default)]
     paths_only: Option<bool>,
+    #[serde(flatten)]
+    grep_context: args::GrepContext,
 }
 
 /// Default cap on rendered grep matches.
@@ -184,7 +187,7 @@ impl Tool for AgentGrepTool {
     }
 
     fn description(&self) -> &str {
-        "Search code and file names. Defaults to grep mode when mode is omitted."
+        "Search text, file names, outlines or relationships."
     }
 
     fn effects(&self) -> ToolEffects {
@@ -198,49 +201,57 @@ impl Tool for AgentGrepTool {
                 "intent": super::intent_schema_property(),
                 "mode": {
                     "type": "string",
-                    "enum": ["grep", "find", "outline", "trace"],
-                    "description": "grep (default), find (file names), outline (one file), trace (relationship DSL)."
+                    "enum": ["grep", "find", "outline", "trace", "locate"],
+                    "description": "Defaults to grep. locate ranks code locations for a plain-language description in query."
                 },
                 "query": {
                     "type": "string",
-                    "description": "Required for grep (literal unless regex=true); optional ranking terms for find."
+                    "description": "Search text for grep; ranking terms for find."
                 },
                 "file": {
                     "type": "string",
-                    "description": "Single file to inspect. Required for outline."
+                    "description": "Required for outline."
                 },
                 "terms": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Trace DSL terms, e.g. [\"subject:auth_status\"]. Not grep; use query."
+                    "description": "Trace DSL terms, e.g. [\"subject:auth_status\"]."
                 },
                 "regex": {
                     "type": "boolean",
-                    "description": "grep mode: query is a regex. Default false (literal)."
+                    "description": "Use regex in grep; defaults to literal."
                 },
                 "path": {
                     "type": "string",
-                    "description": "Directory or file to search, relative to the workspace; default: all of it."
+                    "description": "File or directory; defaults to workspace."
                 },
                 "glob": {
                     "type": "string",
-                    "description": "File glob filter such as **/*.rs."
+                    "description": "File glob, e.g. **/*.rs."
                 },
                 "type": {
                     "type": "string",
-                    "description": "ripgrep file type filter, such as rs, py, js, ts, or md."
+                    "description": "ripgrep file type, e.g. rs or md."
                 },
                 "max_files": {
                     "type": "integer",
-                    "description": "Maximum files to return in find/trace modes."
+                    "description": "File cap for find/trace."
                 },
                 "max_regions": {
                     "type": "integer",
-                    "description": "Maximum matching regions to return."
+                    "description": "Match limit."
+                },
+                "before": {
+                    "type": "integer",
+                    "description": "Lines before grep matches (0–20)."
+                },
+                "after": {
+                    "type": "integer",
+                    "description": "Lines after grep matches (0–20)."
                 },
                 "paths_only": {
                     "type": "boolean",
-                    "description": "Return matching paths, not excerpts, where supported."
+                    "description": "Return paths only."
                 }
             }
         })
@@ -419,9 +430,16 @@ fn execute_linked_agentgrep(
             // benchmark transcripts produced 923k chars in a single call. The
             // header still reports the true total, so the caller sees that more
             // matches exist and can raise the cap deliberately.
-            let max_regions = params.max_regions.or(Some(DEFAULT_GREP_MAX_REGIONS));
-            let rendered = render_grep_output(&result, &args, max_regions);
+            let max_regions = params.max_regions.unwrap_or(DEFAULT_GREP_MAX_REGIONS);
+            let (before, after) = params.grep_context.bounded();
+            let with_context = !args.paths_only && (before, after) != (0, 0);
+            let rendered = if with_context {
+                render_grep_context(&root, &result, max_regions, before, after)?
+            } else {
+                render_grep_output(&result, &args, Some(max_regions))
+            };
             let rendered = match regex_note {
+                Some(note) if with_context => format!("{}\n{rendered}", util::truncate_str(&note, 512)),
                 Some(note) => format!("{note}\n{rendered}"),
                 None => rendered,
             };
@@ -448,11 +466,136 @@ fn execute_linked_agentgrep(
             );
             Ok(ToolOutput::new(render_smart_output(&result, &args)).with_title(format!("agentgrep {}", params.mode)))
         }
+        "locate" => {
+            let query = params
+                .query
+                .as_deref()
+                .filter(|query| !query.trim().is_empty())
+                .ok_or_else(|| anyhow::anyhow!("locate requires a query describing the behavior to find"))?;
+            let root = resolve_search_root(ctx, params.path.as_deref())?;
+            let rendered = locate::run_locate(&root, query, params.max_regions, params.max_files)?;
+            Ok(ToolOutput::new(rendered).with_title("agentgrep locate"))
+        }
         _ => Err(anyhow::anyhow!(
-            "Unsupported agentgrep mode: {}. Use grep, find, outline, or trace.",
+            "Unsupported agentgrep mode: {}. Use grep, find, outline, trace, or locate.",
             params.mode
         )),
     }
+}
+
+fn render_grep_context(
+    root: &Path,
+    result: &GrepResult,
+    max_regions: usize,
+    before: usize,
+    after: usize,
+) -> Result<String> {
+    use std::fmt::Write as _;
+    use std::io::Read as _;
+
+    const FILE_BYTES: usize = 2 * 1024 * 1024;
+    const OMITTED: &str = "\n[More grep results omitted: output limit reached.]";
+    let mut read_bytes_left = FILE_BYTES * 4;
+    let mut out = String::with_capacity((result.total_matches.min(64) * 96).saturating_add(128));
+    write!(
+        out,
+        "query: {}\nmatches: {} in {} files",
+        util::truncate_str(&result.query, 1024),
+        result.total_matches,
+        result.total_files
+    )?;
+    let mut displayed = 0;
+    // Leave room for the regex fallback note and a truncation notice.
+    let out_limit = super::artifacts::GENERIC_CONDENSE_BUDGET_BYTES - 513 - OMITTED.len();
+    let mut file_bytes = Vec::new();
+    let mut selected: Vec<(usize, Option<&str>)> = Vec::new();
+    for file in &result.files {
+        let count = file
+            .matches
+            .len()
+            .min(max_regions.saturating_sub(displayed))
+            .min(DEFAULT_GREP_MAX_REGIONS);
+        if count == 0 {
+            break;
+        }
+        if out.len() + 1100 > out_limit {
+            out.push_str(OMITTED);
+            return Ok(out);
+        }
+
+        // The join allocates, so it is built only on the route that reads the
+        // file; a match already carrying its own line text needs no path at all.
+        let has_text = if file.path_bytes.is_none() && read_bytes_left != 0 {
+            let path = root.join(&file.path);
+            let bytes_limit = read_bytes_left.min(FILE_BYTES);
+            file_bytes.clear();
+            if let Ok(opened) = std::fs::File::open(&path)
+                && let Ok(meta) = opened.metadata()
+                && meta.is_file()
+            {
+                let reserve = (meta.len().min(bytes_limit as u64) as usize).saturating_add(1);
+                file_bytes.reserve(reserve);
+                let read = opened.take(bytes_limit as u64).read_to_end(&mut file_bytes);
+                read_bytes_left -= file_bytes.len();
+                read.is_ok() && file_bytes.len() < bytes_limit && !file_bytes.contains(&0)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        selected.clear();
+        for matched in &file.matches[..count] {
+            if has_text {
+                let first = matched.line_number.saturating_sub(before).max(1);
+                let last = matched.line_number.saturating_add(after);
+                for line in first..=last {
+                    selected.push((line, None));
+                }
+            }
+            selected.push((matched.line_number, Some(matched.line_text.as_str())));
+        }
+        selected.sort_by_key(|&(line, _)| line);
+        selected.dedup_by(|later, earlier| {
+            if later.0 == earlier.0 {
+                if later.1.is_some() {
+                    earlier.1 = later.1;
+                }
+                true
+            } else {
+                false
+            }
+        });
+
+        let source = has_text.then(|| String::from_utf8_lossy(&file_bytes));
+        let mut lines = source.as_deref().unwrap_or("").lines();
+        let mut previous = 0;
+        out.push_str("\n\n");
+        out.push_str(util::truncate_str(&file.path, 1024));
+        if source.is_none() {
+            out.push_str("\n  [Context unavailable within the file-read budget.]");
+        }
+        for &(line, matched_text) in &selected {
+            let source_line = lines.nth(line - previous - 1);
+            previous = line;
+            let (marker, text) = match (matched_text, source_line) {
+                (Some(text), _) => ('@', text),
+                (None, Some(text)) => (' ', text),
+                (None, None) => continue,
+            };
+            let text = util::truncate_str(text, 240);
+            if out.len() + text.len() + 32 > out_limit {
+                out.push_str(OMITTED);
+                return Ok(out);
+            }
+            write!(out, "\n  {marker} {line} {text}")?;
+            displayed += usize::from(matched_text.is_some());
+        }
+    }
+    if displayed < result.total_matches {
+        write!(out, "\n\n... {} more matches omitted", result.total_matches - displayed)?;
+    }
+    Ok(out)
 }
 
 fn resolve_path_arg(ctx: &ToolContext, path: &str) -> PathBuf {

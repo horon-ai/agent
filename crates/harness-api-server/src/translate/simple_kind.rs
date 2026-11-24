@@ -4,12 +4,17 @@
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SimpleKind {
     RuntimeCommand,
+    /// Awaiting `package_control_result`.
+    PackageControl,
+    /// Awaiting `done` for `configure_a2ui`.
+    ConfigureA2ui,
     Detach,
     Tools,
     ToolControl,
     Ping,
     History,
     Ok,
+    ContinueRun,
     /// Awaiting `done`: the daemon acks a delete before it touches the store,
     /// and acknowledging a delete that later failed would report a transcript
     /// as gone while it is still there. Only `done` answers this one.
@@ -35,6 +40,10 @@ pub(crate) enum SimpleKind {
     BackgroundWorkList,
     /// Awaiting `runtime_state`.
     RuntimeState,
+    /// Awaiting `effective_settings`.
+    EffectiveSettings,
+    /// Awaiting `todo_edit_result` for one revision-checked status change.
+    TodoEdit,
     /// Awaiting `control_receipt`.
     ControlReceipt,
     /// Awaiting `snapshot_result`.
@@ -43,4 +52,10 @@ pub(crate) enum SimpleKind {
         provider: String,
         configured: bool,
     },
+}
+
+impl SimpleKind {
+    pub(super) fn error_is_reply_only(&self) -> bool {
+        matches!(self, Self::Tools | Self::ToolControl | Self::ContinueRun)
+    }
 }

@@ -2,7 +2,7 @@ mod response_stats;
 
 #[path = "render_markup.rs"]
 pub(crate) mod render_markup;
-pub use self::render_markup::{reasoning_line_content, reasoning_line_markup};
+pub use self::render_markup::{reasoning_line_content, reasoning_line_markup, split_rendered_reasoning};
 
 use super::{Session, StoredDisplayRole};
 use crate::message::{ContentBlock, Role, ToolCall};
@@ -113,6 +113,7 @@ fn stored_message_renders_visible_message(msg: &super::StoredMessage) -> bool {
     msg.content.iter().any(|block| match block {
         ContentBlock::Text { text, .. } => !text.is_empty(),
         ContentBlock::ToolResult { .. } => true,
+        ContentBlock::A2ui { .. } => block.a2ui_text_card().is_some(),
         _ => false,
     })
 }
@@ -367,6 +368,7 @@ pub fn render_messages_and_images_with_compacted_history(
                         tool_calls: Vec::new(),
                         tool_data: None,
                         stored_index: None,
+                        stored_id: None,
                     }],
                     Vec::new(),
                     None,
@@ -419,6 +421,7 @@ pub fn render_messages_and_images_with_compacted_history(
             tool_calls: Vec::new(),
             tool_data: None,
             stored_index: None,
+            stored_id: None,
         });
     }
 
@@ -448,6 +451,7 @@ pub fn render_messages_and_images_with_compacted_history(
                 tool_calls: Vec::new(),
                 tool_data: None,
                 stored_index: Some(stored_index),
+                stored_id: Some(msg.id.clone()),
             });
             continue;
         }
@@ -521,6 +525,7 @@ pub fn render_messages_and_images_with_compacted_history(
                             tool_calls: tool_calls.clone(),
                             tool_data: None,
                             stored_index: Some(stored_index),
+                            stored_id: Some(msg.id.clone()),
                         });
                     }
 
@@ -542,6 +547,7 @@ pub fn render_messages_and_images_with_compacted_history(
                         tool_calls: Vec::new(),
                         tool_data,
                         stored_index: Some(stored_index),
+                        stored_id: Some(msg.id.clone()),
                     });
                 }
                 ContentBlock::Reasoning { text: t } | ContentBlock::ReasoningTrace { text: t } => {
@@ -597,6 +603,7 @@ pub fn render_messages_and_images_with_compacted_history(
                             tool_calls: std::mem::take(&mut tool_calls),
                             tool_data: None,
                             stored_index: Some(stored_index),
+                            stored_id: Some(msg.id.clone()),
                         });
                     }
                     let tool_data = tool_map.get(&display.id).cloned().unwrap_or_else(|| {
@@ -616,9 +623,18 @@ pub fn render_messages_and_images_with_compacted_history(
                         tool_calls: Vec::new(),
                         tool_data: Some(tool_data),
                         stored_index: Some(stored_index),
+                        stored_id: Some(msg.id.clone()),
                     });
                 }
                 ContentBlock::OpenAICompaction { .. } | ContentBlock::ToolReference { .. } => {}
+                ContentBlock::A2ui { .. } => {
+                    if let Some(card) = block.a2ui_text_card() {
+                        if !text.is_empty() && !text.ends_with('\n') {
+                            text.push('\n');
+                        }
+                        text.push_str(&card);
+                    }
+                }
             }
         }
 
@@ -634,6 +650,7 @@ pub fn render_messages_and_images_with_compacted_history(
                 tool_calls,
                 tool_data: None,
                 stored_index: Some(stored_index),
+                stored_id: Some(msg.id.clone()),
             });
         } else if !pending_prompt_image_indices.is_empty() {
             // The message carried images but produced no rendered user prompt;
@@ -651,6 +668,45 @@ pub fn render_messages_and_images_with_compacted_history(
     (rendered, images, compacted_info)
 }
 
+pub(super) fn redact_json_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(s) => {
+            *s = crate::message::redact_secrets(s);
+        }
+        serde_json::Value::Array(values) => {
+            for entry in values {
+                redact_json_value(entry);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, entry) in map.iter_mut() {
+                if is_sensitive_json_key(key) {
+                    *entry = serde_json::Value::String("[REDACTED_SECRET]".to_string());
+                } else {
+                    redact_json_value(entry);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_sensitive_json_key(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    normalized.contains("apikey")
+        || normalized.ends_with("token")
+        || normalized.ends_with("secret")
+        || normalized.contains("password")
+        || matches!(
+            normalized.as_str(),
+            "authorization" | "cookie" | "setcookie" | "privatekey" | "clientsecret"
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::format_reasoning_markup;
@@ -659,5 +715,24 @@ mod tests {
     fn empty_reasoning_input_renders_empty_string() {
         assert_eq!(format_reasoning_markup(""), "");
         assert_eq!(format_reasoning_markup(" \n\t "), "");
+    }
+
+    #[test]
+    fn a2ui_only_message_counts_as_visible_in_compacted_history() {
+        let msg = super::super::StoredMessage {
+            role: horon_agent_message_types::Role::Assistant,
+            content: vec![horon_agent_message_types::ContentBlock::A2ui {
+                envelopes: vec![serde_json::json!({
+                    "version": horon_agent_tool_types::a2ui::A2UI_VERSION_V1_0,
+                    "createSurface": {
+                        "surfaceId": "main",
+                        "catalogId": horon_agent_tool_types::a2ui::A2UI_BASIC_CATALOG_V1_0
+                    }
+                })],
+                fallback_text: Some("Deployment card".to_string()),
+            }],
+            ..Default::default()
+        };
+        assert!(super::stored_message_renders_visible_message(&msg));
     }
 }

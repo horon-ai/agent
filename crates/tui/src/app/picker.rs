@@ -1,5 +1,6 @@
-//! The pickers: the model and session lists the harness owns, the search over
-//! this client's own drafts, and what a chosen row of any of them means.
+//! The pickers: the model, session, swarm and tool lists the harness owns, the
+//! search over this client's own drafts, and what a chosen row of any of them
+//! means.
 //!
 //! The screen itself ([`crate::overlays::picker`]) knows only rows; the meaning
 //! of a row is decided here, where the rest of the client state is. A session
@@ -7,12 +8,16 @@
 //! parked prompts, the turn flag and the scroll offset all belong to the session
 //! that was open, so they are cleared before the stored conversation is replayed.
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use horon_agent_sdk::api::SessionToolDefinition;
+
+use horon_agent_sdk::todo::{TodoEditRefusal, TodoItem, canonical_todo_status};
 
 use super::{Action, App};
 use crate::overlays::picker::{Kind, Outcome, Picker, Row};
 use crate::scroll::Scroll;
-use crate::sdk_bridge::{AttachedSession, SessionRow};
+use crate::sdk_bridge::{AttachedSession, SessionRow, SwarmRow};
+use crate::todo_panel::{TodoPanel, TodoStatusRequest};
 
 impl App {
     /// Open the model list; the bridge fills it when the catalog answers.
@@ -30,38 +35,248 @@ impl App {
     /// A catalog that does not name the model serving the session still gets a
     /// row for it: the list has to say what is in force, or the user cannot
     /// tell whether the top row is a change or the state they are already in.
+    ///
+    /// The answer is also the catalog the cycle keys check `models.shortlist`
+    /// against, so checking an entry costs no second request.
     pub fn show_models(&mut self, models: Vec<String>, current: Option<String>) {
-        let provider = self.provider.clone();
-        let mut rows: Vec<Row> = models
-            .into_iter()
-            .map(|model| {
-                let marked = current.as_deref() == Some(model.as_str());
-                let preview = model_preview(&model, provider.as_deref(), marked);
-                Row::new(model.clone(), model).marked(marked).with_preview(preview)
-            })
-            .collect();
-        if let Some(current) = &current
-            && !rows.iter().any(|row| row.current)
-        {
-            let preview = model_preview(current, provider.as_deref(), true);
-            rows.insert(
-                0,
-                Row::new(current.clone(), current.clone())
-                    .marked(true)
-                    .with_preview(preview),
-            );
+        let rows: Option<Vec<Row>> = self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| picker.kind() == Kind::Models)
+            .then(|| {
+                let provider = self.provider.as_deref();
+                let shortlist = &self.model_shortlist;
+                let mut rows: Vec<Row> = models
+                    .iter()
+                    .map(|model| {
+                        let marked = current.as_deref() == Some(model.as_str());
+                        let preview = model_preview(model.as_str(), provider, marked, shortlist);
+                        Row::new(model.as_str(), model.as_str())
+                            .marked(marked)
+                            .with_preview(preview)
+                    })
+                    .collect();
+                if let Some(current) = &current
+                    && !rows.iter().any(|row| row.current)
+                {
+                    let preview = model_preview(current, provider, true, shortlist);
+                    rows.insert(
+                        0,
+                        Row::new(current.clone(), current.clone())
+                            .marked(true)
+                            .with_preview(preview),
+                    );
+                }
+                rows
+            });
+        // The answer is also the catalog the cycle keys check
+        // `models.shortlist` against, so checking an entry costs no second
+        // request. An empty list is the harness saying it has nothing to
+        // switch to yet rather than a catalog: the next press reads it again
+        // instead of refusing every entry on the strength of that answer.
+        self.model_catalog = models;
+        self.model_catalog_loaded = !self.model_catalog.is_empty();
+        if !self.model_catalog_loaded && self.model_cycle_pending.take().is_some() {
+            self.warn("the harness returned no models to cycle");
         }
-        self.fill(Kind::Models, rows);
+        if let Some(rows) = rows {
+            self.fill(Kind::Models, rows);
+        }
     }
 
-    /// Fill the open session list, marking the session in force.
+    /// `app.cycle_model` and `app.cycle_model_back`: step through
+    /// `models.shortlist`.
+    ///
+    /// The walk is the configured order, forward wrapping past the last entry
+    /// and backward wrapping past the first. It starts from the model already
+    /// in force, so the first press moves off it rather than onto it; a model
+    /// waiting for the running turn or an answer counts as in force, which is
+    /// what makes two quick presses walk two entries instead of asking for the
+    /// same one twice.
+    ///
+    /// The catalog decides which entries can be asked for: one it does not
+    /// list is skipped and named once, because a switch the harness would
+    /// refuse is better said than sent. A press before the catalog has been
+    /// read asks for it instead and walks once it lands, so the status line
+    /// moves only when a report names the new model and a refused entry never
+    /// replaces the one in force.
+    pub(crate) fn cycle_model(&mut self, forward: bool) -> Option<Action> {
+        if self.disconnected {
+            self.warn("the harness connection is gone; the model cannot change");
+            return None;
+        }
+        if self.model_shortlist.is_empty() {
+            self.warn("models.shortlist is empty; add model ids under [models] in tui.toml to cycle them");
+            return None;
+        }
+        // An entry is only asked for once the harness has listed its models.
+        // Without that answer the client cannot tell a name the provider has
+        // from one it does not, and a switch it guessed would be reported as a
+        // failure the user never asked for. The press is remembered, the list
+        // is read once, and the walk follows the answer in the same direction.
+        if !self.model_catalog_loaded {
+            self.model_cycle_pending = Some(forward);
+            return Some(Action::Models);
+        }
+        self.walk_model(forward)
+    }
+
+    /// The walk itself, once the catalog says which entries the harness has.
+    fn walk_model(&mut self, forward: bool) -> Option<Action> {
+        // A waiting change is the newest intent, then one already sent, then
+        // the model the harness last reported.
+        let current = self
+            .model_after_turn
+            .as_deref()
+            .or(self.model_requested.as_deref())
+            .or(self.model.as_deref());
+        let mut first_supported: Option<usize> = None;
+        let mut last_supported: Option<usize> = None;
+        let mut after_current: Option<usize> = None;
+        let mut before_current: Option<usize> = None;
+        let mut saw_current = false;
+        let mut skipped_count = 0usize;
+        let mut skipped_changed = false;
+
+        for (index, model) in self.model_shortlist.iter().enumerate() {
+            if self.model_catalog.iter().any(|listed| listed == model.as_str()) {
+                if first_supported.is_none() {
+                    first_supported = Some(index);
+                }
+                if saw_current && after_current.is_none() {
+                    after_current = Some(index);
+                }
+                if current == Some(model.as_str()) {
+                    saw_current = true;
+                }
+                if !saw_current {
+                    before_current = Some(index);
+                }
+                last_supported = Some(index);
+            } else {
+                if self.model_shortlist_skipped.get(skipped_count).map(String::as_str) != Some(model.as_str()) {
+                    skipped_changed = true;
+                }
+                skipped_count += 1;
+            }
+        }
+        skipped_changed |= skipped_count != self.model_shortlist_skipped.len();
+
+        let next_index = if forward {
+            after_current.or(first_supported)
+        } else {
+            (if saw_current { before_current } else { None }).or(last_supported)
+        };
+        let Some(next_index) = next_index else {
+            let skipped: Vec<&str> = self.model_shortlist.iter().map(String::as_str).collect();
+            self.warn(format!(
+                "none of the models in models.shortlist is in the harness catalog: {}; open the \
+                 model list to see the models it offers",
+                join_names(&skipped)
+            ));
+            return None;
+        };
+        // A press that skips the same entries as the last one stays quiet: the
+        // notice is about the file, and repeating it on every step would bury
+        // the model the press is changing to.
+        if skipped_changed {
+            let mut skipped: Vec<String> = Vec::with_capacity(skipped_count);
+            for model in &self.model_shortlist {
+                if !self.model_catalog.iter().any(|listed| listed == model.as_str()) {
+                    skipped.push(model.clone());
+                }
+            }
+            if !skipped.is_empty() {
+                self.transcript.push_notice(format!(
+                    "models.shortlist: the harness does not list {}; skipped",
+                    join_names(&skipped)
+                ));
+            }
+            self.model_shortlist_skipped = skipped;
+        }
+        let next = self.model_shortlist[next_index].clone();
+        self.ask_model(&next)
+    }
+
+    /// The walk a cycle press asked for while the catalog was being read.
+    ///
+    /// Called by the event loop once the answer landed, so the press becomes
+    /// one switch in the direction it named instead of a request for a list
+    /// the user never sees.
+    pub(crate) fn take_model_cycle(&mut self) -> Option<Action> {
+        // Between the keypress and its reply, the catalog is still unread.
+        if !self.model_catalog_loaded {
+            return None;
+        }
+        // Taken before the walk: a refused entry reports a failure, and the
+        // press has already been answered by then.
+        let forward = self.model_cycle_pending.take()?;
+        self.walk_model(forward)
+    }
+
+    /// Read `models.shortlist` into the list the cycle keys walk.
+    ///
+    /// A repeated or blank entry is one mistake in a file, not a reason to
+    /// refuse the other entries: it is named once, when the file changes, and
+    /// dropped, so the walk never visits one model twice.
+    pub(crate) fn apply_model_shortlist(&mut self, listed: &[String]) {
+        if listed == self.model_shortlist_source.as_slice() {
+            return;
+        }
+        self.model_shortlist_source = listed.to_vec();
+        let mut names: Vec<String> = Vec::new();
+        for raw in listed {
+            let name = raw.trim();
+            if name.is_empty() {
+                self.warn("models.shortlist has an empty entry; ignored");
+                continue;
+            }
+            if names.iter().any(|kept| kept == name) {
+                self.warn(format!(
+                    "models.shortlist names `{name}` twice; the later entry is ignored"
+                ));
+                continue;
+            }
+            names.push(name.to_string());
+        }
+        self.model_shortlist = names;
+        self.model_shortlist_skipped.clear();
+    }
+
+    /// Fill the open session list, pinned sessions first.
     ///
     /// The preview lines travel with the row: they are built from the stored
     /// history the bridge already read, so drawing the list costs one map here
     /// and no request at all. The head line is drawn but not searched: it is
     /// the directory and the time, which every row of one directory shares, so
     /// a filter on the path would otherwise keep the whole list.
+    ///
+    /// The answer arrives newest first. It is kept whole and the rows are built
+    /// from it, so a pin taken while the list is open reorders the same answer
+    /// without asking the harness again. A pinned id the answer no longer holds
+    /// simply has no row: the pin waits in the file until the session is listed
+    /// again, and the list keeps working meanwhile.
     pub fn show_sessions(&mut self, sessions: Vec<SessionRow>) {
+        self.load_pins();
+        self.pins.rows = sessions;
+        let rows = self.session_picker_rows();
+        self.fill(Kind::Sessions, rows);
+    }
+
+    pub(crate) fn show_archived_sessions(&mut self, sessions: Vec<SessionRow>) {
+        self.fill_session_rows(Kind::ArchivedSessions, sessions);
+    }
+
+    pub(crate) fn open_archived_sessions(&mut self) -> Option<Action> {
+        self.picker = Some(Picker::loading(
+            Kind::ArchivedSessions,
+            "Archived sessions",
+            "no archived sessions in this directory",
+        ));
+        Some(Action::ArchivedSessions)
+    }
+
+    fn fill_session_rows(&mut self, kind: Kind, sessions: Vec<SessionRow>) {
         let rows = sessions
             .into_iter()
             .map(|session| {
@@ -77,7 +292,99 @@ impl App {
                     .with_search(search)
             })
             .collect();
-        self.fill(Kind::Sessions, rows);
+        self.fill(kind, rows);
+    }
+
+    pub(crate) fn open_tools(&mut self) -> Option<Action> {
+        self.picker = Some(Picker::loading(
+            Kind::Tools,
+            "Session tools",
+            "no tools are enabled for this session",
+        ));
+        Some(Action::Tools)
+    }
+
+    pub(crate) fn show_tools(&mut self, mut tools: Vec<SessionToolDefinition>) {
+        tools.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        let rows = tools
+            .into_iter()
+            .map(|tool| {
+                let preview = (!tool.description.is_empty())
+                    .then_some(tool.description)
+                    .into_iter()
+                    .collect();
+                Row::new(tool.name, "")
+                    .with_detail("tier unknown")
+                    .with_preview(preview)
+            })
+            .collect();
+        self.fill(Kind::Tools, rows);
+    }
+
+    /// The session rows in display order: pinned first, newest first in each.
+    ///
+    /// The split keeps the order the bridge sent inside both groups, so a pin
+    /// changes which group a session joins and never the recent order within
+    /// it. The marker travels with the row so the list says why it moved.
+    pub(super) fn session_picker_rows(&self) -> Vec<Row> {
+        let mut rows = Vec::with_capacity(self.pins.rows.len());
+        for pinned in [true, false] {
+            rows.extend(
+                self.pins
+                    .rows
+                    .iter()
+                    .filter(|session| self.pins.store.is_pinned(&session.id) == pinned)
+                    .map(|session| session_row(session, pinned)),
+            );
+        }
+        rows
+    }
+
+    /// Put the open session list back in its new order, on the row `keep`.
+    ///
+    /// Only a session list can be reordered; a model or link list keeps the
+    /// rows it was given. A save that failed never reaches here, so the order
+    /// on screen is the order the file holds.
+    pub(super) fn refresh_session_picker(&mut self, keep: &str) {
+        if !self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| picker.kind() == Kind::Sessions)
+        {
+            return;
+        }
+        let rows = self.session_picker_rows();
+        if let Some(picker) = self.picker.as_mut() {
+            picker.refill(rows, keep);
+        }
+    }
+
+    /// Fill the open swarm list: this session's children, then the parent row.
+    ///
+    /// The rows arrive already narrowed to the attached session's lineage, so
+    /// nothing here decides what belongs to the swarm. The task the harness
+    /// recorded and the answer the child reported are searchable besides the
+    /// label, and the second column carries the state: a reader looks for a
+    /// child by what it was told to do, what it said it did, or whether it is
+    /// still working.
+    pub fn show_swarm(&mut self, rows: Vec<SwarmRow>) {
+        let rows = rows
+            .into_iter()
+            .map(|row| {
+                let mut search: Vec<String> = Vec::with_capacity(2);
+                if let Some(task) = row.task {
+                    search.push(task);
+                }
+                if let Some(report) = row.report {
+                    search.push(report);
+                }
+                Row::new(row.label, row.id)
+                    .with_detail(row.detail)
+                    .with_preview(row.preview)
+                    .with_search(search)
+            })
+            .collect();
+        self.fill(Kind::Swarm, rows);
     }
 
     /// Replace the rows of the open list, if it is the one that asked.
@@ -96,9 +403,40 @@ impl App {
     /// The list is taken out of the app while the key is read, so a key that
     /// closes it cannot leave a half-updated screen behind.
     pub(crate) fn picker_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The todo list edits rows instead of choosing one, so its keys are
+        // answered here before the generic list reads `enter` as a choice.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Todos) {
+            return self.todo_panel_key(key);
+        }
         let mut picker = self.picker.take()?;
+        if picker.kind() == Kind::Sessions && key.code == KeyCode::Char('a') && key.modifiers == KeyModifiers::CONTROL {
+            let Some(row) = picker.selected_row() else {
+                self.picker = Some(picker);
+                return None;
+            };
+            if row.current {
+                self.picker = Some(picker);
+                self.warn("leave the current session before archiving it");
+                return None;
+            }
+            return Some(Action::Archive(row.value.clone()));
+        }
         match picker.on_key(key) {
             Outcome::Handled => {
+                self.picker = Some(picker);
+                None
+            }
+            // The pin key means something only in the session list, and only
+            // when a row is under the cursor. The list is put back before the
+            // store is read, so a failed save leaves it exactly as it was.
+            Outcome::TogglePin => {
+                if picker.kind() == Kind::Sessions
+                    && let Some(session) = picker.selected_row().map(|row| row.value.clone())
+                {
+                    self.picker = Some(picker);
+                    self.toggle_session_pin(&session);
+                    return None;
+                }
                 self.picker = Some(picker);
                 None
             }
@@ -113,19 +451,74 @@ impl App {
                     self.transcript.push_notice(format!("attaching to {label}"));
                     Some(Action::Attach(value))
                 }
+                // A row of the swarm list names a child the harness reported,
+                // and attaching is the same request `/switch` makes: the row
+                // cannot grant access by existing, the harness answers for the
+                // session it serves. The choice is a session change, so it waits
+                // under the rule every other one does.
+                Kind::Swarm => {
+                    if !self.session_change_allowed("swarm") {
+                        return None;
+                    }
+                    let label = picker.selected_label().unwrap_or(value.as_str()).to_string();
+                    self.transcript.push_notice(format!("attaching to {label}"));
+                    Some(Action::Attach(value))
+                }
+                // Restoring an archived session asks the harness for it; the
+                // answer arrives as a session like any attach.
+                Kind::ArchivedSessions => Some(Action::Restore(value)),
                 // A recalled draft is an edit, not a send: the picker closes and
                 // the editor holds the text, and no action leaves the client.
                 Kind::History => {
                     self.recall_draft(&value);
                     None
                 }
-                // A skill is the same: the invocation goes into the draft, with
-                // the request still to be written after it.
+                // A boundary is a stored message id the daemon resolves; the
+                // first row may instead name the session this branch came
+                // from, which is an ordinary attach back.
+                Kind::Forks => {
+                    let label = picker.selected_label().unwrap_or(value.as_str()).to_string();
+                    self.choose_fork(&value, &label)
+                }
                 Kind::Skills => {
                     self.draft_skill(&value);
                     None
                 }
+                // The chosen text leaves through the same queue the copy keys
+                // use, so the list and the keys cannot carry different bytes.
+                Kind::Copies => {
+                    self.copy_selection(&value);
+                    None
+                }
+                // The queue answers its own keys before this list sees them, so
+                // no row is ever chosen from here; a value that arrives anyway
+                // changes nothing rather than acting as some other kind of row.
+                // The job list is the same shape: `delete` cancels, and the
+                // generic selector never runs for it.
+                Kind::Queue | Kind::Tools | Kind::Jobs => None,
+                // The todo list answers its own keys before this list sees
+                // them, so no row is ever chosen from here either.
+                Kind::Todos => None,
+                // A link is the one row that leaves the client: the reader
+                // pressed enter on it, so it goes to the platform handler and
+                // the list closes without an action for the bridge.
+                Kind::Links => {
+                    self.open_link(&value);
+                    None
+                }
             },
+        }
+    }
+
+    /// Open one chosen link through the platform's own handler.
+    ///
+    /// Only an explicit enter on a row reaches this, and the URL is checked
+    /// again inside: a row keeps the string it was built from, and the list may
+    /// outlive the answer that supplied it.
+    pub(crate) fn open_link(&mut self, url: &str) {
+        match crate::links::launch(url) {
+            Ok(()) => self.transcript.push_notice(format!("opening {url}")),
+            Err(error) => self.warn(format!("links: {error}")),
         }
     }
 
@@ -145,14 +538,33 @@ impl App {
         let session_id = session.session_id;
         self.description = session.description;
         self.session_id = Some(session_id.clone());
+        // A call id is scoped to the session that started it, so neither the
+        // job rows nor an open job list may follow the client across.
+        self.clear_background_jobs();
         self.todos = Default::default();
+        // The todo list belonged to the session being left; a key must not
+        // carry it into the one just attached.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Todos) {
+            self.picker = None;
+        }
         self.session_title = session.title;
         self.new_session_pending = false;
+        // The branch origin belongs to the session being left; a fork answer
+        // records its own right after this, in the handler that received it.
+        self.fork_origin = None;
         self.pending_turn = false;
+        // A session the user switched to is a client they are watching, so an
+        // outcome of the session before it is not worth a tab mark.
+        self.note_user_attention();
         self.in_flight = None;
         self.queue.clear();
         self.prompt = None;
         self.waiting_prompts.clear();
+        // A capture belongs to the session being left, and the consent was
+        // given for that session: both go with it, so its audio cannot become
+        // a draft in the session being attached.
+        self.voice.forget();
+        self.voice.live.forget();
         self.resend_held = false;
         self.session_status = Some(session.status);
         self.model = session.model;
@@ -161,6 +573,9 @@ impl App {
         // session just left behind must not resolve.
         self.skills.clear();
         self.commands.set_skills(Vec::new());
+        // The package commands belong to the session for the same reason, and
+        // the bridge asks the new session for its own right after this answer.
+        self.commands.set_package_commands(Vec::new());
         // The effort belongs to the session being attached to, so it is the
         // one the bridge read for it. Nothing of the session left behind
         // survives: a report that names no effort leaves it unknown until the
@@ -172,24 +587,83 @@ impl App {
         self.effort_requested = None;
         self.effort_after_turn = None;
         self.model_after_turn = None;
+        // The model a request named belongs to the session being left, and the
+        // catalog was read for its provider: neither describes the one being
+        // attached to, so the next cycle starts from this session's model and
+        // the next model list is the one that fills the catalog.
+        self.model_requested = None;
+        self.model_catalog.clear();
+        self.model_catalog_loaded = false;
+        self.model_cycle_pending = None;
         // A steer still in flight is kept: its answer belongs to the session
         // being left, and its refusal is still worth showing. It stops holding
         // this session's `esc`, which reads the ids instead of clearing it.
         self.provider = None;
         self.tokens = None;
+        // The spending belongs to the session left behind: its totals, its
+        // route's window, and the estimate for it would all describe a
+        // conversation the client is no longer following. The bridge reads the
+        // new session's report as soon as it has moved.
+        self.capacity = None;
+        self.usage = None;
+        self.cost = None;
         self.scroll = Scroll::new();
+        // A side question belongs to the session it was asked of. Moving to
+        // another session closes it; the child stays stored, and its answer is
+        // reachable from the session list like any other conversation.
+        self.side = None;
         self.slash.dismiss();
+        // A list that is still open describes the session being left: its rows
+        // were fetched for that session's swarm or directory, and a selection
+        // from it would attach for a scope the client no longer shows. It goes
+        // with the rest of the old session's state, so a list request that was
+        // in flight when the answer landed cannot put strangers' rows under the
+        // new session.
+        self.picker = None;
+        // A commit review belongs to the previous session's confirmation flow,
+        // even when the newly attached session works in the same directory.
+        self.commit_review = None;
+        // The candidates were read from the directory of the session being
+        // left; the next Tab reads the directory this session reported.
+        self.path_cycle = None;
+        self.work_notes.reset();
         self.transcript.clear();
         for message in &session.history {
             match message.role.as_str() {
-                "user" => self.transcript.push_user(message.content.clone()),
-                "assistant" => self.transcript.push_assistant(message.content.clone()),
+                "user" => self
+                    .transcript
+                    .push_user_stored(message.content.clone(), message.message_id.clone()),
+                // A stored assistant row carries the reasoning the daemon
+                // re-rendered before the answer. Reading it back with the
+                // daemon's own markup helper keeps the answer row identical to
+                // the one the live stream produced, which is what a note on it
+                // is keyed by.
+                "assistant" => {
+                    let (reasoning, split) = crate::transcript::Transcript::split_rendered_assistant(&message.content);
+                    if let Some(reasoning) = reasoning {
+                        self.transcript.reasoning_delta(&reasoning);
+                        self.transcript.reasoning_done();
+                    }
+                    // A history row that names its answer separately is read
+                    // from that field: a raw stored row can carry reasoning and
+                    // answer as one unmarked string, and `content` keeps that
+                    // historical value for clients that do not know the field.
+                    let answer = message.answer.clone().unwrap_or(split);
+                    if !answer.is_empty() {
+                        crate::a2ui::push_replayed_assistant(&mut self.transcript, answer, message.message_id.clone());
+                    }
+                }
                 // Tool rows are the daemon's record of what ran, not the
                 // conversation; the answers they produced are in the assistant
                 // messages that follow them.
                 _ => {}
             }
         }
+        // The notes are read before the notice below, so anything the file
+        // said about itself is drawn before the line naming the session. A
+        // note belongs to a session id, so the ones drawn from here on are
+        // this session's, never the one just left.
+        self.load_notes();
         if session.history.is_empty() && !started {
             self.transcript.push_notice("the stored session has no messages");
         }
@@ -198,6 +672,266 @@ impl App {
         } else {
             format!("resumed {session_id}")
         });
+    }
+
+    /// Point the client at the directory the attached session works in.
+    ///
+    /// Called with the directory that travels beside the attach answer, after
+    /// the session itself is in place. This is what keeps a draft's completed
+    /// paths the session's: a switch to a session in another folder moves the
+    /// root, and an answer that names no folder is not the old one either, so
+    /// path completion stays off until a session names one.
+    pub fn apply_session_directory(&mut self, directory: Option<&str>) {
+        // Every attach answer belongs to a freshly attached or switched session,
+        // so any staged commit review from before that attach is stale even if
+        // the directory happens to stay the same.
+        self.commit_review = None;
+        let Some(directory) = directory.map(str::trim).filter(|directory| !directory.is_empty()) else {
+            self.workspace_known = false;
+            return;
+        };
+        self.workspace_known = true;
+        if self.cwd.as_deref() == Some(directory) {
+            return;
+        }
+        self.cwd = Some(directory.to_string());
+        self.reload_commands();
+    }
+
+    /// Open the complete todo list of the attached session.
+    ///
+    /// Every stored item is shown, including completed and cancelled ones, so
+    /// the operator can restore work the agent finished or dropped. The list is
+    /// built from the same snapshot the passive panel summarizes; nothing is
+    /// fetched here, because a `TodoChanged` refresh has already brought the
+    /// current list.
+    ///
+    /// A harness that does not report a revision opens read-only: the server
+    /// could not check an edit against the list the operator sees, and an
+    /// unchecked write could overwrite work that landed in between.
+    pub(crate) fn open_todos(&mut self) -> Option<Action> {
+        if self.session_id.is_none() {
+            self.warn("todo: not attached to a session");
+            return None;
+        }
+        if self.todos.revision().is_none() {
+            self.transcript
+                .push_notice("todo: this harness does not report a list revision; the list is read-only");
+        }
+        let rows = todo_rows(self.todos.items());
+        self.picker = Some(Picker::new(Kind::Todos, "Todos", rows, "this session has no todos"));
+        None
+    }
+
+    /// Replace the stored list after a read or a committed change.
+    ///
+    /// Only the attached session's list reaches the panel, so a snapshot from
+    /// another session cannot replace the one on screen. The revision travels
+    /// with the items: the edit sends back exactly the revision these items came
+    /// from. A change still in flight is kept across the refresh, because the
+    /// answer it is waiting for has not arrived yet.
+    ///
+    /// Returns whether anything the screen shows changed.
+    pub(crate) fn set_todos(&mut self, session_id: &str, items: Vec<TodoItem>, revision: Option<String>) -> bool {
+        if self.session_id.as_deref() != Some(session_id) {
+            return false;
+        }
+        let pending = self.todos.pending().cloned();
+        let mut panel = TodoPanel::from_snapshot(&items, revision);
+        panel.restore_pending(pending);
+        if panel == self.todos {
+            return false;
+        }
+        self.todos = panel;
+        self.refresh_todo_picker();
+        true
+    }
+
+    /// Apply the answer to one status edit.
+    ///
+    /// A refusal is not a failure: the reply carries the current list and
+    /// revision, so the list refreshes from the same frame and the notice says
+    /// the change was not made. Nothing here retries a stale edit: the user saw
+    /// the new list by the time the notice lands and can press the key again.
+    pub(crate) fn todo_edit_reply(
+        &mut self,
+        session_id: &str,
+        applied: bool,
+        refusal: Option<TodoEditRefusal>,
+        items: Vec<TodoItem>,
+        revision: String,
+        (id, status): (&str, &str),
+    ) -> bool {
+        if self.session_id.as_deref() != Some(session_id) {
+            return false;
+        }
+        let label = items
+            .iter()
+            .find(|item| item.id == id)
+            .map(|item| item.content.trim())
+            .filter(|content| !content.is_empty())
+            .unwrap_or(id)
+            .to_string();
+        let changed = {
+            let pending = self.todos.pending().cloned();
+            let mut panel = TodoPanel::from_snapshot(&items, Some(revision));
+            panel.restore_pending(pending);
+            let changed = panel != self.todos;
+            self.todos = panel;
+            self.todos.clear_edit();
+            changed
+        };
+        self.refresh_todo_picker();
+        if applied {
+            self.transcript.push_notice(format!("todo: {label} is now {status}"));
+        } else {
+            let sentence = match refusal {
+                Some(TodoEditRefusal::StaleRevision) => format!(
+                    "todo: the list changed on the server; refreshed without changing {label} — press the key again to apply it to the new list"
+                ),
+                Some(TodoEditRefusal::UnknownItem) => {
+                    format!("todo: {label} is no longer in the list; refreshed")
+                }
+                Some(TodoEditRefusal::InvalidStatus) => {
+                    format!("todo: {status} is not a status the harness accepts; nothing was changed")
+                }
+                Some(TodoEditRefusal::InvalidBlocker) => format!(
+                    "todo: {label} is blocked on nothing; the harness needs a blocker note before it can be marked blocked"
+                ),
+                None => format!("todo: the change to {label} was not applied; refreshed"),
+            };
+            self.warn(sentence);
+        }
+        changed
+    }
+
+    /// One keystroke inside the todo list.
+    ///
+    /// `enter` toggles an item between done and open, and `delete` cancels it;
+    /// both are reversible from the same list, and neither removes the item.
+    /// Every other key is the list's own — filter, arrows, pages — and `esc`
+    /// closes without changing anything. Only keys that cannot be typed are
+    /// claimed, so the filter keeps every letter.
+    pub(crate) fn todo_panel_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The list belongs to the attached session: a switch closes it rather
+        // than letting a key edit a list the session no longer owns.
+        if self.session_id.is_none() {
+            self.picker = None;
+            return None;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.picker = None;
+                None
+            }
+            KeyCode::Enter => {
+                let id = self.todo_selected_id()?;
+                let status = self.todo_toggle_status(&id)?;
+                self.todo_commit(id, status)
+            }
+            KeyCode::Delete => {
+                let id = self.todo_selected_id()?;
+                self.todo_commit(id, "cancelled".to_string())
+            }
+            _ => {
+                let mut picker = self.picker.take()?;
+                if picker.on_key(key) == Outcome::Handled {
+                    self.picker = Some(picker);
+                }
+                None
+            }
+        }
+    }
+
+    /// The item id under the cursor.
+    fn todo_selected_id(&mut self) -> Option<String> {
+        let id = self.picker.as_ref()?.selected_row().map(|row| row.value.clone());
+        match id {
+            Some(id) if !id.is_empty() => Some(id),
+            _ => {
+                self.warn("todo: this item has no id, so the harness cannot address it");
+                None
+            }
+        }
+    }
+
+    /// The status `enter` asks for on one item.
+    fn todo_toggle_status(&self, id: &str) -> Option<String> {
+        let item = self.todos.items().iter().find(|item| item.id == id)?;
+        let current = canonical_todo_status(&item.status).unwrap_or("pending");
+        Some(
+            if current == "completed" || current == "cancelled" {
+                "pending"
+            } else {
+                "completed"
+            }
+            .to_string(),
+        )
+    }
+
+    /// Check one status change against what this client holds, then send it.
+    ///
+    /// Every refusal is local and changes nothing: no session, no revision, no
+    /// item in the current list, or an answer to an earlier change still on its
+    /// way. The last one matters most — two edits sent together would carry the
+    /// same expected revision, and the server would refuse the second after the
+    /// first had already landed.
+    fn todo_commit(&mut self, id: String, status: String) -> Option<Action> {
+        let Some(session_id) = self.session_id.clone() else {
+            self.warn("todo: not attached to a session");
+            return None;
+        };
+        if self.todos.pending().is_some() {
+            self.warn("todo: waiting for the previous change to be answered");
+            return None;
+        }
+        let Some(revision) = self
+            .todos
+            .revision()
+            .map(str::to_string)
+            .filter(|text| !text.is_empty())
+        else {
+            self.warn("todo: this harness did not report a list revision; the list is read-only");
+            return None;
+        };
+        if !self.todos.items().iter().any(|item| item.id == id) {
+            self.warn("todo: that item is no longer in the list; reopen the list to see the current one");
+            return None;
+        }
+        let Some(status) = canonical_todo_status(&status) else {
+            self.warn("todo: that status is not one the harness accepts");
+            return None;
+        };
+        let status = status.to_string();
+        if !self.todos.begin_edit(id.clone(), status.clone()) {
+            self.warn("todo: waiting for the previous change to be answered");
+            return None;
+        }
+        Some(Action::TodoStatus(TodoStatusRequest {
+            session_id,
+            revision,
+            id,
+            status,
+        }))
+    }
+
+    /// Rebuild the open todo list from the panel's current items, keeping the
+    /// row under the cursor selected by id.
+    fn refresh_todo_picker(&mut self) {
+        if !self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Todos) {
+            return;
+        }
+        let keep = self
+            .picker
+            .as_ref()
+            .and_then(Picker::selected_row)
+            .map(|row| row.value.clone())
+            .and_then(|id| self.todos.items().iter().position(|item| item.id == id))
+            .unwrap_or(0);
+        let rows = todo_rows(self.todos.items());
+        if let Some(picker) = self.picker.as_mut() {
+            picker.replace_rows(rows, keep);
+        }
     }
 
     /// A list or attach request the harness refused.
@@ -210,14 +944,40 @@ impl App {
     /// make the next successful attach claim it started a session.
     pub fn request_failed(&mut self, message: &str) {
         self.new_session_pending = false;
+        // A refused fork never moved, so the session it was asked from must not
+        // be treated as a branch's origin, and a later answer must not do it.
+        self.fork_pending = None;
         // A request that came back as a failure will never be answered, so the
-        // level it asked for must not steer the cycle key.
+        // level or model it asked for must not steer the cycle keys.
         self.effort_requested = None;
+        self.model_requested = None;
+        self.model_cycle_pending = None;
+        // A status change that failed on the wire will never be answered, so
+        // its marker must not keep the next key from being sent.
+        self.todos.clear_edit();
         if self.picker.as_ref().is_some_and(Picker::is_loading) {
             self.picker = None;
         }
         self.warn(message);
     }
+}
+
+/// One session as the list draws it.
+///
+/// The preview's first line is the directory and time every row of one
+/// directory shares, so only the conversation lines are searchable; a filter
+/// on the path would otherwise keep the whole list.
+fn session_row(session: &SessionRow, pinned: bool) -> Row {
+    let mut search = Vec::new();
+    if let Some((_head, conversation)) = session.preview.split_first() {
+        search.extend_from_slice(conversation);
+    }
+    Row::new(session.label.clone(), session.id.clone())
+        .with_detail(session.detail.clone())
+        .marked(session.current)
+        .pinned(pinned)
+        .with_preview(session.preview.clone())
+        .with_search(search)
 }
 
 /// The lines the model list shows while one of its rows is selected.
@@ -227,7 +987,7 @@ impl App {
 /// time. None of these lines is searchable — the filter matches model names,
 /// and a preview says what a row means rather than being another way to find
 /// it.
-fn model_preview(model: &str, provider: Option<&str>, current: bool) -> Vec<String> {
+fn model_preview(model: &str, provider: Option<&str>, current: bool, shortlist: &[String]) -> Vec<String> {
     let mut lines = vec![format!("model: {model}")];
     if let Some(provider) = provider {
         lines.push(format!("provider: {provider}"));
@@ -237,6 +997,103 @@ fn model_preview(model: &str, provider: Option<&str>, current: bool) -> Vec<Stri
     } else {
         "not the current model".to_string()
     });
+    // Where the model sits in the list the cycle keys walk, so a reader can
+    // tell whether the next press reaches it. An unconfigured shortlist says
+    // nothing rather than repeating one line on every row.
+    if !shortlist.is_empty() {
+        lines.push(match shortlist.iter().position(|entry| entry.as_str() == model) {
+            Some(index) => format!("models.shortlist entry {}", index + 1),
+            // The one in force is the clearest case of this: the walk cannot
+            // start from a model it does not hold, so the first press starts
+            // at the near end instead.
+            None if current => "not in models.shortlist; the next cycle starts at its near end".to_string(),
+            None => "not in models.shortlist".to_string(),
+        });
+    }
     lines.push(format!("enter switches this session to {model}"));
     lines
+}
+
+/// The models of a list as one readable phrase: `a`, `a and b`, `a, b and c`.
+fn join_names<S: AsRef<str>>(names: &[S]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => only.as_ref().to_string(),
+        [rest @ .., last] => {
+            let total = names.iter().map(|s| s.as_ref().len()).sum::<usize>() + (names.len() - 1) * 2 + 3;
+            let mut out = String::with_capacity(total);
+            for (index, name) in rest.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(name.as_ref());
+            }
+            out.push_str(" and ");
+            out.push_str(last.as_ref());
+            out
+        }
+    }
+}
+
+/// One row per stored todo item, in stored order.
+///
+/// Every item is included, cancelled ones too: the list is the whole stored
+/// state, not the active subset the passive panel counts. The row's value is the
+/// item id because that is what a status edit addresses; an item without one is
+/// shown but cannot be edited, which the key handler says rather than guessing.
+fn todo_rows(items: &[TodoItem]) -> Vec<Row> {
+    items
+        .iter()
+        .map(|item| {
+            let status = canonical_todo_status(&item.status).unwrap_or("pending");
+            let content = item.content.trim();
+            let label = if content.is_empty() {
+                if item.id.is_empty() {
+                    "(untitled)".to_string()
+                } else {
+                    item.id.clone()
+                }
+            } else {
+                content.to_string()
+            };
+            let mut preview = vec![format!("status: {status}")];
+            if let Some(group) = item.group.as_deref().map(str::trim).filter(|group| !group.is_empty()) {
+                preview.push(format!("group: {group}"));
+            }
+            if !item.priority.trim().is_empty() {
+                preview.push(format!("priority: {}", item.priority.trim()));
+            }
+            if let Some(blocker) = item.blocker.as_deref().map(str::trim).filter(|note| !note.is_empty()) {
+                preview.push(format!("blocker: {blocker}"));
+            }
+            if let Some(owner) = item
+                .assigned_to
+                .as_deref()
+                .map(str::trim)
+                .filter(|owner| !owner.is_empty())
+            {
+                preview.push(format!("assigned: {owner}"));
+            }
+            if !item.blocked_by.is_empty() {
+                preview.push(format!("waiting on: {}", item.blocked_by.join(", ")));
+            }
+            if !item.id.is_empty() {
+                preview.push(format!("id: {}", item.id));
+            }
+            preview.push(if status == "completed" || status == "cancelled" {
+                "enter reopens this item".to_string()
+            } else {
+                "enter marks this item done".to_string()
+            });
+            let detail = if item.priority.trim().is_empty() {
+                status.to_string()
+            } else {
+                format!("{status} · {}", item.priority.trim())
+            };
+            Row::new(label, item.id.clone())
+                .with_detail(detail)
+                .marked(status == "in_progress")
+                .with_preview(preview)
+        })
+        .collect()
 }

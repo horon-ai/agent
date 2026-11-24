@@ -120,8 +120,12 @@ pub async fn generate(profile_name: &str, call: &ImageCall) -> Result<Option<Ima
     };
     let model = match call.model.as_deref().map(str::trim).filter(|model| !model.is_empty()) {
         Some(model) => model.to_string(),
-        None => crate::provider::external::image_model(profile_name)
-            .ok_or_else(|| anyhow::anyhow!("Provider profile '{profile_name}' names no `image` model."))?,
+        None => endpoint.model,
+    };
+    let inputs = if call.input.is_empty() {
+        Vec::new()
+    } else {
+        load_inputs(&call.input)?
     };
 
     let client = reqwest::Client::builder()
@@ -129,7 +133,11 @@ pub async fn generate(profile_name: &str, call: &ImageCall) -> Result<Option<Ima
         .build()
         .map_err(|error| anyhow::anyhow!("the image HTTP client could not be built: {error}"))?;
 
-    let reply = if call.input.is_empty() {
+    let permit = match &endpoint.request_slots {
+        Some(slots) => Some(slots.acquire().await?),
+        None => None,
+    };
+    let reply = if inputs.is_empty() {
         let request = GenerateRequest {
             model: model.clone(),
             prompt: call.prompt.clone(),
@@ -147,7 +155,6 @@ pub async fn generate(profile_name: &str, call: &ImageCall) -> Result<Option<Ima
         )
         .await?
     } else {
-        let inputs = load_inputs(&call.input)?;
         let request = EditRequest {
             model: model.clone(),
             prompt: call.prompt.clone(),
@@ -165,6 +172,7 @@ pub async fn generate(profile_name: &str, call: &ImageCall) -> Result<Option<Ima
         )
         .await?
     };
+    drop(permit);
 
     if reply.images.is_empty() {
         return Ok(Some(ImageResult {

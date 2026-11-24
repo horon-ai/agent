@@ -13,6 +13,8 @@ fn plain_subscribe(id: u64) -> Request {
         continue_on_disconnect: false,
         terminal_env: Vec::new(),
         acp: None,
+        history_message_ids: false,
+        a2ui: None,
     }
 }
 
@@ -48,6 +50,8 @@ fn acp_subscribe(id: u64, acp: AcpSubscribeOptions) -> Request {
         continue_on_disconnect,
         terminal_env,
         acp: Some(acp),
+        history_message_ids: false,
+        a2ui: None,
     }
 }
 
@@ -68,7 +72,10 @@ fn acp_subscribe_options_round_trip() -> Result<()> {
     println!("subscribe with acp: {json}");
 
     let decoded = parse_request_json(&json)?;
-    let Request::Subscribe { id, acp, working_dir, .. } = decoded else {
+    let Request::Subscribe {
+        id, acp, working_dir, ..
+    } = decoded
+    else {
         return Err(anyhow!("expected Subscribe"));
     };
     assert_eq!(id, 501);
@@ -96,7 +103,10 @@ fn old_subscribe_json_still_parses() -> Result<()> {
     // Back-compat: a subscriber written before this field existed sends no
     // `acp` key and must keep decoding exactly as it did.
     let decoded = parse_request_json(r#"{"type":"subscribe","id":503,"working_dir":"/tmp/legacy"}"#)?;
-    let Request::Subscribe { id, acp, working_dir, .. } = decoded else {
+    let Request::Subscribe {
+        id, acp, working_dir, ..
+    } = decoded
+    else {
         return Err(anyhow!("expected Subscribe"));
     };
     assert_eq!(id, 503);
@@ -111,10 +121,7 @@ fn subscribe_rejects_acp_non_object() {
     // the raw decoder and the daemon's `decode_request` must reject it.
     let wire = r#"{"type":"subscribe","id":1,"acp":"x"}"#;
     let raw = serde_json::from_str::<Request>(wire);
-    assert!(
-        raw.is_err(),
-        "a string acp payload must not deserialize: {raw:?}"
-    );
+    assert!(raw.is_err(), "a string acp payload must not deserialize: {raw:?}");
     let decoded = decode_request(wire);
     assert!(
         decoded.is_err(),
@@ -291,10 +298,7 @@ fn client_request_event_round_trip() -> Result<()> {
     );
     assert!(matches!(
         parse_event_json(json.trim())?,
-        ServerEvent::ClientRequest {
-            tool_call_id: None,
-            ..
-        }
+        ServerEvent::ClientRequest { tool_call_id: None, .. }
     ));
     Ok(())
 }
@@ -404,11 +408,7 @@ fn tool_permission_resolved_round_trip() -> Result<()> {
     let json = encode_event(&event);
     assert!(json.contains("\"type\":\"tool_permission_resolved\""));
     let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::ToolPermissionResolved {
-        request_id,
-        approved,
-    } = decoded
-    else {
+    let ServerEvent::ToolPermissionResolved { request_id, approved } = decoded else {
         return Err(anyhow!("expected ToolPermissionResolved event"));
     };
     assert_eq!(request_id, "cb-perm-1");
@@ -425,7 +425,10 @@ fn v2_wire_fields_are_inert_when_absent() -> Result<()> {
     assert_eq!(message.role, "user");
     let json = serde_json::to_string(&message)?;
     println!("history message without an id: {json}");
-    assert!(!json.contains("message_id"), "an absent message id stays off the wire: {json}");
+    assert!(
+        !json.contains("message_id"),
+        "an absent message id stays off the wire: {json}"
+    );
 
     let options: AcpSubscribeOptions = serde_json::from_str(
         r#"{"client_capabilities":{"fs_read_text_file":true,"terminal":true},"permission_requests":true}"#,
@@ -439,14 +442,16 @@ fn v2_wire_fields_are_inert_when_absent() -> Result<()> {
         "a connection that asked for no version must not carry one: {json}"
     );
 
-    let diff: FileDiffWire =
-        serde_json::from_str(r#"{"path":"/tmp/project/a.txt","old_text":null,"new_text":"x\n"}"#)?;
+    let diff: FileDiffWire = serde_json::from_str(r#"{"path":"/tmp/project/a.txt","old_text":null,"new_text":"x\n"}"#)?;
     assert!(!diff.deleted);
     assert_eq!(diff.old_path, None);
     let json = serde_json::to_string(&diff)?;
     println!("plain file diff: {json}");
     assert!(!json.contains("deleted"), "a write is not a delete: {json}");
-    assert!(!json.contains("old_path"), "a write in place carries no old path: {json}");
+    assert!(
+        !json.contains("old_path"),
+        "a write in place carries no old path: {json}"
+    );
     Ok(())
 }
 
@@ -621,11 +626,7 @@ fn withdraw_message_round_trips_and_reports_id() -> Result<()> {
 
     let decoded = parse_request_json(&json)?;
     assert_eq!(decoded.id(), 91);
-    let Request::WithdrawMessage {
-        id,
-        message_request_id,
-    } = decoded
-    else {
+    let Request::WithdrawMessage { id, message_request_id } = decoded else {
         return Err(anyhow!("expected WithdrawMessage"));
     };
     assert_eq!(id, 91);

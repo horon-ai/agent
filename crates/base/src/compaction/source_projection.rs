@@ -317,6 +317,12 @@ fn render_message(message: &Message, allowance: usize, out: &mut String) {
             ContentBlock::OpenAICompaction { .. } => {
                 out.push_str("[openai native compaction state] ");
             }
+            a2ui @ ContentBlock::A2ui { .. } => {
+                if let Some(summary) = a2ui.a2ui_model_summary() {
+                    out.push_str(&summary);
+                    out.push(' ');
+                }
+            }
             ContentBlock::Reasoning { .. }
             | ContentBlock::ReasoningTrace { .. }
             | ContentBlock::AnthropicThinking { .. }

@@ -41,12 +41,27 @@ on:
         required: false
         default: "5"
       baseline_ref:
-        description: "Optional ref built in the build job beside the measured commit; the compare unit measures it as a second horon row and the tools unit as a second daemon"
+        description: "Optional ref built in the build job beside the measured commit; the compare unit measures it as a second horon row, the packages unit runs its three scenarios too, and the tools unit as a second daemon"
         type: string
         required: false
         default: ""
       features:
         description: "Cargo features for the candidate release build only (comma-separated, e.g. jemalloc); the baseline build never gets them. Empty leaves the build command unchanged"
+        type: string
+        required: false
+        default: ""
+      jcode_version:
+        description: "Published jcode tag resolved once for this benchmark round; empty lets the installer resolve the newest stable release"
+        type: string
+        required: false
+        default: ""
+      jcode_release_commit:
+        description: "Commit the resolved jcode tag peeled to; the installer refuses a tag that has moved"
+        type: string
+        required: false
+        default: ""
+      jcode_release_source:
+        description: "How benchmark.yml chose the tag: latest (newest stable release) or pin (explicit jcode_version)"
         type: string
         required: false
         default: ""
@@ -205,7 +220,7 @@ jobs:
         # cache key. A before/after pair has to be measured on one machine in
         # one job, so the second tree appears only once that key is settled.
         # The `tui` unit uses the tree for the scroll bench pair only.
-        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
+        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.packages == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.baseline_ref }}
@@ -239,7 +254,7 @@ jobs:
         # invalidate the candidate's cached artifacts too. Two separate steps
         # rather than two restores inside one: the action keeps its config in
         # per-step state, so only the second step's post would save anything.
-        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
+        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.packages == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
         with:
           key: benchmark-baseline-${{ runner.os }}
           workspaces: ".bench-baseline -> target"
@@ -252,10 +267,10 @@ jobs:
       - name: Build the baseline release binary
         # The same profile as the candidate step below, from its own checkout
         # and its own target directory, so neither build reuses the other's
-        # artifacts and the two rows stay comparable. Only the compare and tools
-        # units consume this build, so no other selection pays for it. The
-        # binary travels to those jobs inside bench-bin.tar as baseline/.
-        if: ${{ !cancelled() && inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true') }}
+        # artifacts and the two rows stay comparable. Only the compare, packages
+        # and tools units consume this build, so no other selection pays for it.
+        # The binary travels to those jobs inside bench-bin.tar as baseline/.
+        if: ${{ !cancelled() && inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.packages == 'true' || steps.sel.outputs.tools == 'true') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -314,9 +329,15 @@ jobs:
             cargo build --release --locked -p horon-agent-base --example loading_probe
             cargo build --release --locked -p horon-agent-base --example resume_stage_probe
           fi
+          # The packages unit installs this as a real package; it is built here
+          # so the measure job never compiles.
+          if [[ "${{ steps.sel.outputs.packages }}" == "true" ]]; then
+            cargo build --release --locked -p horon-package-example
+          fi
           exe=""
           [[ "$RUNNER_OS" == "Windows" ]] && exe=".exe"
           files=("horon-agent$exe")
+          [[ -f "target/release/horon-package-example$exe" ]] && files+=("horon-package-example$exe")
           [[ -f "target/release/examples/loading_probe$exe" ]] && files+=("examples/loading_probe$exe")
           [[ -f "target/release/examples/resume_stage_probe$exe" ]] && files+=("examples/resume_stage_probe$exe")
           [[ -f "target/release/horon-tui$exe" ]] && files+=("horon-tui$exe")
@@ -378,6 +399,11 @@ jobs:
       SESSIONS: ${{ inputs.sessions }}
       TURNS: ${{ inputs.turns }}
       ONESHOT_RUNS: ${{ inputs.oneshot_runs }}
+      # Resolved once by benchmark.yml; the installer verifies this exact release
+      # for this platform and refuses a tag that has moved since.
+      JCODE_VERSION: ${{ inputs.jcode_version }}
+      JCODE_RELEASE_COMMIT: ${{ inputs.jcode_release_commit }}
+      JCODE_RELEASE_SOURCE: ${{ inputs.jcode_release_source }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -425,45 +451,47 @@ jobs:
           if [[ -f "bench-bin/baseline/horon-agent$exe" ]]; then
             echo "BASELINE_BIN=$root/bench-bin/baseline/horon-agent$exe" >> "$GITHUB_ENV"
           fi
+          # Only the packages unit reads this, so an unselected run leaves the
+          # environment exactly as it was.
+          if [[ -f "bench-bin/horon-package-example$exe" ]]; then
+            echo "PACKAGE_BIN=$root/bench-bin/horon-package-example$exe" >> "$GITHUB_ENV"
+          fi
           mkdir -p "$RESULTS"
 
-      - name: Install strace
-        # The compare suite counts fsync/fdatasync calls with --syscalls. On a
-        # runner without strace (macOS, Windows) the script records that as
-        # skipped and still exits 0, so this step is Linux-only.
+      - name: Install Linux compare dependencies (strace, bubblewrap)
+        # The compare suite counts fsync/fdatasync calls with --syscalls and runs
+        # Codex inside bubblewrap with `bwrap-userns-restrict` loaded once via
+        # a single apt-get update.
         if: ${{ matrix.unit == 'compare' && runner.os == 'Linux' }}
         shell: bash
+        env:
+          ENABLE_CODEX_SANDBOX: ${{ contains(env.COMPETITORS, 'codex') && 'true' || 'false' }}
         run: |
-          if command -v strace >/dev/null 2>&1; then
+          pkgs=()
+          if ! command -v strace >/dev/null 2>&1; then
+            pkgs+=(strace)
+          else
             strace --version | head -n 1
-          else
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq strace
           fi
-
-      - name: Allow the Codex sandbox (bubblewrap) on Ubuntu 24.04
-        # Codex runs its shell tool inside bubblewrap. On ubuntu-24.04 the
-        # AppArmor user-namespace restriction leaves the new namespace without
-        # capabilities, so every command fails with `bwrap: loopback: Failed
-        # RTM_NEWADDR: Operation not permitted` and the skill scenario never
-        # reads its SKILL.md. This is the setup Codex documents for 24.04
-        # (developers.openai.com/codex/concepts/sandboxing): install bubblewrap
-        # and load the `bwrap-userns-restrict` profile. The sandbox stays on.
-        if: ${{ matrix.unit == 'compare' && runner.os == 'Linux' && contains(env.COMPETITORS, 'codex') }}
-        shell: bash
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq bubblewrap apparmor-profiles apparmor-utils
-          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
-            /etc/apparmor.d/bwrap-userns-restrict
-          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
-          bwrap --version
-          # A failing check is reported, not fatal: the other rows still run,
-          # and the Codex skill row then records the sandbox error it saw.
-          if bwrap --unshare-all --ro-bind / / true; then
-            echo "bwrap: namespace sandbox works"
-          else
-            echo "::warning::bwrap still cannot create its sandbox; the Codex skill row will show the error"
+          if [ "$ENABLE_CODEX_SANDBOX" = "true" ]; then
+            pkgs+=(bubblewrap apparmor-profiles apparmor-utils)
+          fi
+          if [ "${#pkgs[@]}" -gt 0 ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "${pkgs[@]}"
+          fi
+          if [ "$ENABLE_CODEX_SANDBOX" = "true" ]; then
+            sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+              /etc/apparmor.d/bwrap-userns-restrict
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+            bwrap --version
+            # A failing check is reported, not fatal: the other rows still run,
+            # and the Codex skill row then records the sandbox error it saw.
+            if bwrap --unshare-all --ro-bind / / true; then
+              echo "bwrap: namespace sandbox works"
+            else
+              echo "::warning::bwrap still cannot create its sandbox; the Codex skill row will show the error"
+            fi
           fi
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -484,9 +512,20 @@ jobs:
         shell: bash
         env:
           # The jcode fallback calls the release API; a token avoids the shared
-          # anonymous rate limit of the runner's IP.
+          # anonymous rate limit of the runner's IP. The resolver never passes it
+          # to the release binary.
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/perf/install_competitors.sh "$RUNNER_TEMP/bench-tools" "$COMPETITORS" | tee "$RESULTS/competitors.txt"
+        run: |
+          set -o pipefail
+          mkdir -p "$RESULTS"
+          rc=0
+          # stderr carries the resolver's resolution and verification lines, so
+          # the artifact keeps the real installer log beside competitors.txt.
+          bash scripts/perf/install_competitors.sh "$RUNNER_TEMP/bench-tools" "$COMPETITORS" 2>&1 \
+            | tee "$RESULTS/competitors.txt" || rc=$?
+          cp "$RUNNER_TEMP/bench-tools/jcode-release.json" "$RESULTS/jcode-release.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/bench-tools/jcode-release.log" "$RESULTS/jcode-release.log" 2>/dev/null || true
+          exit "$rc"
 
       - name: "Suite: compare (horon vs other agents)"
         if: ${{ matrix.unit == 'compare' }}
@@ -505,6 +544,10 @@ jobs:
           fi
           install_failures=()
           [[ -f "$RUNNER_TEMP/bench-tools/failures.txt" ]] && install_failures=(--install-failures "$RUNNER_TEMP/bench-tools/failures.txt")
+          # The same release record the artifact and install report keep; the
+          # comparison JSON carries it so one file names the measured binary.
+          provenance=()
+          [[ -f "$RESULTS/jcode-release.json" ]] && provenance=(--jcode-release "$RESULTS/jcode-release.json")
           # The dispatched list decides what is measured. Without --tools the
           # script's default set would skip a competitor whose binary is
           # installed but whose name is not a default.
@@ -523,9 +566,27 @@ jobs:
           # shellcheck disable=SC2086
           python scripts/perf/bench_compare.py \
             --bin "horon=$HORON_BIN" ${baseline_args[@]+"${baseline_args[@]}"} $bins_args --tools $tools \
-            ${install_failures[@]+"${install_failures[@]}"} \
+            ${install_failures[@]+"${install_failures[@]}"} ${provenance[@]+"${provenance[@]}"} \
             --sessions $SESSIONS --turns "$TURNS" --oneshot-runs "$ONESHOT_RUNS" --syscalls \
             --json-out "$RESULTS/compare.json" --markdown-out "$RESULTS/compare.md"
+
+      - name: "Suite: packages"
+        # Nothing installed, installed but never called, and one real call: the
+        # turn time, first-request time and peak RSS of each, plus the size the
+        # installed area occupies. With a baseline binary the same three
+        # scenarios are measured for that build in this job, alternating, so the
+        # compare cells are a same-machine before/after. `horon-tui` numbers are
+        # never part of this suite.
+        if: ${{ matrix.unit == 'packages' }}
+        shell: bash
+        run: |
+          args=(--binary "$HORON_BIN" --package-binary "${PACKAGE_BIN:-}"
+                --runs "$ONESHOT_RUNS"
+                --json-out "$RESULTS/packages.json" --markdown-out "$RESULTS/packages.md")
+          if [[ -n "${BASELINE_BIN:-}" ]]; then
+            args+=(--baseline-binary "$BASELINE_BIN")
+          fi
+          python scripts/perf/package_workloads.py "${args[@]}"
 
       - name: "Suite: startup"
         if: ${{ matrix.unit == 'startup' }}
@@ -732,7 +793,7 @@ jobs:
             fi
             echo "- suites: \`$SUITES\`, status: \`$(cat "$RESULTS/status.txt")\`"
             echo
-            for f in compare tools reload tui compile; do
+            for f in compare packages tools reload tui compile; do
               if [[ -f "$RESULTS/$f.md" ]]; then cat "$RESULTS/$f.md"; echo; fi
             done
             for f in startup loading-cold loading-warm; do

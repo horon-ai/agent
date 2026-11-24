@@ -1,0 +1,225 @@
+---
+title: "Hosting and the per-user boundary"
+description: "A hosted deployment runs one agent container or Fly Machine per customer, each with one home volume, and never puts two customers in one daemon."
+---
+
+{/* Generated from docs/architecture/HOSTING.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
+
+A hosted deployment runs one agent container or Fly Machine per customer, each with one home volume, and never puts two customers in one daemon. This page states the flag contract, the image and volume layout, the routing contract the control plane owns, the suspend and delete procedures, and the limits that remain.
+
+## The hosting flag contract
+
+The environment is the only authority for the hosting mode. A tenant can write its own `config.toml`, so a file must never be able to widen the mode it runs under.
+
+| Value | Where it comes from | Meaning |
+| --- | --- | --- |
+| Hosting mode | `HORON_AGENT_HOSTING_MODE` | `per-user-container` or `shared-worker`. An absent variable means no hosting. Any other value is a startup error that names the two allowed values |
+| Tenant id | `HORON_AGENT_TENANT_ID` | A validated audit label: 1 to 63 bytes of lowercase ASCII letters, digits and hyphens, starting and ending with a letter or digit. It is a directory name and a log label, never a session lookup key |
+| `[hosting] allow_shared_children` | `config.toml` | `false` refuses MCP servers and extension children even in a mode that would allow them. `true` never widens a mode that forbids them |
+| `[hosting] allowed_mcp_servers` | `config.toml` | Names of MCP servers a hosted process may connect. Absent leaves all of them reachable, an empty list reaches none, and the match is exact. Never widens a mode and leaves a process without hosting unchanged; narrowed further in [hosted MCP and extension isolation](/reference/safety/security) |
+| `[hosting] mode` | `config.toml` | Ignored with one warning. Set `HORON_AGENT_HOSTING_MODE` instead |
+
+The resolved policy is a single process-wide value. `HostingPolicy::mode()`, `tenant_id()`, `is_hosted()`, `is_per_user_container()`, `is_shared_worker()`, `allows_shared_children()`, `allowed_mcp_servers()`, `permits_mcp_server()` and `inherits_operator_logins()` are the supported reads; the MCP and extension gate and the non-local exposure check consume them rather than re-reading the environment.
+
+What each mode does with an MCP server or a package child, the `HOSTED_POLICY` audit event, and the limits of the gate are in [hosted MCP and extension isolation](/reference/safety/security).
+
+## The startup boundary
+
+A per-user container refuses to start unless all of the following hold. The daemon checks them before it binds a socket and exits with a message naming the failed condition.
+
+| Condition | Why |
+| --- | --- |
+| `HORON_HOME` is set, absolute, exists, is a directory, is owner-only (`0700`) and is not a symlink | The customer's state must live on a directory only that container can enter |
+| `HORON_HOME` is not `$HOME/.horon` | A hosted customer must never be served from the operator's own home |
+| `HORON_AGENT_RUNTIME_DIR` is set, absolute, owner-only and not inside the home | Sockets stay off the volume, and the runtime directory is separate from durable state |
+| `HORON_AGENT_TENANT_ID` is set and valid | Every hosted process carries its audit label |
+| `[gateway] enabled` is false | The TCP gateway binds an address outside the container's socket boundary |
+
+A shared worker starts without those checks so its own gate can refuse the operations it must not run: it never allows child processes or remote MCP connections for a customer, whatever `config.toml` says.
+
+## Image, volume and runtime layout
+
+`scripts/hosting/Containerfile` builds the hosted image from the same published release archives as the release image. It keeps UID `10001`, declares `/data` as the volume, sets `HORON_HOME=/data/home` and `HORON_AGENT_RUNTIME_DIR=/run/horon`, and starts `scripts/hosting/entrypoint.sh`, which validates the hosting variables and execs `horon-agent --no-update serve`.
+
+The same image runs on a Fly Machine, where a Fly Volume mounted at `/data` is that customer's home, once the Machine configuration below supplies the stop signal, the timeout and the idle policy the image needs. The boundary itself needs the volume, the environment and the absence of a TCP gateway, not a particular runtime; the Machine settings, not the image, are what differ from a local Docker host.
+
+| Path | Contents |
+| --- | --- |
+| `/data` | The tenant volume. One volume per customer. The volume root is not empty: Fly creates a root-owned `lost+found` there, so nothing may assume an empty root |
+| `/data/home` | `HORON_HOME`: sessions, transcripts, approvals, MCP config, preferences, memory and user files |
+| `/run/horon` | Socket directory, separate from the volume and recreated on every start |
+
+The image never exposes an agent port. The API socket and the daemon socket are files inside the container; a client outside the container reaches them only through the control plane, or through the authenticated TCP listener described under the routing contract.
+
+## Routing contract
+
+The control plane owns the mapping from a customer to an instance and its volume. The agent binary does not read tenant ids from requests and does not route between customers.
+
+1. The control plane authenticates the customer and resolves `user -> instance -> volume`.
+2. It starts, wakes or reuses that customer's instance. `scripts/hosting/instance.sh create` prepares the volume, `start` runs the daemon in the foreground under a supervisor, or the container runtime starts the image with the volume mounted at `/data`.
+3. It delivers the customer's request to that instance. On one host, the request goes to the instance's Unix socket. Across Fly, a Unix socket is unreachable: the request must go to an **authenticated TCP listener** that the daemon exposes inside the Machine, reached over the proxy or the 6PN, and the listener authenticates every connection before any request is processed. No unauthenticated endpoint is ever reachable, so "forwarding to the socket" is a single-host shortcut, not a cross-network design.
+4. Requests from two customers never reach one process. There is no per-session tenant check, because there is no shared process to check against.
+
+Hosted images keep the gateway off. A container that must serve the harness API outside itself starts
+`horon-agent api-bridge --api-bind` (or sets `HORON_AGENT_API_BIND`), issues a credential inside that
+tenant's home, and acknowledges the TLS-terminating proxy in front; the listener then authenticates
+every TCP connection while the local socket keeps its handshake. Because the credential file lives in
+the tenant's `HORON_HOME`, credentials are per customer by construction. The full listener contract is
+`docs/protocol/HARNESS_API.md`.
+
+Deployment target: Fly Machines, one Machine plus one Fly Volume mounted as `/data` per customer. The
+Fly Proxy and the 6PN cannot reach a Unix socket, so the listener above is the only route off the
+Machine, and it is the one route the contract allows.
+
+| Path | How it is reached | Authentication |
+|---|---|---|
+| Public port | A `services` entry whose `internal_port` is the `--api-bind` port; Fly Proxy terminates TLS on 443 and forwards plaintext over the WireGuard mesh, so the operator passes `--api-insecure-behind-proxy` | The tenant's bearer token |
+| Private 6PN | Another Machine or the control plane dials the tenant's 6PN address or `<machine>.vm.<app>.internal`; the listener binds `[::]:PORT` or `fly-local-6pn` | The tenant's bearer token |
+
+The 6PN is private to the organization, not to a user, so it does not replace the token. `fly-local-6pn`
+and `[::]` are IPv6 addresses, so they are non-loopback binds and take the same acknowledgement. A
+stopped or suspended Machine has no process and therefore no listener; the credential file stays on the
+volume, and the listener never exits on idleness, so autostop is the only thing that ends it. These
+platform statements follow Fly.io's own documentation (`docs.fly.io/networking/tls-termination`,
+`docs.fly.io/networking/app-services`, `docs.fly.io/networking/private-networking`); this repository
+implements no Fly API call and no proxy-header trust.
+
+## Fly Machines: one Machine and one Volume per customer
+
+The control plane runs one Fly App per customer, holding one Machine and one Fly Volume. The agent
+repository implements no Fly API call; the control plane (`horon-ai/server`) owns every provider call
+and this section is the contract it must satisfy.
+
+### The Machines / Volume / 6PN mapping
+
+| Fly concept | In this contract |
+| --- | --- |
+| App | One per customer. A single multi-tenant app cannot route to per-user Machines |
+| Machine | One per customer, running the hosted image with the environment below |
+| Volume | One per customer, attached to that Machine at `/data`; one region, one host; a volume attaches to one Machine at a time |
+| 6PN | The private address space the control plane dials, `<machine>.vm.<app>.internal`, resolved by DNS because the address changes on reboot and migration |
+| `HORON_HOME` | `/data/home`, inside the volume |
+| `services` | Empty until the authenticated TCP listener is running |
+
+### Machine configuration the image requires
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `stop_config.signal` | `SIGTERM` (recommended) | The daemon drains in-flight session saves, unregisters, cleans up sockets and locks, and exits 0 on both `SIGTERM` and Fly's default `SIGINT`. Setting `SIGTERM` explicitly remains recommended as defense in depth and to match other supervisors. `fly.toml`: `kill_signal = "SIGTERM"` |
+| `stop_config.timeout` | At least `30` seconds | Fly's default `kill_timeout` is 5 seconds, below the drain plus unregister plus exit. `fly.toml`: `kill_timeout = 30` |
+| `restart.policy` | `no`, or an explicit `on-failure` policy paired with an idle-exit policy the daemon agrees with | The daemon exits with code 44 after 300 seconds with no clients; `on-failure` then restarts it, which is restart churn. Pick one owner of idling: the daemon's self-exit with `restart = "no"`, or a hosted idle-exit switch with `auto_stop = "suspend"` |
+| `env` | `HORON_AGENT_HOSTING_MODE=per-user-container`, `HORON_AGENT_TENANT_ID=<tenant>`, `HORON_HOME=/data/home`, `HORON_AGENT_RUNTIME_DIR=/run/horon`, `HORON_AGENT_GATEWAY_ENABLED=0`, `HORON_AGENT_NO_AUTO_UPDATE=1` | The startup boundary above |
+| `guest` | 1 shared CPU, 1 GB memory | Suspend requires at most 2 GB and no swap |
+| `mounts` | The customer's volume at `/data` | The only durable state |
+
+### Snapshot, restore and delete
+
+| Operation | Provider calls, in order | Notes |
+| --- | --- | --- |
+| Back up | `horon volume quiesce`, then `fly volumes snapshots create <volume>` | The quiesce checkpoints the memory index, fsyncs the page files and fences writes; see below |
+| Restore | `fly volumes create --snapshot-id <snapshot>` into a new volume, create a replacement Machine, start it, then `horon volume resume` | A snapshot restores into a **new** volume of equal or greater size, never in place; the central `user_volumes.volume_id` moves to the new id |
+| Delete | `delete_user`: fence writes, revoke the key, delete every snapshot, destroy the Machine, destroy the volume, mark the central row `deleted` | An attached volume cannot be destroyed, so the Machine is destroyed first; deletion is permanent, and a deleted volume id is reusable after 24 hours while its snapshots live until retention expiry |
+
+Snapshot facts the procedure depends on: daily snapshots are the default with retention 1 to 60 days
+(5 by default), and Fly documents **no filesystem-freeze or crash-consistency guarantee**. Treat a
+snapshot taken under load as crash-consistent at best.
+
+### The quiesce requirement
+
+`horon volume quiesce` exists because a crash-consistent snapshot of a live store can lose the page
+tail and can leave an index the next open must rebuild. It takes the store's writer lock, checkpoints
+the SQLite write-ahead log with `TRUNCATE`, fsyncs the index and every page file, and writes a fence
+that makes the store refuse writes. It reports a checkpoint token and the store revision, and it is
+idempotent. The data-loss window is explicit: **a snapshot taken without quiescing may miss the last
+seconds of acknowledged writes and may need a full reindex on first open**, while a snapshot taken
+after a successful quiesce misses nothing the store acknowledged before the call returned. `horon
+volume resume` lifts the fence; a snapshot and its restore are not complete until `resume` has run on
+the volume that serves traffic.
+
+### The control-plane interface (documentation only)
+
+```yaml
+# One Fly App per user; a single multi-tenant app cannot route to per-user Machines.
+config:
+  image: registry.fly.io/horon-agent-hosting@sha256:<digest>
+  guest: {cpu_kind: shared, cpus: 1, memory_mb: 1024}   # suspend needs <= 2 GB
+  env:
+    HORON_AGENT_HOSTING_MODE: per-user-container
+    HORON_AGENT_TENANT_ID: <tenant-id>
+    HORON_HOME: /data/home
+    HORON_AGENT_RUNTIME_DIR: /run/horon
+    HORON_AGENT_GATEWAY_ENABLED: "0"
+    HORON_AGENT_NO_AUTO_UPDATE: "1"
+  mounts: [{volume: vol_<id>, path: /data}]
+  services: []                    # add only after the authenticated TCP listener exists
+  stop_config: {signal: SIGTERM, timeout: "30s"}
+  restart: {policy: "no"}         # or on-failure with an agreed idle-exit policy
+  auto_destroy: false
+  metadata: {tenant: <tenant-id>, user: <user-id>}
+# fly.toml equivalent: kill_signal="SIGTERM", kill_timeout=30,
+# auto_stop_machines="off"|"suspend", auto_start_machines=true,
+# min_machines_running=0, internal_port=<listener-port>
+```
+
+**Lifecycle calls:** create the volume (region, size, retention 1 to 60, scheduled snapshots), create
+the Machine (volume id, environment, no services), wait for `started`, serve, `cordon` for maintenance,
+stop with `SIGTERM`, quiesce, take a snapshot, restore to a new volume with `--snapshot-id`, create a
+replacement Machine with the new volume, start it, then destroy the old Machine and finally the old
+volume.
+
+**Split of responsibility.** This repository exposes the stable environment and layout contract, the
+`SIGTERM` and `SIGINT` drain, readiness (the socket accepts), the write fence and quiesce command, and the memory
+volume export, import and `delete_user` steps. It leaves to `horon-ai/server`: every Fly API call, the
+volume-Machine-user mapping, image publishing, region and placement, TLS and domains, customer
+authentication, quotas and billing, retries and idempotency, and snapshot scheduling. The agent never
+calls the Fly API.
+
+## Suspend, wake and restore
+
+Idling an instance is stopping its container or sending the daemon `SIGTERM` or `SIGINT`. The daemon drains in-flight session saves, unregisters and removes its runtime sockets before it exits (`docs/architecture/SERVER.md`), so a stop is a durable stop and the next start opens the same volume.
+
+- Stop with `scripts/hosting/instance.sh stop <tenant>`, `docker stop`, or the supervisor's termination signal. `stop_hosted_instance` in `horon-agent-sdk` is the same operation: it signals, waits for the endpoint to stop accepting, and reports the tenant as stopped only after that. On Fly, configuring `SIGTERM` remains recommended as defense in depth, while the platform default `SIGINT` also drains cleanly.
+- Wake by starting the image or the daemon again with the same volume. Sessions, approvals, MCP config and memory files are read from the volume; a session resumes through the ordinary resume path.
+- Never copy a volume between tenants, and never mount one volume into two instances.
+- A suspended Machine keeps its volume and loses nothing from it. A cold start resets the root filesystem, so `/run/horon` is recreated and the daemon unlinks stale sockets before binding.
+
+## Deleting a customer
+
+There are two deletion paths, and they are not interchangeable.
+
+- **Local and development.** `delete_hosted_instance` and `scripts/hosting/instance.sh delete <tenant>` remove one host directory, `<root>/<tenant>`, under a shared parent directory. They are reference implementations for a local Docker or supervised-process runtime. `delete_hosted_instance` deletes a directory, **not** a Fly volume, and neither it nor `instance.sh` makes a Fly API call or destroys a snapshot.
+- **Hosted on Fly.** `horon volume delete-user <user_id>` runs the durable, resumable step machine below. It fences writes, revokes the user data key, wipes the local store, deletes every snapshot, destroys the Machine and the volume, and marks the central row `deleted` last.
+
+| Step | What runs it | Result |
+| --- | --- | --- |
+| `write_stop` | `delete_user` (local) | The memory store is fenced and its pages and index are removed |
+| `key_revoke` | `delete_user` (local, key service) | The key record names `revoked_at` and staged material is wiped |
+| `snapshot_delete` | Control plane / provider | Every snapshot of the volume is deleted |
+| `volume_delete` | Control plane / provider | The Machine is destroyed, then the volume |
+| `mark_deleted` | Control plane | The central row reads `deleted` |
+
+The job file lives at `<HORON_HOME>/volume-state/deletion-job.json`, outside the memory store, so a step
+that deletes the store cannot lose the record of what it did. A failed step is recorded with its reason,
+the command exits non-zero, and `horon volume delete-user` re-run resumes at that step. `deleted` is
+reported only after every step finished: a partial run reports `deleting` and names the step.
+
+Deleting one customer must leave every other customer untouched. Their sessions, volumes and running
+daemons are separate, and the boundary test starts two daemons and asserts exactly that.
+
+## What is out of scope
+
+- Billing, plans and quotas.
+- Autoscaling and placement policy.
+- A central metadata service; the control plane owns the mapping and this repository does not implement it. The agent's client against that service and its request shapes are in the memory volume docs (`docs/runtime/MEMORY.md`); the service itself is `horon-ai/server#28`, whose contract is still a draft.
+- A Fly API client. The control plane calls the provider; the agent only exposes the volume commands it needs.
+- Live-disk page-file encryption beyond Fly volume at-rest encryption (memory export/import archives support authenticated `aes-256-gcm` sealing via `KeyProvider` and `--key-env`/`--key-file`, and the key contract tracks creation and revocation).
+- A hosted idle-exit switch. Changing the shared-server idle deadline or adding a hosted idle-exit switch is outside this scope.
+- Authentication for non-local exposure beyond the authenticated TCP listener the harness API already implements.
+- Tenant ids inside application code paths, sessions or the wire protocol.
+- A general-purpose OS sandbox beyond the container boundary.
+
+## Compatibility
+
+With `HORON_AGENT_HOSTING_MODE` absent, nothing changes: the daemon serves the operator's own home, the gateway default stays off, and every existing command behaves as before. Hosted mode adds a startup check and a launcher; it does not alter sessions, the wire protocol or configuration semantics outside the `[hosting]` section.
+
+The volume commands (`horon volume ...`) are additive: they act on the volume `HORON_HOME` resolves to and change nothing unless an operator runs one. The write fence is a file only a quiesce writes, so an unfenced store behaves exactly as before, and the memory store's own writes are the only thing the fence gates.

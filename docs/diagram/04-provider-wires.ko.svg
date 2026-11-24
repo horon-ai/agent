@@ -93,6 +93,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="676" y="610" font-size="11" class="m">기본 설정에서는 꺼져 있어 도구가</text>
 <text x="676" y="626" font-size="11" class="m">모델에 아예 알려지지 않는다</text>
 
-<text x="30" y="680" font-size="11" class="m">모델 경로는 하나다. 턴은 프로필 type의 엔드포인트로 POST한다. 라우터 프로세스도, 플러그인 호스트도, 두 번째 자격 증명도 없다.</text>
+<text x="30" y="646" font-size="11" class="m">프로필마다 여러 세션이 동시에 보내는 모델·이미지 요청 수를 제한할 수 있다.</text>
+<text x="30" y="660" font-size="11" class="m">네 가지 요청 방식 모두 프로필에서 첫 응답과 응답 도중 대기 시간을 따로 제한할 수 있다.</text>
+<text x="30" y="680" font-size="11" class="m">모델 경로는 하나다. 공급자 런타임은 프로필의 자격 증명으로 해당 type의 엔드포인트에 바로 POST한다.</text>
 <text x="30" y="700" font-size="11" class="m">회선마다 model routes에 자기 api_method를 보고하지만, 저장되는 프로바이더 정체성은 openai-compatible로 같다.</text>
 </svg>

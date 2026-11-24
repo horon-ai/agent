@@ -18,11 +18,15 @@ Scenario, evaluated per request:
    only when it carries that nonce in a tool result.
 3. omp's skill routing-hint request -> one valid hint, so omp does not retry it
    three times in the skill scenario.
-4. First request of a conversation that offers a shell-like tool -> the model
+4. The prompt carries ``[tui:jobs]`` -> start two background shell jobs, one per
+   tool call, so the terminal client can list and cancel them.
+5. The prompt carries ``[tui:context-proof]`` -> answer with the marker's own
+   tail, which is how the context-controls smoke reads a model reply.
+6. First request of a conversation that offers a shell-like tool -> the model
    asks for that tool once with ``{"command": "ls"}``.
-5. A request whose transcript already carries a tool result -> the model answers
+7. A request whose transcript already carries a tool result -> the model answers
    with the fixed text ``mock-ok`` and stops.
-6. A request with no shell tool -> the model answers ``mock-ok`` immediately.
+8. A request with no shell tool -> the model answers ``mock-ok`` immediately.
 
 Every request is recorded so the benchmark can prove a tool round-trip actually
 happened (``GET /__stats``).
@@ -53,6 +57,13 @@ SHELL_NAME_HINTS = ("bash", "shell", "exec", "terminal", "run_command", "cmd")
 # stay what they were.
 SKILL_MARKER = "[bench:skill]"
 MCP_MARKER = "[bench:mcp]"
+TUI_RETRY_MARKER = "[tui:retry-proof]"
+PACKAGE_MARKER = "[bench:package]"
+JOBS_MARKER = "[tui:jobs]"
+JOBS_COMMANDS = (
+    "printf 'output-one\\n'; sleep 120 # job-one",
+    "printf 'output-two\\n'; sleep 120 # job-two",
+)
 SKILL_NAME = "bench-skill"
 # Text inside the fixture SKILL.md; seeing it in a later request proves the skill
 # body actually reached the model.
@@ -344,6 +355,25 @@ def flatten_tools(tools, namespace: str | None = None) -> list[tuple[dict, str |
     return flat
 
 
+# The registry name the host gives a package tool: `ext__<package>__<tool>`.
+PACKAGE_TOOL_NAME = re.compile(r"ext__[a-z0-9][a-z0-9_-]*__[a-z0-9][a-z0-9_]*")
+
+
+def find_package_tool(tools) -> str | None:
+    """The installed package tool a package scenario calls.
+
+    horon defers a package schema out of the cached prefix, so a request may not
+    carry the tool definition at all; the listed-tool index in the system prompt
+    names it, and the host still dispatches the call by name. The offered list is
+    therefore searched first and the transcript second.
+    """
+    for tool, _namespace in flatten_tools(tools):
+        name = _tool_name(tool)
+        if PACKAGE_TOOL_NAME.fullmatch(name):
+            return name
+    return None
+
+
 def _tool_named(tools, names: tuple[str, ...]) -> dict | None:
     wanted = {name.casefold() for name in names}
     for tool, _namespace in flatten_tools(tools):
@@ -533,6 +563,12 @@ def _plan_name(body: dict, prompt: str) -> str:
         return "skill"
     if MCP_MARKER in blob:
         return "mcp"
+    if PACKAGE_MARKER in blob:
+        return "package"
+    if JOBS_MARKER in blob:
+        return "jobs"
+    if "[tui:context-proof]" in prompt:
+        return "context-proof"
     return "ls"
 
 
@@ -563,6 +599,7 @@ class Stats:
         self.lock = threading.Lock()
         self.requests: list[dict] = []
         self.started_at = time.time()
+        self.retry_fixture_ready = threading.Event()
         self._call_seq = 0
         self._seq_lock = threading.Lock()
 
@@ -683,6 +720,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True})
             return
         body = self._read_body()
+        if path == "/__retry_fixture":
+            if body.get("ready") is True:
+                STATS.retry_fixture_ready.set()
+            else:
+                STATS.retry_fixture_ready.clear()
+            self._send_json({"ok": True})
+            return
+        if path.endswith("/chat/completions") and TUI_RETRY_MARKER in json.dumps(body):
+            if not STATS.retry_fixture_ready.is_set():
+                self._send_json({"error": {"message": "TUI retry fixture provider failure"}}, status=400)
+                return
         if path.endswith("/chat/completions"):
             self._handle_chat(body)
         elif path.endswith("/responses"):
@@ -702,8 +750,9 @@ class Handler(BaseHTTPRequestHandler):
 
         A request's plan comes from a marker in the request's prompt:
         `[bench:skill]` invokes the fixture skill, `[bench:mcp]` calls the
-        fixture MCP tool, and anything else keeps the original `ls` behaviour
-        (so one-shot and session numbers are unchanged). omp's skill-routing
+        fixture MCP tool, `[bench:package]` calls an installed package's tool,
+        and anything else keeps the original `ls` behaviour (so one-shot and
+        session numbers are unchanged). omp's skill-routing
         hint request carries no marker; answering it plainly would make omp
         retry, so it gets a valid hint instead.
         """
@@ -715,6 +764,12 @@ class Handler(BaseHTTPRequestHandler):
         saw_result = has_tool_result(kind, body)
         results = tool_result_text(kind, body)
         transcript = json.dumps(body, ensure_ascii=False)
+        side_fixture_question = "side fixture question" in transcript
+        if "[tui:context-proof]" in prompt:
+            plan_name = "context-proof"
+        elif TUI_RETRY_MARKER in transcript:
+            plan_name = "tui-retry"
+        fork_fixture = "tui-fork-boundary-proof" in transcript
         counter = STATS.next_call_id()
         nonce = f"{NONCE_PREFIX}{counter}"
 
@@ -722,7 +777,7 @@ class Handler(BaseHTTPRequestHandler):
         arguments: dict = {}
         namespace = None
         via = None
-        if plan_name == "hint":
+        if plan_name in {"hint", "tui-retry", "context-proof"} or side_fixture_question or fork_fixture:
             pass
         elif plan_name == "skill":
             skill_tool = find_skill_tool(tools)
@@ -812,6 +867,27 @@ class Handler(BaseHTTPRequestHandler):
                 tool_name = _tool_name(read_tool)
                 via = "mcp-route"
                 arguments = {prop: route}
+        elif plan_name == "package":
+            offered = find_package_tool(tools)
+            named = PACKAGE_TOOL_NAME.search(transcript)
+            if not saw_result and (offered or named):
+                tool_name = offered or named.group(0)
+                via = "package-tool"
+                # The nonce travels as the call's argument and the child's answer
+                # carries it back, which is how the result proves the call ran
+                # instead of being refused.
+                arguments = {"name": nonce}
+        elif plan_name == "jobs":
+            shell = find_shell_tool(tools)
+            issued = tool_call_count(kind, body)
+            if shell is not None and issued < len(JOBS_COMMANDS):
+                tool_name = shell[0]
+                arguments = {
+                    shell[1]: JOBS_COMMANDS[issued],
+                    "intent": "qa",
+                    "run_in_background": True,
+                    "notify": False,
+                }
         else:
             shell = find_shell_tool(tools)
             # The refusal text the approval gate returns names the refusal, and
@@ -843,6 +919,8 @@ class Handler(BaseHTTPRequestHandler):
             sentinel_seen = SKILL_SENTINEL in transcript
         elif plan_name == "mcp":
             sentinel_seen = NONCE_RE.search(results) is not None
+        elif plan_name == "package":
+            sentinel_seen = NONCE_RE.search(results) is not None
         else:
             sentinel_seen = False
         entry = {
@@ -857,6 +935,10 @@ class Handler(BaseHTTPRequestHandler):
             "tool_choice_prop": next(iter(arguments), None),
             "via": via,
             "sentinel_seen": sentinel_seen,
+            **({
+                "context_proof_prompt": prompt,
+                "context_proof_contains_original": "[tui:context-proof] original" in transcript,
+            } if plan_name == "context-proof" else {}),
             "capped": capped,
             "bench_echo_exposed": plan_name == "mcp"
             and bool(
@@ -880,7 +962,7 @@ class Handler(BaseHTTPRequestHandler):
             # The tail of the tool results so far, kept only for the skill and
             # MCP plans: a call that ran without returning the fixture's proof
             # is diagnosed from this instead of a re-run.
-            "result_excerpt": results[-400:] if plan_name in ("skill", "mcp") and results else None,
+            "result_excerpt": results[-400:] if plan_name in ("skill", "mcp", "package") and results else None,
             "ts": time.time(),
         }
         STATS.record(entry)
@@ -890,7 +972,13 @@ class Handler(BaseHTTPRequestHandler):
             "tool": tool_name,
             "arguments": arguments,
             "namespace": namespace if calls_tool else None,
-            "text": ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT,
+            "text": (
+                "retry-fixture-recovered" if plan_name == "tui-retry"
+                else "side-fixture-answer" if side_fixture_question
+                else f"context-verified-{prompt.rsplit(' ', 1)[-1]}" if plan_name == "context-proof"
+                else "fork-boundary-ready" if fork_fixture
+                else ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT
+            ),
             "model": body.get("model") or MOCK_MODEL,
             "stream": bool(body.get("stream")),
         }

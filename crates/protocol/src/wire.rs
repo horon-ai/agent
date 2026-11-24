@@ -147,6 +147,15 @@ pub enum Request {
         /// acknowledges it without starting a model turn.
         #[serde(default, skip_serializing_if = "is_false")]
         no_reply: bool,
+        /// Continue the run the client names instead of starting unrelated work.
+        ///
+        /// The daemon decides while it holds the session: a run that already
+        /// moved on, never stopped, or stopped for a reason no retry can fix is
+        /// answered with an error and no turn runs. That decision is what makes
+        /// a second click, or a second attached client asking for the same run,
+        /// harmless. Omitted by clients that do not continue a run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_run_id: Option<String>,
     },
 
     /// Ask the daemon to drop a queued `message` request before the agent has
@@ -318,6 +327,17 @@ pub enum Request {
         /// field never appears on their wire and their behaviour is unchanged.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         acp: Option<AcpSubscribeOptions>,
+        /// Ask for the stored message id on each history row.
+        ///
+        /// Independent of `acp`: a client that wants the ids without the ACP
+        /// bridge (and its v2-only event surface) sets this alone. Absent on
+        /// every other client, so their history rows keep the bytes they had.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        history_message_ids: bool,
+        /// A2UI v1.0 renderer capabilities negotiated by this client. Absent for
+        /// non-A2UI clients so existing Subscribe wire bytes remain unchanged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        a2ui: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities>,
     },
 
     /// Declare that this client is intentionally detaching before its transport
@@ -422,6 +442,22 @@ pub enum Request {
         label: Option<String>,
     },
 
+    /// Change one todo item's status in the attached session, only if the
+    /// stored list is still `expected_revision`.
+    ///
+    /// Routed through the daemon so the write shares the todo tool's lock and
+    /// the resulting `TodoUpdated` bus event reaches every attached client.
+    /// Unlike a message, it starts no turn and injects no prompt. A stale
+    /// revision answers `TodoEditResult` with `applied: false` and leaves the
+    /// list untouched.
+    #[serde(rename = "set_todo_status")]
+    SetTodoStatus {
+        id: u64,
+        expected_revision: String,
+        todo_id: String,
+        status: String,
+    },
+
     /// Hide or restore the attached session by appending an ArchiveChanged
     /// record. Routed through the daemon because its in-memory session owns the
     /// writer lock and later writes; nothing is deleted either way.
@@ -447,7 +483,27 @@ pub enum Request {
 
     /// Split the current session — clone conversation into a new session
     #[serde(rename = "split")]
-    Split { id: u64 },
+    Split {
+        id: u64,
+        /// Make the fork a read-only consult child: the stored session carries
+        /// the flag, so every later agent starts on the consult tool list.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        consult: bool,
+        /// The stored message the child does not get: it keeps the prefix before
+        /// this id. A stale id refuses the fork before a child exists.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        boundary: Option<String>,
+    },
+
+    /// Fork the current session from a recorded boundary.
+    ///
+    /// The child holds every message the parent recorded before
+    /// `boundary_message_id` and none of the boundary or what follows, so one
+    /// past turn can be continued differently while the parent keeps its
+    /// complete transcript. A boundary the parent no longer records is refused
+    /// without creating a session.
+    #[serde(rename = "split_at")]
+    SplitAt { id: u64, boundary_message_id: String },
 
     /// Transfer the current session into a compacted handoff session
     #[serde(rename = "transfer")]
@@ -589,6 +645,24 @@ pub enum Request {
         id: u64,
         #[serde(default)]
         mode: Option<String>,
+    },
+
+    /// Configure or disable A2UI renderer capabilities for this connection/session.
+    #[serde(rename = "configure_a2ui")]
+    ConfigureA2ui {
+        id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities>,
+    },
+
+    /// Inbound A2UI `renderer_to_agent` event (`action`, `callAgentFunction`,
+    /// `rendererFunctionResponse`, or `error`) plus optional synchronized `data_model`.
+    #[serde(rename = "a2ui_event")]
+    A2uiEvent {
+        id: u64,
+        envelope: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data_model: Option<serde_json::Value>,
     },
 
     /// Send a message to other agents
@@ -962,6 +1036,34 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_bytes: Option<u64>,
     },
+
+    /// Read the allow-listed settings this daemon runs with.
+    ///
+    /// Added for the stable harness API's `get_effective_settings`. The bridge
+    /// is a separate process with its own environment and its own read of the
+    /// config file, so a value it computed itself could differ from the one the
+    /// session acts on. Only this daemon knows what it loaded, so it answers.
+    /// The reply is [`ServerEvent::EffectiveSettings`], and it holds no key
+    /// outside the allow-list.
+    #[serde(rename = "get_effective_settings")]
+    GetEffectiveSettings { id: u64 },
+
+    /// Apply one package-management operation to the catalog this daemon owns.
+    ///
+    /// Accepted on a one-shot connection before any session is attached: the
+    /// catalog is daemon-wide state, not session state. The daemon serializes
+    /// the operation with its inbox pass and answers only after the resulting
+    /// generation is published, so a client that receives the reply knows the
+    /// catalog is already authoritative.
+    ///
+    /// `operation_id` is chosen by the caller: a retry that reuses it reports
+    /// the recorded result instead of applying the operation twice.
+    #[serde(rename = "package_control")]
+    PackageControl {
+        id: u64,
+        operation_id: String,
+        operation: horon_agent_extension_types::control::PackageControlOperation,
+    },
 }
 
 pub mod acp_v2_events;
@@ -969,7 +1071,7 @@ pub mod event_types;
 mod events;
 mod model_identity;
 pub use acp_v2_events::{BackgroundWorkEvent, BackgroundWorkItem};
-pub use event_types::{FileDiffWire, PlanEntryWire};
+pub use event_types::{FileDiffWire, PlanEntryWire, TodoEditResultEvent};
 pub use events::ServerEvent;
 pub use model_identity::RuntimeModelIdentity;
 

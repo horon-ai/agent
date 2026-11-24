@@ -84,6 +84,8 @@ else
         cargo check --all-targets --all-features -j "$JOBS"
     run_gate "cargo clippy -- -D warnings" \
         cargo clippy --all-targets --all-features -j "$JOBS" -- -D warnings
+    run_gate "cargo clippy --workspace --all-targets -- -D warnings" \
+        cargo clippy --locked --workspace --all-targets -j "$JOBS" -- -D warnings
 fi
 
 # Only the Windows CI jobs pass --locked, so a stale lockfile otherwise passes

@@ -86,6 +86,10 @@ impl SkillRegistry {
 
     /// The longest registered, addressable name at the start of `invocation`.
     fn resolve_registered<'a>(&self, invocation: &'a str) -> Option<SkillInvocation<'a>> {
+        let filter = super::filter::SkillFilter::from_env();
+        if filter.is_disabled() {
+            return None;
+        }
         let boundaries = std::iter::once(invocation.len()).chain(
             invocation
                 .char_indices()
@@ -95,7 +99,13 @@ impl SkillRegistry {
 
         for end in boundaries {
             let name = &invocation[..end];
-            if name.is_empty() || !is_addressable(name) || !self.skills.contains_key(name) {
+            if name.is_empty()
+                || !is_addressable(name)
+                || !self
+                    .skills
+                    .get(name)
+                    .is_some_and(|skill| filter.allows(name, &skill.name))
+            {
                 continue;
             }
             return Some(SkillInvocation {
@@ -132,6 +142,7 @@ mod tests {
 
     #[test]
     fn matches_multi_word_skill_names() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["My Custom Skill"]);
         assert_eq!(
             registry.resolve_invocation("/My Custom Skill"),
@@ -144,6 +155,7 @@ mod tests {
 
     #[test]
     fn keeps_trailing_prompt_after_multi_word_name() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["My Custom Skill"]);
         assert_eq!(
             registry.resolve_invocation("/My Custom Skill only the staged diff"),
@@ -160,6 +172,7 @@ mod tests {
 
     #[test]
     fn prefers_longest_registered_match() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["My", "My Custom Skill"]);
         assert_eq!(
             registry.resolve_invocation("/My Custom Skill please"),
@@ -172,6 +185,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_single_token_when_no_registry_match_exists() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = SkillRegistry::default();
         assert_eq!(
             registry.resolve_invocation("/not-a-real-skill with a prompt"),
@@ -184,6 +198,7 @@ mod tests {
 
     #[test]
     fn does_not_bypass_terminal_file_drop_guard() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["tmp/screenshot.png"]);
         assert_eq!(registry.resolve_invocation("/tmp/screenshot.png"), None);
         assert_eq!(registry.resolve_invocation("/tmp/screenshot.png describe this"), None);
@@ -191,6 +206,7 @@ mod tests {
 
     #[test]
     fn preserves_single_word_skill_invocations() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["frontend-design"]);
         assert_eq!(
             registry.resolve_invocation("/frontend-design build a settings page"),
@@ -203,6 +219,7 @@ mod tests {
 
     #[test]
     fn matches_a_namespaced_skill_under_its_registered_name() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["name", "claude/name"]);
         assert_eq!(
             registry.resolve_invocation("/claude/name do the thing"),
@@ -222,6 +239,7 @@ mod tests {
 
     #[test]
     fn namespaced_names_with_spaces_and_unicode_are_invocable() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["claude/My Skill", "플러그인/x"]);
         assert_eq!(
             registry.resolve_invocation("/claude/My Skill do it"),
@@ -241,12 +259,14 @@ mod tests {
 
     #[test]
     fn a_path_shaped_registered_name_stays_uninvocable() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["tmp/x.png"]);
         assert_eq!(registry.resolve_invocation("/tmp/x.png"), None);
     }
 
     #[test]
     fn namespaced_match_takes_the_longest_registered_name() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["claude/name", "claude/name~2"]);
         assert_eq!(
             registry.resolve_invocation("/claude/name~2 do the thing"),
@@ -259,6 +279,7 @@ mod tests {
 
     #[test]
     fn skill_prefix_matches_same_skill() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["frontend-design", "claude/My Skill"]);
         let prefixed = registry.resolve_invocation("/skill:frontend-design build x");
         assert_eq!(
@@ -278,6 +299,7 @@ mod tests {
 
     #[test]
     fn skill_prefix_unknown_is_none() {
+        let _env_guard = crate::storage::lock_test_env();
         let registry = registry(&["frontend-design"]);
         // `/nope` falls back to an identifier-shaped invocation; the explicit
         // prefix does not.
@@ -289,6 +311,7 @@ mod tests {
 
     #[test]
     fn skill_prefix_respects_file_drop_guard() {
+        let _env_guard = crate::storage::lock_test_env();
         assert_eq!(registry(&[]).resolve_invocation("/skill:tmp/x.png"), None);
         assert_eq!(
             registry(&["tmp/x.png"]).resolve_invocation("/skill:tmp/x.png describe it"),

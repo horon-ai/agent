@@ -348,6 +348,10 @@ pub(super) fn subscribe_request(
         allow_session_takeover: false,
         terminal_env: crate::terminal_launch::snapshot_client_terminal_env(),
         acp,
+        // The adapter reads the ids a v2 connection already carries; the
+        // independent opt-in is the TUI bridge's, not this one's.
+        history_message_ids: false,
+        a2ui: None,
     }
 }
 
@@ -377,13 +381,17 @@ impl AcpRuntime {
     fn subscribe_for_session(&self, id: u64, setup: &SessionSetup, target_session_id: Option<String>) -> Request {
         let capabilities = self.client_capabilities();
         let acp = acp_subscribe_options(&capabilities, setup.additional_dirs.clone());
-        subscribe_request(
+        let mut request = subscribe_request(
             id,
             Some(&setup.cwd),
             target_session_id,
             Some(self.for_surface(acp)),
             supports_elicitation_form(&capabilities),
-        )
+        );
+        if let Request::Subscribe { a2ui, .. } = &mut request {
+            *a2ui = self.a2ui_capabilities();
+        }
+        request
     }
 
     /// IS-3: a v2 connection never asks the client for file or terminal access
@@ -506,8 +514,10 @@ impl AcpRuntime {
                 Err(error) => return self.write_rpc_error(id, error).await,
             },
         };
+        let a2ui_enabled = self.is_a2ui_negotiated();
         let mut updates = if replay {
-            let mut updates = v2::replay::replay_updates(&attached.messages, &attached.images, &cwd);
+            let mut updates =
+                v2::replay::replay_updates_with_a2ui(&attached.messages, &attached.images, &cwd, a2ui_enabled);
             updates.push(v2::shapes::replay_complete());
             updates
         } else {
@@ -518,7 +528,7 @@ impl AcpRuntime {
         let resumed = Resumed {
             updates,
             snapshot: attached.snapshot,
-            position: v2::replay::resume_position(&attached.messages),
+            position: v2::replay::resume_position_with_a2ui(&attached.messages, a2ui_enabled),
             leftovers: attached.leftovers,
             background,
         };
@@ -932,7 +942,8 @@ impl AcpRuntime {
         images: &[crate::session::RenderedImage],
         cwd: &Path,
     ) -> Result<()> {
-        let options = MapperOptions::new(&self.client_capabilities(), Some(cwd.to_path_buf()));
+        let mut options = MapperOptions::new(&self.client_capabilities(), Some(cwd.to_path_buf()));
+        options.a2ui = self.is_a2ui_negotiated();
         for update in replay_updates(messages, images, &options) {
             self.write_notification("session/update", json!({ "sessionId": session_id, "update": update }))
                 .await?;

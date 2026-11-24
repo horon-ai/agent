@@ -3,7 +3,21 @@ use crate::logging;
 use crate::message::{Message, ToolDefinition};
 use crate::session::StoredMessage;
 
+#[path = "run_prompt.rs"]
+mod run_prompt;
+
 impl Agent {
+    /// Add text after this session's composed system prompt, for this process only.
+    /// Nothing is stored in the session; the text is bounded.
+    pub fn set_appended_system_text(&mut self, text: &str) -> anyhow::Result<()> {
+        run_prompt::set_appended(&self.session.id, text)
+    }
+
+    /// Clear any per-run appended system prompt text recorded for `session_id`.
+    pub(crate) fn clear_appended_system_text(session_id: &str) {
+        run_prompt::clear_appended(session_id);
+    }
+
     pub(crate) fn runtime_skills_snapshot(&self) -> serde_json::Value {
         let registry = self.current_skills_snapshot();
         let mut loaded = registry.list();
@@ -57,9 +71,9 @@ impl Agent {
     /// or locking a new tool snapshot. Pending memory is deliberately not consumed.
     pub async fn debug_context(&self) -> serde_json::Value {
         self.ensure_listed_tools_index().await;
-        let prompt = self.build_system_prompt_split(None);
         let current_tools = self.tool_definitions_for_debug().await;
         let effective_tools: &[ToolDefinition] = self.locked_tools.as_deref().unwrap_or(&current_tools);
+        let prompt = self.build_request_system_prompt(effective_tools);
         let locked_tool_names = self
             .locked_tools
             .as_ref()
@@ -234,8 +248,42 @@ impl Agent {
         split.dynamic_part.push_str(notes);
     }
 
-    /// Build split system prompt for better caching
-    /// Returns static (cacheable) and dynamic (not cached) parts separately
+    /// Build the cacheable guidance from the definitions used for this request.
+    pub(super) fn build_request_system_prompt(&self, tools: &[ToolDefinition]) -> crate::prompt::SplitSystemPrompt {
+        let mut split = self.build_system_prompt_split(None);
+        if self.session.system_prompt.is_some() || !crate::config::config().tools.eval {
+            return split;
+        }
+        let Some(eval) = tools.iter().find(|tool| tool.name == "eval") else {
+            return split;
+        };
+        let toolbox = tools
+            .iter()
+            .any(|tool| tool.name == crate::config::TOOLBOX_TOOL && !tool.defer_loading);
+        if eval.defer_loading && !toolbox && !self.provider.supports_deferred_tools() {
+            return split;
+        }
+
+        Self::append_static_section(
+            &mut split.static_part,
+            "# Python cells (`eval`)\n\
+             Use `eval` for Python computation or data processing, especially when later cells reuse intermediate values. \
+             Pass Python source as `code`. Variables persist in the session until reset, timeout, or kernel shutdown. \
+             Set `reset: true` for a fresh kernel. Each cell requires explicit approval, and denied cells do not run. \
+             Inside Python, call allowed Horon tools with top-level `await`, for example \
+             `await tool.read(file_path=\"notes.txt\")`. Print values you want back. \
+             The default timeout is 30 seconds. Each cell can make up to 64 bridge calls, with frames up to 256 KiB.",
+        );
+        if eval.defer_loading && toolbox {
+            split.static_part.push_str(
+                " If `eval` is not in the direct tool list, use `toolbox` with `action: \"run\"`, `tool: \"eval\"`, \
+                 and `args` containing the cell's `code` and any `timeout` or `reset` options.",
+            );
+        }
+        split
+    }
+
+    /// Build split system prompt for better caching.
     pub(super) fn build_system_prompt_split(&self, memory_prompt: Option<&str>) -> crate::prompt::SplitSystemPrompt {
         // Read the frozen index once: it is the same rows on every turn, and an
         // SDK system-prompt override carries it too, so those sessions keep the
@@ -246,17 +294,22 @@ impl Agent {
             if let Some(section) = listed_tools {
                 Self::append_static_section(&mut static_part, &section);
             }
+            if let Some(extra) = run_prompt::appended(&self.session.id) {
+                Self::append_static_section(&mut static_part, &extra);
+            }
             return crate::prompt::SplitSystemPrompt {
                 static_part,
                 dynamic_part: String::new(),
             };
         }
 
-        let skills = self.current_skills_snapshot();
+        let package_text = self.package_text_resources();
+        let mut skills_snapshot: Option<std::sync::Arc<crate::skill::SkillRegistry>> = None;
         // A skill whose file is unreadable drops out of this request's active
         // section instead of failing the whole prompt: the transcript keeps
         // going and one log line names the skill and error.
         let skill_prompt = self.active_skill.as_ref().and_then(|name| {
+            let skills = skills_snapshot.get_or_insert_with(|| self.skills_snapshot_for(package_text.as_deref()));
             let skill = skills.get(name)?;
             match skill.get_prompt() {
                 Ok(prompt) => Some(prompt),
@@ -270,19 +323,26 @@ impl Agent {
         });
 
         // Frozen per session so skill installs never rewrite the cached
-        // system prefix. Later installs are announced in the transcript.
-        let skills_section = self.prompt_skills_section.as_deref();
+        // system prefix. A package skill is the exception: the section is then
+        // re-rendered from the turn's package generation, so the package set
+        // that did not move still renders the same bytes.
+        let skills_section = self.request_skills_section(package_text.as_deref(), skills_snapshot.as_deref());
 
         let working_dir = self.session.working_dir.as_ref().map(std::path::PathBuf::from);
 
         let (mut split, _context_info) = crate::prompt::build_system_prompt_split_with_snapshot(
             skill_prompt.as_deref(),
-            skills_section,
+            skills_section.as_deref(),
             memory_prompt,
             working_dir.as_deref(),
             &self.agents_md_snapshot,
             &self.static_prompt_sources,
         );
+        // Package rules come after every captured section: a labelled, capped,
+        // lowest-priority block that never replaces AGENTS.md or the base prompt.
+        if let Some(resources) = package_text.as_deref() {
+            crate::prompt::append_package_rules(&mut split, resources);
+        }
 
         self.append_current_turn_system_reminder(&mut split);
         self.append_context_notes(&mut split);
@@ -291,6 +351,9 @@ impl Agent {
         self.append_todo_hint(&mut split);
         if let Some(section) = listed_tools {
             Self::append_static_section(&mut split.static_part, &section);
+        }
+        if let Some(extra) = run_prompt::appended(&self.session.id) {
+            Self::append_static_section(&mut split.static_part, &extra);
         }
         self.append_yield_instruction(&mut split);
 

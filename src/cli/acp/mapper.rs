@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::protocol::{FileDiffWire, PlanEntryWire, TurnStopReason};
+use std::collections::HashSet;
 use std::path::Path;
 
 const LOCATION_KEYS: [&str; 3] = ["file_path", "path", "filePath"];
@@ -19,6 +20,7 @@ pub(super) struct MapperOptions {
     pub(super) cwd: Option<PathBuf>,
     pub(super) notices: bool,
     pub(super) compaction: bool,
+    pub(super) a2ui: bool,
 }
 
 impl MapperOptions {
@@ -33,6 +35,7 @@ impl MapperOptions {
             cwd,
             notices: advertised("notices"),
             compaction: advertised("compaction"),
+            a2ui: a2ui::parse_capabilities_from_caps_value(client_capabilities).is_some(),
         }
     }
 }
@@ -48,6 +51,7 @@ pub(super) struct EventMapper {
     round_pending: bool,
     compactions: u64,
     current_tool_id: Option<String>,
+    suppressed_tools: HashSet<String>,
     tool_inputs: HashMap<String, String>,
     tool_diffs: HashMap<String, Vec<Value>>,
     tool_terminals: HashMap<String, Vec<Value>>,
@@ -64,6 +68,7 @@ impl EventMapper {
             round_pending: false,
             compactions: 0,
             current_tool_id: None,
+            suppressed_tools: HashSet::new(),
             tool_inputs: HashMap::new(),
             tool_diffs: HashMap::new(),
             tool_terminals: HashMap::new(),
@@ -106,6 +111,11 @@ impl EventMapper {
             }
             ServerEvent::ReasoningDelta { text } => vec![self.chunk("agent_thought_chunk", "thought", text)],
             ServerEvent::ToolStart { id, name } => {
+                if self.options.a2ui && a2ui::is_a2ui_tool_name(&name) {
+                    self.current_tool_id = Some(id.clone());
+                    self.suppressed_tools.insert(id);
+                    return Vec::new();
+                }
                 self.round_pending = true;
                 self.current_tool_id = Some(id.clone());
                 self.tool_inputs.entry(id.clone()).or_default();
@@ -122,6 +132,9 @@ impl EventMapper {
                 let Some(tool_id) = id.or_else(|| self.current_tool_id.clone()) else {
                     return Vec::new();
                 };
+                if self.suppressed_tools.contains(&tool_id) {
+                    return Vec::new();
+                }
                 let buffer = self.tool_inputs.entry(tool_id.clone()).or_default();
                 buffer.push_str(&delta);
                 let mut update = json!({
@@ -132,6 +145,11 @@ impl EventMapper {
                 vec![update]
             }
             ServerEvent::ToolExec { id, name } => {
+                if self.options.a2ui && a2ui::is_a2ui_tool_name(&name) {
+                    self.current_tool_id = Some(id.clone());
+                    self.suppressed_tools.insert(id);
+                    return Vec::new();
+                }
                 self.round_pending = true;
                 self.current_tool_id = Some(id.clone());
                 let mut update = json!({
@@ -151,6 +169,9 @@ impl EventMapper {
                 error,
                 verdict,
             } => {
+                if self.suppressed_tools.remove(&id) || (self.options.a2ui && a2ui::is_a2ui_tool_name(&name)) {
+                    return Vec::new();
+                }
                 self.round_pending = true;
                 let text = json!({
                     "type": "content",
@@ -232,6 +253,13 @@ impl EventMapper {
                     vec![self.chunk("agent_message_chunk", "msg", message)]
                 }
             }
+            ServerEvent::SoftInterruptInjected { content, point, .. } if point == "native_tool_retry" => {
+                if self.options.notices {
+                    vec![notice("info", &content, "Tool call retry")]
+                } else {
+                    vec![self.chunk("agent_message_chunk", "msg", format!("\n{content}\n"))]
+                }
+            }
             ServerEvent::TurnStopped { reason, message, .. } if self.options.notices => {
                 vec![notice(turn_stopped_severity(reason), &message, "The turn stopped")]
             }
@@ -247,6 +275,15 @@ impl EventMapper {
                 "msg",
                 format!("\n[HoronAgent MCP status: {}]\n", servers.join(", ")),
             )],
+            ServerEvent::A2uiEnvelope {
+                tool_call_id,
+                sequence,
+                envelope,
+                ..
+            } if self.options.a2ui => {
+                let resource = a2ui::a2ui_embedded_resource(&envelope, &tool_call_id, sequence);
+                vec![self.content_chunk("agent_message_chunk", "msg", resource)]
+            }
             _ => Vec::new(),
         }
     }
@@ -254,6 +291,10 @@ impl EventMapper {
     /// A message or thought chunk. Chunks of one round share a message id; the
     /// first chunk after a tool round opens a new one.
     fn chunk(&mut self, update: &str, kind: &str, text: String) -> Value {
+        self.content_chunk(update, kind, json!({ "type": "text", "text": text }))
+    }
+
+    fn content_chunk(&mut self, update: &str, kind: &str, content: Value) -> Value {
         if self.round_pending {
             self.round += 1;
             self.round_pending = false;
@@ -261,7 +302,7 @@ impl EventMapper {
         json!({
             "sessionUpdate": update,
             "messageId": format!("{}-{kind}-{}", self.turn, self.round),
-            "content": { "type": "text", "text": text },
+            "content": content,
         })
     }
 

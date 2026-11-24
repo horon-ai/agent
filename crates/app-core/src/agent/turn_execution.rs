@@ -39,6 +39,10 @@ impl Agent {
 
     /// Run a single turn with the given user message
     pub async fn run_once(&mut self, user_message: &str) -> Result<()> {
+        // One turn, one package generation: the snapshot is captured here, as
+        // the tool list and its index are frozen on the first request of a turn.
+        self.enter_package_generation().await;
+        self.report_hosted_refusals();
         self.resolve_armed_effort(false, None);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
@@ -76,6 +80,8 @@ impl Agent {
         user_message: &str,
         display_role: Option<crate::session::StoredDisplayRole>,
     ) -> Result<String> {
+        self.enter_package_generation().await;
+        self.report_hosted_refusals();
         self.resolve_armed_effort(false, display_role);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
@@ -118,6 +124,7 @@ impl Agent {
         display_role: Option<crate::session::StoredDisplayRole>,
         mut report: Option<crate::server::foreground_state::TurnReport>,
     ) -> Result<()> {
+        self.enter_package_generation().await;
         // Inject any pending notifications before the user message
         let alerts = self.take_alerts();
         if !alerts.is_empty() {
@@ -155,6 +162,7 @@ impl Agent {
             reminder => (std::borrow::Cow::Borrowed(user_message), reminder, display_role, false),
         };
         self.current_turn_system_reminder = system_reminder;
+        self.report_hosted_refusals();
 
         self.resolve_armed_effort(continues_turn, display_role);
         self.announce_late_mcp_tools().await;
@@ -265,33 +273,15 @@ impl Agent {
         input_id
     }
 
-    /// Fire the `turn_start` observer hook when a turn begins, before the model
-    /// starts generating (and before the first `pre_tool`). This lets external
-    /// integrations (terminal multiplexers, status bars) detect that the agent
-    /// is actively working during the otherwise-invisible window between prompt
-    /// submission and the first tool call. No-op (without building the payload)
-    /// when the hook is not configured.
-    fn fire_turn_start_hook(&self, source: &str) {
-        if !crate::hooks::hook_configured("turn_start") {
-            return;
-        }
-        let mut event = crate::hooks::HookEvent::new("turn_start")
-            .session_id(self.session.id.clone())
-            .field("MODEL", self.provider_model())
-            .field("SOURCE", source.to_string());
-        if let Some(cwd) = self.working_dir() {
-            event = event.cwd(cwd);
-        }
-        crate::hooks::dispatch_observer(event);
-    }
-
     /// Fire the `turn_end` observer hook with turn outcome metadata.
     /// No-op (without building the payload) when the hook is not configured.
     fn fire_turn_end_hook(&self, result: &Result<()>, started_at: Instant, start_message_index: usize) {
+        crate::extensions::observer::turn_ended(&self.session.id, result.is_ok(), started_at.elapsed());
         if !crate::hooks::hook_configured("turn_end") {
             return;
         }
         let status = if result.is_ok() { "ok" } else { "error" };
+        crate::server::session_notes::note_hook(self.session_id(), "turn_end", Some(status));
         let mut event = crate::hooks::HookEvent::new("turn_end")
             .session_id(self.session.id.clone())
             .field("STATUS", status)
@@ -434,7 +424,7 @@ impl Agent {
             Some(tools) => Arc::clone(tools),
             None => self.build_filtered_tool_definitions().await.into(),
         };
-        let prompt = self.build_system_prompt_split(None);
+        let prompt = self.build_request_system_prompt(&tools);
         self.provider
             .prewarm_with_context(&tools, &prompt.static_part, &self.provider_request_context())
             .await;
@@ -726,6 +716,8 @@ impl Agent {
             HashSet::new()
         };
         let mut tools = self.registry.definitions_filtered(allowed, &disabled).await;
+        self.include_negotiated_a2ui_tool_def(&mut tools, allowed, &disabled)
+            .await;
         self.apply_builtin_load_tiers(&mut tools);
         if apply_mcp_exposure {
             self.apply_mcp_tool_exposure(&mut tools);
@@ -771,7 +763,12 @@ impl Agent {
             return;
         }
         for tool in tools.iter_mut() {
-            if self.load_tiers.tier(&tool.name) == crate::config::LoadMode::Discoverable {
+            let defer = if tool.name == crate::tool::A2UI_TOOL {
+                self.load_tiers.explicit_tier(&tool.name) == Some(crate::config::LoadMode::Discoverable)
+            } else {
+                self.load_tiers.tier(&tool.name) == crate::config::LoadMode::Discoverable
+            };
+            if defer {
                 tool.defer_loading = true;
             }
         }
@@ -899,6 +896,19 @@ impl Agent {
         } else {
             tools.retain(|tool| !matches!(tool.name.as_str(), "mcp_search" | "mcp_call"));
         }
+    }
+
+    /// Carry a hosted-policy refusal into this turn's system reminder.
+    ///
+    /// The refusal was queued while the turn's MCP and package servers were
+    /// planned. The model reads it once per turn, so it can tell the user why a
+    /// configured server's tools are missing instead of the refusal ending as a
+    /// log line nobody reads.
+    fn report_hosted_refusals(&mut self) {
+        let Some(notice) = crate::agent::hosted_notice::take(self.session_id()) else {
+            return;
+        };
+        Self::merge_system_reminder(&mut self.current_turn_system_reminder, &notice);
     }
 
     /// Announce MCP tools that became available after the tool list locked,
@@ -1261,6 +1271,9 @@ impl Agent {
                 return Ok(());
             }
             if let Some(enabled) = config.enabled {
+                if !enabled.is_empty() && self.a2ui_tool_explicitly_allowed(name) {
+                    return Ok(());
+                }
                 let allowed = enabled.into_iter().collect();
                 anyhow::ensure!(
                     self.registry.tool_is_allowed(&allowed, name),
@@ -1273,6 +1286,10 @@ impl Agent {
         if sdk_enabled {
             return Ok(());
         }
+        if self.a2ui_tool_explicitly_allowed(name) {
+            return Ok(());
+        }
+        anyhow::ensure!(name != crate::tool::A2UI_TOOL, "Tool '{}' is not allowed", name);
         if let Some(allowed) = self.allowed_tools.as_ref()
             && !self.registry.tool_is_allowed(allowed, name)
         {
@@ -1684,6 +1701,12 @@ impl Agent {
                     ContentBlock::Audio { .. } => transcript.push_str("[audio]\n"),
                     ContentBlock::OpenAICompaction { .. } => {
                         transcript.push_str("[OpenAI native compaction]\n");
+                    }
+                    a2ui @ ContentBlock::A2ui { .. } => {
+                        if let Some(card) = a2ui.a2ui_text_card() {
+                            transcript.push_str(&card);
+                            transcript.push('\n');
+                        }
                     }
                 }
             }

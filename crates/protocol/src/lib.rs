@@ -14,6 +14,7 @@ mod notifications;
 
 pub use comm_format::*;
 pub use horon_agent_session_types::TurnStopReason;
+pub use horon_agent_tool_types::a2ui;
 pub use notifications::{FeatureToggle, NotificationType};
 
 use horon_agent_batch_types::BatchProgress;
@@ -191,10 +192,14 @@ pub struct ReloadRecoveryDirective {
 pub type ReloadRecoverySnapshot = ReloadRecoveryDirective;
 
 mod wire;
+pub use horon_agent_extension_types::control::{
+    PackageControlOperation, PackageControlReceipt, PackageControlRequest, PackageControlScope, PackageControlState,
+    PackageInboxSkip, PackageSummary,
+};
 pub use wire::{
     AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BackgroundWorkEvent, BackgroundWorkItem, ClientRpcError,
     CompactMethod, FileDiffWire, HandoffCompactionReport, PermissionDecision, PlanEntryWire, Request,
-    RuntimeModelIdentity, ServerEvent, SessionMcpServer,
+    RuntimeModelIdentity, ServerEvent, SessionMcpServer, TodoEditResultEvent,
 };
 pub use wire::{SessionToolConfig, SessionToolDefinition, TaskGraphNodeSpec};
 
@@ -625,7 +630,9 @@ impl Request {
             Request::ArchiveSession { id, .. } => *id,
             Request::DeleteSession { id, .. } => *id,
             Request::SetSessionSaved { id, .. } => *id,
-            Request::Split { id } => *id,
+            Request::SetTodoStatus { id, .. } => *id,
+            Request::Split { id, .. } => *id,
+            Request::SplitAt { id, .. } => *id,
             Request::Transfer { id } => *id,
             Request::Compact { id, .. } => *id,
             Request::NotifyAuthChanged { id, .. } => *id,
@@ -634,11 +641,15 @@ impl Request {
             Request::PermissionDecision { id, .. } | Request::AskResponse { id, .. } => *id,
             Request::ClientResponse { id, .. }
             | Request::ConfigureSessionMcp { id, .. }
-            | Request::SetSessionApprovalMode { id, .. } => *id,
+            | Request::SetSessionApprovalMode { id, .. }
+            | Request::ConfigureA2ui { id, .. }
+            | Request::A2uiEvent { id, .. } => *id,
             Request::GetRuntimeState { id }
             | Request::ApplyControl { id, .. }
             | Request::GetControlReceipt { id, .. }
-            | Request::GetSnapshot { id, .. } => *id,
+            | Request::GetEffectiveSettings { id }
+            | Request::GetSnapshot { id, .. }
+            | Request::PackageControl { id, .. } => *id,
             Request::CommMessage { id, .. } => *id,
             Request::CommList { id, .. } => *id,
             Request::CommListSwarms { id, .. } => *id,
@@ -779,6 +790,8 @@ fn decode_legacy_set_route_model(line: &str) -> Option<Request> {
     Some(Request::SetModel { id, model })
 }
 
+#[cfg(test)]
+mod a2ui_wire_tests;
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;

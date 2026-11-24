@@ -35,6 +35,15 @@ The main goal is to shrink the root crate's recompile scope so ordinary developm
 - Keep serde compatibility and root re-exports during migration unless every call site is being changed on purpose.
 - Success is measured by compile impact: fewer root edits, fewer root-owned DTOs, smaller dependency spread, and faster `cargo check --profile selfdev` plus reload after common changes.
 
+`crates/extension-types` holds the shared data contract for user-installed Rust
+packages and uses the existing workspace dependency set. Its `wire` module is
+the JSON-RPC framing, version range, declaration digest check and typed payloads
+both sides speak; the host half that reads, writes and correlates frames lives in
+`crates/app-core/src/extensions/`. Manifest validation and native file checks
+live in `crates/base/src/packages/` and `crates/platform`. Manifest file paths use
+portable ASCII spelling. Display names and resource content can use Unicode.
+Package registration and child-process supervision are separate implementation steps.
+
 ## Platform adapters
 
 OS-specific system calls live only in the five `crates/platform*` crates. The core crates (`base`, `session-store`, `provider-core`, `app-core`) call only free functions from `horon_agent_platform` and do not know which OS they compile on.
@@ -269,6 +278,11 @@ python3 scripts/ci/check_growth_ratchets.py --list
 | Internal legacy markers | Rust lines matching `legacy`, `deprecated`, `compat_alias` or `back.?compat`, outside the excluded subtrees | `scripts/ci/internal_legacy_markers.ratchet.json` |
 | String results | Rust lines whose signature returns `Result<_, String>`; a string error carries no type, so a caller cannot branch on the cause | `scripts/ci/result_string.ratchet.json` |
 
+The lockfile ceiling is 659 entries. The increase from 657 covers exactly two
+local workspace packages, `horon-agent-extension-sdk` and
+`horon-package-example`. Neither is a dependency of the `horon-agent` binary,
+and neither adds an external lockfile entry.
+
 A ratchet file is any `scripts/ci/*.json` file that ends in `.ratchet.json` or has a top-level object declaring `counter` and `ceiling`, so a later ratchet (model-name branches) adds one file and no workflow or `check_all.sh` edit. A `.ratchet.json` that lost its keys fails instead of being skipped. `counter.kind` is `cargo_lock_packages` or `regex_lines`; the latter takes `pattern`, `roots`, `extensions` and `exclude`. The per-gate budgets beside them (`panic_budget.json`, `code_size_budget.json`) declare neither key and stay owned by their own scripts.
 
 The legacy-marker ratchet excludes the subtrees that implement an external contract, each with a reason in the file: `crates/harness-api-server` (harness API v1 bridge and translate layer), `crates/harness-api` (the published v1 surface and its schema snapshots) and `crates/session-store` (the stored-session migration and replay readers for sessions written by v0.1.x). An exclude whose path does not exist fails, so a stale entry cannot widen the hole. Everything else is internal leftover: it may shrink, and it may not grow.
@@ -346,7 +360,7 @@ Current narrow verification table after the DTO splits:
 | Gateway DTO | `cargo check --profile selfdev -p horon-agent-gateway-types -p horon-agent --bin horon-agent` | Narrow the gateway persistence and auth tests to exact test names where possible. | Pairing and token HTTP and WebSocket behavior stay in the root. |
 | Ambient DTO | `cargo check --profile selfdev -p horon-agent-ambient-types -p horon-agent --bin horon-agent` | Target only the scheduler and the type consumers. | The ambient DTO crate owns usage records only. Queue, runtime, and prompt behavior stay in the root. |
 | Ambient behavior module | `cargo check --profile selfdev -p horon-agent-app-core -p horon-agent --bin horon-agent` | `cargo test --profile selfdev -p horon-agent-app-core ambient::ambient_tests --lib`; `cargo test --profile selfdev -p horon-agent-app-core ambient::scheduler::tests --lib`; `cargo test --profile selfdev -p horon-agent-app-core ambient::runner::runner_tests --lib` | Do not use bare `ambient` as a required gate for a module-only refactor. It also picks up cross-module config state tests. |
-| Memory activity DTO | `cargo check --profile selfdev -p horon-agent-memory-types -p horon-agent-core -p horon-agent --bin horon-agent` | `cargo test --profile selfdev -p horon-agent-base runtime_memory_log --lib` | `memory::activity` matches no test today, so use the consumer test. |
+| Memory DTOs and page model | `cargo check --profile selfdev -p horon-agent-memory-types -p horon-agent-core -p horon-agent --bin horon-agent` | `cargo test --profile selfdev -p horon-agent-memory-types --lib` for the page model and graph tests; `cargo test --profile selfdev -p horon-agent-base memory::store --lib` for the wiki store; `cargo test --profile selfdev -p horon-agent-base memory::export --lib` for the volume export, import, fence, key and deletion steps; `cargo test --profile selfdev -p horon-agent --test memory_volume` for the same commands through the binary | `memory::activity` matches no test today, so use the consumer test. CI runs the memory-types crate whole, the wiki store and the volume module in the whole-crate base suite, and `memory_volume` as an integration target. |
 | Goal, todo, catchup core DTO | `cargo check --profile selfdev -p horon-agent-core -p horon-agent --bin horon-agent` | When behavior changes, use the exact goal, todo, and catchup filters. | They are small and stable enough to stay in `horon-agent-core` for now. Revisit when change frequency rises. |
 
 ## Compile baseline observations
@@ -395,7 +409,7 @@ Compile-speed priorities set by this audit:
 | `copilot_usage_types` | Local Copilot usage counters | Moved to `horon-agent-usage-types` | The move is done, and the compatibility re-export from then is gone from the root `src/lib.rs`. |
 | `gateway_types` | Durable records of paired devices and pairing codes | Moved to `horon-agent-gateway-types` | Pairing and token behavior stay in the root. |
 | `goal_types` | Goal state, milestones, status, updates | `horon-agent-goal-types` or `horon-agent-task-types` | The domain is bigger. Worth splitting when goals and tool work grow. |
-| `memory_types` | Memory activity DTOs | Moved to `horon-agent-memory-types` | Memory carries enough domain weight to have its own type crate. |
+| `memory_types` | Memory activity DTOs, the markdown page model (`page`) | Moved to `horon-agent-memory-types` | Memory carries enough domain weight to have its own type crate. The crate stays free of `rusqlite`: `page` holds ids, kinds, links and the page record, and the markdown wiki store that reads and writes files lives in `crates/base/src/memory/store/`. |
 | `todo_types` | Todo item DTOs | `horon-agent-task-types`, `horon-agent-todo-types`, or core | Very small. Can merge into the goal and catchup work-state crate. |
 | `usage_types` | Provider usage report DTOs | Moved to `horon-agent-usage-types` | Runtime lookup, caches, and display stay in the root. |
 | `env` | Environment variable helpers | Stay in core | A general utility that needs no domain crate. |
@@ -425,6 +439,7 @@ Domain type splits that are done or clearly worthwhile:
 4. `horon-agent-memory-types`
    - `memory_types`
    - memory protocol and activity DTOs shared by the server, TUI, and tools
+   - the markdown page model (`page`: page id and file name, kinds, typed links, the full page record); the SQLite-backed wiki store stays in `crates/base/src/memory/store/` because it needs `rusqlite`
 
 5. An optional work-state crate
    - `goal_types`

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import copy
 import importlib.util
+import json
 import pathlib
+import re
 import subprocess
 import unittest
 from unittest.mock import Mock, patch
@@ -224,8 +226,31 @@ class ReleaseCITests(unittest.TestCase):
         self.assertIn("name: Quality Guardrails", workflow)
         self.assertIn("name: Build & Test (${{ matrix.os }})", workflow)
         self.assertIn("runs-on: ${{ matrix.runner }}", workflow)
-        for label, runner in (("ubuntu-latest", "ubuntu-24.04"), ("macos-latest", "macos-latest")):
-            self.assertRegex(workflow, rf"(?m)^ +- os: {label}\n +runner: {runner}$")
+        build_block = workflow.split("\n  build:\n", 1)[1].split("\n  windows-build-test:\n", 1)[0]
+        match = re.search(
+            r"matrix: \$\{\{ fromJSON\((.+?) && '([^']+)' \|\| '([^']+)'\) \}\}",
+            build_block,
+        )
+        self.assertIsNotNone(match, "build matrix expression not found")
+        condition, full_raw, pr_raw = match.groups()
+        self.assertIn("github.event_name != 'pull_request'", condition)
+        self.assertIn("needs.changes.outputs.platform_macos == 'true'", condition)
+        self.assertIn("needs.changes.outputs.full_matrix == 'true'", condition)
+        full_include = json.loads(full_raw)["include"]
+        pr_include = json.loads(pr_raw)["include"]
+        expected_ubuntu = {
+            "os": "ubuntu-latest",
+            "runner": "ubuntu-24.04",
+            "target": "x86_64-unknown-linux-gnu",
+        }
+        expected_macos = {
+            "os": "macos-latest",
+            "runner": "macos-latest",
+            "target": "aarch64-apple-darwin",
+        }
+        self.assertIn(expected_ubuntu, full_include)
+        self.assertIn(expected_macos, full_include)
+        self.assertEqual(pr_include, [expected_ubuntu])
         self.assertIn("name: Build & Test (windows-latest)", workflow)
         self.assertIn("name: Windows ARM64 Release Configuration", workflow)
 

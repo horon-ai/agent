@@ -365,7 +365,10 @@ discovery pass only.
 | `clear(id)` / `rewind(id, index)`                                                                     | Edit history                                                                  |
 | `respondToPermission(id, requestId, decision)`                                                        | Answer a permission prompt                                                    |
 | `listModels(id)` / `setModel(id, model)`                                                              | List and choose the session's model                                           |
-| `getRuntimeInfo(id)`                                                                                  | Provider, model route, protocol, capability, and health metadata              |
+| `getRuntimeInfo(id)`                                                                                  | Provider, model route, protocol, capability, and health metadata                   |
+| `getEffectiveSettings(id)`                                                                            | Allow-listed daemon settings and their source layers (`effective_settings_v1`)     |
+| `packageControl(request)`                                                                             | Install, enable, disable, remove, sync, or inspect packages (`package_control_v1`) |
+| `listPackageCommands(id)` / `runPackageCommand(id, packageId, command, arguments?)`                   | List and run the slash commands installed packages supply (`package_commands_v1`)  |
 | `setApiKey(provider, key)` / `clearApiKey(provider)`                                                  | Atomically provision or remove owner-only API-key files                       |
 | `usageReport(sessionId?)`                                                                             | Token totals, per-model aggregates, context window, and subscription limits   |
 | `ackApproval(id, requestId)`                                                                          | Retire the daemon's durable copy of a resolved approval                       |
@@ -387,6 +390,7 @@ discovery pass only.
 | `exportSessionEvents(id, { heads?, knownIds?, cursor? })` / `importSessionEvents(page, retryCursor?)` | Exchange one bounded page of original events (`session_replication_v1`)       |
 | `exportSessionBlob(...)` / `importSessionBlob(chunk)` / `sessionBlobStatus(...)`                      | Move original blobs in verified 1 MiB chunks (`session_replication_v1`)       |
 | `exportSessionRecordBlob(...)` / `importSessionRecordBlob(chunk)` / `sessionRecordBlobStatus(...)`    | Move a whole canonical record the page carried by reference                   |
+| `exportSessionMarkdown(id)` / `exportSessionHtml(id)`                                                 | Redacted Markdown transcript or standalone HTML report (`session_replication_v1`) |
 | `ping()`                                                                                              | Liveness                                                                      |
 
 ## Models
@@ -472,6 +476,30 @@ included: a partial key would either clear nothing or read as a different
 switch. An empty id or name rejects with `invalid_request`, and the daemon only
 accepts either ack on a connection attached to that session.
 
+## A2UI v1.0 surfaces
+
+A2UI support (`a2ui_v1`, protocol v1.32) is opt-in per connection and per session. Leaving `a2ui` unset in `connect()`, `launch()`, `createSession()`, and `attachSession()` preserves the exact tool set and prompt cache prefix of prior versions, and the client ignores `a2ui_envelope` frames when `a2ui_v1` was not negotiated.
+
+```ts
+import { A2UI_BASIC_CATALOG_V1_0, A2UI_VERSION_V1_0, HoronAgentClient } from "@horon-ai/agent-sdk";
+
+const a2ui = {
+  version: A2UI_VERSION_V1_0,
+  supported_catalog_ids: [A2UI_BASIC_CATALOG_V1_0],
+  accepts_inline_catalogs: false,
+};
+const client = await HoronAgentClient.connect({ a2ui });
+const session = await client.createSession({ a2ui });
+const turn = await client.run(session.session_id, "Build a deployment confirmation card");
+console.log(turn.a2uiEnvelopes);
+await client.sendA2uiEvent(session.session_id, {
+  version: "1.0",
+  action: { name: "confirm", surfaceId: "main", sourceComponentId: "confirm_btn" },
+});
+```
+
+Use `configureA2ui(sessionId, caps | null)` to update or disable A2UI capabilities on an attached session, and inspect `TurnResult.a2uiEnvelopes` (`A2uiEnvelopeEvent`) or `a2ui_envelope` events in `events()`.
+
 ## Session event store, heads, and replication
 
 The daemon keeps each session as an append-only event log. Four capabilities gate
@@ -481,7 +509,7 @@ before calling, because a missing capability answers `unsupported` naming it:
 | capability                  | gates                                                                                                               |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `session_event_store_v1`    | `listSessionHeads`, `selectSessionHead`                                                                             |
-| `session_replication_v1`    | `exportSessionEvents`, `importSessionEvents`, the blob methods, and the whole-record blob pair                      |
+| `session_replication_v1`    | `exportSessionEvents`, `importSessionEvents`, `exportSessionMarkdown`, `exportSessionHtml`, the blob methods, and the whole-record blob pair |
 | `session_history_cursor_v1` | `getHistoryPage`                                                                                                    |
 | `structured_compaction_v1`  | nothing in this SDK; read it with `supports()` before interpreting a `compacted` record's structured summary fields |
 
@@ -581,6 +609,8 @@ are delivered together as one user message, so `client_ids` can list more than
 one id. Retraction is decided against delivery atomically: an id is never
 reported both cancelled and delivered. `session_status` after attaching carries
 `pending_soft_interrupts` so a reconnecting client can reconcile its own queue.
+
+For a native tool retry, `point` is `native_tool_retry` and `notice` carries the user-visible message.
 
 `backgroundToolResult(id)` moves the running tool to the background so a
 queued message can be read sooner, and reports `{ moved, toolCallId, toolName }`.

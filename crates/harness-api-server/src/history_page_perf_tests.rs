@@ -165,8 +165,10 @@ fn oracle(installed: &Installed, before: Option<&str>, limit: usize) -> Vec<horo
             message.event_id.as_str().to_owned(),
             horon_agent_harness_api::HistoryMessage {
                 response_stats: None,
+                answer: crate::message_content::answer_without_reasoning(&value["content"]),
                 role: value["role"].as_str().unwrap_or_default().to_owned(),
                 content: crate::translate::flatten_content(&value["content"]),
+                message_id: Some(message.message.id.clone()),
             },
         ));
     }
@@ -312,8 +314,10 @@ fn baseline(label: &str) -> Vec<horon_agent_harness_api::HistoryMessage> {
         .iter()
         .map(|message| horon_agent_harness_api::HistoryMessage {
             response_stats: None,
+            answer: crate::message_content::answer_without_reasoning(&message["content"]),
             role: message["role"].as_str().unwrap_or_default().to_owned(),
             content: crate::translate::flatten_content(&message["content"]),
+            message_id: message["id"].as_str().map(str::to_string),
         })
         .collect()
 }

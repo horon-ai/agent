@@ -7,10 +7,13 @@
 pub mod picker;
 mod picker_draw;
 pub mod settings;
+pub mod side;
 
 #[cfg(test)]
 mod picker_tests;
 #[cfg(test)]
 mod preview_tests;
+#[cfg(test)]
+mod side_tests;
 #[cfg(test)]
 mod tests;

@@ -144,6 +144,24 @@ pub fn hook_configured(event: &str) -> bool {
     !hook_commands(event).is_empty()
 }
 
+/// The package observation event one lifecycle hook name corresponds to.
+///
+/// Installed packages and their bundled hook files subscribe to the same
+/// moments the observer hooks here already fire at, so this is the one table that
+/// maps a hook event name onto a package observation event. `pre_tool` and
+/// `post_tool` are absent on purpose: a package's tool observations are built by
+/// the tool dispatcher after approval, never from the gate, which keeps an
+/// observation from ever allowing, denying or modifying a call.
+pub fn observation_event(event: &str) -> Option<horon_agent_extension_types::ObserverEvent> {
+    match event {
+        "session_start" => Some(horon_agent_extension_types::ObserverEvent::SessionStart),
+        "session_end" => Some(horon_agent_extension_types::ObserverEvent::SessionEnd),
+        "turn_start" => Some(horon_agent_extension_types::ObserverEvent::TurnStart),
+        "turn_end" => Some(horon_agent_extension_types::ObserverEvent::TurnEnd),
+        _ => None,
+    }
+}
+
 /// Run configured tool-input transformers in declaration order. Transformers
 /// receive the current JSON tool input on stdin and may print a complete
 /// replacement JSON object to stdout. Invalid output, errors, and timeouts

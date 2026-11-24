@@ -41,6 +41,7 @@ fn grep_input(query: &str, max_regions: Option<usize>) -> AgentGrepInput {
         debug_plan: None,
         debug_score: None,
         paths_only: None,
+        grep_context: Default::default(),
     }
 }
 
@@ -211,6 +212,7 @@ fn build_grep_args_includes_scope_flags() {
         debug_plan: None,
         debug_score: None,
         paths_only: Some(true),
+        grep_context: Default::default(),
     };
 
     let args = build_grep_args(&params, &ctx).unwrap();
@@ -244,6 +246,7 @@ fn build_grep_args_drops_match_all_glob() {
         debug_plan: None,
         debug_score: None,
         paths_only: None,
+        grep_context: Default::default(),
     };
 
     let args = build_grep_args(&params, &ctx).unwrap();
@@ -277,6 +280,7 @@ fn build_grep_args_scopes_file_path_to_parent_and_exact_glob() {
         debug_plan: None,
         debug_score: None,
         paths_only: None,
+        grep_context: Default::default(),
     };
 
     let args = build_grep_args(&params, &ctx).unwrap();
@@ -311,6 +315,7 @@ fn build_grep_and_find_args_scope_file_field_to_exact_file() {
         debug_plan: None,
         debug_score: None,
         paths_only: None,
+        grep_context: Default::default(),
     };
 
     let grep = build_grep_args(&params, &ctx).unwrap();
@@ -342,6 +347,7 @@ fn build_find_args_allows_glob_only_search() {
         debug_plan: None,
         debug_score: None,
         paths_only: Some(true),
+        grep_context: Default::default(),
     };
 
     let args = build_find_args(&params, &ctx).expect("glob-only find should be valid");
@@ -372,6 +378,7 @@ fn build_find_args_still_rejects_unscoped_empty_query() {
         debug_plan: None,
         debug_score: None,
         paths_only: None,
+        grep_context: Default::default(),
     };
 
     let error = build_find_args(&params, &ctx).unwrap_err();
@@ -405,6 +412,7 @@ fn build_smart_args_uses_terms() {
         debug_plan: Some(true),
         debug_score: Some(true),
         paths_only: None,
+        grep_context: Default::default(),
     };
 
     let (args, query) = build_smart_args_and_query(&params, &ctx, None).unwrap();
@@ -444,6 +452,7 @@ fn build_smart_args_falls_back_to_query_terms() {
         debug_plan: Some(true),
         debug_score: Some(true),
         paths_only: None,
+        grep_context: Default::default(),
     };
 
     let (args, _query) = build_smart_args_and_query(&params, &ctx, None).unwrap();
@@ -477,6 +486,7 @@ fn build_args_for_trace_still_requires_terms() {
         debug_plan: None,
         debug_score: None,
         paths_only: None,
+        grep_context: Default::default(),
     };
 
     let error = trace_or_smart_terms_owned(&params).unwrap_err();
@@ -511,7 +521,13 @@ fn schema_only_advertises_common_public_fields() {
     assert!(props.contains_key("paths_only"));
     assert_eq!(
         mode_enum,
-        &vec![json!("grep"), json!("find"), json!("outline"), json!("trace")]
+        &vec![
+            json!("grep"),
+            json!("find"),
+            json!("outline"),
+            json!("trace"),
+            json!("locate")
+        ]
     );
     assert!(!props.contains_key("hidden"));
     assert!(!props.contains_key("no_ignore"));
@@ -552,6 +568,7 @@ fn build_outline_args_accepts_file_field() {
         debug_plan: None,
         debug_score: None,
         paths_only: None,
+        grep_context: Default::default(),
     };
 
     let args = build_outline_args(&params, &ctx, None).unwrap();
@@ -593,6 +610,7 @@ fn build_outline_args_treats_file_valued_path_as_outline_target() {
         debug_plan: None,
         debug_score: None,
         paths_only: None,
+        grep_context: Default::default(),
     };
 
     let args = build_outline_args(&params, &ctx, None).unwrap();
@@ -630,6 +648,7 @@ fn build_outline_args_does_not_duplicate_file_valued_path_when_file_is_also_set(
         debug_plan: None,
         debug_score: None,
         paths_only: None,
+        grep_context: Default::default(),
     };
 
     let args = build_outline_args(&params, &ctx, None).unwrap();
@@ -659,6 +678,33 @@ async fn execute_runs_linked_grep() {
     assert!(output.output.contains("query: auth_status"));
     assert!(output.output.contains("src/app.rs"));
     assert!(output.output.contains("@ 1 pub fn auth_status() {}"));
+}
+
+#[tokio::test]
+async fn grep_context_merges_overlaps_and_preserves_paths_only() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(
+        temp.path().join("sample.txt"),
+        "skip\nbefore\nneedle\nbridge\nneedle\nafter\nskip\n",
+    )
+    .unwrap();
+    let tool = AgentGrepTool::new();
+    let run = |input| tool.execute(input, test_ctx(temp.path()));
+    let contextual = run(json!({"query": "needle", "before": 1, "after": 1})).await.unwrap();
+    assert!(
+        contextual
+            .output
+            .contains("    2 before\n  @ 3 needle\n    4 bridge\n  @ 5 needle\n    6 after")
+    );
+    assert_eq!(contextual.output.matches("4 bridge").count(), 1);
+    assert!(!contextual.output.contains("skip"));
+    let zero = run(json!({"query": "needle", "before": 0, "after": 0})).await.unwrap();
+    let omitted = run(json!({"query": "needle"})).await.unwrap();
+    assert_eq!(zero.output, omitted.output);
+    let paths = run(json!({"query": "needle", "before": 1, "after": 1, "paths_only": true}))
+        .await
+        .unwrap();
+    assert_eq!(paths.output, "sample.txt");
 }
 
 #[tokio::test]

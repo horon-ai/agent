@@ -189,15 +189,45 @@ fn commands_server_names_follow_the_protocol() {
         }
         other => panic!("expected a server command: {other:?}"),
     }
-    // The names come from serde, so every variant is reachable and unique,
-    // apart from the one the built-in list took over.
+    // `/swarm` is a built-in under its bare name too: it opens this session's
+    // children. Anything typed after the name still reaches the harness's own
+    // command, which the built-in forwards, so the command is not lost.
+    assert_eq!(
+        state.resolve("/swarm"),
+        Invocation::Local {
+            command: Local::Swarm,
+            arguments: String::new()
+        }
+    );
+    assert_eq!(
+        state.resolve("/swarm status"),
+        Invocation::Local {
+            command: Local::Swarm,
+            arguments: "status".to_string()
+        }
+    );
+    // `/mcp` is the same shape: the built-in owns the name and sends its own
+    // typed request, so the harness's `mcp` command is not listed beside it.
+    assert_eq!(
+        state.resolve("/mcp"),
+        Invocation::Local {
+            command: Local::Mcp,
+            arguments: String::new()
+        }
+    );
+    // The names come from serde, so every variant is reachable and unique and
+    // the ones the built-in list took over are simply absent.
     let names = server_commands();
     assert_eq!(
-        names.len() + 1,
+        names.len() + 3,
         SERVER_VARIANTS.len(),
-        "the built-in `/skills` owns exactly one harness name"
+        "the built-in `/skills`, `/mcp` and `/swarm` own exactly three harness names"
     );
-    assert!(!names.iter().any(|(name, _)| name == "skills"));
+    assert!(
+        !names
+            .iter()
+            .any(|(name, _)| matches!(name.as_str(), "skills" | "mcp" | "swarm"))
+    );
     let mut unique: Vec<&str> = names.iter().map(|(name, _)| name.as_str()).collect();
     unique.sort_unstable();
     unique.dedup();
@@ -440,7 +470,7 @@ fn commands_tab_completes_the_typed_prefix() {
 
     // A unique match completes whole, and prose gets no hint.
     app.input.clear();
-    for character in "/qu".chars() {
+    for character in "/qui".chars() {
         assert!(press(&mut app, KeyCode::Char(character)).is_none());
     }
     assert_eq!(press(&mut app, KeyCode::Tab), None);

@@ -20,6 +20,7 @@ this file, this file wins.
 |`@horon-ai/horon` and six platform packages|`packages/npm`, `scripts/npm`|both binaries through one launcher|`publish-npm.yml`; publishes on each `main` release once `NPM_PUBLISH` is `true` (and again on `release: published`, which heals a run that arrived while the release was a draft), and fails the run with the recovery command instead of dry-running silently when the switch is off|
 |SDKs|`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`|headless mode from code|TypeScript: `publish-typescript-sdk.yml`, gated by its own `SDK_NPM_PUBLISH`; Python: `publish-python-sdk.yml`, manual dispatch into the `pypi` environment; neither published yet|
 |Container image|`scripts/release/Containerfile`|the daemon in headless mode|`ghcr.io/horon-ai/agent`, pushed by `release-tag.yml`|
+|Hosted per-tenant image|`scripts/hosting/Containerfile`|one customer per container with a `/data` home volume|built from the same release archives; not published, started by the control plane (`docs/architecture/HOSTING.md`)|
 
 - **One release.** Both binaries are built by the same `release.yml` run from
   the same tagged commit (`vMAJOR.MINOR.PATCH`), and `install-release` stages
@@ -124,6 +125,14 @@ A proposed change fits when it:
 4. does not break ACP v1/v2, the SDKs or stored sessions;
 5. does not reintroduce removed surface under another name.
 
+The user-installed Rust package design has one exception to item 3's graph
+limit. It may add the internal data-contract crate `extension-types`, with
+dependencies drawn from the existing workspace dependency set and no new
+external runtime dependencies. Keep the no-package performance and binary size
+baselines. Extend the GitHub Actions structural performance gate with a
+binary-size check and verify the no-package path against both baselines. Keep
+ACP v1/v2, the SDKs, the TUI dependency boundary, and stored sessions compatible.
+
 Does not do: forced tool-call steps, streaming dry-run, a `report_issue` tool,
 per-tool `family@rev` versions, a KDL model catalog, wholesale `anyhow` or
 `SmallVec` replacement, or a cutover of external contracts (ACP v1, harness API
@@ -134,8 +143,10 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
 - Two binaries. The agent binary, `horon-agent`, has these working
   subcommands: `serve` (agent daemon), `run` (send one message and exit),
   `repl` (plain line prompt, no full-screen UI), `api-bridge` (alias `api`;
-  harness API on a local socket, a Unix socket or a Windows named pipe), `acp`
-  (ACP adapter on stdio), and
+  harness API on a local socket, a Unix socket or a Windows named pipe, plus an
+  optional authenticated TCP listener with `--api-bind`), `api-credentials`
+  (issue, rotate, revoke and list the bearer tokens that listener accepts),
+  `acp` (ACP adapter on stdio), and
   `rpc` (stdio JSONL RPC adapter; `--mode rpc` selects the same adapter), plus
   maintenance commands such as `update` and `install-release`. The TUI binary,
   `horon-tui`, is a separate package and binary on `horon-agent-sdk`; it is
@@ -157,16 +168,42 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   `env_file`, `auth`, `default_model`, and optional
   `[[providers.<name>.models]]`. Omitting `auth` applies the type default:
   `Authorization: Bearer` for the two OpenAI kinds, `x-api-key` for Anthropic
-  and `x-goog-api-key` for Gemini; an explicit `auth` always wins. There is
-  still one provider runtime, no router process, no plugin host. External tools
-  come in over MCP, which stays. The one documented exception is the optional
-  `generate_image` tool: when the active profile names `roles.image`, it POSTs
+  and `x-goog-api-key` for Gemini; an explicit `auth` always wins. Model calls
+  use one provider runtime and reach the endpoint directly. Keep routers and
+  provider plugins out of that path. External tools currently come in over MCP.
+  When the active profile names `roles.image`, the optional `generate_image`
+  tool POSTs
   `/images/generations` and `/images/edits` on that same profile, with the same
   base URL, credential and `extra_body`. It is a route beside the wires, not a
   runtime, and it is off unless `[tools] generate_image = true`. The `image`
   role is therefore the one role whose model does not speak Chat Completions,
   it is served only by an `openai-compatible` or `openai-responses` profile,
   and it is the only role with no text fallback.
+- User-installed Rust packages are an approved design (#635), pending
+  implementation. An extension declares a Rust executable. A plugin bundles
+  one extension and declared resources. Both use `horon package install` or
+  `$HORON_HOME/packages/inbox/<id>/`. Installation is consent. Register after
+  validation, apply the new package set at the next turn of an open session,
+  and check the recorded SHA-256 internally before starting the child. Load
+  packages only from the user's catalog. Run executable calls in a separate
+  child under the user's OS account and through the existing tool policy. Keep
+  in-process plugin loading prohibited and preserve the fixed requirements.
+- Hosting is opt-in through `HORON_AGENT_HOSTING_MODE` (`per-user-container`
+  or `shared-worker`; absent means the operator's own home, and any other value
+  is a startup error naming both). A hosted process carries
+  `HORON_AGENT_TENANT_ID` as a validated audit label and directory name, never
+  a session lookup key. A per-user container refuses to start unless
+  `HORON_HOME` is an owner-only directory that is not `~/.horon`, the runtime
+  directory is absolute, owner-only and outside the home, the TCP gateway is
+  off and the tenant id is valid. A shared worker starts, but
+  `HostingPolicy::allows_shared_children()` is false. A per-user container
+  keeps its own MCP stdio servers and package children; a shared worker refuses
+  every MCP stdio server, editor-supplied server, pool connection and remote
+  connection through one gate (`crates/base/src/mcp/hosted.rs`), with one
+  `HOSTED_POLICY` audit record per refusal. `[hosting]` in `config.toml` may
+  only narrow the policy (`allow_shared_children`, `allowed_mcp_servers`), and a
+  `mode` key there is ignored with one warning, because a tenant can write its
+  own config (`docs/architecture/HOSTING.md`, `docs/safety/SECURITY.md`).
 - Core tool profile, the default when a launch selects none (18 tools): `bash`, `read`, `write`,
   `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
   `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`.
@@ -223,14 +260,21 @@ Boundaries, each with the gate that enforces it:
 |`[tools] bash_pty`|`auto`|`off`, `always`|
 |`[tools] irc`|`false`|`true`; `HORON_AGENT_IRC` overrides it for one process|
 |`[irc] mailbox_cap`, `max_body_bytes`, `wait_max_secs`, `broadcast_concurrency`|`100`, `65536`, `300`, `16`|any value ≥ 1|
+|`[tools] eval`|`false`|`true` with Python 3.10+, a profile that permits `eval`, and explicit cell approval|
 |`[features] crash_bundles`|`true`|`false`|
 |`[features] turn_recovery`|`conservative`|`aggressive`, `off`|
-|`[features] foreign_rules`, `stream_rules`|`false`|`true`|
+|`[features] foreign_rules`, `stream_rules`, `repeat_guard`|`false`|`true`|
 |`[features] effort_keywords`|`true`|`false`|
 |`[prewalk] enabled`|`false`|`true`, which then requires `into` (a model id or `role:<name>`) that passes config validation|
 |`[storage] sync`|`full`|`fast`; `HORON_AGENT_STORAGE_SYNC` overrides it for one process, and an unknown value falls back to `full` with one warning|
 |`[features] pricing_refresh`|`false`|`true`; `HORON_AGENT_PRICING_REFRESH=1` or `0` overrides it for one process|
 |`[server] idle_hibernation_secs`|`1800`|`0` disables the sweep; `HORON_AGENT_IDLE_HIBERNATION_SECS` overrides it for one process|
+|`HORON_AGENT_HOSTING_MODE`|unset (no hosting)|`per-user-container`, `shared-worker`; any other value is a startup error|
+|`HORON_AGENT_TENANT_ID`|unset|1 to 63 lowercase ASCII letters, digits and hyphens, starting and ending with a letter or digit; required by every hosted mode and used only as an audit label|
+|`[hosting] allow_shared_children`|per mode (true only in a per-user container)|`false` narrows; `true` never widens; `[hosting] mode` is ignored with one warning|
+|`[hosting] allowed_mcp_servers`|unset (every server reachable)|a list of exact MCP server names for a hosted process; an empty list refuses every server; narrowing only, never widens a mode, and a process without hosting is unchanged|
+|`HORON_AGENT_API_BIND`, `[harness_api] bind`, `--api-bind`|unset (local socket only)|`IP:PORT` for the authenticated TCP harness API listener; the flag wins over the environment and both win over the file|
+|`HORON_AGENT_API_INSECURE_BEHIND_PROXY`, `[harness_api] insecure_behind_proxy`, `--api-insecure-behind-proxy`|`false`|`true` only when a TLS-terminating proxy fronts a non-loopback bind, which also needs an issued credential (`horon-agent api-credentials issue`)|
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
 
 `[storage] sync` names a durability level, not a syscall: `full` is
@@ -241,11 +285,19 @@ Originals are confirmed with it and derived caches are rebuilt instead, which
 keeps a one-shot run off the network; a catalog already on disk is still read.
 
 `[server] idle_hibernation_secs` is the idle window before the daemon releases
-a session's derived caches. It drops the provider projection and the tool-output
-index and writes nothing, so the next turn rebuilds both from resident state
-without a disk read; `docs/performance/MEMORY.md` lists what is released and
-what stays. `0` disables the sweep, and the daemon checks every ten seconds, so
+a session's derived caches and any opt-in Python kernel. The provider
+projection and tool-output index rebuild from resident state without a disk
+read. The next Python cell starts with fresh state. `docs/performance/MEMORY.md` lists
+what is released and what stays.
+`0` disables the sweep, and the daemon checks every ten seconds, so
 the release lands up to one tick after the threshold passes.
+
+Memory is stored in the per-user markdown wiki under `$HORON_HOME/memory` — one
+markdown page per memory plus a SQLite index rebuilt from those pages — and the
+pre-wiki `memory/*.json` files are a migration source only
+(`docs/runtime/MEMORY.md`). Project memory is keyed by the canonical project
+directory, not by the caller's path spelling, and every `memory` action and the
+prompt-injection path read and write that store.
 
 Tools outside the core set (memory, irc) stay in the tree but off.
 `irc` is agent-to-agent messaging inside one daemon; `[tools] irc = true` adds
@@ -269,6 +321,33 @@ project-local MCP config is skipped unless its digest was trusted, and
 
 ## Build, run, verify
 
+### CI-first local verification (takes precedence for agent sessions)
+
+GitHub Actions owns full verification for this repository. Where the reference
+commands or table below conflict with this subsection, these rules win:
+
+1. **GitHub CI runs full checks.** Never run workspace-wide `cargo clippy`,
+   `cargo test`, `cargo doc`, cross-OS checks (`cargo xwin`, `justrust`), or full
+   `scripts/ci/check_all.sh` locally; check PR CI (`scripts/ci/run_warnings.py`
+   at 0 warnings).
+2. **Scoped local checks.** Run only single-crate checks (`cargo check --locked
+   -p <crate>`, one targeted test) or non-Cargo gates (`actionlint`,
+   `check_docs_links.py`), plus minimal (1 to 2) scoped before/after
+   measurements when an optimization needs local evidence.
+3. **`build-lock` discipline.** Serialize heavy local Cargo work with
+   `~/.local/bin/build-lock`; allow one waiter per session (no polling loops or
+   duplicate `hc wait` waiters; clear stale duplicates). Skip waiting when load
+   per core < 2, and defer to CI under high contention.
+4. **PR-first loop.** Open or update the PR first; if CI fails, reproduce only
+   the single failing test locally. Merge only when green with 0 warnings.
+5. **Hard test bounds.** Run local tests with a hard timeout (e.g., 90s) and
+   `-- --test-threads=1` so hung tests never hold `build-lock`.
+6. **Adopted 2026-11-24** per owner directive after shared MacBook `build-lock`
+   queues stalled concurrent sessions.
+
+Reference commands and pre-push gate table (run by CI or selectively on a single
+touched component per the rules above):
+
 ```bash
 cargo build -p horon-agent
 cargo build -p horon-tui
@@ -278,7 +357,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-Run before pushing, by what the change touches:
+CI gates and optional manual commands by changed area:
 
 |Change|Command|
 |---|---|
@@ -384,22 +463,48 @@ and do not merge or report success before then.
 ## CI gates by change type
 
 `ci.yml` and `structural-perf.yml` start with a `Changed Paths` job
-(`scripts/ci/classify_changes.py`) that classifies a change by its files: a pull
-request against its base, and a first-attempt push to `dev` against the head of
-the last successful `dev` push run of the same workflow (two-dot diff).
+(`scripts/ci/classify_changes.py`, emitting 16 boolean lanes) that classifies a
+change by its files: a pull request against its base, and a first-attempt push
+to `dev` against the head of the last successful `dev` push run of the same
+workflow (two-dot diff).
 
-- **Documentation only** (README, `PHILOSOPHY*.md`, `docs/`, `AGENTS.md`, templates): runs
-  `Documentation Checks` (links, UTF-8, English/Korean pairs) and
+- **Documentation only** (`README`, `PHILOSOPHY*.md`, `docs/`, `AGENTS.md`,
+  templates; `docs_only=true`): runs `Documentation Checks` (links, UTF-8,
+  English/Korean pairs, install claim table consistency) and
   `Documentation Corpus Test` (`docs/` is compiled into the binary, so the
-  `horon_agent_docs` tests still run). The release build, the three-OS test
-  matrix, the SDK jobs and the structural performance gate are skipped.
-- **Anything else** (code, workflows, scripts, dependencies, lockfiles): every
-  gate runs.
-- **Site pages count as code.** `packages/docs-site/` is not in the documentation
-  list of `classify_changes.py`, so a change to a site page runs every gate.
-- **Pushes to `main`, manual dispatches and re-runs of a `dev` push always run
-  everything.** A `dev` push whose head is already in `origin/main`, and any
-  lookup or diff failure, also runs everything. Release evidence
+  `horon_agent_docs` tests still run). Release builds, the OS test matrix,
+  SDK jobs, `Quality Guardrails` and the structural performance gate are skipped.
+- **Scoped non-Rust lanes:**
+  - `packages/docs-site/` (`docs_site=true`, `rust=false`) runs only
+    `Documentation Site` (`sync_docs_site.py --check`, Mintlify build and
+    broken-links check), skipping Rust, SDK and structural gates.
+  - `.github/workflows/*` (`workflows=true`, `rust=false`) runs
+    `Workflow Lint` (`actionlint`), `Release Automation` and
+    `PowerShell Syntax`, skipping Rust builds.
+  - Standalone TypeScript SDK, Python SDK, npm launcher or install-script
+    edits (`ts_sdk`, `py_sdk`, `npm_pkg`, `install_scripts` with `rust=false`)
+    run their matching lane (`TypeScript SDK`, `Python SDK`, `Setup Friction Eval`,
+    `PowerShell Syntax`, `Release Automation`) plus non-Rust `Quality Guardrails`
+    checks, skipping `Build & Test`, Windows cross-checks and `structural-perf`.
+- **Rust changes (`rust=true`):** runs `Quality Guardrails`, `Build & Test`
+  (pull requests use `scripts/ci/workspace_impact.py` to compile and test only
+  impacted crates and integration targets, falling back to the full workspace
+  on manifests, lockfiles, shared infra or `ci:all-os`/`ci:full`),
+  `windows-cross-check` (`cargo-xwin`), `windows-arm64-check` (`justrust`),
+  `Release Automation` and `Structural performance gate` (unified `--no-run`
+  compilation with `mold` on Linux).
+- **Pull request OS and soak scoping:** portable Rust pull requests run
+  `ubuntu-latest` plus the two Linux-hosted Windows cross-checks with
+  `HORON_AGENT_SOAK_CYCLES=20`. `macos-latest`, native `windows-build-test` and
+  `tui_smoke` run on pull requests only when matching platform/TUI paths, shared
+  Linux-macOS `#[path]` sources, manifests, lockfiles or the
+  `ci:all-os`/`ci:full` label trigger them. Any ambiguous diff or lookup failure
+  resolves conservatively to `rust=true` and `full_matrix=true`.
+- **Pushes to `dev`, `main`, manual dispatches and re-runs:** non-docs pushes to
+  `dev` run all three OSes, the full crate/target suite and
+  `HORON_AGENT_SOAK_CYCLES=200`. A `dev` push whose head is already in
+  `origin/main`, a push to `main`, a manual dispatch, a `dev` re-run and any
+  lookup or diff failure run everything. Release evidence
   (`scripts/release/check_ci.py`) accepts only a fully successful push run; a
   documentation-only `dev` run is not release evidence, and `Re-run all jobs` on
   that run produces a full run.
@@ -525,10 +630,12 @@ still states the old behaviour. To find the pages:
 |`src/cli/tui_handoff.rs`, `crates/tui/`|`docs/runtime/TUI.md`, `docs/diagram/02-run-modes`|
 |`src/cli/acp/`, `src/cli/acp.rs`|`docs/protocol/ACP.md`, `docs/diagram/05-acp-negotiation`|
 |`src/cli/rpc/`|`docs/protocol/RPC.md`|
-|`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`|`docs/protocol/HARNESS_API.md`|
+|`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`, `src/cli/api_credentials.rs`, `crates/base/src/harness_api.rs`, `crates/config-types/src/harness_api.rs`|`docs/protocol/HARNESS_API.md`|
 |`crates/app-core/src/server/`|`docs/architecture/SERVER.md`, `docs/runtime/TURNS.md`, `docs/diagram/03-turn-lifecycle`|
+|`crates/base/src/hosting.rs`, `crates/config-types/src/hosting.rs`, `crates/app-core/src/server/hosted_tenant.rs`, `crates/agent-sdk/src/launch_hosted.rs`, `scripts/hosting/`|`docs/architecture/HOSTING.md`|
 |`crates/session-store/`, `crates/storage/`, `[storage] sync`|`docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/diagram/06-session-storage`|
 |`crates/app-core/src/tool/`, `crates/tool-*`, `crates/edit-safety/`, tool profiles|`docs/runtime/TOOLS.md`, `docs/runtime/TOOL_SCHEDULING.md`, `docs/diagram/07-tool-loading`, "What this build is" above|
+|`crates/base/src/memory*`, `crates/memory-types/`, `horon memory migrate`, `horon volume`, `src/cli/volume.rs`|`docs/runtime/MEMORY.md`, `docs/runtime/TOOLS.md`, `docs/architecture/CRATES.md`, `docs/architecture/HOSTING.md`|
 |`crates/provider-*`, `crates/base/src/provider*`, `crates/config-types/`|`docs/provider/MODEL.md`, `docs/diagram/04-provider-wires`, "What this build is" above|
 |`crates/irc-core/`, `crates/app-core/src/server/irc/`|`docs/runtime/IRC.md`|
 |`crates/plan/`, `crates/swarm-core/`|`docs/runtime/SWARM_TASK_GRAPH.md`|

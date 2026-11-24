@@ -25,6 +25,7 @@ import {
   EVENT_CAPABILITIES,
   MAX_REPLICATION_WIRE_BYTES,
   REPLICATION_PROTOCOL_VERSION,
+  type A2uiSessionCapabilities,
   type ApiEvent,
   type ApiRequest,
   type ArtifactEntry,
@@ -32,10 +33,15 @@ import {
   type BackgroundWorkItem,
   type CanonicalRecordRef,
   type CompactHandoffOutcome,
+  type EffectiveSetting,
   type HistoryMessage,
   type ImageAttachment,
   type MessageModes,
   type ModelRouteInfo,
+  type PackageCommandList,
+  type PackageCommandOutcome,
+  type PackageControlOperation,
+  type PackageControlReceipt,
   type PayloadRef,
   type PermissionDecision,
   type RenderedImage,
@@ -56,6 +62,7 @@ import {
   type SessionToolDefinition,
   type TextMatch,
   type TodoEffects,
+  type TodoEditRefusal,
   type TodoSnapshot,
   type ToolVerdictName,
   type TurnStopReason,
@@ -329,6 +336,8 @@ export interface ConnectOptions {
   transport?: Transport;
   /** Milliseconds before a request without a reply rejects. 0 disables. */
   requestTimeoutMs?: number;
+  /** Optional A2UI v1.0 renderer capabilities offered as the connection default. */
+  a2ui?: A2uiSessionCapabilities;
 }
 
 export interface CreateSessionOptions {
@@ -342,6 +351,13 @@ export interface CreateSessionOptions {
   systemPrompt?: string;
   /** Configured before createSession resolves, before any model turn starts. */
   tools?: SessionToolsOptions;
+  /** Optional A2UI v1.0 renderer capabilities for the created session. */
+  a2ui?: A2uiSessionCapabilities;
+}
+
+export interface AttachSessionOptions {
+  /** Optional A2UI v1.0 renderer capabilities for this attachment. */
+  a2ui?: A2uiSessionCapabilities;
 }
 
 export interface EventsOptions {
@@ -556,6 +572,7 @@ export class HoronAgentClient extends EventEmitter {
       supports_user_response: options.supportsUserResponse ?? false,
       supports_ask_requests: options.supportsAskRequests ?? false,
       event_capabilities: EVENT_CAPABILITIES,
+      ...(options.a2ui === undefined ? {} : { a2ui: options.a2ui }),
     });
     if (!isEventOfKind(frame, "hello_ok")) {
       void client.close();
@@ -624,8 +641,13 @@ export class HoronAgentClient extends EventEmitter {
    * never receives an event it has no branch for.
    */
   private dropsUnnegotiated(frame: ServerFrame): boolean {
-    if (frame.ev !== "snapshot_marker" && frame.ev !== "snapshot") return false;
-    return !this.supports("snapshot_marker_v1");
+    if (frame.ev === "snapshot_marker" || frame.ev === "snapshot") {
+      return !this.supports("snapshot_marker_v1");
+    }
+    if (frame.ev === "a2ui_envelope") {
+      return !this.supports("a2ui_v1");
+    }
+    return false;
   }
 
   /** Emit without Node's fatal-throw behaviour for unlistened "error". */
@@ -792,13 +814,22 @@ export class HoronAgentClient extends EventEmitter {
   }
 
   async createSession(options?: string | CreateSessionOptions): Promise<SessionInfo> {
-    const { workingDir, systemPrompt, tools } = typeof options === "string" ? { workingDir: options } : (options ?? {});
+    const { workingDir, systemPrompt, tools, a2ui } =
+      typeof options === "string" ? { workingDir: options } : (options ?? {});
+    if (a2ui !== undefined) {
+      this.requireCapability("a2ui_v1", "createSession with a2ui");
+    }
     if (tools) {
       this.requireSessionTools();
       prepareTools(tools);
     }
     const frame = await this.expectReply(
-      { req: "create_session", working_dir: workingDir, system_prompt: systemPrompt },
+      {
+        req: "create_session",
+        working_dir: workingDir,
+        system_prompt: systemPrompt,
+        ...(a2ui === undefined ? {} : { a2ui }),
+      },
       "attached",
     );
     if (tools) await this.configureTools(frame.session.session_id, tools);
@@ -860,6 +891,32 @@ export class HoronAgentClient extends EventEmitter {
     return (await this.expectReply({ req: "get_message_modes", session_id: sessionId }, "message_modes")).modes;
   }
 
+  /**
+   * The allow-listed daemon values a settings screen displays. The daemon
+   * behind the bridge answers from its own configuration, so the values and
+   * their sources describe the process the session runs with. Requires
+   * `effective_settings_v1`; an older bridge does not advertise it, and a
+   * daemon that predates the request answers `unsupported` naming the
+   * capability rather than timing out.
+   */
+  async getEffectiveSettings(sessionId: string): Promise<EffectiveSetting[]> {
+    this.requireCapability("effective_settings_v1", "getEffectiveSettings");
+    return (await this.expectReply({ req: "get_effective_settings", session_id: sessionId }, "effective_settings"))
+      .settings;
+  }
+
+  /**
+   * Apply one package-management operation to the daemon's catalog. Requires
+   * `package_control_v1`; the receipt names the generation the daemon published.
+   */
+  async packageControl(request: {
+    operation_id: string;
+    operation: PackageControlOperation;
+  }): Promise<PackageControlReceipt> {
+    this.requireCapability("package_control_v1", "packageControl");
+    return (await this.expectReply({ req: "package_control", ...request }, "package_control")).receipt;
+  }
+
   /** Low-level response API for applications handling tool_call events themselves. */
   async submitToolResult(sessionId: string, callId: string, result: string | ToolResult): Promise<void> {
     const value = typeof result === "string" ? { output: result } : result;
@@ -869,14 +926,73 @@ export class HoronAgentClient extends EventEmitter {
     );
   }
 
-  async attachSession(sessionId: string): Promise<SessionInfo> {
-    const frame = await this.expectReply({ req: "attach_session", session_id: sessionId }, "attached");
+  async attachSession(sessionId: string, options?: AttachSessionOptions): Promise<SessionInfo> {
+    const a2ui = options?.a2ui;
+    if (a2ui !== undefined) {
+      this.requireCapability("a2ui_v1", "attachSession with a2ui");
+    }
+    const frame = await this.expectReply(
+      { req: "attach_session", session_id: sessionId, ...(a2ui === undefined ? {} : { a2ui }) },
+      "attached",
+    );
     return frame.session;
   }
 
+  /** Update A2UI v1.0 renderer capabilities for an attached session; pass `null` to disable A2UI. */
+  async configureA2ui(sessionId: string, capabilities: A2uiSessionCapabilities | null): Promise<void> {
+    this.requireCapability("a2ui_v1", "configureA2ui");
+    await this.expectReply({ req: "configure_a2ui", session_id: sessionId, capabilities }, "ok");
+  }
+
+  /** Forward a client-to-agent A2UI v1.0 envelope to an attached session. */
+  async sendA2uiEvent(sessionId: string, envelope: unknown, dataModel?: unknown): Promise<void> {
+    this.requireCapability("a2ui_v1", "sendA2uiEvent");
+    await this.expectReply(
+      {
+        req: "a2ui_event",
+        session_id: sessionId,
+        envelope,
+        ...(dataModel === undefined ? {} : { data_model: dataModel }),
+      },
+      "ok",
+    );
+  }
+
   /** Clone a session's complete persisted context into a new idle session. */
-  async forkSession(sessionId: string): Promise<SessionInfo> {
-    const frame = await this.expectReply({ req: "fork_session", session_id: sessionId }, "session_forked");
+  async forkSession(sessionId: string, options: { consult?: boolean; boundary?: string } = {}): Promise<SessionInfo> {
+    const frame = await this.expectReply(
+      {
+        req: "fork_session",
+        session_id: sessionId,
+        ...(options.consult ? { consult: true } : {}),
+        ...(options.boundary ? { boundary: options.boundary } : {}),
+      },
+      "session_forked",
+    );
+    return frame.session;
+  }
+
+  /** Fork a read-only consult child, optionally before a stored message id. */
+  async forkConsult(sessionId: string, boundary?: string): Promise<SessionInfo> {
+    if (!this.supports("consult_fork_v1")) {
+      throw new Error("This harness cannot create a read-only side session. Update the runtime and API bridge.");
+    }
+    return this.forkSession(sessionId, { consult: true, boundary });
+  }
+
+  /**
+   * Fork a new idle session from the messages recorded before `boundaryMessageId`.
+   *
+   * The boundary is a stored message id from the source's history, not an index.
+   * A boundary the source no longer records is refused and the source is left
+   * untouched. Requires `session_fork_at_v1`.
+   */
+  async forkSessionAt(sessionId: string, boundaryMessageId: string): Promise<SessionInfo> {
+    this.requireCapability("session_fork_at_v1", "forkSessionAt");
+    const frame = await this.expectReply(
+      { req: "fork_session_at", session_id: sessionId, boundary_message_id: boundaryMessageId },
+      "session_forked",
+    );
     return frame.session;
   }
 
@@ -936,6 +1052,19 @@ export class HoronAgentClient extends EventEmitter {
   /** Submit a hidden recovery continuation without awaiting message acceptance. */
   async sendSystemReminder(sessionId: string, reminder: string): Promise<void> {
     this.notify({ req: "send_message", session_id: sessionId, content: "", system_reminder: reminder });
+  }
+
+  /** Continue the named failed run after the daemon accepts it. */
+  async continueRun(sessionId: string, expectedRunId: string): Promise<void> {
+    this.requireCapability("turn_retry_v1", "continueRun");
+    if (!expectedRunId.trim()) throw new HarnessError("invalid_option", "continueRun requires the failed run ID");
+    await this.requestOk({
+      req: "send_message",
+      session_id: sessionId,
+      content: "",
+      system_reminder: "Continue the failed task from where it left off. Do not repeat completed tool calls or edits.",
+      expected_run_id: expectedRunId,
+    });
   }
 
   /** Persist a user message as context without starting a model turn. */
@@ -1242,6 +1371,38 @@ export class HoronAgentClient extends EventEmitter {
     return { session_id: frame.session_id, command: frame.command, data: frame.data, message: frame.message };
   }
 
+  /**
+   * List the package slash commands this session provides.
+   *
+   * The entries belong to the package generation the session observes, and
+   * `generation` says which one.
+   */
+  async listPackageCommands(sessionId: string): Promise<PackageCommandList> {
+    this.requireCapability("package_commands_v1", "listPackageCommands");
+    const frame = await this.runtimeCommand(sessionId, "package_commands");
+    return frame.data as PackageCommandList;
+  }
+
+  /**
+   * Run one package command and return what the daemon answered.
+   *
+   * A template sets `text`, the user message it expands to; an executable
+   * command sets `output` and the child's `data` after the tool policy allowed
+   * the call. A command whose package left the generation is refused with a
+   * stale-entry error.
+   */
+  async runPackageCommand(
+    sessionId: string,
+    packageId: string,
+    command: string,
+    argumentsText = "",
+  ): Promise<PackageCommandOutcome> {
+    this.requireCapability("package_commands_v1", "runPackageCommand");
+    const words = argumentsText.trim() === "" ? [] : argumentsText.trim().split(/\s+/);
+    const frame = await this.runtimeCommand(sessionId, "package_command", [packageId, command, ...words]);
+    return frame.data as PackageCommandOutcome;
+  }
+
   async transferSession(sessionId: string): Promise<SessionInfo> {
     const frame = await this.expectReply({ req: "transfer_session", session_id: sessionId }, "session_forked");
     return frame.session;
@@ -1371,6 +1532,32 @@ export class HoronAgentClient extends EventEmitter {
     return frame.state;
   }
 
+  /** Persisted todo state with the revision that names the stored list it was
+   * read from. The revision is absent on servers that predate it.
+   * Requires the `todo_state` capability. */
+  async todoSnapshot(sessionId: string): Promise<{ state: TodoSnapshot; revision?: string }> {
+    const frame = await this.expectReply({ req: "get_todo_state", session_id: sessionId }, "todo_state");
+    return { state: frame.state, revision: frame.revision };
+  }
+
+  /** Change one todo item's status only if the stored list is still the
+   * revision the caller read. A stale list answers with `applied: false`, the
+   * refusal `stale_revision`, and the current state, and writes nothing.
+   * Requires the `todo_edit_v1` capability. */
+  async setTodoStatus(
+    sessionId: string,
+    expectedRevision: string,
+    id: string,
+    status: string,
+  ): Promise<{ applied: boolean; refusal?: TodoEditRefusal; state: TodoSnapshot; revision: string }> {
+    this.requireCapability("todo_edit_v1", "setTodoStatus");
+    const frame = await this.expectReply(
+      { req: "set_todo_status", session_id: sessionId, expected_revision: expectedRevision, todo_id: id, status },
+      "todo_edit_result",
+    );
+    return { applied: frame.applied, refusal: frame.refusal, state: frame.state, revision: frame.revision };
+  }
+
   /** Apply a follow-up decision's persistent effects. */
   async ackTodoFollowUp(sessionId: string, effects: TodoEffects): Promise<void> {
     if (!effects.clear_gate_observations && !effects.mark_long_session_review_delivered) {
@@ -1434,10 +1621,7 @@ export class HoronAgentClient extends EventEmitter {
    * rejected.
    */
   async compactHandoff(sessionId: string): Promise<CompactHandoffOutcome> {
-    const frame = await this.expectReply(
-      { req: "compact", session_id: sessionId, method: "handoff" },
-      "compacted",
-    );
+    const frame = await this.expectReply({ req: "compact", session_id: sessionId, method: "handoff" }, "compacted");
     const outcome = frame.handoff;
     if (!outcome) {
       throw new HarnessError("unexpected_reply", "the daemon answered a handoff compaction without an outcome");
@@ -1520,7 +1704,10 @@ export class HoronAgentClient extends EventEmitter {
    */
   async cancelTurn(sessionId: string, runId: string): Promise<{ accepted: boolean; reason?: string }> {
     this.requireCapability("cancellable_work_v1", "cancelTurn");
-    const frame = await this.expectReply({ req: "cancel_turn", session_id: sessionId, run_id: runId }, "cancel_turn_result");
+    const frame = await this.expectReply(
+      { req: "cancel_turn", session_id: sessionId, run_id: runId },
+      "cancel_turn_result",
+    );
     const result: { accepted: boolean; reason?: string } = { accepted: frame.accepted === true };
     if (typeof frame.reason === "string") result.reason = frame.reason;
     return result;
@@ -1573,11 +1760,11 @@ export class HoronAgentClient extends EventEmitter {
     return frame.items ?? [];
   }
 
-  private cancelOutcome(frame: {
-    call_id?: string;
-    accepted?: boolean;
+  private cancelOutcome(frame: { call_id?: string; accepted?: boolean; reason?: string }): {
+    callId: string;
+    accepted: boolean;
     reason?: string;
-  }): { callId: string; accepted: boolean; reason?: string } {
+  } {
     const result: { callId: string; accepted: boolean; reason?: string } = {
       callId: typeof frame.call_id === "string" ? frame.call_id : "",
       accepted: frame.accepted === true,
@@ -1649,10 +1836,7 @@ export class HoronAgentClient extends EventEmitter {
    * server also sends on this connection as a `snapshot_marker` event.
    * Requires `snapshot_marker_v1`.
    */
-  async getSnapshot(
-    sessionId: string,
-    options: { tail?: number; maxBytes?: number } = {},
-  ): Promise<SessionSnapshot> {
+  async getSnapshot(sessionId: string, options: { tail?: number; maxBytes?: number } = {}): Promise<SessionSnapshot> {
     this.requireCapability("snapshot_marker_v1", "getSnapshot");
     const frame = await this.expectReply(
       {
@@ -1670,12 +1854,7 @@ export class HoronAgentClient extends EventEmitter {
    * Answer an `ask_requested` with a retry-safe answer id. Requires
    * `ask_receipts_v1`.
    */
-  async respondToAskWithId(
-    sessionId: string,
-    askId: string,
-    answerId: string,
-    answers: AskSelection[],
-  ): Promise<void> {
+  async respondToAskWithId(sessionId: string, askId: string, answerId: string, answers: AskSelection[]): Promise<void> {
     this.requireCapability("ask_receipts_v1", "respondToAskWithId");
     await this.requestOk({
       req: "ask_response",
@@ -1694,7 +1873,10 @@ export class HoronAgentClient extends EventEmitter {
   private async replicationRequest(request: ApiRequest): Promise<ServerFrame> {
     const probe = `${JSON.stringify(request)}`;
     if (Buffer.byteLength(probe, "utf8") + 64 > MAX_REPLICATION_WIRE_BYTES) {
-      throw new HarnessError("invalid_request", `replication request exceeds the ${MAX_REPLICATION_WIRE_BYTES} byte wire envelope`);
+      throw new HarnessError(
+        "invalid_request",
+        `replication request exceeds the ${MAX_REPLICATION_WIRE_BYTES} byte wire envelope`,
+      );
     }
     return this.requestOk(request);
   }
@@ -1720,11 +1902,14 @@ export class HoronAgentClient extends EventEmitter {
   /** Select the head execution should use. A live owner answers `busy`. */
   async selectSessionHead(sessionId: string, headEventId: string): Promise<SessionHeads> {
     this.requireCapability("session_event_store_v1", "selectSessionHead");
-    const frame = await this.replicationReply({
-      req: "select_session_head",
-      session_id: sessionId,
-      head_event_id: headEventId,
-    }, "session_heads");
+    const frame = await this.replicationReply(
+      {
+        req: "select_session_head",
+        session_id: sessionId,
+        head_event_id: headEventId,
+      },
+      "session_heads",
+    );
     return { session_id: frame.session_id, heads: frame.heads, selected_head: frame.selected_head };
   }
 
@@ -1734,13 +1919,16 @@ export class HoronAgentClient extends EventEmitter {
     options: { headEventId?: string; beforeEventId?: string; limit?: number } = {},
   ): Promise<SessionHistoryPage> {
     this.requireCapability("session_history_cursor_v1", "getHistoryPage");
-    const frame = await this.replicationReply({
-      req: "get_history_page",
-      session_id: sessionId,
-      head_event_id: options.headEventId,
-      before_event_id: options.beforeEventId,
-      limit: options.limit,
-    }, "session_history_page");
+    const frame = await this.replicationReply(
+      {
+        req: "get_history_page",
+        session_id: sessionId,
+        head_event_id: options.headEventId,
+        before_event_id: options.beforeEventId,
+        limit: options.limit,
+      },
+      "session_history_page",
+    );
     return {
       session_id: frame.session_id,
       head: frame.head,
@@ -1755,14 +1943,17 @@ export class HoronAgentClient extends EventEmitter {
     options: { heads?: string[]; knownIds?: string[]; cursor?: string } = {},
   ): Promise<SessionEventPage> {
     this.requireCapability("session_replication_v1", "exportSessionEvents");
-    const frame = await this.replicationReply({
-      req: "export_session_events",
-      session_id: sessionId,
-      protocol_version: REPLICATION_PROTOCOL_VERSION,
-      heads: options.heads,
-      known_ids: options.knownIds,
-      cursor: options.cursor,
-    }, "session_event_page");
+    const frame = await this.replicationReply(
+      {
+        req: "export_session_events",
+        session_id: sessionId,
+        protocol_version: REPLICATION_PROTOCOL_VERSION,
+        heads: options.heads,
+        known_ids: options.knownIds,
+        cursor: options.cursor,
+      },
+      "session_event_page",
+    );
     return {
       session_id: frame.session_id,
       heads: frame.heads,
@@ -1780,27 +1971,40 @@ export class HoronAgentClient extends EventEmitter {
    */
   async exportSessionMarkdown(sessionId: string): Promise<string> {
     this.requireCapability("session_replication_v1", "exportSessionMarkdown");
-    const frame = await this.expectReply(
-      { req: "export_session_markdown", session_id: sessionId },
-      "session_markdown",
-    );
+    const frame = await this.expectReply({ req: "export_session_markdown", session_id: sessionId }, "session_markdown");
     return frame.markdown ?? "";
+  }
+
+  /** Export the conversation as a standalone offline HTML report.
+   *
+   * Requires `session_replication_v1`. Returns one self-contained document
+   * rendered from the same redacted projection as `exportSessionMarkdown`:
+   * every transcript character is escaped, the stylesheet is inline, and the
+   * page loads nothing from the network.
+   */
+  async exportSessionHtml(sessionId: string): Promise<string> {
+    this.requireCapability("session_replication_v1", "exportSessionHtml");
+    const frame = await this.expectReply({ req: "export_session_html", session_id: sessionId }, "session_html");
+    return frame.html ?? "";
   }
 
   /** Import one validated page. Identical retransmissions are idempotent. */
   async importSessionEvents(page: SessionEventPage, retryCursor?: string): Promise<SessionImportResult> {
     this.requireCapability("session_replication_v1", "importSessionEvents");
-    const frame = await this.replicationReply({
-      req: "import_session_events",
-      session_id: page.session_id,
-      protocol_version: REPLICATION_PROTOCOL_VERSION,
-      heads: page.heads,
-      events: page.events,
-      next_cursor: page.next_cursor,
-      blob_refs: page.blob_refs,
-      record_refs: page.record_refs,
-      retry_cursor: retryCursor,
-    }, "session_import_result");
+    const frame = await this.replicationReply(
+      {
+        req: "import_session_events",
+        session_id: page.session_id,
+        protocol_version: REPLICATION_PROTOCOL_VERSION,
+        heads: page.heads,
+        events: page.events,
+        next_cursor: page.next_cursor,
+        blob_refs: page.blob_refs,
+        record_refs: page.record_refs,
+        retry_cursor: retryCursor,
+      },
+      "session_import_result",
+    );
     return {
       session_id: frame.session_id,
       accepted_ids: frame.accepted_ids,
@@ -1811,15 +2015,23 @@ export class HoronAgentClient extends EventEmitter {
   }
 
   /** Read one 1 MiB chunk of an original payload blob. */
-  async exportSessionBlob(sessionId: string, sha256: string, totalSize: number, offset: number): Promise<SessionBlobChunk> {
+  async exportSessionBlob(
+    sessionId: string,
+    sha256: string,
+    totalSize: number,
+    offset: number,
+  ): Promise<SessionBlobChunk> {
     this.requireCapability("session_replication_v1", "exportSessionBlob");
-    const frame = await this.replicationReply({
-      req: "export_session_blob",
-      session_id: sessionId,
-      sha256,
-      total_size: totalSize,
-      offset,
-    }, "session_blob_chunk");
+    const frame = await this.replicationReply(
+      {
+        req: "export_session_blob",
+        session_id: sessionId,
+        sha256,
+        total_size: totalSize,
+        offset,
+      },
+      "session_blob_chunk",
+    );
     return {
       sha256: frame.sha256,
       offset: frame.offset,
@@ -1833,7 +2045,10 @@ export class HoronAgentClient extends EventEmitter {
   /** Stage one chunk of an original payload blob. */
   async importSessionBlob(sessionId: string, chunk: SessionBlobChunk): Promise<SessionBlobStatus> {
     this.requireCapability("session_replication_v1", "importSessionBlob");
-    const frame = await this.replicationReply({ req: "import_session_blob", session_id: sessionId, chunk }, "session_blob_status");
+    const frame = await this.replicationReply(
+      { req: "import_session_blob", session_id: sessionId, chunk },
+      "session_blob_status",
+    );
     return {
       session_id: frame.session_id,
       sha256: frame.sha256,
@@ -1846,12 +2061,15 @@ export class HoronAgentClient extends EventEmitter {
   /** Resume an interrupted payload transfer. */
   async sessionBlobStatus(sessionId: string, sha256: string, totalSize: number): Promise<SessionBlobStatus> {
     this.requireCapability("session_replication_v1", "sessionBlobStatus");
-    const frame = await this.replicationReply({
-      req: "get_session_blob_status",
-      session_id: sessionId,
-      sha256,
-      total_size: totalSize,
-    }, "session_blob_status");
+    const frame = await this.replicationReply(
+      {
+        req: "get_session_blob_status",
+        session_id: sessionId,
+        sha256,
+        total_size: totalSize,
+      },
+      "session_blob_status",
+    );
     return {
       session_id: frame.session_id,
       sha256: frame.sha256,
@@ -1868,12 +2086,15 @@ export class HoronAgentClient extends EventEmitter {
     offset: number,
   ): Promise<SessionBlobChunk> {
     this.requireCapability("session_replication_v1", "exportSessionRecordBlob");
-    const frame = await this.replicationReply({
-      req: "export_session_record_blob",
-      session_id: sessionId,
-      reference,
-      offset,
-    }, "session_blob_chunk");
+    const frame = await this.replicationReply(
+      {
+        req: "export_session_record_blob",
+        session_id: sessionId,
+        reference,
+        offset,
+      },
+      "session_blob_chunk",
+    );
     return {
       sha256: frame.sha256,
       offset: frame.offset,
@@ -1891,12 +2112,15 @@ export class HoronAgentClient extends EventEmitter {
     chunk: SessionBlobChunk,
   ): Promise<SessionRecordBlobStatus> {
     this.requireCapability("session_replication_v1", "importSessionRecordBlob");
-    const frame = await this.replicationReply({
-      req: "import_session_record_blob",
-      session_id: sessionId,
-      reference,
-      chunk,
-    }, "session_record_blob_status");
+    const frame = await this.replicationReply(
+      {
+        req: "import_session_record_blob",
+        session_id: sessionId,
+        reference,
+        chunk,
+      },
+      "session_record_blob_status",
+    );
     return {
       session_id: frame.session_id,
       reference: frame.reference,
@@ -1909,11 +2133,14 @@ export class HoronAgentClient extends EventEmitter {
   /** Resume an interrupted whole-record transfer. */
   async sessionRecordBlobStatus(sessionId: string, reference: CanonicalRecordRef): Promise<SessionRecordBlobStatus> {
     this.requireCapability("session_replication_v1", "sessionRecordBlobStatus");
-    const frame = await this.replicationReply({
-      req: "get_session_record_blob_status",
-      session_id: sessionId,
-      reference,
-    }, "session_record_blob_status");
+    const frame = await this.replicationReply(
+      {
+        req: "get_session_record_blob_status",
+        session_id: sessionId,
+        reference,
+      },
+      "session_record_blob_status",
+    );
     return {
       session_id: frame.session_id,
       reference: frame.reference,
@@ -2373,6 +2600,7 @@ export class HoronAgentClient extends EventEmitter {
       reasoning: "",
       toolCalls: [],
       usage: undefined,
+      a2uiEnvelopes: [],
     };
     const parts: AssistantTextMessage[] = [];
     const messagesById = new Map<string, AssistantTextMessage>();
@@ -2454,6 +2682,16 @@ export class HoronAgentClient extends EventEmitter {
           result.stopReason = event.reason;
           result.stopMessage = event.message;
           break;
+        case "a2ui_envelope": {
+          const item: A2uiEnvelopeEvent = {
+            toolCallId: event.tool_call_id,
+            sequence: event.sequence,
+            envelope: event.envelope,
+          };
+          if (event.fallback_text !== undefined) item.fallbackText = event.fallback_text;
+          result.a2uiEnvelopes.push(item);
+          break;
+        }
         case "turn_done":
           await stream.return?.(undefined);
           return finish();
@@ -2530,6 +2768,15 @@ export interface TurnResult {
   reasoning: string;
   toolCalls: ToolCallResult[];
   usage?: { input: number; output: number; cacheReadInput?: number; cacheCreationInput?: number };
+  /** A2UI v1.0 envelopes emitted during this turn when `a2ui_v1` is active. */
+  a2uiEnvelopes: A2uiEnvelopeEvent[];
+}
+
+export interface A2uiEnvelopeEvent {
+  toolCallId: string;
+  sequence: number;
+  envelope: unknown;
+  fallbackText?: string;
 }
 
 export interface AssistantTextMessage {

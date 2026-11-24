@@ -143,7 +143,7 @@ Check this for every release that changes Windows behaviour.
 
 Windows is covered by:
 
-- `.github/workflows/ci.yml`: release build, test compilation, platform-targeted tests, runtime smoke tests, lifecycle end-to-end tests, install script checks, PowerShell syntax check.
+- `.github/workflows/ci.yml`: release build, unified test compilation, platform-targeted tests, runtime smoke tests, lifecycle end-to-end tests, install script checks, PowerShell syntax check. Every Rust pull request runs `windows-cross-check` (`cargo-xwin`) and `windows-arm64-check` (`justrust`), while the native `windows-build-test` runner executes on Windows-scoped pull requests, manifest/lockfile or `ci:all-os` changes, and every push to `dev` and `main`.
 - `.github/workflows/windows-smoke.yml`: manually run x64 and ARM64 smoke verification.
 - `.github/workflows/release.yml`: x64 and ARM64 builds (a separate job per architecture), the managed signing the Windows distribution needs, signature verification, packaging and checksums. Each platform job uploads its own assets to the draft release without waiting for the others. The final `Finalize release` job publishes only when every platform asset is present and leaves the release as a draft when one is missing. A failed ARM64 build does not stop the x64 signing and upload.
 

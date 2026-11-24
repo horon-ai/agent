@@ -164,6 +164,9 @@ pub(super) async fn create_headless_session(
     );
     if let Some(source) = consult_source.as_ref() {
         new_agent.install_forked_transcript(source)?;
+        // Persist the classification, not only the list this agent was born
+        // with: a later agent built for this session must narrow itself too.
+        new_agent.mark_consult();
     }
     new_agent.set_memory_enabled(memory_enabled);
     // Inline swarm mode renders a live gallery of worker viewports in the
@@ -179,6 +182,9 @@ pub(super) async fn create_headless_session(
         new_agent.set_session_provider_key(provider_key_override.clone());
     }
     let client_session_id = new_agent.session_id().to_string();
+    if consult_source.is_some() {
+        crate::tool::mark_session_consult_policy(&client_session_id);
+    }
 
     if let Some(model) = model_override {
         // Build a model-switch request that preserves the coordinator's auth
@@ -229,15 +235,26 @@ pub(super) async fn create_headless_session(
         }
     }
 
-    if let Some(effort) = effort_override
+    let requested_effort = effort_override
         .as_deref()
         .map(str::trim)
-        .filter(|effort| !effort.is_empty())
+        .filter(|effort| !effort.is_empty());
+    if let Some(maximum) = crate::config::config().agents.swarm_max_spawn_effort.as_deref()
+        && report_back_to_session_id.is_some()
+    {
+        let inherited = provider.reasoning_effort();
+        let supported = provider.available_efforts();
+        if let Some(effort) =
+            horon_agent_swarm_core::clamp_spawn_effort(requested_effort.or(inherited.as_deref()), maximum, &supported)
+                .map_err(|reason| anyhow::anyhow!("agents.swarm_max_spawn_effort '{maximum}': {reason}"))?
+        {
+            new_agent.set_reasoning_effort(effort)?;
+        }
+    } else if let Some(effort) = requested_effort
         && let Err(e) = new_agent.set_reasoning_effort(effort)
     {
         crate::logging::warn(&format!(
-            "Failed to set headless session reasoning effort override '{}': {}",
-            effort, e
+            "Failed to set headless session reasoning effort override '{effort}': {e}"
         ));
     }
 

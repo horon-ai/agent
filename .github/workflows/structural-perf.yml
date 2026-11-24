@@ -41,13 +41,12 @@ permissions:
 
 concurrency:
   group: structural-perf-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Same classification as ci.yml: a documentation-only pull request or
-  # first-attempt `dev` push has no counter to measure. A push to `main`, a
-  # dispatch, a re-run of a `dev` push and every lookup or diff failure run the
-  # gate.
+  # Same classification as ci.yml: non-Rust and documentation-only PRs skip
+  # the compile gate. Pushes, dispatches, re-runs, and lookup/diff failures run
+  # everything.
   changes:
     name: Changed Paths
     runs-on: ubuntu-24.04
@@ -57,6 +56,7 @@ jobs:
       actions: read
     outputs:
       code: ${{ steps.classify.outputs.code }}
+      rust: ${{ steps.classify.outputs.rust }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -68,12 +68,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: python3 scripts/ci/classify_changes.py --workflow structural-perf.yml --base "$BASE_SHA" --head "$HEAD_SHA"
 
   structural-perf:
     name: Structural performance gate
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -81,6 +82,7 @@ jobs:
       # crate, so the rustup proxy would honour it from that crate's CWD. Pin the
       # job's own toolchain, as the Build & Test job does.
       RUSTUP_TOOLCHAIN: stable
+      CARGO_BUILD_RUSTC_WRAPPER: ""
     steps:
       # The cleanup lives in the repository, so the checkout comes first: the
       # shared script is not on disk until the workspace exists.
@@ -102,7 +104,21 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: structural-perf-${{ runner.os }}
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
+
+      - name: Install mold linker (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          installed=0
+          for attempt in 1 2 3; do
+            if sudo apt-get update -qq && sudo apt-get install -y -qq clang mold; then
+              installed=1
+              break
+            fi
+            sleep $((attempt * 10))
+          done
+          [ "$installed" = 1 ]
 
       - name: Contract test the structural gate
         # Fast and compile-free: proves the bounds file, the report template and
@@ -116,7 +132,18 @@ jobs:
       - name: Run the structural performance gate
         # Independent of the steps above, so one failure does not hide the rest.
         if: ${{ !cancelled() }}
-        run: python3 scripts/perf/check_structural.py
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            mkdir -p .cargo
+            cat > .cargo/config.toml << 'EOF'
+          [target.x86_64-unknown-linux-gnu]
+          linker = "clang"
+          rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+          EOF
+            CARGO_BUILD_JOBS="$(nproc)"
+            export CARGO_BUILD_JOBS
+          fi
+          python3 scripts/perf/check_structural.py
 
   # Always finishes: a documentation-only pull request or `dev` push skips the
   # gate by design and must not leave a required check pending.
@@ -139,5 +166,17 @@ jobs:
             echo "::error::Changed Paths gave code='$code'; expected true or false"
             exit 1
           fi
-          [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != failure ]
-          [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != cancelled ]
+          rust="$(echo "$NEEDS" | jq -r '.changes.outputs.rust // ""')"
+          if [ "$rust" != true ] && [ "$rust" != false ]; then
+            echo "::error::Changed Paths gave rust='$rust'; expected true or false"
+            exit 1
+          fi
+          if [ "$rust" = true ] && [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != success ]; then
+            echo "::error::Changed Paths enabled rust=true but structural-perf did not succeed"
+            exit 1
+          fi
+          perf_result="$(echo "$NEEDS" | jq -r '.["structural-perf"].result')"
+          if [ "$perf_result" != success ] && [ "$perf_result" != skipped ]; then
+            echo "::error::structural-perf ended with unexpected result='$perf_result'"
+            exit 1
+          fi

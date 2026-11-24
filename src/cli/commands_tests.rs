@@ -821,6 +821,7 @@ async fn one_shot_output_modes_close_sessions_and_clear_active_pid_markers() {
             "Return the test response.",
             emit_json,
             emit_ndjson,
+            RunLimits::default(),
         )
         .await
         .unwrap_or_else(|error| panic!("{mode} run failed: {error:#}"));
@@ -874,6 +875,7 @@ async fn resumed_one_shot_closes_the_restored_session() {
         "Finish the resumed one-shot session.",
         true,
         false,
+        RunLimits::default(),
     )
     .await
     .expect("run resumed one-shot session");
@@ -906,11 +908,19 @@ async fn one_shot_cleanup_preserves_the_original_command_error() {
             .expect("active PID directory")
             .join(&session_id);
 
-        let error =
-            match run_single_message_with_agent(&mut agent, provider, "Fail this run.", emit_json, emit_ndjson).await {
-                Ok(()) => panic!("{mode} provider failure should remain the command result"),
-                Err(error) => error,
-            };
+        let error = match run_single_message_with_agent(
+            &mut agent,
+            provider,
+            "Fail this run.",
+            emit_json,
+            emit_ndjson,
+            RunLimits::default(),
+        )
+        .await
+        {
+            Ok(()) => panic!("{mode} provider failure should remain the command result"),
+            Err(error) => error,
+        };
 
         assert!(
             error.to_string().contains("one-shot sentinel failure"),
@@ -921,4 +931,223 @@ async fn one_shot_cleanup_preserves_the_original_command_error() {
             .unwrap_or_else(|error| panic!("load failed {mode} session: {error:#}"));
         assert!(matches!(persisted.status, crate::session::SessionStatus::Closed));
     }
+}
+
+struct A2uiScriptedProvider {
+    saw_render_a2ui_tool: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait]
+impl Provider for A2uiScriptedProvider {
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        tools: &[ToolDefinition],
+        _system: &str,
+        _resume_session_id: Option<&str>,
+    ) -> Result<EventStream> {
+        let has_tool = tools.iter().any(|tool| tool.name == "a2ui");
+        self.saw_render_a2ui_tool
+            .store(has_tool, std::sync::atomic::Ordering::Relaxed);
+        let (tx, rx) = tokio_mpsc::channel::<Result<StreamEvent>>(16);
+        let args = serde_json::json!({
+            "envelopes": [
+                {
+                    "version": crate::A2UI_VERSION_V1_0,
+                    "createSurface": {
+                        "surfaceId": "status-card",
+                        "catalogId": crate::A2UI_BASIC_CATALOG_V1_0
+                    }
+                },
+                {
+                    "version": crate::A2UI_VERSION_V1_0,
+                    "updateComponents": {
+                        "surfaceId": "status-card",
+                        "components": [
+                            {"id": "root", "component": "Text", "text": "Deploy Ready"}
+                        ]
+                    }
+                }
+            ],
+            "fallback_text": "Deploy Ready",
+            "final_response": true
+        })
+        .to_string();
+        tokio::spawn(async move {
+            let _ = tx
+                .send(Ok(StreamEvent::ToolUseStart {
+                    id: "call-a2ui-1".to_string(),
+                    name: "a2ui".to_string(),
+                }))
+                .await;
+            let _ = tx.send(Ok(StreamEvent::ToolInputDelta(args))).await;
+            let _ = tx.send(Ok(StreamEvent::ToolUseEnd)).await;
+            let _ = tx
+                .send(Ok(StreamEvent::MessageEnd {
+                    stop_reason: Some("tool_use".to_string()),
+                }))
+                .await;
+        });
+        Ok(Box::pin(ReceiverStream::new(rx)))
+    }
+
+    fn name(&self) -> &str {
+        "a2ui-scripted"
+    }
+
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(Self {
+            saw_render_a2ui_tool: Arc::clone(&self.saw_render_a2ui_tool),
+        })
+    }
+}
+
+#[test]
+fn run_command_report_omits_a2ui_when_empty_and_preserves_when_present() {
+    let base = run_jobs::RunCommandReport {
+        session_id: "ses-1".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-test".to_string(),
+        text: "hello".to_string(),
+        usage: crate::agent::TokenUsage::default(),
+        background_jobs: None,
+        a2ui: Vec::new(),
+    };
+    let empty_json = serde_json::to_value(&base).expect("serialize empty a2ui report");
+    assert!(empty_json.get("a2ui").is_none());
+
+    let populated = run_jobs::RunCommandReport {
+        a2ui: vec![serde_json::json!({
+            "type": "a2ui",
+            "envelopes": [{"version": "1.0", "createSurface": {"surfaceId": "s1", "catalogId": crate::A2UI_BASIC_CATALOG_V1_0}}],
+            "fallback_text": "Card"
+        })],
+        ..base
+    };
+    let with_a2ui_json = serde_json::to_value(&populated).expect("serialize populated a2ui report");
+    let blocks = with_a2ui_json["a2ui"].as_array().expect("a2ui array");
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0]["fallback_text"], "Card");
+}
+
+#[test]
+fn a2ui_run_builds_capabilities_and_streams_ndjson_frames() {
+    assert!(
+        a2ui_run::build_a2ui_capabilities(false, &[])
+            .expect("disabled ok")
+            .is_none()
+    );
+    let default_caps = a2ui_run::build_a2ui_capabilities(true, &[])
+        .expect("default caps")
+        .expect("some caps");
+    assert_eq!(default_caps.version, crate::A2UI_VERSION_V1_0);
+    assert_eq!(
+        default_caps.supported_catalog_ids,
+        vec![crate::A2UI_BASIC_CATALOG_V1_0.to_string()]
+    );
+    assert!(!default_caps.accepts_inline_catalogs);
+
+    let custom_caps = a2ui_run::build_a2ui_capabilities(
+        false,
+        &[
+            " https://example.com/a.json ".to_string(),
+            "https://example.com/a.json".to_string(),
+            "https://example.com/b.json".to_string(),
+        ],
+    )
+    .expect("custom caps")
+    .expect("some custom caps");
+    assert_eq!(
+        custom_caps.supported_catalog_ids,
+        vec![
+            "https://example.com/a.json".to_string(),
+            "https://example.com/b.json".to_string(),
+        ]
+    );
+    assert!(a2ui_run::build_a2ui_capabilities(true, &["   ".to_string()]).is_err());
+
+    let mut out = Vec::new();
+    let mut state = NdjsonRunState::default();
+    emit_ndjson_event(
+        &mut out,
+        &mut state,
+        crate::protocol::ServerEvent::A2uiEnvelope {
+            session_id: "ses-nd".to_string(),
+            tool_call_id: "call-1".to_string(),
+            sequence: 0,
+            envelope: serde_json::json!({"version": "1.0", "createSurface": {"surfaceId": "s1", "catalogId": crate::A2UI_BASIC_CATALOG_V1_0}}),
+            fallback_text: Some("Summary Card".to_string()),
+        },
+    )
+    .expect("emit first a2ui ndjson event");
+    emit_ndjson_event(
+        &mut out,
+        &mut state,
+        crate::protocol::ServerEvent::A2uiEnvelope {
+            session_id: "ses-nd".to_string(),
+            tool_call_id: "call-1".to_string(),
+            sequence: 1,
+            envelope: serde_json::json!({"version": "1.0", "updateComponents": {"surfaceId": "s1", "components": []}}),
+            fallback_text: None,
+        },
+    )
+    .expect("emit second a2ui ndjson event");
+    let lines: Vec<serde_json::Value> = String::from_utf8(out)
+        .expect("utf8")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("ndjson frame"))
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["type"], "a2ui");
+    assert_eq!(lines[0]["sequence"], 0);
+    assert_eq!(lines[0]["fallback_text"], "Summary Card");
+    assert_eq!(lines[1]["sequence"], 1);
+    assert!(lines[1].get("fallback_text").is_none());
+}
+
+#[tokio::test]
+async fn run_single_message_with_agent_a2ui_collects_json_and_text_cards() {
+    let _guard = crate::storage::lock_test_env();
+    let _saved = SavedEnv::capture(&["HORON_HOME", "HORON_AGENT_RUN_AUTO_POKE"]);
+    let temp = tempfile::tempdir().expect("tempdir");
+    crate::env::set_var("HORON_HOME", temp.path());
+    crate::env::set_var("HORON_AGENT_RUN_AUTO_POKE", "0");
+
+    let saw_tool = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let provider: Arc<dyn Provider> = Arc::new(A2uiScriptedProvider {
+        saw_render_a2ui_tool: Arc::clone(&saw_tool),
+    });
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = crate::agent::Agent::for_memory_only_run(provider.clone(), registry);
+    let caps = a2ui_run::build_a2ui_capabilities(true, &[])
+        .expect("build caps")
+        .expect("some caps");
+    agent.set_a2ui_capabilities(Some(caps)).await;
+
+    run_single_message_with_agent(
+        &mut agent,
+        provider,
+        "Show status",
+        true,
+        false,
+        RunLimits {
+            a2ui: true,
+            ..RunLimits::default()
+        },
+    )
+    .await
+    .expect("a2ui run completes");
+
+    assert!(saw_tool.load(std::sync::atomic::Ordering::Relaxed));
+    let json_blocks = a2ui_run::collect_a2ui_json_blocks(agent.messages());
+    assert_eq!(json_blocks.len(), 1);
+    assert_eq!(json_blocks[0]["type"], "a2ui");
+    assert_eq!(json_blocks[0]["envelopes"].as_array().expect("envelopes").len(), 2);
+
+    let cards = a2ui_run::collect_a2ui_text_cards(agent.messages());
+    assert_eq!(cards.len(), 1);
+    assert!(cards[0].contains("Deploy Ready"));
+    let mut rendered = Vec::new();
+    a2ui_run::write_a2ui_text_cards(&mut rendered, &cards).expect("write cards");
+    assert!(String::from_utf8(rendered).expect("utf8").contains("Deploy Ready"));
 }

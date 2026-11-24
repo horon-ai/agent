@@ -3,7 +3,7 @@
 //! Config is loaded from `~/.horon/config.toml` (or `$HORON_HOME/config.toml`)
 //! Environment variables override config file settings.
 
-pub use horon_agent_config_types::model_roles::{ModelRole, ModelRoles, resolve_role_model};
+pub use horon_agent_config_types::model_roles::{ModelRole, ModelRoles, SessionModelPreset, resolve_role_model};
 pub use horon_agent_config_types::parse_model_reference;
 pub use horon_agent_config_types::rewind_summary;
 pub use horon_agent_config_types::{
@@ -25,6 +25,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant, SystemTime};
+
+mod artifact_output;
+pub use artifact_output::ArtifactOutputConfig;
 
 const CONFIG_CACHE_CHECK_INTERVAL: Duration = if cfg!(test) {
     Duration::ZERO
@@ -357,13 +360,11 @@ pub struct Config {
     pub provider: ProviderConfig,
 
     /// Named provider profiles, keyed by profile name.
-    ///
-    /// Example; `type` picks the wire: `openai-compatible` (default),
-    /// `openai-responses`, `anthropic-compatible`, or `gemini-compatible`:
-    /// [providers.my-gateway]
-    /// type = "openai-compatible"
-    /// base_url = "https://llm.example.com/v1", api_key_env = "MY_GATEWAY_API_KEY"
     pub providers: BTreeMap<String, NamedProviderConfig>,
+
+    /// Named sets of session model and effort overrides.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_presets: BTreeMap<String, SessionModelPreset>,
 
     /// Agent-specific model defaults
     pub agents: AgentsConfig,
@@ -861,18 +862,15 @@ pub struct ToolConfig {
     /// Opt-in `redo`: expose the tool that re-applies the mutation the last
     /// `undo` removed. Off by default; `undo` is always available.
     pub redo: bool,
-    /// On by default: append the `AGENTS.md` of a read file's ancestor
-    /// directories to `read` results, so a session sees the rules of the
-    /// directories it actually reads from.
+    /// On by default: append the `AGENTS.md` files in a read file's ancestor directories.
     pub nested_agents_md: bool,
-    /// On by default: answer a repeated `read` of unchanged lines with a
-    /// one-line notice, and a whole-file re-read of a changed file with a diff
-    /// against the earlier read. `full: true` on a call always prints.
+    /// On by default: notice unchanged reads and diff changed whole-file re-reads. `full: true` always prints.
     pub read_dedup: bool,
-    /// On by default: condense large, older tool results in one batch when the
-    /// prompt cache is already cold or compaction is near. Originals stay
-    /// readable through `artifact://`.
+    /// Maximum lines per default read page, clamped to 1–5,000.
+    pub read_default_limit: usize,
     pub tool_result_aging: bool,
+    pub output_column_cap: usize,
+    pub artifact_output: ArtifactOutputConfig,
     /// On by default: refuse to edit, replace, delete, or overwrite a file that
     /// a generator produces. A generated file is regenerated from its source,
     /// so an edit to it is silently lost.
@@ -886,13 +884,12 @@ pub struct ToolConfig {
     /// Opt-in `ast_grep`/`ast_edit`: structural search and rewrite over
     /// tree-sitter grammars. Off by default.
     pub ast_tools: bool,
-    /// Opt-in structural `read` summary for large source files: keep item
-    /// signatures and elide long bodies instead of a full-file page. Off by
-    /// default.
+    /// Opt-in outlines for large source files and Markdown documents.
     pub read_summary: bool,
     /// Opt-in fuzzy `edit`: accept an `old_string` that matches exactly one
     /// location after whitespace and quote normalization. Off by default.
     pub edit_fuzzy: bool,
+    pub enforce_seen_line_guard: bool,
     /// Opt-in `lsp`: expose the tool that asks the project's language server
     /// for diagnostics, definitions, references, hover text, and symbols. Off
     /// by default because it starts and keeps a server process.
@@ -929,17 +926,15 @@ pub struct ToolConfig {
     /// Which calls ask before they run. `yolo` auto-approves ordinary calls.
     /// See [`ApprovalMode`] for the modes and their restrictions.
     pub approval_mode: ApprovalMode,
-    /// Let `bash` remember the directory the last command ended in and start
-    /// the next call there. On by default because an agent that has to prefix
-    /// every command with `cd` misreads its own working directory; set it to
-    /// `false` to pin every call to the session's working directory.
+    /// Start the next `bash` call where the last command ended. On by default.
+    /// Set to `false` to pin every call to the session's working directory.
     pub bash_session_cwd: bool,
-    /// Give every `bash` child a non-interactive environment: pagers and
-    /// editors resolve to no-ops, `CI=true` asks tools for plain output, and
-    /// package managers stop prompting. On by default so a command cannot
-    /// hang waiting for a terminal answer; set it to `false` to inherit the
-    /// parent environment unchanged.
+    /// Disable pagers, editors, and package-manager prompts for `bash` children.
+    /// Defaults to enabled and includes `CI=true` for plain output.
+    /// Set to `false` to inherit the parent environment unchanged.
     pub bash_non_interactive_env: bool,
+    /// Load an approved direnv environment for local shell commands.
+    pub bash_direnv: bool,
     /// Opt-in output minimizer for `bash`: a single, non-piped command that is
     /// a known build or package-manager invocation has its progress lines
     /// dropped before the result reaches the model, and the full output is
@@ -963,11 +958,10 @@ pub struct ToolConfig {
     /// Opt-in auxiliary completions: a separate small completion path for
     /// side tasks that must not disturb the main conversation.
     pub aux_completion: bool,
-    /// Opt-in image generation: registers `generate_image`, which posts to the
-    /// profile's `/images/generations` route through the `image` model role.
-    /// Off by default, and inert without an `image` entry in the active
-    /// profile, so a session that never generates an image pays nothing.
+    /// Opt in to `generate_image` on profiles with an `image` model role.
     pub generate_image: bool,
+    /// Opt in to Python cells that require explicit approval to run.
+    pub eval: bool,
     /// How credentials in outbound text are handled. `off` (default) leaves
     /// text untouched; see [`SecretsMode`].
     pub secrets_mode: SecretsMode,
@@ -1005,13 +999,17 @@ impl Default for ToolConfig {
             redo: false,
             nested_agents_md: true,
             read_dedup: true,
+            read_default_limit: 5000,
             tool_result_aging: true,
+            output_column_cap: 0,
+            artifact_output: ArtifactOutputConfig::default(),
             block_auto_generated: true,
             bash_pty: BashPtyMode::Auto,
             hashline_edit: false,
             ast_tools: false,
             read_summary: false,
             edit_fuzzy: false,
+            enforce_seen_line_guard: false,
             lsp: false,
             managed_skills: false,
             context_notes: false,
@@ -1023,12 +1021,14 @@ impl Default for ToolConfig {
             approval_mode: ApprovalMode::default(),
             bash_session_cwd: true,
             bash_non_interactive_env: true,
+            bash_direnv: false,
             bash_minimizer: false,
             bash_interceptor: BashInterceptorMode::Off,
             bash_patterns: Vec::new(),
             git_guard: false,
             aux_completion: false,
             generate_image: false,
+            eval: false,
             secrets_mode: SecretsMode::Off,
             dual_confirm_classes: Vec::new(),
             restricted_paths: Vec::new(),

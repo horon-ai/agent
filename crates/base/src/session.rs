@@ -42,9 +42,11 @@ mod purge;
 #[path = "session/purge_tests.rs"]
 mod purge_tests;
 mod render;
+use render::redact_json_value;
 mod resume_marker;
 mod storage_paths;
 mod streaming_guard;
+mod visibility;
 pub use crash::{
     CrashedSessionsInfo, detect_crashed_sessions, find_recent_crashed_sessions, find_session_by_name_or_id,
     recover_crashed_sessions, recover_crashed_sessions_by_ids,
@@ -68,12 +70,13 @@ pub use render::{
     RenderedCompactedHistoryInfo, RenderedImage, RenderedImageAnchor, RenderedImageSource, RenderedMessage,
     has_rendered_images, is_attached_image_label_text, is_compacted_history_notice, reasoning_line_content,
     reasoning_line_markup, render_images, render_messages, render_messages_and_images,
-    render_messages_and_images_with_compacted_history, summarize_tool_calls,
+    render_messages_and_images_with_compacted_history, split_rendered_reasoning, summarize_tool_calls,
 };
 pub use storage_paths::session_journal_path_from_snapshot;
 pub use storage_paths::{discard_session_original, session_exists, session_journal_path, session_path, store_paths};
 use storage_paths::{estimate_json_bytes, persist_vector_mode_label};
 pub use streaming_guard::StreamingGuard;
+pub use visibility::is_scheduled_task_message;
 pub use {horon_agent_session_types::prompt_title, persistence::drain_saves_for_shutdown};
 
 fn stored_messages_to_messages(messages: &[StoredMessage]) -> Vec<Message> {
@@ -102,16 +105,6 @@ fn is_visible_conversation_message(message: &StoredMessage) -> bool {
     message.display_role.is_none()
         && !is_internal_system_reminder_message(message)
         && !is_scheduled_task_message(message)
-}
-
-/// Recognize scheduler prompts persisted before they received an explicit
-/// system display role. This keeps old sessions from treating them as user
-/// prompts after resume.
-pub fn is_scheduled_task_message(message: &StoredMessage) -> bool {
-    message.role == Role::User
-        && message.content.iter().any(|block| {
-            matches!(block, ContentBlock::Text { text, .. } if text.trim_start().starts_with("[Scheduled task]\n"))
-        })
 }
 
 /// Identity of the inputs the cached provider projection was built from.
@@ -270,6 +263,9 @@ pub struct Session {
     /// Last time the session was marked active
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_active_at: Option<Timestamp>,
+    /// A read-only consult child; see [`crate::session_scope::CONSULT_TOOLS`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub consult: bool,
     /// Whether this is a debug/test session (created via debug socket)
     #[serde(default)]
     pub is_debug: bool,
@@ -715,6 +711,7 @@ impl Session {
             status: SessionStatus::Active,
             last_pid: Some(std::process::id()),
             last_active_at: Some(now),
+            consult: false,
             is_debug,
             saved: false,
             save_label: None,
@@ -785,6 +782,7 @@ impl Session {
             status: SessionStatus::Active,
             last_pid: Some(std::process::id()),
             last_active_at: Some(now),
+            consult: false,
             is_debug,
             saved: false,
             save_label: None,
@@ -1168,9 +1166,16 @@ request in this new forked session, using the inherited conversation only as con
                         *content = crate::message::redact_secrets(content);
                     }
                     ContentBlock::ToolUse { input, .. } => redact_json_value(input),
-                    // Export copy only: the stored item stays verbatim for
-                    // replay, but queries can carry pasted credentials.
                     ContentBlock::ProviderNative { item, .. } => redact_json_value(item),
+                    ContentBlock::A2ui {
+                        envelopes,
+                        fallback_text,
+                    } => {
+                        envelopes.iter_mut().for_each(redact_json_value);
+                        if let Some(t) = fallback_text {
+                            *t = crate::message::redact_secrets(t);
+                        }
+                    }
                     ContentBlock::Image { .. } | ContentBlock::Audio { .. } => {}
                     ContentBlock::OpenAICompaction { .. } | ContentBlock::ToolReference { .. } => {}
                 }
@@ -1781,45 +1786,6 @@ fn aggregate_usage<'a>(
             .saturating_add(usage.cache_creation_input_tokens.unwrap_or(0));
     }
     totals
-}
-
-fn redact_json_value(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::String(s) => {
-            *s = crate::message::redact_secrets(s);
-        }
-        serde_json::Value::Array(values) => {
-            for entry in values {
-                redact_json_value(entry);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            for (key, entry) in map.iter_mut() {
-                if is_sensitive_json_key(key) {
-                    *entry = serde_json::Value::String("[REDACTED_SECRET]".to_string());
-                } else {
-                    redact_json_value(entry);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn is_sensitive_json_key(key: &str) -> bool {
-    let normalized = key
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect::<String>();
-    normalized.contains("apikey")
-        || normalized.ends_with("token")
-        || normalized.ends_with("secret")
-        || normalized.contains("password")
-        || matches!(
-            normalized.as_str(),
-            "authorization" | "cookie" | "setcookie" | "privatekey" | "clientsecret"
-        )
 }
 
 /// The lineage root a freshly created session starts with: a new UUID for a root, and

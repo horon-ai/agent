@@ -13,7 +13,8 @@ use horon_agent_sdk::{ConnectOptions, HistoryMessage, SessionInfo};
 
 use super::AttachedSession;
 use super::sessions::{
-    Dial, belongs, described, first_user_text, follow, history_or_empty, messages, preview, session_of,
+    Dial, belongs, boundaries, described, first_user_text, follow, history_or_empty, last_assistant_text, messages,
+    preview, session_of,
 };
 
 /// One streamed delta of the session named, as the daemon publishes it.
@@ -35,6 +36,8 @@ fn message(role: &str, content: &str) -> HistoryMessage {
         role: role.to_string(),
         content: content.to_string(),
         response_stats: None,
+        answer: None,
+        message_id: None,
     }
 }
 
@@ -273,6 +276,7 @@ fn the_dial_settings_survive_the_first_connection_taking_the_options() {
         ensure_runtime: false,
         supports_user_response: true,
         supports_ask_requests: false,
+        a2ui: None,
     };
     let again = Dial::of(&loaded).options();
     assert_eq!(again.socket_path, loaded.socket_path);
@@ -289,6 +293,7 @@ fn the_dial_settings_survive_the_first_connection_taking_the_options() {
         ensure_runtime: true,
         supports_user_response: false,
         supports_ask_requests: true,
+        a2ui: None,
     };
     let again = Dial::of(&bare).options();
     assert_eq!(again.socket_path, bare.socket_path);
@@ -357,4 +362,73 @@ fn an_attach_whose_history_read_answered_keeps_the_conversation() {
         history_or_empty(read),
         vec![message("user", "hello"), message("assistant", "hi")]
     );
+}
+
+fn stored(role: &str, content: &str, id: &str) -> HistoryMessage {
+    HistoryMessage {
+        role: role.to_string(),
+        content: content.to_string(),
+        response_stats: None,
+        answer: None,
+        message_id: Some(id.to_string()),
+    }
+}
+
+#[test]
+fn fork_rows_are_the_recorded_user_messages_newest_first() {
+    let history = [
+        stored("user", "first question", "message_1"),
+        stored("assistant", "an answer", "message_2"),
+        // Injected context is stored under the user role but was never written
+        // by the user, so it cannot be a branch point.
+        stored("user", "<system-reminder>hidden</system-reminder>", "message_3"),
+        stored("user", "second question\nwith a second line", "message_4"),
+        // A row without a stored id has no stable boundary to send.
+        message("user", "no id"),
+    ];
+    let rows = boundaries(&history);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows[0].boundary, "message_4", "the newest boundary is not first");
+    assert_eq!(rows[0].label, "second question with a second line");
+    assert_eq!(rows[0].detail, "#2");
+    assert!(
+        rows[0].preview.iter().any(|line| line.contains("3 stored messages")),
+        "{:?}",
+        rows[0].preview
+    );
+    assert_eq!(rows[1].boundary, "message_1");
+    assert_eq!(rows[1].detail, "#1");
+}
+
+#[test]
+fn the_newest_assistant_line_is_the_summary_a_finished_child_reports() {
+    let messages = [
+        message("assistant", "an older answer"),
+        message("tool", "the report tool's own row"),
+        message("user", "a later question"),
+        message("assistant", "the final report"),
+    ];
+
+    assert_eq!(
+        last_assistant_text(&messages).as_deref(),
+        Some("the final report"),
+        "the summary must be the newest assistant line, not a tool or user row"
+    );
+
+    // A row that names its answer separately is read from that field: a raw
+    // stored row can carry reasoning and answer as one unmarked string.
+    let named = HistoryMessage {
+        role: "assistant".to_string(),
+        content: "reasoning text\nthe answer".to_string(),
+        answer: Some("the answer".to_string()),
+        response_stats: None,
+        message_id: None,
+    };
+    assert_eq!(last_assistant_text(&[named]).as_deref(), Some("the answer"));
+}
+
+#[test]
+fn a_conversation_with_no_assistant_answer_has_no_summary() {
+    let messages = [message("user", "only the question"), message("assistant", "   \n\t ")];
+    assert_eq!(last_assistant_text(&messages), None);
 }

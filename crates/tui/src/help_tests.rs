@@ -345,6 +345,7 @@ fn a_notice_keeps_its_hanging_indent() {
         symbols: Symbols::default(),
         width: 40,
         markdown: true,
+        visual_blocks: true,
     };
     let text = "the transcript pane draws the newest rows first and stops when it fills";
     let rows: Vec<String> = wrap::wrap_rows(item_lines::lines(&Item::Notice(text.to_string()), &look, None), 40)
@@ -368,16 +369,26 @@ fn the_popup_offers_the_commands_a_prefix_matches() {
     assert!(app.slash.is_open(), "the popup is closed for a matching prefix");
     let names: Vec<String> = app.slash.matches().iter().map(|entry| entry.name.clone()).collect();
     assert_eq!(
-        names.iter().take(5).cloned().collect::<Vec<_>>(),
-        vec!["refresh_model_list", "remote", "resume", "resume_all", "review"],
+        names.iter().take(9).map(String::as_str).collect::<Vec<_>>(),
+        vec![
+            "record",
+            "refresh_model_list",
+            "remote",
+            "rename",
+            "replay",
+            "resume",
+            "resume_all",
+            "retry",
+            "review"
+        ],
         "the prefix hits keep their order and come first: {names:?}"
     );
     assert!(
-        names.iter().skip(5).all(|name| !name.starts_with("re")),
+        names.iter().skip(9).all(|name| !name.starts_with("re")),
         "a prefix match was ranked below a fuzzy one: {names:?}"
     );
     assert!(
-        names.len() > 5,
+        names.len() > 8,
         "the letters `re` appear inside a command, so a fuzzy row was expected: {names:?}"
     );
     // A slash that matches nothing offers nothing.
@@ -414,10 +425,10 @@ fn a_closed_popup_leaves_up_and_down_to_the_history() {
 fn the_selection_stops_at_both_ends_and_tab_fills_it() {
     let mut app = app();
     type_text(&mut app, "/re");
-    for _ in 0..4 {
+    for _ in 0..8 {
         press(&mut app, KeyCode::Down);
     }
-    assert_eq!(app.slash.selected(), 4, "down stopped before the last row");
+    assert_eq!(app.slash.selected(), 8, "down did not reach /review");
     assert_eq!(press(&mut app, KeyCode::Tab), None);
     assert_eq!(app.input.text(), "/review");
     assert!(!app.slash.is_open(), "the popup stayed open after the fill");
@@ -425,21 +436,21 @@ fn the_selection_stops_at_both_ends_and_tab_fills_it() {
     app.sync_slash();
     assert!(app.slash.is_open(), "editing the draft did not bring the popup back");
     press(&mut app, KeyCode::Tab);
-    assert_eq!(app.input.text(), "/refresh_model_list", "the first row is the default");
+    assert_eq!(app.input.text(), "/record", "the first row is the default");
 }
 
 #[test]
 fn tab_fills_the_row_a_fuzzy_match_offers() {
     let mut app = app();
-    type_text(&mut app, "/mdl");
-    assert!(app.slash.is_open(), "the letters of `/model` did not offer it");
+    type_text(&mut app, "/qit");
+    assert!(app.slash.is_open(), "the letters of `/quit` did not offer it");
     assert_eq!(
         app.slash.selected_name(),
-        Some("model"),
+        Some("quit"),
         "the marker is not on the row Tab would fill"
     );
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/model", "tab did not fill the offered row");
+    assert_eq!(app.input.text(), "/quit", "tab did not fill the offered row");
     assert!(
         !app.slash.is_open(),
         "the popup stayed open over the command it had just filled"
@@ -726,6 +737,7 @@ fn listing_rows(line: &str, width: u16) -> Vec<String> {
         symbols: Symbols::default(),
         width,
         markdown: false,
+        visual_blocks: true,
     };
     wrap::wrap_rows(item_lines::lines(&Item::Notice(line.to_string()), &look, None), width)
         .iter()
@@ -835,4 +847,45 @@ fn the_fingerprint_reads_the_first_word_and_the_length() {
     // which is what bounds the per-frame check.
     let long = format!("/mo{}", "x".repeat(100_000));
     assert_ne!(hash("/mo"), hash(&long), "the length is part of the answer");
+}
+
+#[test]
+fn alt_m_asks_the_harness_for_read_only_plan_mode() {
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    let mut app = App::new("default socket".to_string(), receiver);
+    let key = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT);
+    let plan = Action::Runtime {
+        command: horon_agent_sdk::RuntimeCommand::Plan,
+        arguments: vec!["on".to_string()],
+    };
+    assert_eq!(app.on_key(key), Some(plan));
+}
+
+#[test]
+fn usage_covers_launch_flags_keys_and_builtin_commands() {
+    for needle in [
+        "--plan",
+        "--goal <objective>",
+        "--goal-budget <tokens>",
+        "selected cut tool call",
+        "Alt-T",
+        "Alt-M",
+        "Ctrl-P",
+        "Ctrl-Alt-P",
+        "Ctrl-Right",
+        "Ctrl-G",
+        "/commit",
+        "/diff",
+        "/export",
+        "/note",
+        "/queue",
+        "/stats",
+        "/swarm",
+    ] {
+        assert!(help::USAGE.contains(needle), "`{needle}` missing from help::USAGE");
+    }
+    assert!(
+        !help::USAGE.contains("newest cut tool call"),
+        "stale Ctrl-O description remained in help::USAGE"
+    );
 }

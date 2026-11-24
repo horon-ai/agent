@@ -4,11 +4,12 @@
 // `tool/goal.rs` takes for the identical pattern.
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
-use super::read_selector::{
-    DEFAULT_LIMIT, Rendered, Selector, push_numbered_line, render_range, render_with_selector, split_path_and_selector,
-};
 #[cfg(test)]
 use super::read_selector::{MAX_LINE_LEN, TRUNCATED_TAG};
+use super::read_selector::{
+    Rendered, Selector, default_read_limit, push_numbered_line, render_markdown_outline, render_range,
+    render_with_selector, split_path_and_selector,
+};
 use super::read_state::{self, READ_SNAPSHOT_MAX_BYTES, READ_SNAPSHOT_TOOL, ReadRecord};
 use super::{Tool, ToolContext, ToolEffects, ToolOutput, artifacts, nested_agents};
 use crate::bus::{Bus, BusEvent, FileOp, FileTouch};
@@ -98,7 +99,7 @@ fn normalize_read_range(params: &ReadInput) -> Result<NormalizedReadRange> {
             }
             end_line - start_line + 1
         } else {
-            params.limit.unwrap_or(DEFAULT_LIMIT)
+            params.limit.unwrap_or_else(default_read_limit)
         };
 
         return Ok(NormalizedReadRange {
@@ -110,7 +111,7 @@ fn normalize_read_range(params: &ReadInput) -> Result<NormalizedReadRange> {
 
     Ok(NormalizedReadRange {
         offset: params.offset.unwrap_or(0),
-        limit: params.limit.unwrap_or(DEFAULT_LIMIT),
+        limit: params.limit.unwrap_or_else(default_read_limit),
         style: ReadRangeStyle::OffsetLimit,
     })
 }
@@ -159,7 +160,7 @@ impl Tool for ReadTool {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max text lines to read. Default 5000."
+                    "description": "Max lines; defaults to the configured page size."
                 },
                 "hashline": {
                     "type": "boolean",
@@ -301,13 +302,20 @@ impl Tool for ReadTool {
         // send a diff for a changed whole file. Recorded even under `full`,
         // since that output is in context too. Only the start_line/offset form
         // is tracked; a selector read is rendered as asked.
-        let dedup = crate::config::config().tools.read_dedup && range.is_some();
-        let read_key = dedup.then(|| read_state::key_for(&path));
-        let content_hash: Option<[u8; 32]> = dedup.then(|| Sha256::digest(content.as_bytes()).into());
+        // Python receives bridge output directly and may discard it without
+        // ever putting the file in the model's context.
+        let tools = &crate::config::config().tools;
+        let track = range.is_some() && !super::eval::owns_subcall();
+        let edit_evidence = track && tools.enforce_seen_line_guard;
+        let dedup = track && tools.read_dedup;
+        let read_key = (dedup || edit_evidence).then(|| read_state::key_for(&path));
+        let content_hash: Option<[u8; 32]> = read_key.as_ref().map(|_| Sha256::digest(content.as_bytes()).into());
         let previous = read_key
             .as_ref()
             .and_then(|key| read_state::lookup(&ctx.session_id, key));
         if !params.full
+            && dedup
+            && !edit_evidence
             && let (Some(range), Some(key), Some(hash), Some(prev)) =
                 (range, read_key.as_ref(), content_hash, previous.as_ref())
             && let Some(repeated) = repeated_read_response(&params, range, &content, hash, prev, key, &ctx)
@@ -316,7 +324,7 @@ impl Tool for ReadTool {
             return Ok(ToolOutput::new(repeated.output));
         }
 
-        let summary = if matches!(selector, Selector::None) && !explicit_range && !params.hashline {
+        let summary = if matches!(selector, Selector::None) && !explicit_range && !params.hashline && !params.full {
             structural_summary(&content, &authored_path, &path)
         } else {
             None
@@ -342,6 +350,7 @@ impl Tool for ReadTool {
                 (range.offset, rendered.last_line),
                 rendered.total_lines,
                 params.hashline,
+                edit_evidence,
                 previous,
             );
         }
@@ -440,6 +449,11 @@ fn structural_summary(content: &str, display: &str, path: &Path) -> Option<Rende
     let total_lines = content.lines().count();
     if total_lines <= SUMMARY_MIN_LINES {
         return None;
+    }
+    if path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown") || ext.eq_ignore_ascii_case("mdx")
+    }) {
+        return render_markdown_outline(content, display, total_lines);
     }
     let lang = horon_agent_ast::Lang::from_path(path)?;
     let segments = horon_agent_ast::summarize(content, lang, SUMMARY_MIN_BODY_LINES)?;
@@ -554,6 +568,7 @@ fn repeated_read_response(
         key.to_path_buf(),
         ReadRecord {
             hash,
+            edit_evidence: false,
             ranges: vec![(0, total_lines)],
             hashline: false,
             total_lines,
@@ -585,19 +600,21 @@ fn remember_read(
     (start, end): (usize, usize),
     total_lines: usize,
     hashline: bool,
+    edit_evidence: bool,
     previous: Option<ReadRecord>,
 ) {
     if start >= end {
         return;
     }
     let mut record = match previous {
-        Some(prev) if prev.hash == hash && prev.hashline == hashline => prev,
+        Some(prev) if prev.hash == hash && prev.hashline == hashline && prev.edit_evidence == edit_evidence => prev,
         Some(prev) if prev.hash == hash => ReadRecord {
             ranges: Vec::new(),
             ..prev
         },
         _ => ReadRecord {
             hash,
+            edit_evidence,
             ranges: Vec::new(),
             hashline,
             total_lines,
@@ -606,10 +623,16 @@ fn remember_read(
         },
     };
     record.hashline = hashline;
+    record.edit_evidence = edit_evidence;
     record.total_lines = total_lines;
     record.tool_call_id = ctx.tool_call_id.clone();
     record.merge_range(start, end);
-    if record.snapshot_id.is_none() && start == 0 && end >= total_lines && content.len() <= READ_SNAPSHOT_MAX_BYTES {
+    if !edit_evidence
+        && record.snapshot_id.is_none()
+        && start == 0
+        && end >= total_lines
+        && content.len() <= READ_SNAPSHOT_MAX_BYTES
+    {
         record.snapshot_id = artifacts::store(&ctx.session_id, READ_SNAPSHOT_TOOL, content).ok();
     }
     read_state::record(&ctx.session_id, key, record);
@@ -629,6 +652,10 @@ mod read_skill;
 mod read_sqlite;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "read/options_tests.rs"]
+mod options_tests;
 
 /// A path that leaves the filesystem: an `agent://` reference or any URL scheme.
 ///

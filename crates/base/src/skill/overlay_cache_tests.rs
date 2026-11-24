@@ -1,8 +1,9 @@
 //! The per-workspace overlay cache: unchanged workspaces read nothing, every
 //! kind of change is visible on the next call, and only changed files are read.
 //!
-//! The cache and the read counters are process-wide, so every test here holds
-//! `counter_lock()` and starts from an empty cache.
+//! The cache, process environment, and read counters are process-wide, so every
+//! test here holds `lock_test_env()` then `counter_lock()` and starts from an
+//! empty cache.
 
 use super::overlay_cache;
 use super::test_support;
@@ -19,11 +20,12 @@ fn write_skill(root: &Path, scope: &str, name: &str, description: &str) {
     .expect("write skill");
 }
 
-/// Serialize with the other counter tests and start from a cold cache.
-fn cold_cache() -> std::sync::MutexGuard<'static, ()> {
-    let guard = test_support::counter_lock();
+/// Serialize with env/counter tests and start from a cold cache.
+fn cold_cache() -> (std::sync::MutexGuard<'static, ()>, std::sync::MutexGuard<'static, ()>) {
+    let env_guard = crate::storage::lock_test_env();
+    let counter_guard = test_support::counter_lock();
     overlay_cache::clear_for_tests();
-    guard
+    (env_guard, counter_guard)
 }
 
 fn description(overlay: &super::SkillRegistry, name: &str) -> Option<String> {

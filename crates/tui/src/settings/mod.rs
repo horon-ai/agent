@@ -15,13 +15,17 @@
 //! came from. [`reload::Reloader`] watches the files and re-resolves after one
 //! changes, keeping the last good values from a file that stops parsing.
 
+pub mod daemon;
 pub mod layers;
+pub mod motion;
 pub mod registry;
 pub mod reload;
 
 #[cfg(test)]
 mod tests;
 
+pub use daemon::{DaemonRow, DaemonSettings};
 pub use layers::{Provenance, SettingValue, Settings, Sources, save_global};
+pub use motion::{Motion, MotionMode};
 pub use registry::{REGISTRY, SettingKind, SettingSpec, UiMeta, spec};
 pub use reload::{Reload, Reloader};

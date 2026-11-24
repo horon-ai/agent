@@ -205,6 +205,8 @@ fn heads_selection_and_history_page_round_trip() {
                 head: head_event_id.clone().unwrap_or_else(|| "h1".into()),
                 messages: vec![horon_agent_harness_api::HistoryMessage {
                     response_stats: None,
+                    answer: None,
+                    message_id: None,
                     role: "user".into(),
                     content: format!("limit={limit:?} before={before_event_id:?}"),
                 }],
@@ -409,6 +411,36 @@ fn export_session_markdown_sends_the_request_and_returns_the_transcript() {
     let markdown = client.export_session_markdown("s1").expect("export");
     assert!(markdown.contains("### User"));
     assert!(markdown.contains("### Assistant"));
+}
+
+#[test]
+fn export_session_html_sends_the_request_and_returns_the_report() {
+    let client = fake_harness(CAPABILITIES.to_vec(), |frame, writer| match frame.request {
+        ApiRequest::ExportSessionHtml { ref session_id } => {
+            assert_eq!(session_id, "s1");
+            reply(
+                frame,
+                ApiEvent::SessionHtml {
+                    session_id: "s1".into(),
+                    html: "<!DOCTYPE html>\n<html lang=\"en\"><body><h2>User</h2></body></html>\n".into(),
+                },
+                writer,
+            )
+        }
+        _ => reply(
+            frame,
+            ApiEvent::Error {
+                code: ErrorCode::UnknownRequest,
+                message: "unexpected request".into(),
+                details: None,
+            },
+            writer,
+        ),
+    });
+
+    let html = client.export_session_html("s1").expect("export");
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(html.contains("<h2>User</h2>"));
 }
 
 #[test]

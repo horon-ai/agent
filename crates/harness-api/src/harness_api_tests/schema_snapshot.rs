@@ -14,11 +14,7 @@ fn minor_fourteen_requests_are_additive_and_keep_legacy_goldens() {
         matches!(&decoded.request, ApiRequest::AskResponse { answer_id: None, ask_id, .. } if ask_id == "a1"),
         "{decoded:?}"
     );
-    assert_eq!(
-        serde_json::to_string(&decoded).unwrap(),
-        legacy_ask,
-        "an answer without an id must serialize byte-identically to the legacy frame"
-    );
+    assert_eq!(serde_json::to_string(&decoded).unwrap(), legacy_ask);
 
     let hello = ClientFrame::new(
         1,
@@ -29,6 +25,7 @@ fn minor_fourteen_requests_are_additive_and_keep_legacy_goldens() {
             supports_user_response: false,
             supports_ask_requests: false,
             event_capabilities: Vec::new(),
+            a2ui: None,
         },
     );
     assert_eq!(
@@ -160,6 +157,7 @@ fn gated_requests_name_their_capability_and_refuse_an_unnegotiated_peer() {
         ApiRequest::Ping,
         ApiRequest::AttachSession {
             session_id: "s1".into(),
+            a2ui: None,
         },
         ApiRequest::GetHistory {
             session_id: "s1".into(),
@@ -288,8 +286,10 @@ fn minor_fourteen_events_roundtrip_and_the_marker_is_a_stream_event() {
                 state,
                 messages: vec![HistoryMessage {
                     response_stats: None,
+                    answer: None,
                     role: "user".into(),
                     content: "hi".into(),
+                    message_id: None,
                 }],
                 next_history_cursor: None,
                 truncated: true,
@@ -480,8 +480,10 @@ fn replication_events_roundtrip() {
             head: "h1".into(),
             messages: vec![HistoryMessage {
                 response_stats: None,
+                answer: None,
                 role: "user".into(),
                 content: "hi".into(),
+                message_id: None,
             }],
             next_cursor: Some("e1".into()),
         },
@@ -581,6 +583,7 @@ fn create_session_system_prompt_roundtrip_and_legacy_default() {
         let request = ApiRequest::CreateSession {
             working_dir: None,
             system_prompt: Some(prompt.into()),
+            a2ui: None,
         };
         let wire = serde_json::to_value(&request).unwrap();
         assert_eq!(wire["system_prompt"], prompt);
@@ -626,6 +629,7 @@ fn client_frame_wire_shape() {
             images: vec![],
             system_reminder: None,
             no_reply: false,
+            expected_run_id: None,
         },
     );
     let json = serde_json::to_string(&frame).unwrap();
@@ -645,6 +649,7 @@ fn send_message_no_reply_wire_shape_and_legacy_default() {
             images: vec![],
             system_reminder: None,
             no_reply: true,
+            expected_run_id: None,
         },
     );
     let json = serde_json::to_string(&frame).unwrap();
@@ -739,6 +744,7 @@ fn soft_interrupt_ids_requests_and_events_wire_shape() {
         client_ids: vec!["f1".into(), "f2".into()],
         point: "D".into(),
         tools_skipped: None,
+        notice: None,
         display_role: None,
     });
     assert_eq!(
@@ -832,6 +838,7 @@ fn request_roundtrip() {
                 crate::CAPABILITY_BACKGROUND_OUTPUT_V1.into(),
                 crate::CAPABILITY_LIVE_TODO_V1.into(),
             ],
+            a2ui: None,
         },
         ApiRequest::ListSessions {
             include_archived: false,
@@ -849,9 +856,11 @@ fn request_roundtrip() {
         ApiRequest::CreateSession {
             working_dir: None,
             system_prompt: None,
+            a2ui: None,
         },
         ApiRequest::AttachSession {
             session_id: "s1".into(),
+            a2ui: None,
         },
         ApiRequest::Cancel {
             session_id: "s1".into(),
@@ -1201,6 +1210,7 @@ fn hidden_system_reminder_wire_shape_and_legacy_default() {
             system_reminder: Some("continue task".into()),
             images: vec![],
             no_reply: false,
+            expected_run_id: None,
         },
     );
     let wire = serde_json::to_value(&frame).unwrap();

@@ -34,7 +34,13 @@ effort는 방식마다 다르게 실린다. `openai-compatible`은 `reasoning_ef
 
 각 방식은 모델 라우트에 위 표의 `api_method` 값으로 나타난다. 런타임 정체성은 네 가지 모두 `openai-compatible` 또는 `openai-compatible:<profile>`로 남으므로, 저장된 세션과 하네스 API, SDK는 프로바이더 이름 하나를 본다.
 
-`prompt_cache_key`는 `openai-compatible`과 `openai-responses`에만 적용한다. `extra_body` 키는 네 방식 모두에서 모든 요청 본문의 최상위에 합쳐진다. 모델 목록은 프로파일의 정적 `[[providers.<name>.models]]` 배열에서 오고, 어떤 방식도 엔드포인트에 목록을 묻지 않는다.
+`prompt_cache_key`는 `openai-compatible`과 `openai-responses`에만 적용한다. `extra_body` 키는 네 방식 모두에서 모든 요청 본문의 최상위에 합쳐진다. 기본 모델 목록은 프로파일의 정적 `[[providers.<name>.models]]` 배열을 사용한다.
+
+`horon model list --profile <name> --search <text>`는 프로파일 이름과 모델 ID에 포함된 문자열로 설정 목록을 거른다. 모델 ID를 거를 때 대소문자를 구분하지 않는다. `--refresh`를 추가하면 조건에 맞는 `openai-compatible`과 `openai-responses` 프로파일에 설정된 인증을 사용해 `GET /models`를 요청한다. 프로파일별로 갱신 성공, 실패 또는 지원하지 않는 방식임을 표시한다. 실패하거나 지원하지 않는 프로파일은 설정된 모델을 목록에 표시한다. `--json`에는 프로파일별 목록 출처와 사유가 들어간다. 갱신 결과는 이번 명령에 적용되며 `config.toml`은 그대로 둔다.
+
+### 도구 파라미터 스키마
+
+도구의 `parameters`는 선택한 요청 형식의 JSON Schema 규격에 맞춰 보낸다. 지원하지 않는 키워드는 `schema_keyword_dropped`로 기록한다. OpenAI의 두 형식은 루트에 객체 하나를 요구한다. 루트 `anyOf`나 `oneOf`의 객체 대안은 속성을 모으고 모든 객체 대안에 공통인 필수 항목을 올려 객체 하나로 보낸다. 루트에 이미 선언한 속성은 그 선언을 유지한다. 대안에만 선언한 속성의 규칙이 서로 다르면 속성 안의 `anyOf`에 모은다. 요청은 `strict: false`로 보내고 제거한 루트 결합 규칙을 기록한다. `swarm`의 `spawn`에 필요한 `label`처럼 동작별 필수 항목은 실행할 때 도구가 검사한다.
 
 ```toml
 # Chat Completions, 기본값
@@ -109,10 +115,32 @@ input = ["text", "image"]
 | `extra_body` | 네 방식 모두에서 모든 요청 본문의 최상위에 합칠 JSON 객체다. 백엔드 전용 필드(`chat_template_kwargs` 등)를 넣을 때 쓴다. |
 | `requires_api_key` | 키가 필요한지 명시한다. 로컬 엔드포인트처럼 키가 없으면 `false`로 둔다. |
 | `prompt_cache_key` | 요청 본문에 계보 고정 `prompt_cache_key`를 실을지 정한다. `true`는 항상 싣고, `false`는 싣지 않으며, 비우면 `api.openai.com`과 `openrouter.ai` 호스트에만 싣는다. 엄격한 스키마의 게이트웨이가 모르는 필드로 400을 내면 `false`로 둔다. |
+| `stream_first_event_timeout_secs` | 요청을 보낸 때부터 의미 있는 첫 이벤트까지 기다리는 시간이다. 양의 정수를 초 단위로 지정한다. HTTP 응답 헤더 제한도 함께 적용된다. |
+| `stream_idle_timeout_secs` | 스트림이 시작된 뒤 다음 의미 있는 이벤트까지 기다리는 시간이다. 양의 정수를 초 단위로 지정한다. 의미 있는 이벤트가 오면 대기 시간을 다시 센다. |
+| `max_in_flight_requests` | 한 프로세스에서 이 프로파일로 동시에 보낼 수 있는 모델 및 이미지 요청의 최대 개수다. 1개부터 65,535개까지 지정할 수 있다. 비우면 프로파일별 대기열을 사용하지 않는다. |
+
+두 제한은 네 가지 요청 방식에 모두 적용된다. 연결 유지 신호와 사용량만 담은 이벤트는 스트림을 시작하거나 대기 시간을 다시 세지 않는다. 각 설정은 해당 타이머를 켜며 두 시간 초과 오류에는 기존 재시도 횟수 제한을 적용한다.
+
+같은 프로파일을 쓰는 세션과 모델은 한도를 공유한다. 한도가 차면 새 요청은 연결 전에 기다리며 대기 중에 취소할 수 있다. 스트리밍 요청은 스트림이 끝나거나 닫힐 때까지 한 자리를 차지한다. 한도 변경은 에이전트 프로세스를 다시 시작하면 적용된다.
 
 `default_model` 한 줄만으로도 호출은 된다. `models` 배열은 컨텍스트 크기와 입력 형식을 알려 모델 선택과 압축 계산을 돕는다.
 
 모델의 `reasoning_effort`는 그 모델이 활성화될 때 적용된다. 세션은 첫 요청 전에 그 값을 보고하고 요청에 실으므로, `/effort`를 실행하지 않아도 상태 줄이 `provider/model · high`를 그리고 값은 프로파일이 쓰는 방식([요청 방식](#요청-방식) 표의 둘째 열)에 맞는 자리에 들어간다. `/effort`, `shift+tab`, 클라이언트의 `set_reasoning_effort` 같은 명시적 지정은 설정 값을 덮어쓰고 유지된다. 그 뒤 다른 모델로 바꾸면 새로 고른 모델이 선언한 값을 받아들이고, 선언이 없는 모델이면 이미 적용 중인 값을 그대로 둔다. 저장소에서 복원한 세션은 설정이 다른 값을 적었더라도 기록해 둔 값을 유지한다.
+
+`horon run --thinking <effort>`는 선택한 모델의 추론 강도를 이번 실행에 적용한다. `--service-tier <tier>`는 OpenAI Chat Completions와 Responses에서 쓴다. `priority`(`fast`도 같은 값), 요청에서 등급 필드를 빼는 `off`, 지원 모델에서 쓰는 `ultrafast`를 받는다. 지원하지 않는 값은 프롬프트를 보내기 전에 거절한다. 두 옵션은 프로파일 설정을 바꾸지 않는다.
+
+## 세션 모델 프리셋
+
+`config.toml`에 이름을 붙인 프리셋을 넣는다. `/modelpreset preview focus`로 확인하고 `/modelpreset apply focus`로 현재 세션에 적용한다.
+
+```toml
+[model_presets.focus]
+model = "daily-model"
+effort = "high"
+roles = { swarm = "worker-model", review = "daily-model" }
+```
+
+모든 항목은 생략할 수 있다. `roles`에는 세션 대상 `swarm`, `review`, `judge`, `memory`, `ambient`를 지정한다. 값에 `inherit`를 쓰면 상속을 지원하는 작업이 세션 모델을 쓴다. 모델은 현재 공급자 프로파일에서 쓸 수 있어야 하고 추론 강도는 적용할 세션 모델이 지원해야 한다. 잘못된 프리셋을 적용하면 기존 설정을 유지한다.
 
 ## 모델 역할
 
@@ -165,6 +193,10 @@ aux = "my-small-model"
 
 빈 문자열은 어느 단계에서든 미설정으로 본다. `aux`도 같은 사슬을 걸으므로 `default_model`만 있는 프로파일은 보조 작업에 지금의 모델을 쓴다. `judge`는 `default`보다 `aux`를 먼저 상속하므로, 보조 작업용으로 값싼 모델 하나를 이미 지정한 프로파일은 세션 모델을 쓰지 않고 그 모델로 판단한다. `image`는 3단계에서 멈춘다. 상속하는 역할이 없고 프로파일이나 프로바이더의 텍스트 기본값도 받지 않는다. 채팅 모델로 보낸 이미지 요청은 성공할 수 없으므로 `roles.image`가 없으면 이미지 생성이 설정되지 않은 것이고, 도구가 그렇게 보고한다. 끝점에서 항상 실패하는 호출을 보내지 않는다. 텍스트 기본값이 대체물이 될 수 없는 유일한 역할이며 `ModelRole::accepts_text_default`가 이를 한 곳에서 밝힌다. 1, 4, 5단계는 에이전트가 지금 모델 하나를 고르는 순서다. 역할은 그 위에 끼어들므로 기존 파일은 모두 지금과 같은 모델로 풀리고, 미설정 역할은 실패하지 않고 상속한다.
 
+### 보조 호출은 활성 프로파일 안에 머문다
+
+모든 보조 작업은 세션이 실행 중인 프로파일 안에서 모델을 정합니다. `advisor`는 세션의 provider를 복제해 모델만 바꾸고, `prewalk`는 그 프로파일의 모델 id나 `role:<name>`만 받으며, `judge`, `aux`, `plan`, `image`는 그 프로파일의 `roles`를 읽습니다. `beta/aux-model`처럼 다른 프로파일의 모델처럼 보이는 역할 값도 모델 id로서 활성 프로파일 자신의 엔드포인트에 그 프로파일의 자격 증명으로 전송됩니다. 두 번째 프로파일을 고르는 보조 호출은 없으므로 어느 것도 다른 프로파일의 엔드포인트에 접속하지 않으며 `[ambient] provider`는 provider를 고르는 데 읽히지 않습니다. 이는 모델 제공자 라우팅에 한정된 설명이며 셸 명령, MCP 서버, 그 밖의 네트워크 접근은 다루지 않습니다. `crates/base/src/provider/aux_boundary_tests.rs`가 로컬 서버 두 개로 이를 확인합니다.
+
 ### 폴백과 페일오버 순서
 
 #73이 추가하는 순서 목록은 `[providers.<name>]`의 `fallback_models = ["m2", "m3"]`이고 역할이 아니라 프로파일에 붙으며, 역할이 해석한 모델에 적용한다. 복구는 아래 고정 순서로 들어가고, 앞 단계가 소진된 뒤에만 다음 단계로 간다.
@@ -175,9 +207,15 @@ aux = "my-small-model"
 
 전환은 그 턴의 나머지 동안 유지되고 다음 턴은 역할의 모델로 다시 시작한다. 재시도 불가능한 오류(401, 잘못된 요청, 컨텍스트 초과)는 사슬을 시작하지 않는다. 이유: 단계마다 치르는 비용이 다르다. 모델 전환은 엔드포인트와 자격 증명, 캐시 호스트를 그대로 두고, 계정 전환은 자격 증명을 바꾸며, 프로바이더 전환은 엔드포인트를 바꾼다. 싼 것부터 하면 프롬프트 캐시 지역성을 잃지 않고 속도 제한을 흡수하고, 목록을 프로파일에 두면 위 배치 규칙이 금지한 다른 엔드포인트의 모델을 가리킬 수 없다.
 
+### 페일오버 순서 미리보기
+
+`horon provider failover [--json]`은 현재 설정이 만드는 순서를 출력한다. 재시도 예산, 같은 프로바이더 계정 페일오버, 다른 프로바이더 페일오버, 무인 전환 순이다. 실행할 수 없는 단계에는 그 단계를 제외한 설정을 표시한다. 이 명령은 설정만 읽는다. 모델 요청을 보내지 않고 계정, 쿼터, 프로바이더 선택을 바꾸지 않으며 자격 증명을 출력하지 않는다.
+
+이 빌드에는 입력 집합에 계정을 배정하는 기능이 없어 미리 볼 분포가 없다. 대신 실제 페일오버 순서를 보여 준다. 쿼터 쿨다운과 지금 쓸 수 있는 저장 계정은 실행 중인 데몬이 메모리에 갖고 있어 이 미리보기에는 나오지 않는다. `fallback_models`는 이 빌드에 아직 없는 설정이라 목록에 넣지 않는다.
+
 ### 구현 주체
 
-#73이 공유 타입을 쓴다. `crates/config-types/src/named_provider.rs:150-151`에서 `NamedProviderConfig`로 평면화되는 `roles` 표를 넣고, 모든 호출자가 쓰는 해석 함수 하나를 만든다. #70은 자기 `[prewalk]` 절만 더하고 `into`와 `from`에 그 함수를 부르며 역할을 `role:<name>`으로 적는다(`into = "role:aux"`). 이유: #73은 어차피 `NamedProviderConfig`를 바꾸고 #70의 선언된 의존성이다(`depends_on: [73, 112]`). 구현이 둘이면 서로 어긋나고, `role:` 접두사는 기존 `openai:`와 `<profile>:` 접두사처럼 역할 참조를 모델 id와 구분한다.
+#73이 공유 타입을 쓴다. `crates/config-types/src/named_provider.rs`에서 `NamedProviderConfig`로 평면화되는 `roles` 표를 넣고, 모든 호출자가 쓰는 해석 함수 하나를 만든다. #70은 자기 `[prewalk]` 절만 더하고 `into`와 `from`에 그 함수를 부르며 역할을 `role:<name>`으로 적는다(`into = "role:aux"`). 이유: #73은 어차피 `NamedProviderConfig`를 바꾸고 #70의 선언된 의존성이다(`depends_on: [73, 112]`). 구현이 둘이면 서로 어긋나고, `role:` 접두사는 기존 `openai:`와 `<profile>:` 접두사처럼 역할 참조를 모델 id와 구분한다.
 
 역할 설정이 없으면 이 빌드와 정확히 같게 동작한다. `roles` 표도, 새 키도 없고, 기존 사슬이 모델을 고르며, 추가 시도도 없다.
 
@@ -187,7 +225,7 @@ aux = "my-small-model"
 
 - **같은** 프로파일의 `POST {base_url}/images/generations`에 JSON 본문으로, 또는 `POST {base_url}/images/edits`에 멀티파트 본문으로 보낸다. base URL, 자격 증명, `auth`, `extra_body`가 모두 같다.
 - `openai-compatible` 또는 `openai-responses` 종류의 프로파일만 이 경로를 받는다. Anthropic이나 Gemini 방식의 프로파일은 두 방식 모두 Images 엔드포인트를 두지 않으므로 이 경로를 처리할 수 없다. `roles.image`가 모델을 가리키면 도구는 등록되지만, 호출할 때마다 답할 수 없는 URL로 요청을 보내는 대신 프로파일과 그 종류를 이름으로 밝힌 오류로 끝난다(`crates/base/src/provider/external.rs`의 `image_endpoint`).
-- 프로바이더 런타임은 여전히 하나이고 두 번째 라우터도 플러그인 호스트도 없다. `crates/provider-openai/src/images.rs`는 `chat/` 옆에 놓인 요청 빌더이지 런타임이 아니다.
+- 공급자 런타임 하나가 요청을 직접 보낸다. `crates/provider-openai/src/images.rs`는 `chat/` 옆에서 이미지 요청을 만든다. 계획 중인 사용자 설치 Rust 패키지는 모델 경로 밖에 둔다.
 - 모델은 `roles.image`에서 온다. 도구는 그 항목이 있고 `[tools] generate_image = true`일 때만 등록된다. 둘 다 필요하다. 스위치만 있으면 모든 호출이 실패하는 도구를 광고하고, 역할만 있으면 요청하지도 않은 세션에 등록된다.
 - 호출은 `WRITE | NETWORK`를 선언한다. 그래서 `approval_mode = "write"`는 먼저 확인하고, 승인 없는 무인 실행은 돈을 쓰지 않는다.
 - 모델은 이미지 바이트를 받지 않는다. 파일은 `~/.horon/generated-images/`에 놓이고 결과는 경로, 크기, MIME 타입을 알린다. 한 호출이 컨텍스트와 저장 이벤트 로그에 메가바이트를 넣지 않고 수백 토큰으로 끝나는 이유다.
@@ -226,6 +264,7 @@ from = "plan-model"
 | --- | --- |
 | `enabled` | 세션이 핸드오프를 하는지 여부다. 기본값은 꺼짐이다. |
 | `into` | 실행 모델이다. 모델 id 또는 `role:<name>`을 적는다. `enabled = true`일 때 필수이며, 쓸 수 있는 값이 없는 절은 `prewalk.into`를 지목하는 오류와 함께 설정 검증에 실패한다. |
+| `planning` | 선택 사항이다. 새 세션이 계획을 세울 모델이며 모델 id 또는 `role:<name>`을 적는다. 세션의 첫 어시스턴트 메시지 전에 한 번만 적용하므로 나중에 고른 모델, 이어 받은 세션, 이미 핸드오프한 세션은 건드리지 않고, `into`로의 핸드오프는 이 모델에서 시작한다. `enabled = true`가 필요하며, 프로파일이 제공하지 않는 값은 세션 모델을 유지하고 이유를 로그에 남긴다. |
 | `from` | 적용 조건일 뿐이다. 값을 적으면 세션이 지금 이 모델로 돌 때만 핸드오프한다. 돌아갈 모델을 뜻하지 않으며, 비워 두면 모든 세션에 적용된다. |
 
 핸드오프 지점은 계획 모드에 달렸다. `[tools] plan_mode`가 꺼져 있으면 항목을 하나 이상 남긴 첫 `todo` 쓰기이고, 켜져 있으면 계획 승인이다. 그래서 계획 중에 쓴 할 일 목록이 계획 아래에서 모델을 바꾸지 않는다. 전환은 `/model`과 같은 경로를 쓰므로 `session.model`에 실행 모델이 저장되고, 재개나 복원 뒤의 요청까지 모두 그 모델로 실행된다.
@@ -233,6 +272,18 @@ from = "plan-model"
 결정은 저장된 세션의 리플레이 이벤트 `prewalk` 하나이고, 이 이벤트가 프로세스를 넘어 핸드오프를 한 번으로 만든다. 이미 이벤트를 가진 세션은 다시 결정하지 않는다. 거부된 `into`도 같은 방식으로 기록한다. 알 수 없는 모델, `default`, `plan`, `aux` 밖의 `role:` 이름, 아무 모델로도 해석되지 않는 역할이 그렇다. 세션은 지금 모델을 유지하고 경고는 한 번만 남으며, 이후 라운드는 같은 거부를 되풀이하지 않는다. 세션이 이미 쓰는 모델로 해석되는 `into`는 전환 없이 결정만 기록한다.
 
 `role:<name>`은 위에서 설명한 활성 프로파일의 역할 체인으로 해석된다. 그래서 `default_model`만 정한 프로파일도 `into = "role:aux"`로 핸드오프하면 같은 모델을 얻는다. 결정은 `crates/app-core/src/agent/prewalk.rs`에 있고, 인수 조건은 `crates/app-core/src/agent/prewalk_tests.rs`에 있다.
+
+### 실행 한 번의 역할·프리워크 덮어쓰기
+
+`--role <이름>=<모델>`은 이번 실행에만 역할 하나를 덮어쓰고, `--prewalk <into>`와 `--no-prewalk`는 핸드오프에 같은 일을 한다. `--role`을 반복하면 여러 역할을 정할 수 있다. 이름은 `default`, `plan`, `aux`, `judge`, `image`이고, 모르는 이름, 빈 모델, 활성 `[providers.<name>].models` 목록에 없는 모델은 첫 요청을 보내기 전에 실패한다.
+
+`--role default=<모델>`은 `--model`이 채우는 해석 칸인 세션 모델을 정한다. 두 값을 서로 다르게 함께 주면 하나를 조용히 고르지 않고 실패한다. 나머지 역할은 `--provider-profile`이나 `[provider] default_provider`로 고른 활성 프로파일 안에서 덮어쓴다. `--no-prewalk`는 `[prewalk]`가 핸드오프를 켰어도 끄며, 같은 명령행의 `--prewalk`보다 우선한다.
+
+덮어쓰기는 그 프로세스에만 적용된다. `HORON_AGENT_MODEL_ROLE_DEFAULT`, `HORON_AGENT_MODEL_ROLE_PLAN`, `HORON_AGENT_MODEL_ROLE_AUX`, `HORON_AGENT_MODEL_ROLE_JUDGE`, `HORON_AGENT_MODEL_ROLE_IMAGE`, `HORON_AGENT_PREWALK_ENABLED`, `HORON_AGENT_PREWALK_INTO`를 설정하고, 설정 로더가 역할을 해석하기 전에 읽는다. 설정 저장은 파일 계층만 읽으므로 이 값들은 파일에 쓰이지 않는다. `horon run`은 적용한 값을 표준 오류에 `launch override: role plan -> plan-model (this invocation only)`처럼 알리고, `--quiet`가 그 줄을 감춘다.
+
+`--no-context-files`는 `AGENTS.md`(프로젝트와 전역) 탐색을 건너뛰고, `--no-rules`는 가져온 외부 규칙과 `.horon/prompt-overlay.md`, `.horon/preferred-tools.md`(프로젝트와 `~/.horon`)를 건너뛴다. 둘 다 그 실행에만 적용된다. 기본 시스템 프롬프트와 정책이 정하는 섹션은 항상 적용되고, 건너뛴 출처는 읽지 않을 뿐이라 파일이나 도구 접근이 늘어나지 않으며, 두 옵션이 없으면 실행은 달라지지 않는다. 이 옵션은 프로세스에 `HORON_AGENT_NO_CONTEXT_FILES=1`과 `HORON_AGENT_NO_RULES=1`을 설정하고, `horon run`은 있었다가 건너뛴 출처를 표준 오류에 `launch override: --no-context-files skips project AGENTS.md (this invocation only)`처럼 알린다.
+
+`--skills <패턴>`은 이름이 맞는 스킬만 남기며 그 실행에만 적용된다. 쉼표로 구분한 이름이나 패턴이고 `*`는 임의의 문자열에 맞고 반복할 수 있다. 패턴은 최대 32개, 개당 64바이트이며 글자, 숫자, `-`, `_`, `/`, `:`, `*`만 쓴다. `--no-skills`는 모든 스킬을 숨기고 `--skills`보다 우선한다. 필터는 스킬 레지스트리의 목록과 조회에 있으므로 숨긴 스킬은 프롬프트, 선택기, 모델의 불러오기 요청, 슬래시 호출에서 모두 사라진다. 스킬은 저장된 이름과 frontmatter 이름이 모두 맞아야 보이므로 숨긴 스킬의 네임스페이스 별칭도 숨겨진다. 이 옵션은 프로세스에 `HORON_AGENT_SKILLS`와 `HORON_AGENT_NO_SKILLS=1`을 설정하므로 이 프로세스가 직접 맡는 `run`, `repl`, `acp` 세션에 적용되고, 이미 떠 있는 데몬이 맡은 세션에는 적용되지 않는다. 잘못된 패턴은 첫 요청 전에 실패하고, 두 옵션이 없으면 탐색은 달라지지 않는다.
 
 ## 프롬프트 캐시 키
 
@@ -262,6 +313,8 @@ from = "plan-model"
 ## 프로파일 만들기
 
 `provider add`가 같은 표를 `config.toml`에 쓰고, `--api-key-stdin`으로 받은 키를 키 파일에 저장한다.
+
+`horon provider diagnose`는 모델 호출 없이 모든 `[providers.<name>]` 프로필을 점검합니다. `no_providers`, `invalid_base_url`, `missing_credential`(`api_key_env`가 없거나 변수가 설정되지 않음), `configured` 중 하나로 표시하고, 확인할 항목이 있으면 종료 코드 1을 돌려줍니다. `--check`를 주면 설정한 자격 증명으로 각 엔드포인트의 모델 목록을 요청해 `reachable` 또는 `unreachable`을 표시합니다. 출력에는 키와 상대 서버의 응답 본문이 들어가지 않습니다. `--json`으로 구조화된 결과를 받습니다.
 
 ```bash
 printf '%s' "$MY_GW_KEY" | horon provider add my-gw \

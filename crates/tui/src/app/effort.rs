@@ -157,6 +157,10 @@ impl App {
             ));
             return None;
         }
+        // The cycle keys step from here until an answer names the model: the
+        // harness has not switched yet, and the status line must keep the model
+        // it confirmed.
+        self.model_requested = Some(name.to_string());
         Some(Action::Model(name.to_string()))
     }
 
@@ -193,9 +197,23 @@ impl App {
         level: Option<String>,
     ) {
         if let Some(provider) = provider {
+            // The catalog belongs to the provider that listed it: a report
+            // naming another one makes the entries the cycle checked against
+            // the old list meaningless.
+            if self.provider.as_deref() != Some(provider.as_str()) {
+                self.model_catalog.clear();
+                self.model_catalog_loaded = false;
+                self.model_shortlist_skipped.clear();
+            }
             self.provider = Some(provider);
         }
         if let Some(model) = model {
+            // Only a report naming the model the client asked for is the answer
+            // to that request; one naming another model says nothing about a
+            // switch still on its way, so the cycle keys keep stepping from it.
+            if self.model_requested.as_deref() == Some(model.as_str()) {
+                self.model_requested = None;
+            }
             self.model = Some(model);
         }
         if let Some(effort) = effort {

@@ -1,0 +1,177 @@
+name: Package child (Windows)
+
+# The package child supervisor keeps its lifetime promise with a Job Object on
+# Windows, which only a native Windows runner can exercise. The integration
+# target `crates/base/tests/package_spawn_windows.rs` is therefore excluded from
+# the default manifest (`scripts/ci/test_target_allowlist.json` says why), and
+# this workflow is where it runs: x64 on `windows-latest` and arm64 on
+# `windows-11-arm`.
+#
+# Both jobs assert a minimum number of passing tests. A filter that selects
+# nothing makes libtest print `0 passed` and exit 0, so a run that silently
+# stops covering the Job Object would otherwise stay green.
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "crates/base/src/packages/**"
+      - "crates/base/tests/package_spawn.rs"
+      - "crates/base/tests/package_spawn_windows.rs"
+      - "crates/platform/src/process.rs"
+      - "crates/platform/src/process/package_child.rs"
+      - "crates/platform-api/src/**"
+      - "crates/platform-windows/**"
+      - "scripts/ci/test_target_allowlist.json"
+      - ".github/workflows/package-windows.yml"
+  push:
+    branches: [dev, main]
+    paths:
+      - "crates/base/src/packages/**"
+      - "crates/base/tests/package_spawn.rs"
+      - "crates/base/tests/package_spawn_windows.rs"
+      - "crates/platform/src/process.rs"
+      - "crates/platform/src/process/package_child.rs"
+      - "crates/platform-api/src/**"
+      - "crates/platform-windows/**"
+      - "scripts/ci/test_target_allowlist.json"
+      - ".github/workflows/package-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
+  # about the default branch name. Naming it removes the cause of the message.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+  HORON_AGENT_CI: "1"
+  # CI builds without the local parallel-frontend rustc wrapper from
+  # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+  CARGO_BUILD_WARNINGS: deny
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  RUSTUP_MAX_RETRIES: "10"
+  SCCACHE_CACHE_SIZE: "512M"
+  # dtolnay/rust-toolchain installs the matrix target into `stable`. Use that
+  # same toolchain for the build; otherwise rust-toolchain.toml wins inside the
+  # checkout and `--target` fails with a missing target.
+  RUSTUP_TOOLCHAIN: stable
+
+jobs:
+  package-child:
+    name: Package child (${{ matrix.arch }})
+    strategy:
+      # The two targets answer the same question on different CPUs, so one
+      # failing must not hide the other's result.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            msvc_arch: amd64
+          - arch: arm64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            msvc_arch: amd64_arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/msvc-dev-cmd
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: package-windows-${{ matrix.arch }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
+          cache-all-crates: "true"
+
+      - name: Prepare a fresh horon home
+        shell: pwsh
+        run: |
+          $horonHome = Join-Path $env:RUNNER_TEMP 'horon-package-windows-home'
+          if (Test-Path $horonHome) {
+            Remove-Item -Recurse -Force $horonHome
+          }
+          New-Item -ItemType Directory -Force -Path $horonHome | Out-Null
+          "HORON_HOME=$horonHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "HORON_HOME=$horonHome"
+
+      - name: Compile the package child tests
+        shell: pwsh
+        run: |
+          & cargo test --locked --target $env:TARGET -p horon-agent-platform-windows --lib --no-run
+          if ($LASTEXITCODE -ne 0) {
+            throw 'the Windows package child contract tests did not compile'
+          }
+          & cargo test --locked --target $env:TARGET -p horon-agent-base --test package_spawn_windows --no-run
+          if ($LASTEXITCODE -ne 0) {
+            throw 'the package_spawn_windows integration target did not compile'
+          }
+
+      - name: Run the Job Object contract tests
+        shell: pwsh
+        run: |
+          # 1 test: a host job with no room for another process refuses the
+          # package child before it runs.
+          $expected = 1
+          $output = & cargo test --locked --target $env:TARGET `
+            -p horon-agent-platform-windows --lib package_child::tests -- --nocapture
+          $exit = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          if ($exit -ne 0) {
+            throw 'the Job Object contract tests failed'
+          }
+          $passed = 0
+          foreach ($line in $output) {
+            if ($line -match 'test result: ok\. (\d+) passed') { $passed += [int]$Matches[1] }
+          }
+          if ($passed -lt $expected) {
+            throw "the Job Object contract tests must run at least $expected test, ran $passed"
+          }
+          Write-Host "Job Object contract tests passed: $passed"
+
+      - name: Run the Windows package child scenarios
+        shell: pwsh
+        run: |
+          # 5 tests: extension and plugin children with a descendant, a home
+          # path with spaces, a program that is not an image, and a detached
+          # daemon that must outlive the package job. The probe is #[ignore]d and
+          # only runs as the installed package process, so it is not counted.
+          $expected = 5
+          $output = & cargo test --locked --target $env:TARGET `
+            -p horon-agent-base --test package_spawn_windows -- --nocapture
+          $exit = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          if ($exit -ne 0) {
+            throw 'the Windows package child scenarios failed'
+          }
+          $passed = 0
+          foreach ($line in $output) {
+            if ($line -match 'test result: ok\. (\d+) passed') { $passed += [int]$Matches[1] }
+          }
+          if ($passed -lt $expected) {
+            throw "the Windows package child scenarios must run at least $expected tests, ran $passed"
+          }
+          Write-Host "Windows package child scenario tests passed: $passed ($($env:TARGET))"

@@ -336,7 +336,7 @@ fn ga_runtime_and_file_methods_map_requests_and_typed_replies() {
 fn out_of_order_replies_reach_the_right_waiter() {
     let client = fake_harness(|frame, writer| match &frame.request {
         // Delay the first request's reply so the second overtakes it.
-        ApiRequest::AttachSession { session_id } => {
+        ApiRequest::AttachSession { session_id, .. } => {
             let id = session_id.clone();
             std::thread::sleep(Duration::from_millis(120));
             reply(frame, ApiEvent::Attached { session: session(&id) }, writer);
@@ -1060,8 +1060,7 @@ fn recovery_events_are_delivered_and_filtered_by_session() {
 fn send_system_reminder_is_hidden_and_does_not_wait_for_acceptance() {
     let (sent, received) = channel();
     let client = fake_harness(move |frame, _writer| {
-        sent.send(frame.request.clone()).unwrap();
-        // Deliberately no reply or message_accepted event.
+        sent.send(frame.request.clone()).unwrap(); // Deliberately no reply or acceptance.
     });
     client.send_system_reminder("mine", "continue task").unwrap();
     assert_eq!(
@@ -1071,6 +1070,7 @@ fn send_system_reminder_is_hidden_and_does_not_wait_for_acceptance() {
             content: String::new(),
             system_reminder: Some("continue task".into()),
             images: vec![],
+            expected_run_id: None,
             no_reply: false,
         }
     );
@@ -1363,12 +1363,12 @@ fn create_session_options_preserve_system_prompt_wire_values() {
         Some("Review precisely.\nKeep Unicode: λ".to_string()),
         Some(String::new()),
     ] {
-        let created = client
-            .create_session_with_options(CreateSessionOptions {
-                working_dir: Some("/project".into()),
-                system_prompt: prompt.clone(),
-            })
-            .expect("create session");
+        let opts = CreateSessionOptions {
+            working_dir: Some("/project".into()),
+            system_prompt: prompt.clone(),
+            a2ui: None,
+        };
+        let created = client.create_session_with_options(opts).expect("create session");
         assert_eq!(created.session_id, "created");
         let wire = rx.recv_timeout(Duration::from_secs(5)).expect("captured frame");
         assert_eq!(wire["req"], "create_session");

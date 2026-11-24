@@ -196,6 +196,7 @@ fn a_history_tool_row_reports_the_stored_verdict() {
                 ..Default::default()
             }),
             stored_index: Some(index),
+            stored_id: Some(stored[index].id.clone()),
         };
         history_message(rendered, &stored, include_message_ids)
     };

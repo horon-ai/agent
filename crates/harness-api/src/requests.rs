@@ -55,6 +55,9 @@ pub enum ApiRequest {
         /// Optional event capabilities this client handles.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         event_capabilities: Vec<String>,
+        /// Optional A2UI v1.0 renderer capabilities offered as the connection default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        a2ui: Option<crate::A2uiSessionCapabilities>,
     },
 
     /// List sessions visible to this client.
@@ -95,13 +98,46 @@ pub enum ApiRequest {
         /// An empty string is an explicit empty override.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system_prompt: Option<String>,
+        /// Optional A2UI v1.0 renderer capabilities for the created session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        a2ui: Option<crate::A2uiSessionCapabilities>,
     },
 
     /// Attach to an existing session and subscribe to its event stream.
-    AttachSession { session_id: String },
+    AttachSession {
+        session_id: String,
+        /// Optional A2UI v1.0 renderer capabilities for this attachment.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        a2ui: Option<crate::A2uiSessionCapabilities>,
+    },
 
     /// Clone an attached session's transcript into a new, idle session.
-    ForkSession { session_id: String },
+    ///
+    /// `consult` makes the fork a read-only consult child: the flag is stored
+    /// with the child before its id is answered, and every agent built for it
+    /// starts on the consult tool list, including after a daemon restart. A
+    /// normal fork never inherits the flag.
+    ForkSession {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        consult: bool,
+        /// Stored message id the fork stops before: the child keeps the prefix
+        /// before it. A stale id is refused and no child is created.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        boundary: Option<String>,
+    },
+
+    /// Clone the messages recorded before `boundary_message_id` into a new,
+    /// idle session, leaving the source untouched.
+    ///
+    /// The boundary is a stored message id the client read from the source's
+    /// history, not an index: the daemon resolves it against the source's
+    /// selected head and refuses a boundary that head no longer records.
+    /// Requires `session_fork_at_v1`. Replies with `SessionForked`.
+    ForkSessionAt {
+        session_id: String,
+        boundary_message_id: String,
+    },
 
     /// Create a fresh session containing a runtime-compacted handoff.
     /// The parent remains unchanged. Replies with `SessionForked`.
@@ -123,6 +159,17 @@ pub enum ApiRequest {
         /// Persist the message as context without starting a model turn.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         no_reply: bool,
+        /// Continue this run rather than start unrelated work.
+        ///
+        /// The run id is the one the daemon reported (for example the
+        /// `last_stop` of `get_runtime_state`), and the daemon decides whether
+        /// it may still be continued while it holds the session's agent. A run
+        /// that already moved on, one that never stopped, or one whose stop is
+        /// not a failure the caller may resume is refused with an error and no
+        /// turn runs, so a repeated click or a second attached client cannot
+        /// start the same continuation twice.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_run_id: Option<String>,
     },
 
     /// Replace the attached session's tool configuration.
@@ -138,6 +185,16 @@ pub enum ApiRequest {
     /// `MessageModes`; the values are configuration, not session state, so the
     /// reply does not depend on the session existing.
     GetMessageModes { session_id: String },
+
+    /// Read the allow-listed daemon values a settings screen displays, each
+    /// with the layer that supplied it. Requires `effective_settings_v1`.
+    ///
+    /// Read-only by construction: the reply carries [`EffectiveSettings`]
+    /// rows for a fixed list of keys and nothing else, so no credential and no
+    /// raw config text can travel. A client that cannot read it keeps working
+    /// against the daemon defaults, because the request is additive and an old
+    /// server answers `unknown_request`.
+    GetEffectiveSettings { session_id: String },
 
     /// Complete a client-executed custom tool call. Acknowledged with `Ok`.
     ToolResult {
@@ -218,6 +275,15 @@ pub enum ApiRequest {
     /// redaction mechanism redacts secrets; tool outputs longer than 4 KiB
     /// are truncated with a marker.
     ExportSessionMarkdown { session_id: String },
+
+    /// Export the conversation as a standalone offline HTML report.
+    ///
+    /// One self-contained document from the same redacted projection
+    /// `ExportSessionMarkdown` renders: every transcript character is escaped,
+    /// the stylesheet is inline, and the page loads nothing from the network.
+    /// The same `session_replication_v1` capability gates it, and an unknown
+    /// session returns the same unknown-session error.
+    ExportSessionHtml { session_id: String },
 
     /// Answer an `AskRequested` event.
     ///
@@ -356,6 +422,28 @@ pub enum ApiRequest {
     /// observations, long-session review clock) for client-side auto-poke and
     /// quality gates. Replies with `TodoState`. Requires `todo_state`.
     GetTodoState { session_id: String },
+
+    /// Change the status of one todo item in the attached session's stored
+    /// list, but only if the list is still the revision the caller read.
+    ///
+    /// `expected_revision` is the `revision` from the `TodoState` (or
+    /// `TodoEditResult`) the client last showed. The server compares it with
+    /// the stored list before touching it: a list that moved since then
+    /// answers `TodoEditResult` with `applied: false`, the refusal
+    /// `stale_revision`, and the current list, so the client refreshes instead
+    /// of overwriting work it never saw. `status` is one of the canonical
+    /// statuses; `blocked` needs the item to already carry a blocker note.
+    ///
+    /// This is an operator edit of the stored list, not a model instruction:
+    /// nothing is sent to the agent and no turn starts. Requires
+    /// `todo_edit_v1` and an attached session.
+    SetTodoStatus {
+        session_id: String,
+        expected_revision: String,
+        #[serde(rename = "todo_id")]
+        id: String,
+        status: String,
+    },
 
     /// Apply the persistent effects of a follow-up decision made with
     /// `horon_agent_todo_policy::FollowUpPolicy` (consume the gate observation log,
@@ -571,6 +659,22 @@ pub enum ApiRequest {
     /// Liveness check.
     Ping,
 
+    /// Apply one package-management operation to the catalog the daemon owns.
+    ///
+    /// Needs no attached session: the catalog is daemon-wide state, so a client
+    /// can install, disable, remove or read it on a fresh connection. The daemon
+    /// serializes the operation with its own inbox pass and answers only after
+    /// the resulting generation is published, so the reply is authoritative.
+    ///
+    /// `operation_id` is chosen by the caller. A retry that reuses it reports
+    /// the recorded result instead of applying the operation twice, which keeps
+    /// a lost reply from installing the same package again. Requires
+    /// `package_control_v1`.
+    PackageControl {
+        operation_id: String,
+        operation: crate::PackageControlOperation,
+    },
+
     /// Run, queue, receipt, and monitor summary read from this session's
     /// durable runtime journal. Requires `durable_runtime_v1`. Replies
     /// `RuntimeState`.
@@ -612,6 +716,25 @@ pub enum ApiRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_bytes: Option<u64>,
     },
+    /// Update A2UI v1.0 renderer capabilities for the attached session.
+    ///
+    /// Pass `capabilities: None` to turn off A2UI rendering for the session.
+    /// Requires `a2ui_v1`. Replies with `Ok`.
+    ConfigureA2ui {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<crate::A2uiSessionCapabilities>,
+    },
+
+    /// Forward a validated client-to-agent A2UI v1.0 envelope to the attached session.
+    /// Requires `a2ui_v1`. Replies with `Ok`.
+    A2uiEvent {
+        session_id: String,
+        envelope: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data_model: Option<serde_json::Value>,
+    },
+
     /// Forward-compatibility catch-all. Servers reply with an error frame.
     #[serde(other)]
     Unknown,
@@ -642,8 +765,11 @@ impl ApiRequest {
             Self::ArchiveSession { session_id, .. } => Some(session_id.as_str()),
             Self::RestoreSession { session_id, .. } => Some(session_id.as_str()),
             Self::DeleteSession { session_id, .. } => Some(session_id.as_str()),
-            Self::AttachSession { session_id, .. } => Some(session_id.as_str()),
+            Self::AttachSession { session_id, .. }
+            | Self::ConfigureA2ui { session_id, .. }
+            | Self::A2uiEvent { session_id, .. } => Some(session_id.as_str()),
             Self::ForkSession { session_id, .. } => Some(session_id.as_str()),
+            Self::ForkSessionAt { session_id, .. } => Some(session_id.as_str()),
             Self::TransferSession { session_id, .. } => Some(session_id.as_str()),
             Self::DetachSession { session_id, .. } => Some(session_id.as_str()),
             Self::SendMessage { session_id, .. } => Some(session_id.as_str()),
@@ -659,10 +785,12 @@ impl ApiRequest {
             Self::PermissionResponse { session_id, .. } => Some(session_id.as_str()),
             Self::ApprovalAck { session_id, .. } => Some(session_id.as_str()),
             Self::ExportSessionMarkdown { session_id, .. } => Some(session_id.as_str()),
+            Self::ExportSessionHtml { session_id, .. } => Some(session_id.as_str()),
             Self::AskResponse { session_id, .. } => Some(session_id.as_str()),
             Self::FailoverAck { session_id, .. } => Some(session_id.as_str()),
             Self::ListModels { session_id, .. } => Some(session_id.as_str()),
             Self::GetRuntimeInfo { session_id, .. } => Some(session_id.as_str()),
+            Self::GetEffectiveSettings { session_id, .. } => Some(session_id.as_str()),
             Self::UsageReport { session_id, .. } => session_id.as_deref(),
             Self::RuntimeCommand { session_id, .. } => Some(session_id.as_str()),
             Self::ReadFile { session_id, .. } => Some(session_id.as_str()),
@@ -671,6 +799,7 @@ impl ApiRequest {
             Self::FileStatus { session_id, .. } => Some(session_id.as_str()),
             Self::ListArtifacts { session_id, .. } => Some(session_id.as_str()),
             Self::GetTodoState { session_id, .. } => Some(session_id.as_str()),
+            Self::SetTodoStatus { session_id, .. } => Some(session_id.as_str()),
             Self::AckTodoFollowUp { session_id, .. } => Some(session_id.as_str()),
             Self::SetModel { session_id, .. } => Some(session_id.as_str()),
             Self::SetReasoningEffort { session_id, .. } => Some(session_id.as_str()),
@@ -711,6 +840,10 @@ impl ApiRequest {
     /// cannot disagree about which method needs which capability.
     pub fn required_capability(&self) -> Option<&'static str> {
         match self {
+            // The operator edit writes the stored list itself, never a model
+            // turn; a connection that did not negotiate the capability is
+            // refused before the request is served.
+            Self::SetTodoStatus { .. } => Some(crate::CAPABILITY_TODO_EDIT_V1),
             Self::GetRuntimeState { .. } | Self::ApplyControl { .. } | Self::GetControlReceipt { .. } => {
                 Some(crate::CAPABILITY_DURABLE_RUNTIME_V1)
             }
@@ -722,6 +855,13 @@ impl ApiRequest {
             // Only the optional field is gated: an `ask_response` without an
             // `answer_id` is the legacy request and needs no negotiation.
             Self::AskResponse { answer_id, .. } if answer_id.is_some() => Some(crate::CAPABILITY_ASK_RECEIPTS_V1),
+            Self::GetEffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
+            Self::PackageControl { .. } => Some(crate::CAPABILITY_PACKAGE_CONTROL_V1),
+            Self::ForkSessionAt { .. } => Some(crate::CAPABILITY_SESSION_FORK_AT_V1),
+            Self::CreateSession { a2ui: Some(_), .. }
+            | Self::AttachSession { a2ui: Some(_), .. }
+            | Self::ConfigureA2ui { .. }
+            | Self::A2uiEvent { .. } => Some(crate::CAPABILITY_A2UI_V1),
             _ => None,
         }
     }

@@ -4,9 +4,7 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
 
     fn sample_ascii(rng: &mut rand::rngs::StdRng, max_len: usize) -> String {
         let len = rng.random_range(0..=max_len);
-        (0..len)
-            .map(|_| char::from(rng.random_range(b'a'..=b'z')))
-            .collect()
+        (0..len).map(|_| char::from(rng.random_range(b'a'..=b'z'))).collect()
     }
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(0xC0DEC0DE);
@@ -30,6 +28,7 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
             system_reminder: system_reminder.clone(),
             active_skill: None,
             no_reply: rng.random_bool(0.5),
+            expected_run_id: None,
         };
         let decoded = parse_request_json(&serde_json::to_string(&req)?)?;
         let Request::Message {
@@ -47,10 +46,7 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
         assert_eq!(decoded_content, content);
         assert_eq!(decoded_images, images);
         assert_eq!(decoded_system_reminder, system_reminder);
-        assert_eq!(
-            decoded_no_reply,
-            matches!(req, Request::Message { no_reply: true, .. })
-        );
+        assert_eq!(decoded_no_reply, matches!(req, Request::Message { no_reply: true, .. }));
     }
 
     for id in 100..132u64 {
@@ -77,6 +73,8 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
             continue_on_disconnect,
             terminal_env: Vec::new(),
             acp: None,
+            history_message_ids: false,
+            a2ui: None,
         };
         let decoded = parse_request_json(&serde_json::to_string(&req)?)?;
         let Request::Subscribe {
@@ -93,6 +91,8 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
             continue_on_disconnect: decoded_continue_on_disconnect,
             terminal_env: _,
             acp: _,
+            history_message_ids: _,
+            a2ui: _,
         } = decoded
         else {
             return Err(anyhow!("expected randomized Subscribe"));

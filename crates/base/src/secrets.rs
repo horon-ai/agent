@@ -87,7 +87,7 @@ pub(crate) mod rules {
         r"(?m)^\s*(AZURE_OPENAI_API_KEY\s*=\s*)([^\r\n]+)",
         r"(?m)^\s*(CURSOR_API_KEY\s*=\s*)([^\r\n]+)",
         r"(?m)^\s*(GITHUB_TOKEN\s*=\s*)([^\r\n]+)",
-        r"(?im)^\s*([A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|COOKIE)\s*=\s*)([^\r\n]+)",
+        r"(?im)^\s*((?:export\s+)?(?:[A-Z][A-Z0-9_]*)?(?:API_KEY|TOKEN|SECRET|PASSWORD|COOKIE)\s*=\s*)([^\r\n]+)",
         r"(?im)^\s*(AUTHORIZATION\s*[:=]\s*)([^\r\n]+)",
     ];
 
@@ -639,6 +639,14 @@ pub fn mask_for_history(text: &str, session_id: &str, mode: SecretsMode) -> Stri
     session_vault_with(session_id, |vault| obfuscate(text, vault, &[])).unwrap_or_else(|| text.to_string())
 }
 
+/// Replace credentials inside structured JSON payloads before emission or storage.
+pub fn mask_json_for_history(value: &mut Value, session_id: &str, mode: SecretsMode) {
+    if mode == SecretsMode::Off {
+        return;
+    }
+    session_vault_with(session_id, |vault| obfuscate_value(value, vault, &[]));
+}
+
 fn replace_whole(text: &str, regex: &Regex, label: &str, vault: &mut SecretVault) -> String {
     if !regex.is_match(text) {
         return text.to_string();
@@ -767,6 +775,17 @@ fn obfuscate_block(block: &mut ContentBlock, vault: &mut SecretVault, extra: &[R
         }
         ContentBlock::ToolUse { input, .. } => obfuscate_value(input, vault, extra),
         ContentBlock::ProviderNative { item, .. } => obfuscate_value(item, vault, extra),
+        ContentBlock::A2ui {
+            envelopes,
+            fallback_text,
+        } => {
+            for envelope in envelopes {
+                obfuscate_value(envelope, vault, extra);
+            }
+            if let Some(text) = fallback_text {
+                *text = obfuscate(text, vault, extra);
+            }
+        }
         ContentBlock::Image { .. }
         | ContentBlock::Audio { .. }
         | ContentBlock::OpenAICompaction { .. }
@@ -790,6 +809,17 @@ fn detect_block(block: &ContentBlock) -> Vec<String> {
         ContentBlock::ToolResult { content, .. } => check(content),
         ContentBlock::ToolUse { input, .. } => check(&input.to_string()),
         ContentBlock::ProviderNative { item, .. } => check(&item.to_string()),
+        ContentBlock::A2ui {
+            envelopes,
+            fallback_text,
+        } => {
+            for envelope in envelopes {
+                check(&envelope.to_string());
+            }
+            if let Some(text) = fallback_text {
+                check(text);
+            }
+        }
         ContentBlock::Image { .. }
         | ContentBlock::Audio { .. }
         | ContentBlock::OpenAICompaction { .. }
@@ -878,6 +908,22 @@ mod restore_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_exported_assignment_is_masked_like_a_bare_one() {
+        let mut vault = SecretVault::new();
+        let value = "sk-ant-abcdefghijklmnopqrstuvwxyz";
+        let masked = obfuscate(
+            &format!("export API_KEY={value}\nAPI_KEY={value}\nexport PATH=/usr/bin\n"),
+            &mut vault,
+            &[],
+        );
+        assert!(!masked.contains(value), "{masked}");
+        assert!(
+            masked.contains("export PATH=/usr/bin"),
+            "an ordinary export stays readable: {masked}"
+        );
+    }
 
     #[test]
     fn obfuscate_replaces_known_shapes_with_stable_placeholders() {

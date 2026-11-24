@@ -18,6 +18,60 @@ This build has no interactive login flow. The SDK exposes two things about crede
 
 The SDK neither issues nor refreshes OAuth tokens. The launch option `inherit_logins` (on by default) links the user's existing CLI credential files into the instance, and model requests use those files as they are (`crates/agent-sdk/src/launch.rs`). Model calls go only through the OpenAI-compatible profile in `[providers.<name>]`, so this build has no model runtime that authenticates with OAuth. The `openai-oauth:` prefix still exists, but with that runtime gone it fails before the call (`docs/provider/MODEL.md`).
 
+## Serving the API beyond the local socket
+
+The default endpoint stays local: a Unix socket, a named pipe on Windows, or one stdio connection. A bridge can additionally serve the same frames on TCP, which is how a TLS-terminating proxy, an SSH forward or another machine reaches it. The local socket keeps its handshake byte for byte, so existing clients are unaffected.
+
+| Switch | Where | Meaning |
+| --- | --- | --- |
+| `--api-bind IP:PORT` | `horon-agent api-bridge` | Serve the API on that TCP address beside the local socket |
+| `HORON_AGENT_API_BIND` | environment | The same address, for a container entrypoint or a supervisor |
+| `[harness_api] bind` | `config.toml` | The same address, for an installation that always exposes one |
+| `--api-insecure-behind-proxy` | `horon-agent api-bridge` | Acknowledge that a TLS-terminating proxy fronts the address |
+| `HORON_AGENT_API_INSECURE_BEHIND_PROXY` | environment | The same acknowledgement, `1` or `true` |
+| `[harness_api] insecure_behind_proxy` | `config.toml` | The same acknowledgement |
+
+The flag wins over the environment, and both win over the file. A bind value is a literal `IP:PORT` such as `127.0.0.1:7946` or `[::1]:7946`; a host name is refused, because resolving one at bind time must not decide whether the listener is loopback.
+
+Two rules decide whether an address is allowed.
+
+- **Every TCP connection authenticates.** Its first line must be `Authorization: Bearer <token>`, and the ordinary `hello` and every later frame follow unchanged. A missing, malformed, oversized (over 1 KiB), late (over 10 seconds), wrong or revoked token closes the connection before the daemon is dialled and before any request is read, and the bridge writes nothing back.
+- **A non-loopback address also needs the proxy acknowledgement.** Built-in TLS is not implemented, so a non-loopback bind refuses to start unless the operator confirms that TLS terminates in front of it and at least one credential exists. A loopback TCP bind needs the credential but not the acknowledgement.
+
+A bridge started with `--api-bind` is not terminal-owned: it does not exit when its parent process ends or when it has been idle, because an exposed endpoint has no terminal to belong to. Stop it with its supervisor, `docker stop`, or SIGTERM.
+
+The bind value is parsed as a literal address, never resolved. Only `127.0.0.0/8` and `::1` are loopback; `0.0.0.0`, `[::]` and any other literal, including a private IPv6 address such as a Fly 6PN `fdaa::/16` one, are non-loopback and need both the credential and the proxy acknowledgement. A dual-stack listener binds `[::]:PORT`; a platform that routes to the process over IPv4 needs `0.0.0.0:PORT` instead. A host name such as `localhost:7946` is refused so that name resolution cannot decide which rule applies.
+
+### Two network paths, two different guarantees
+
+A listener on a network address is reached one of two ways, and they are not equivalent.
+
+| Path | TLS | Who can reach it | What it proves |
+| --- | --- | --- | --- |
+| Public port through the platform proxy | Terminated by the proxy, which forwards plaintext to the process over the provider's private mesh | Anyone the proxy routes; the port is public unless the app has no public IP | The bearer token alone |
+| Provider private network | None, by design | Anything on the organization's private network, by internal address | The bearer token alone |
+
+Neither path authenticates a *user*: the private network keeps other organizations out, but every process on it is equally trusted, and a public port is public. That is why every TCP connection presents the token on both paths, and why the proxy acknowledgement exists only to state where TLS ends — never to stand in for authentication. The listener trusts no forwarded header, so `Fly-Client-IP` or any other proxy header never affects who is accepted.
+
+On Fly.io, which is the hosting target for `docs/architecture/HOSTING.md`: the public path is a `services` entry in `fly.toml` (or the Machine config) whose `internal_port` matches `--api-bind`, with Fly Proxy terminating TLS on port 443 and forwarding plaintext to the process over the WireGuard mesh — so that path passes `--api-insecure-behind-proxy`. The private path is the organization's 6PN: a service is reachable there when it binds the IPv6 wildcard (`[::]:PORT`) or `fly-local-6pn`, and needs no `services` entry and no app IP. 6PN addresses are IPv6 literals in an `fdaa::/16` ULA, so `[fdaa:…]:PORT` and `[::]:PORT` are both non-loopback binds that need the proxy acknowledgement and a credential. A Fly Machine that is stopped or suspended has no running process, so its listener, its sockets and any in-memory session are gone; the credential file stays on the volume and keeps working after the next start. The listener therefore does not exit on idleness or when the starting process goes away (see above), and the control plane's autostop policy is what ends it. Those platform details are documented by Fly.io (`docs.fly.io/networking/tls-termination`, `docs.fly.io/networking/app-services`); this repository implements no Fly API call, no proxy-header handling and no autostop.
+
+### Issuing, rotating and revoking credentials
+
+| Command | Effect |
+| --- | --- |
+| `horon-agent api-credentials issue --label NAME` | Create one credential and print its token once |
+| `horon-agent api-credentials rotate ID` | Replace one credential's token and print the new token once |
+| `horon-agent api-credentials revoke ID` | Delete one credential; the next connection with its token is refused |
+| `horon-agent api-credentials list` | Print id, label and timestamps, never a token |
+
+The store is `$HORON_HOME/harness-api/credentials.json`, mode `0600` inside a `0700` directory, and it holds only `sha256:<hex>` digests: a token exists in the clear only in the output of `issue` and `rotate`. The bridge re-reads the file for every connection, so revoke and rotate apply without restarting it. A store that became a symlink, changed owner or lost its owner-only mode refuses every authentication instead of trusting it. In a per-user container the file lives in that tenant's `HORON_HOME`, so credentials are per user by construction and `list` names the tenant as their namespace.
+
+A client on another machine supplies its own transport: terminate TLS at the proxy in front, forward plaintext to the `--api-bind` address, and send the authorization line before `hello`. Neither SDK has a built-in TCP transport and this build adds none, so SSH forwarding to the local socket or the proxy in front of `--api-bind` is the supported path. Client certificates at that proxy are the supported mutual-authentication path; built-in mTLS is a deliberate follow-up, not a silently dropped feature.
+
+## Session goals
+
+Send `runtime_command` with the command `goal` and arguments `["1200", "Ship a fix"]` to attach a goal to the selected session. The first argument is a positive token ceiling. The response contains the saved goal and a display message. The command leaves an existing active goal in place and returns an error if another is requested.
+
 ## Durable runtime API (protocol 1.14)
 
 The major version stays at `1` and the minor version moved from 13 to 14. Every surface below is additive. The byte representation of existing requests and the shape of their responses are unchanged, and a client that sends none of the new requests behaves exactly as before.
@@ -71,6 +125,71 @@ Four events were added: `runtime_state`, `control_receipt`, `snapshot_marker` an
 All four requests are served. The daemon advertises `durable_runtime_api` in its `pong` (`crates/app-core/src/server/session_connections.rs`) and owns the session, its cancel signals and the control ledger, so the bridge only translates a request into the daemon's own frame and translates the reply back (`crates/harness-api-server/src/translate.rs`); the daemon dispatches them in `crates/app-core/src/server/client_lifecycle.rs` and builds the snapshot from the session's observation owner (`crates/app-core/src/server/runtime_state_api.rs`).
 
 `unsupported` therefore means **this daemon is older**, not that the surface is unimplemented. The bridge returns it, naming `durable_runtime_v1`, only when the daemon it dialled did not advertise `durable_runtime_api`: an older daemon answers an unknown request with an error frame carrying no id, so forwarding would leave the client waiting out its own timeout. From the client's side that is the same "this server does not offer it" answer as any other missing capability, so no branching changes.
+
+## Package catalog control (protocol 1.26)
+
+The bridge advertises `package_control_v1` when the daemon's `pong` advertises
+`package_control`. A `package_control` request carries an `operation_id` and an
+`operation`. A successful response carries the published generation and its
+catalog, including each package's scope and any removal records. The daemon
+applies catalog changes through the same store lock used by the standalone CLI.
+Clients can continue to use the existing protocol with an older daemon. A
+package control request requires the advertised capability.
+
+The daemon checks for complete inbox folders at startup and during filesystem
+reconciliation. A status request reads the published snapshot. Subscribers
+receive the latest complete snapshot even if they miss intermediate updates.
+When a mutation returns a transport error after sending the request, inspect
+the published state before submitting it again.
+
+## Package commands (protocol 1.27)
+
+The harness API keeps major version 1 and moved from minor version 26 to 27.
+Everything here is additive: a client that never lists a package command reads
+the same frames it did before.
+
+The bridge advertises `package_commands_v1` only when the daemon reported
+`runtime_commands`, because these two values ride that request instead of a
+request of their own. A client checks the capability before sending, and the
+three SDKs refuse the call in the process when it is absent, so an older server
+never receives a value it cannot answer.
+
+| Value | `args` | `data` in `runtime_command_result` |
+| --- | --- | --- |
+| `package_commands` | empty | `PackageCommandList`: the generation, and the commands sorted by name |
+| `package_command` | `[package_id, command, …argument words]` | `PackageCommandOutcome`: the expansion or the child's answer |
+
+One entry carries the typed name, the package that declares it, the declared
+command name, the kind, one description line and the `argument_hint` the
+resource declares when it declares one. `kind` is `template` for a Markdown
+resource that expands into a user message and `executable` for a command the
+package's child answers over the wire.
+
+```json
+{"v":1,"id":9,"req":"runtime_command","session_id":"s-1","command":"package_commands"}
+{"v":1,"reply_to":9,"ev":"runtime_command_result","session_id":"s-1","command":"package_commands","data":{"generation":7,"commands":[{"name":"hello:greet","package_id":"hello","command":"greet","kind":"executable","description":"Report the arguments this executable command was called with."},{"name":"hello:review","package_id":"hello","command":"review","kind":"template","description":"Review a file","argument_hint":"<path>"}]},"message":"..."}
+```
+
+An outcome sets exactly one of `text` and `output`: a template sets `text`, the
+message a client submits, and an executable command sets `output`, the child's
+value rendered as text, beside `data`, the same value unrendered. `message` in
+the result frame repeats whichever one is set, so a client that only prints the
+message needs no new parsing.
+
+Both values read the package generation the session captured at its turn
+boundary. A listing names that generation, and a run refuses an entry whose
+package left it before reading a file or starting a child; the error says the
+entry is stale. Executable commands consult plan mode, the approval mode, the
+session's disabled names and the `pre_tool` hook, and they do not consult the
+tool allow-list, which names the tools a model may call rather than the commands
+a user types. The policy name is `ext__<package id>__<command>`.
+
+The three SDKs expose the pair as `list_package_commands` and
+`run_package_command` in Rust and Python, and as `listPackageCommands` and
+`runPackageCommand` in TypeScript. ACP v1 and v2 are unchanged: their
+`available_commands_update` still carries the client's own `/model`, `/models`
+and `/effort`, because a package command is a harness API surface, not an ACP
+one.
 
 ## Handoff compaction
 
@@ -290,6 +409,10 @@ No capability gates the pair. The request is additive, so a server that predates
 it answers `unknown_request`; a client that gets that error treats the modes as
 unknown rather than assuming the defaults. The SDKs expose the call as
 `get_message_modes` (Rust, Python) and `getMessageModes` (TypeScript).
+
+For a text-only tool attempt, `soft_interrupt_injected` carries `point: "native_tool_retry"` and an optional `notice` for display. The notice describes the upcoming retry. Interrupts without a display notice omit that field.
+
+A daemon advertising `turn_retry_v1` checks `expected_run_id` on a `send_message` request that continues a failed turn. The check and the start share the same session lock. If another request has already continued or replaced the run, the daemon refuses it before adding any message.
 
 ## Tool verdict (protocol 1.19)
 
@@ -569,6 +692,160 @@ client that cannot read it.
 
 Request `live_todo_v1` in `hello.event_capabilities` and check for the same capability in `hello_ok`. The daemon must support live updates. After a todo write is saved, the attached session receives `todo_changed` with its `session_id`. The event carries no todo data. Subscribe before reading the initial `get_todo_state` snapshot and read it again after changes for the attached session. One read can cover a batch of changes because the response holds the latest list. A client that omits the capability receives no `todo_changed` events and can still read snapshots.
 
+## Read-only consult forks
+
+On a daemon advertising `consult_fork_v1`, send `fork_session` with `consult: true` to persist a separate session whose tools are limited to the daemon's read-only consult list. An optional `boundary` identifies a stored message. The new conversation ends before that message, and the daemon rejects a stale boundary before creating the fork. Reattaching after a daemon restart retains the tool restriction.
+
+## Daemon effective settings (protocol 1.25)
+
+The harness API keeps major version 1 and moved from minor version 24 to 25.
+Everything here is additive: a client that never sends the request reads the
+same frames it did before.
+
+A settings screen that shows only the client's own preferences cannot explain
+why a turn behaves the way it does. `get_effective_settings` reports a **fixed
+allow-list** of daemon values, each with the layer that supplied it. It is a
+list, not a dump: there is no "other keys" field and no raw file text, so a
+credential in the config file cannot reach a client however the file is
+written. `effective_settings_v1` gates the pair.
+
+### Request: `get_effective_settings`
+
+```json
+{"v":1,"id":7,"req":"get_effective_settings","session_id":"s-1"}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `session_id` | string | Yes | Session the question is about |
+
+### Response: `effective_settings`
+
+```json
+{"v":1,"reply_to":7,"ev":"effective_settings","session_id":"s-1",
+ "settings":[{"key":"provider.stream_idle_timeout_secs",
+              "label":"Stream idle timeout (seconds)",
+              "value":"240","source":"file","origin":"/home/u/.horon/config.toml"}]}
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `key` | string | Dotted config path, e.g. `provider.stream_idle_timeout_secs` |
+| `label` | string | Human-readable name for the row |
+| `value` | string | The value in force, as the screen prints it |
+| `source` | `default`, `cli`, `file`, `env` | The layer that supplied it |
+| `origin` | string, absent for `default` | The flag, file path or variable name `source` points at |
+
+`value` is text because the screen prints it: a client that rendered a number
+itself would have to know which keys are numeric, and that knowledge belongs
+beside the allow-list rather than in every client.
+
+### Allow-list
+
+The rows are `provider.openai_reasoning_effort`,
+`provider.anthropic_reasoning_effort`, `provider.stream_idle_timeout_secs`,
+`provider.max_retries`, `tools.profile`, `tools.mcp_tools`,
+`tools.approval_mode`, `tools.ask_policy`, `tools.secrets_mode`,
+`compaction.mode`, `messages.{follow_up,steering,interrupt}_mode`. A key added
+to the daemon's spec table is the only way a row appears; nothing outside it
+can be reported.
+
+### Behaviour
+
+The **daemon** answers, from the configuration it actually loaded. It is the
+process whose environment, launch flags and config file the session runs with,
+so it is the only process that can say which value is in force and where that
+value came from. The bridge only translates: it forwards
+`get_effective_settings` on the internal protocol and passes the rows back.
+`crates/base/src/effective_settings.rs` holds the table and the source
+decisions; `crates/app-core/src/server/effective_settings.rs` maps the rows onto
+this reply.
+
+A daemon advertises `effective_settings_api` in its ping. The bridge advertises
+`effective_settings_v1` unconditionally and refuses the request with a
+structured `unsupported` naming that capability when the daemon behind it does
+not advertise it — an older daemon answers an unknown request with a frame that
+carries no id, so a forwarding bridge would otherwise leave the client waiting
+for its own timeout. A client sees the same "this daemon does not report its
+settings" state from an older bridge (which never advertises the capability) and
+from an older daemon (which is refused by name).
+
+The layer is decided from evidence, strongest first:
+
+1. `cli` — a flag the launcher recorded for the variable it set. The launcher
+   turns flags such as `--tool-profile` and `--mcp-tools` into environment
+   variables, so the environment alone cannot tell a flag from a variable the
+   user exported. A default the launcher chose because nothing selected one is
+   not reported at all: the variable exists, but the user never set it.
+2. `env` — a variable this process read and the daemon would apply. A variable
+   the daemon ignores (a zero timeout, an unparseable retry count, a mode it does
+   not know) is not named as the source of the value in force.
+3. `file` — the effective config file: the same strict parse the daemon runs,
+   read as one document, and only when the declared value is one the daemon
+   applies and renders the value in force. A file that does not parse supplied
+   nothing, so its rows read as `default`, and neither does a declared value the
+   daemon rejects — `approval_mode = "nonsense"`, for example, falls back to the
+   default without making the file the source of that default.
+4. `default` — the shipped value.
+
+The rows describe the daemon's own configuration. A session that changes a value
+for itself at runtime (for example `set_session_approval_mode`) is not reflected
+here; the row reports what the daemon loaded, not what one session overrode
+afterwards.
+
+Nothing writes. The request is read-only by construction, and a client that
+cannot read it keeps working against the daemon defaults. The SDKs expose the
+call as `get_effective_settings` (Rust, Python) and `getEffectiveSettings`
+(TypeScript); each refuses it before sending when the capability was not
+advertised. The TUI's `Daemon` tab is the shipped consumer.
+
+## Forking before a stored message (protocol 1.28)
+
+The harness API keeps major version 1 and moved from minor version 27 to 28.
+Everything here is additive: a client that never sends the request reads the
+same frames it did before.
+
+`session_fork_at_v1` enables `fork_session_at`. Pass the attached `session_id` and a `boundary_message_id` read from `get_history`. The daemon saves a new session containing the history before that user message and returns `session_forked`. The original retains its full history. If the message is no longer a boundary on the active history, the request fails and the client stays attached to the original.
+
+## Editing a todo item (protocol 1.29)
+
+The harness API keeps major version 1 and moved from minor version 28 to 29.
+Everything here is additive: a client that never sends the request reads the
+same frames it did before.
+
+`todo_edit_v1` adds a revision to `todo_state` and enables `set_todo_status` for the attached session. Send `session_id`, `todo_id`, `expected_revision` and the requested `status`. The daemon saves the update only if the revision still matches. `todo_edit_result` includes `applied`, the current list and its revision, and `stale_revision` when a newer list takes precedence. Successful writes notify clients with the existing `todo_changed` event.
+
+## A2UI v1.0 surfaces (protocol 1.32)
+
+The harness API keeps major version 1 and advances to minor version 32. Everything here is **additive and opt-in**: a client that never negotiates `a2ui_v1` keeps the exact same tool catalog, system prompt bytes, and wire frames as before.
+
+### Handshake and session capability
+
+Advertise `a2ui_v1` in `hello.event_capabilities` to allow outbound `a2ui_envelope` events on that connection. Optionally declare `a2ui` renderer capabilities on `hello`, `create_session`, or `attach_session` (`A2uiSessionCapabilities`: `version`, `supported_catalog_ids`, `accepts_inline_catalogs`). When omitted, the daemon leaves the `a2ui` tool unregistered for that session so the prompt cache prefix stays unchanged.
+
+```json
+{ "v": 1, "id": 1, "req": "hello", "min_version": 1, "max_version": 1, "client": "my-ui", "event_capabilities": ["a2ui_v1"], "a2ui": { "version": "1.0", "supported_catalog_ids": ["https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"], "accepts_inline_catalogs": false } }
+```
+
+| Capability / frame | Direction | Required / Gated | Meaning |
+| --- | --- | --- | --- |
+| `hello.event_capabilities` (`a2ui_v1`) | Client -> Bridge | Opt-in | Permits delivery of `a2ui_envelope` events on the connection |
+| `hello.a2ui`, `create_session.a2ui`, `attach_session.a2ui` | Client -> Bridge | `a2ui_v1` | Enables the capability-gated `a2ui` tool with the declared catalogs |
+| `configure_a2ui` | Client -> Bridge | `a2ui_v1` | Updates or clears (`capabilities: null`) A2UI renderer capabilities for an attached session |
+| `a2ui_event` | Client -> Bridge | `a2ui_v1` | Submits a validated client-to-agent `action`, `callAgentFunction`, `rendererFunctionResponse`, or `error` envelope |
+| `a2ui_envelope` | Bridge -> Client | `a2ui_v1` | Streams one validated `agent_to_renderer` envelope (`session_id`, `tool_call_id`, `sequence`, `envelope`, `fallback_text`) |
+
+### `configure_a2ui` and `a2ui_event`
+
+```json
+{ "v": 1, "id": 31, "req": "configure_a2ui", "session_id": "session_...", "capabilities": { "version": "1.0", "supported_catalog_ids": ["https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"], "accepts_inline_catalogs": false } }
+{ "v": 1, "id": 32, "req": "a2ui_event", "session_id": "session_...", "envelope": { "version": "1.0", "action": { "name": "confirm", "surfaceId": "main", "sourceComponentId": "confirm_btn" } }, "data_model": { "step": 1 } }
+```
+
+- Both requests require `a2ui_v1`, attach to `session_id`, and reply `{ "ev": "ok" }` once accepted.
+- Invalid envelopes, forbidden components or URIs, oversized payloads (more than 256 KiB or depth 32), or empty identifiers are rejected with `invalid_request` before reaching the model loop.
+- The three SDKs expose `configure_a2ui` / `configureA2ui`, `send_a2ui_event` / `sendA2uiEvent`, `a2ui` fields on connect/create/attach options, and `TurnResult.a2ui_envelopes` / `a2uiEnvelopes` (`A2uiEnvelopeEvent`).
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -590,7 +867,7 @@ A session holds several heads after a branched import or after a turn is appende
 
 ### History
 
-`get_history` is unchanged and still returns the whole visible conversation history. `get_history_page` is the bounded read a UI wants on long sessions. It takes `session_id`, an optional `head_event_id` (defaulting to the selected head), the opaque continuation value `before_event_id`, and `limit` (default 50, maximum 200). The response is a `SessionHistoryPage` with a fixed `head`, a list of page messages from oldest to newest, and a `next_cursor` to pass back as `before_event_id`. Pin `head_event_id` while the user scrolls. A cursor with a pinned head points at the same history even after the selection changes.
+`get_history` is unchanged and still returns the whole visible conversation history. A history row keeps `content` exactly as before; when a stored assistant row also carries a reasoning trace, it adds an `answer` field with the visible text blocks joined, so a client that needs the answer itself does not have to interpret the daemon's reasoning markup. Rows without reasoning omit the field. A row may also carry `message_id`, the session's stored id of the message it was rendered from: the bridge asks the daemon for those ids, so it is present on rows from a daemon that reports them and absent on synthetic rows and on rows from an older daemon. `get_history_page` is the bounded read a UI wants on long sessions. It takes `session_id`, an optional `head_event_id` (defaulting to the selected head), the opaque continuation value `before_event_id`, and `limit` (default 50, maximum 200). The response is a `SessionHistoryPage` with a fixed `head`, a list of page messages from oldest to newest, and a `next_cursor` to pass back as `before_event_id`. Pin `head_event_id` while the user scrolls. A cursor with a pinned head points at the same history even after the selection changes.
 
 ### Replication
 
@@ -601,6 +878,14 @@ A session holds several heads after a branched import or after a turn is appende
 `export_session_markdown` takes `session_id` and replies with a `session_markdown` event carrying the whole readable transcript in `markdown`. Each turn is a `### User` or `### Assistant` heading followed by its content: text verbatim, a tool call as a fenced JSON block, a tool result as a fenced block, and an image or audio block as a short placeholder. Secrets are redacted with the same pattern table the disk path uses, so a token that never reached the event log cannot appear in the transcript. A tool result longer than 4 KiB is cut at a UTF-8 boundary and replaced with a `… (truncated, N bytes total)` marker.
 
 The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
+
+### HTML report (protocol 1.27)
+
+`export_session_html` takes `session_id` and replies with a `session_html` event carrying a standalone document in `html`. It renders the same redacted projection as `export_session_markdown`, so a secret or a truncated tool result is identical in both formats; the difference is the presentation. Each turn is a `<section>` with an `<h2>` naming the role, its text in `pre-wrap` blocks that keep the line breaks, and a tool call or result in a `<pre>` block.
+
+The document is meant to be saved and opened later without a connection. Every transcript character is escaped, so stored text that looks like markup renders as characters instead of becoming a node; the stylesheet is inline, with no font, image or script reference; and the head carries `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">`, which makes a browser refuse any network load the document might later gain. It requires `session_replication_v1` and answers `unknown_session` for an id the store does not hold.
+
+`horon export <session-id> --html [--out <path>]` writes the same bytes, and `--json` wraps them as `{"session_id": ..., "html": ...}`. Unlike the Markdown form, an `--out` path that already exists is refused rather than overwritten: a report is a destination the reader named by hand.
 
 Two rules a client must not break:
 
@@ -940,6 +1225,8 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 - Request definitions: `GetRuntimeState`, `ApplyControl`, `GetControlReceipt`, `GetSnapshot` and `AskResponse.answer_id` in `crates/harness-api/src/requests.rs`, and the `approval_ack` and `failover_ack` requests (`ApprovalAck` and `FailoverAck` in the same file)
 - Event definitions: `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary` and `ControlReceipt` in `crates/harness-api/src/events.rs`, and the typed `approval_ack` and `failover_ack` events in the same file
 - Implementation: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
-- Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1` and `CAPABILITY_ASK_RECEIPTS_V1` in `crates/harness-api/src/lib.rs`
-- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
+- Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1` and `CAPABILITY_A2UI_V1` in `crates/harness-api/src/lib.rs`
+- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 32`
+- A2UI surface & bridge translation: `ConfigureA2ui` and `A2uiEvent` in `crates/harness-api/src/requests.rs`, `A2uiEnvelope` in `crates/harness-api/src/events.rs`, `A2uiSessionCapabilities` in `crates/tool-types/src/a2ui.rs`, translated by `crates/harness-api-server/src/translate/a2ui.rs`
 - `[messages]` modes: `GetMessageModes` in `crates/harness-api/src/requests.rs`, the `MessageModes` reply in `crates/harness-api/src/events.rs`, answered by the bridge itself in `crates/harness-api-server/src/message_modes.rs`
+- Effective settings: `GetEffectiveSettings` in `crates/harness-api/src/requests.rs`, the `EffectiveSettings` reply and `EffectiveSetting` row in `crates/harness-api/src/effective_settings.rs`, answered by the daemon in `crates/base/src/effective_settings.rs` and `crates/app-core/src/server/effective_settings.rs`, forwarded by the bridge in `crates/harness-api-server/src/translate.rs`, gated by `CAPABILITY_EFFECTIVE_SETTINGS_V1` in `crates/harness-api/src/lib.rs`

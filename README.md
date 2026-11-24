@@ -19,7 +19,7 @@
 
 horon agent is one agent with two equal modes on one engine. In headless mode a program drives a session: a one-shot command, an SDK, an editor over ACP, or a host program over stdio RPC. In TUI mode a person drives it from the terminal through the `horon-tui` client. Both modes attach to the same daemon and share its sessions, tools, MCP servers and configuration. They differ only in who is on the other end, and neither is a reduced form of the other.
 
-Model calls speak one of four wires, picked by the profile's `type`: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Gemini generateContent. The agent POSTs straight to your endpoint, with no router process and no plugin host in between.
+Model calls speak one of four wires, picked by the profile's `type`: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Gemini generateContent. One provider runtime posts directly to the configured endpoint.
 
 Each release ships two binaries built from the same tag. The agent binary `horon-agent` serves headless mode and runs the daemon both modes attach to; it never draws a full-screen terminal UI. The TUI binary `horon-tui` is a separate package built on the agent SDK and published beside it as its own archive.
 
@@ -32,9 +32,8 @@ Each release ships two binaries built from the same tag. The agent binary `horon
 
 ![Benchmark summary: horon against seven tools](docs/performance/charts/00-summary.svg)
 
-- Linux one-shot median 42.5 ms against jcode's 138.0 ms, and macOS 88.1 ms against 377.1 ms. Windows is the exception: 141.8 ms against 128.4 ms, inside overlapping ranges.
 - One history page from a 100k-event session reads 18,554 B instead of 62,169,922 B and takes 5.9 ms instead of 26.2 s; a 200 MiB source hash peaks at 65,600 B instead of 268,435,520 B.
-- Memory per additional session is still jcode's win: 151.0 KB against 98.1 KB on Linux.
+- The agent comparison against jcode and six other tools is the generated table under [Benchmarks](#benchmarks); its numbers come from a GitHub Actions run, never from a developer machine.
 
 ![Session store: one request, before and after the plan](docs/performance/charts/record-01-session-store.svg)
 
@@ -104,6 +103,11 @@ horon run "summarize this repo"
 
 With no profile configured, a model call stops before the network and names the missing `[providers.<name>]` table. [docs/provider/MODEL.md](docs/provider/MODEL.md) lists every key: `headers`, `extra_body`, `context_window`, and built-in profiles such as `openrouter`, `zai`, `kimi` and `ollama`.
 
+Set `stream_first_event_timeout_secs` and `stream_idle_timeout_secs` in a named profile to limit startup and pauses during a streamed reply independently.
+Set `max_in_flight_requests` to cap concurrent requests across sessions using the same profile.
+Use `/modelpreset` in the terminal to preview and apply a named set of [session model choices](docs/provider/MODEL.md#session-model-presets).
+Use `horon --isolated-profile <name>` to keep config, sessions, credentials and daemon sockets in an isolated local profile ([install notes](docs/release/INSTALL.md#launcher-aliases-horon-hrn)).
+
 ## Ways to run it
 
 Headless mode covers every subcommand below except bare `horon`, which opens TUI mode. `horon repl` is a plain line prompt served by the agent binary itself, for someone who wants no full-screen client.
@@ -111,12 +115,39 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | Command | What it does |
 | --- | --- |
 | `horon` (no subcommand) | On a terminal, starts the server and replaces itself with the `horon-tui` client beside it, with keybindings, user files and a settings screen ([docs](docs/runtime/TUI.md)). A pipe, `HORON_NO_TUI=1` or a missing sibling prints a sentence naming the condition and the install command, then exits non-zero. |
-| `horon run "<message>"` | Sends one message, runs tools until the turn ends, then exits. |
+| `horon run "<message>"` | Sends one message, runs tools until the turn ends, then exits. Use `--thinking` and `--service-tier` to set [model options](docs/provider/MODEL.md#configuration), `--no-pty` to run shell tools through pipes, `--no-session` to keep the run in memory, `--add-dir <path>` (repeatable) to list extra workspace directories in the session context, [`--max-time`](docs/runtime/TURNS.md#run-deadline) to limit the run, and `--warn-cost` or `--max-cost` to watch its estimated spend. |
 | `horon repl` | One line at a time in the terminal, without the full-screen client. |
 | `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
-| `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. |
+| `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. `--api-bind IP:PORT` also serves it on TCP with a bearer credential. |
+| `horon api-credentials issue|rotate|revoke|list` | Issue, rotate, revoke or list the bearer tokens a TCP-exposed harness API accepts; the token is printed once ([docs](docs/protocol/HARNESS_API.md)). |
 | `horon acp` | ACP v1 and v2 adapter on stdio, for editors. |
+| `horon stats --from 2026-11-01 --through 2026-11-21` | Report stored token usage by UTC date, provider, and model. Add `--json` for structured output. In the terminal client, `/stats` reports the attached session. |
+| `horon config show` / `horon config check` | Read-only. `show` lists the effective settings with the layer behind each (default, file, env, cli) and never prints credentials; `--json` for structured output. `check` validates `config.toml` with the startup loader, names the invalid section, and exits 1 when it is invalid. |
 | `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out ([docs](docs/protocol/RPC.md)). `--mode rpc` selects the same adapter. |
+| `horon completions <bash\|zsh\|fish>` | Prints a shell completion script without starting a daemon. |
+| `horon stream-rules [TEXT]` | Validates stream rules and previews matching rules for assistant text offline. |
+| `horon tokens [TEXT]` | Estimates UTF-8 tokens offline from inline text, stdin, or `--file`. `--model` selects a known tokenizer family and the output labels any fallback. |
+| `horon session cache [--apply] [--json]` | Lists the regenerable cache files of sessions no running agent owns and their sizes. It writes nothing until `--apply`, and never touches original logs, blobs or the runtime journal. |
+| `horon agents` | Lists named agent definitions, their sources, and configured model and tools without starting a session. |
+| `horon provider status [--json]` | Reports each configured profile's credential source and local status (`authenticated`, `unauthenticated`, or `unknown`) without printing credentials or contacting a provider. |
+| `horon skills list [--json]`, `horon skills install <source> --approve` | Lists skills with the source and commit of installed ones, or installs one through the managed-skill installer from an https, ssh or file source or a local directory. Needs `[tools] managed_skills = true`. |
+| `horon provider failover [--json]` | Shows the failover order the configuration produces and which setting excludes a step. Read-only: no model request, no account or quota change, no credential. |
+| `horon compact-text <FILE\|->` | Summarizes a UTF-8 text file (or stdin, up to 48 KiB, never modified) on stdout and lists what it left out on stderr. `--max-tokens` bounds the summary. |
+| `horon cloud doctor [--host <alias>]` | Checks that an SSH host is reachable and runs a horon-agent that supports `cloud move`, before you move a session. It prints one `ready`, `unreachable` or `incompatible` line with the next step, sends no session data and exits nonzero unless the host is ready. |
+| `horon changelog [VERSION] [--json]` | Prints the published release notes of VERSION (default: the running release) without updating or installing anything. If the notes cannot be read it prints the version and the release page instead. Control characters in the notes are removed. |
+| `horon memory migrate [--dry-run]` | Imports the pre-wiki `memory/*.json` files into the per-user markdown wiki, reporting pages written and skipped. Idempotent; the JSON originals are never modified ([docs](docs/runtime/MEMORY.md#migration-from-json)). |
+| `horon volume export\|import\|quiesce\|resume\|key\|delete-user\|deletion-status` | Backs up, restores, freezes for a snapshot or deletes one user's volume. `export` writes a tar of the memory pages with a metadata and manifest file; `import` verifies it into a new, empty home and rebuilds the index; `quiesce` checkpoints and fences writes before a snapshot and `resume` lifts the fence; `delete-user` runs the durable deletion steps and reports `deleted` only after every one finished ([docs](docs/runtime/MEMORY.md#exporting-importing-and-deleting-a-volume)). |
+| `horon images --session <id> [--json] [--copy <number> <dest>]` | Lists the images a session generated, read from that session's stored `generate_image` results. Only regular files directly inside `generated-images/` are listed; a path outside it, a symbolic link or a missing file is shown as refused and cannot be copied. `--copy` writes one image to a new local file and never overwrites. Nothing is uploaded. |
+
+`horon run --wait-async "<message>"` waits for jobs started by that run and reports each final status once. Set `--max-time` to bound the turn and job wait together. A timed-out run exits nonzero and reports the job statuses it observed.
+
+`horon run --system-template <FILE>` renders a text template once as the system prompt for that run. The variables are `{{cwd}}`, `{{date}}` and `{{model}}`. A value is never expanded again. An unknown variable, an unclosed `{{` or a template over 16 KiB is refused before any provider request.
+
+`horon run --no-session "<message>"` keeps the run in memory. It writes no session log, checkpoint, catalog row or run journal under `$HORON_HOME`, so the run cannot be resumed or recovered afterwards, and a failed run leaves nothing behind either. The session id in `--json` and `--ndjson` output names no stored session. Logs, usage records and other non-session state are written as usual. It cannot be combined with `--resume`, `--continue` or `--goal`, which need a stored session. Tools that keep their own per-session files, such as `todo`, are not covered by this guarantee.
+
+`horon run --warn-cost <USD>` prints one warning on stderr when the estimated spend of that run reaches the amount. `--max-cost <USD>` sends no new model request once the estimate reaches it, and the run fails with a spend cap error. The estimate comes from each response's reported tokens and the pricing catalog. A request already sent settles and is counted, so the total can exceed the ceiling by what was in flight. A model with no known price is reported separately and is never counted as free, so a cap does not limit it. Child agents owned by the same process are charged to the same run. Without either option, requests are unchanged.
+
+`horon run --role plan=<model>`, `--prewalk <model|role:<name>>` and `--no-prewalk` change model roles and the `[prewalk]` handoff for that one launch without touching `config.toml`. An unknown role, an empty model, or a model the active profile does not list fails before any request, and `--no-prewalk` wins over both `[prewalk]` and `--prewalk` ([docs](docs/provider/MODEL.md#launch-overrides)).
 
 `horon acp` answers `initialize` with the highest protocol version both sides support, so v1 clients and v2 clients both work.
 
@@ -125,6 +156,21 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 `horon-tui` is TUI mode: a transcript pane that scrolls back and renders the model's Markdown, a multi-line editor that grows to eight rows, an approval prompt that parks a tool call and takes `y`, `a`, `n` or `esc`, model and session pickers, and a settings screen behind `/settings`. It is a separate package (`crates/tui`) on `horon-agent-sdk` and attaches to the same daemon and sessions as every other client, which is what keeps terminal libraries out of the agent binary.
 
 It starts when you run bare `horon`, `hrn` or `horon-agent` on a terminal. The command starts the server if none is running, then replaces itself with the `horon-tui` file beside the agent, handing over the working directory so the new session belongs to the directory you ran it from, and the session id when you passed `--resume <id>`. Three conditions are checked first: stdin and stdout are both terminals, `HORON_NO_TUI` is unset, and `horon-tui` sits next to the running executable. A pipe or a redirect prints that sentence instead, so scripts and CI get the reason rather than a client. When a condition fails, the command names it, prints the install hint for the interactive client, and exits non-zero.
+
+Run `horon --continue` to reopen the most recently active saved session in the current working directory. Use `--resume <id>` to pick a specific session.
+
+Use `horon --goal "Ship a fix" --goal-budget 1200` to attach an objective and token budget to a new session.
+
+Use `horon --plan` to open a new terminal session in read-only plan mode, or `horon run --plan "<message>"` for one planning run. It needs `[tools] plan_mode = true`, conflicts with `--resume` and `--continue`, and fails before any model request otherwise. `/plan approve` ends read-only mode.
+
+`horon run --config overlay.toml "<message>"` layers a TOML file over `config.toml` for that run only. The flag is repeatable. Later files win per key, omitted keys inherit, and tables merge key by key. A file that does not parse names itself, and the merged result is validated before any provider work.
+
+`horon run --system-prompt <text|@file>` replaces the system prompt for that run and `--append-system-prompt <text|@file>` adds up to 16 KiB after the composed prompt. The tool definitions are sent either way, an append keeps the base prompt in place, and neither flag affects another session or a default run.
+
+`horon run --plan --approve-plan "<message>"` approves the plan the model submits instead of waiting for an answer, so the run continues to its configured execution model (`[prewalk]`) under the normal approval policy. It requires `--plan`.
+`horon run --approval write|all "<message>"` asks before file-changing calls (`write`) or before every call that is not read-only (`all`) for that run only. It can raise the approval mode but never lowers a stricter configured mode, and other sessions keep their own setting.
+
+Use `horon --add-dir <path>` (repeatable) to open a session with extra workspace directories. Each path is resolved to an existing directory, a second spelling of the same directory collapses to one entry, and the list is part of the session context and stored with the session. In the client, `/dirs` lists it and `/dirs add <path>` or `/dirs remove <path>` changes it; removal never touches the directory. A listed root is workspace context, not an approval grant.
 
 The installer fetches `horon-tui-<platform suffix>.tar.gz` beside the agent archive and verifies it against `SHA256SUMS`. That archive is optional: a release that does not publish one, a digest that does not match, a source build and FreeBSD all install or keep the agent alone with one warning line. User files are `$HORON_HOME/tui.toml`, `themes/<name>.json`, `keybindings.toml`, `commands/<name>.md` and the project's `.horon/commands/<name>.md`; every key is in [docs/runtime/TUI.md](docs/runtime/TUI.md).
 
@@ -188,23 +234,46 @@ Crate boundaries and platform adapters are in [docs/architecture/CRATES.md](docs
 
 ## Benchmarks
 
-`.github/workflows/benchmark-docs.yml` runs a one-shot turn on GitHub-hosted runners at commit `729624b` (measured 2026-11-18) against seven other agents, with a deterministic mock model and exactly one `ls` tool call per turn. jcode v0.99.1 is the closest competitor and the one compared below. Each OS runs on a different machine, so compare inside a row and never across rows.
+<!-- bench-summary:start -->
 
-<p align="center">
-  <img src="docs/performance/charts/03-oneshot-time.svg" alt="Bar chart of median one-shot time per OS for eight agents. Linux: horon 42.5 ms, jcode 138 ms. macOS: horon 88.1 ms, jcode 377 ms. Windows: horon 142 ms, jcode 128 ms" width="780">
-</p>
+`.github/workflows/benchmark-docs.yml` rewrites this summary from the run's own `compare.json`; the version label is the binary each runner installed, not a hand-written constant.
+
+Measured commit `e7b81ddfd166f2609b77ddb0d2080831adab4c34`, 2026-11-20 18:54 UTC. Each OS runs on a different machine, so compare inside a row.
+jcode v1.0.1 (release `v1.0.1`, commit `10114429c8133994861d6c915a2483d397c0f7c2`).
 
 | Linux (`ubuntu-24.04`) | horon | jcode |
 | --- | --- | --- |
-| One-shot turn, median | 42.5 ms | 138.0 ms |
-| Skill invocation, median | 38.0 ms | 53.1 ms |
-| MCP tool call, median | 58.8 ms | 162.9 ms |
-| Peak tree RSS, one-shot | 39.4 MB | 42.2 MB |
-| Memory per additional session, idle after 3 turns | 151.0 KB | 98.1 KB |
-| First model request, body / tool catalog bytes | 3,756 / 2,368 | 3,292 / 1,433 |
-| Install size | 110.6 MB | 163.4 MB |
+| One-shot prompt time | 45.0 ms | 148.2 ms |
+| Skill invocation time | 37.3 ms | 53.9 ms |
+| MCP tool call time | 64.2 ms | 164.8 ms |
+| One-shot prompt memory | 41.1 MB | 80.1 MB |
+| Memory per additional session | 379.9 KB | 173.4 KB |
+| Install size | 117.7 MB | 191.4 MB |
+| First model request, body / tool catalog bytes | 3,699 / 2,358 | 2,888 / 1,100 |
 
-horon took all three Linux time rows and the one-shot peak memory, and macOS followed the same shape: one-shot 88.1 ms against 377.1 ms, skill 64.0 ms against 357.6 ms, MCP 115.1 ms against 486.4 ms. **Windows is the exception.** jcode had the lower median on the one-shot (128.4 ms against 141.8 ms) and the skill run (172.6 ms against 220.0 ms). In both cells the min–max ranges overlap, so neither counts as a clear win; horon kept the MCP call (211.0 ms against 318.3 ms). jcode also used less memory per additional session on Linux and Windows (98.1 KB against 151.0 KB, 63.8 KB against 122.8 KB), less peak memory on the Windows one-shot (26.9 MB against 36.1 MB), and a smaller first request on every OS.
+| macOS (`macos-latest`) | horon | jcode |
+| --- | --- | --- |
+| One-shot prompt time | 46.6 ms | 271.6 ms |
+| Skill invocation time | 38.9 ms | 182.4 ms |
+| MCP tool call time | 58.7 ms | 267.9 ms |
+| One-shot prompt memory | 31.6 MB | 37.8 MB |
+| Memory per additional session | 410.9 KB | 333.1 KB |
+| Install size | 99.0 MB | 161.3 MB |
+| First model request, body / tool catalog bytes | 3,587 / 2,358 | 2,776 / 1,100 |
+
+| Windows (`windows-latest`) | horon | jcode |
+| --- | --- | --- |
+| One-shot prompt time | 237.1 ms | 177.3 ms |
+| Skill invocation time | 226.8 ms | 272.0 ms |
+| MCP tool call time | 274.5 ms | 376.4 ms |
+| One-shot prompt memory | 33.1 MB | 30.4 MB |
+| Memory per additional session | 358.3 KB | 304.4 KB |
+| Install size | 100.3 MB | 153.2 MB |
+| First model request, body / tool catalog bytes | 3,654 / 2,358 | 2,878 / 1,111 |
+
+[Run](https://github.com/horon-ai/agent/actions/runs/44792005623)
+
+<!-- bench-summary:end -->
 
 These are single-commit CI samples, not a guarantee. The full tables for eight tools, the TUI suite, the measurement method and what the numbers do not say are in [docs/performance/RESULTS.md](docs/performance/RESULTS.md) and [docs/performance/BENCHMARK.md](docs/performance/BENCHMARK.md).
 
@@ -219,7 +288,11 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 | `[acp] profile` | `standard` | `extended`, `full` |
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
+| `[tools] bash_direnv` | `false` | `true` imports new variables from approved direnv files in a trusted workspace |
+| `[tools] output_column_cap` | `0` (disabled) | Positive Unicode character count per text preview line |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
+| `[agents] swarm_child_runtime_secs`, `swarm_child_request_limit` | `0` (disabled) | Positive elapsed seconds or model request count per spawned child |
+| `[agents] swarm_child_request_notice`, `swarm_max_spawn_effort` | `true`, unset | Turn off the final-request notice or set a maximum reasoning effort at spawn |
 | `[storage] sync` | `full` (power-loss durable) | `fast` |
 | `[server] idle_hibernation_secs` | `1800` | `0` disables |
 | Update check on `serve` | not run | `--no-update` skips it everywhere |
