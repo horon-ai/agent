@@ -38,16 +38,15 @@ pub(crate) fn resolve(name: &str, base_home: &Path, runtime_base: &Path) -> Resu
     // A short digest of the exact home keeps sockets under the Unix path limit
     // and gives every profile root its own endpoint names.
     let digest = Sha256::digest(home.to_string_lossy().as_bytes());
-    let runtime_dir = runtime_base.join(format!("horon-profile-{}", hex_prefix(&digest)));
+    let runtime_dir = runtime_base.join(format!(
+        "horon-profile-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5]
+    ));
     Ok(Profile {
         name: name.to_owned(),
         home,
         runtime_dir,
     })
-}
-
-fn hex_prefix(digest: &[u8]) -> String {
-    digest.iter().take(6).map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Export the profile to this process and every child it starts.

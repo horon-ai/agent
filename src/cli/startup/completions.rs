@@ -37,24 +37,37 @@ compdef _horon_complete horon horon-agent hrn
 pub(in crate::cli) fn write(shell: CompletionShell, mut out: impl Write) -> anyhow::Result<()> {
     let mut command = Args::command();
     command.build();
+    let mut context = String::from("horon");
     match shell {
         CompletionShell::Bash | CompletionShell::Zsh => {
             for (function, subcommands_only) in [("_horon_subcommands", true), ("_horon_choices", false)] {
                 writeln!(out, "{function}() {{\n    case \"$1\" in")?;
-                walk(&command, "horon", &mut |command, context| {
-                    let mut items = subcommands(command);
+                walk(&command, &mut context, &mut |command, context| {
+                    write!(out, "        '{context}') printf '%s\\n' '")?;
+                    let mut first = true;
+                    write_words(out_subcommands(command), &mut first, &mut out)?;
                     if !subcommands_only {
-                        items.extend(values(command));
+                        for value in out_possible_values(command) {
+                            write_space_word(value.get_name(), &mut first, &mut out)?;
+                        }
                         for opt in command.get_arguments().filter(|arg| !arg.is_hide_set()) {
                             if let Some(short) = opt.get_short() {
-                                items.push(format!("-{short}"));
+                                if !first {
+                                    out.write_all(b" ")?;
+                                }
+                                first = false;
+                                write!(out, "-{short}")?;
                             }
                             if let Some(long) = opt.get_long() {
-                                items.push(format!("--{long}"));
+                                if !first {
+                                    out.write_all(b" ")?;
+                                }
+                                first = false;
+                                write!(out, "--{long}")?;
                             }
                         }
                     }
-                    writeln!(out, "        '{context}') printf '%s\\n' '{}' ;;", items.join(" "))
+                    writeln!(out, "' ;;")
                 })?;
                 writeln!(out, "    esac\n}}")?;
             }
@@ -67,17 +80,17 @@ pub(in crate::cli) fn write(shell: CompletionShell, mut out: impl Write) -> anyh
                 .as_bytes(),
             )?;
         }
-        CompletionShell::Fish => write_fish(&command, &mut out)?,
+        CompletionShell::Fish => write_fish(&command, &mut context, &mut out)?,
     }
     Ok(())
 }
 
-fn write_fish(command: &clap::Command, out: &mut impl Write) -> std::io::Result<()> {
+fn write_fish(command: &clap::Command, context: &mut String, out: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         out,
         "function __horon_at\n    set -l context horon\n    set -l tokens (commandline -opc)\n    for token in $tokens[2..-1]\n        switch \"$context/$token\""
     )?;
-    walk(command, "horon", &mut |_, context| {
+    walk(command, context, &mut |_, context| {
         if context != "horon" {
             writeln!(
                 out,
@@ -87,19 +100,29 @@ fn write_fish(command: &clap::Command, out: &mut impl Write) -> std::io::Result<
         Ok(())
     })?;
     writeln!(out, "        end\n    end\n    test \"$context\" = \"$argv[1]\"\nend")?;
-    walk(command, "horon", &mut |command, context| {
-        let prefix = format!("complete -c horon -n '__horon_at {context}'");
-        let mut items = subcommands(command);
-        items.extend(values(command));
-        if !items.is_empty() {
-            writeln!(out, "{prefix} -f -a '{}'", items.join(" "))?;
+    walk(command, context, &mut |command, context| {
+        let mut first = true;
+        for name in out_subcommands(command) {
+            if first {
+                write!(out, "complete -c horon -n '__horon_at {context}' -f -a '")?;
+            }
+            write_space_word(name, &mut first, out)?;
+        }
+        for value in out_possible_values(command) {
+            if first {
+                write!(out, "complete -c horon -n '__horon_at {context}' -f -a '")?;
+            }
+            write_space_word(value.get_name(), &mut first, out)?;
+        }
+        if !first {
+            writeln!(out, "'")?;
         }
         for arg in command.get_arguments().filter(|arg| !arg.is_hide_set()) {
             if let Some(short) = arg.get_short() {
-                writeln!(out, "{prefix} -s {short}")?;
+                writeln!(out, "complete -c horon -n '__horon_at {context}' -s {short}")?;
             }
             if let Some(long) = arg.get_long() {
-                writeln!(out, "{prefix} -l {long}")?;
+                writeln!(out, "complete -c horon -n '__horon_at {context}' -l {long}")?;
             }
         }
         Ok(())
@@ -109,32 +132,52 @@ fn write_fish(command: &clap::Command, out: &mut impl Write) -> std::io::Result<
 
 fn walk(
     command: &clap::Command,
-    context: &str,
+    context: &mut String,
     f: &mut impl FnMut(&clap::Command, &str) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
     f(command, context)?;
+    let prefix_len = context.len();
     for subcommand in command.get_subcommands().filter(|subcommand| !subcommand.is_hide_set()) {
-        walk(subcommand, &format!("{context}/{}", subcommand.get_name()), f)?;
+        context.push('/');
+        context.push_str(subcommand.get_name());
+        walk(subcommand, context, f)?;
+        context.truncate(prefix_len);
     }
     Ok(())
 }
 
-fn subcommands(command: &clap::Command) -> Vec<String> {
+fn out_subcommands(command: &clap::Command) -> impl Iterator<Item = &str> {
     command
         .get_subcommands()
         .filter(|subcommand| !subcommand.is_hide_set())
-        .map(|subcommand| subcommand.get_name().to_owned())
-        .collect()
+        .map(clap::Command::get_name)
 }
 
-fn values(command: &clap::Command) -> Vec<String> {
+fn out_possible_values(command: &clap::Command) -> impl Iterator<Item = clap::builder::PossibleValue> + '_ {
     command
         .get_positionals()
         .filter(|arg| !arg.is_hide_set())
         .flat_map(|arg| arg.get_value_parser().possible_values().into_iter().flatten())
         .filter(|value| !value.is_hide_set())
-        .map(|value| value.get_name().to_owned())
-        .collect()
+}
+
+fn write_space_word(word: &str, first: &mut bool, out: &mut impl Write) -> std::io::Result<()> {
+    if !*first {
+        out.write_all(b" ")?;
+    }
+    *first = false;
+    out.write_all(word.as_bytes())
+}
+
+fn write_words<'a>(
+    words: impl Iterator<Item = &'a str>,
+    first: &mut bool,
+    out: &mut impl Write,
+) -> std::io::Result<()> {
+    for word in words {
+        write_space_word(word, first, out)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
