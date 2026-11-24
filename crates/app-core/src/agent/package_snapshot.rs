@@ -537,8 +537,8 @@ impl crate::agent::Agent {
                 return;
             }
         };
-        let workspace = self.working_dir().map(PathBuf::from);
-        if let Err(error) = session.enter_turn(workspace.as_deref()).await {
+        let workspace = self.working_dir().map(Path::new);
+        if let Err(error) = session.enter_turn(workspace).await {
             crate::logging::warn(&format!(
                 "package snapshot for session {} could not be captured: {error:#}",
                 self.session_id()

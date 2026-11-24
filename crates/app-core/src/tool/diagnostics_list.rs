@@ -60,22 +60,74 @@ pub fn group(found: Vec<(String, Vec<Diagnostic>)>) -> Vec<FileReport> {
         .collect()
 }
 
+fn push_usize(out: &mut String, mut value: usize) {
+    let mut digits = [0u8; 20];
+    let mut pos = digits.len();
+    loop {
+        pos -= 1;
+        digits[pos] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if let Ok(text) = std::str::from_utf8(&digits[pos..]) {
+        out.push_str(text);
+    }
+}
+
 fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut words = text.split_whitespace();
+    let Some(first) = words.next() else {
+        return String::new();
+    };
+    let Some(second) = words.next() else {
+        return first.to_owned();
+    };
+    let mut out = String::with_capacity(text.len());
+    out.push_str(first);
+    out.push(' ');
+    out.push_str(second);
+    for word in words {
+        out.push(' ');
+        out.push_str(word);
+    }
+    out
 }
 
 pub fn render(reports: &[FileReport]) -> String {
-    let mut out = String::new();
+    use std::fmt::Write as _;
+
+    let total_bytes: usize = reports
+        .iter()
+        .map(|report| {
+            let header = report.path.len() + report.note.as_ref().map_or(8, |note| note.len() + 4);
+            let items: usize = report.diagnostics.iter().map(|item| item.message.len() + 28).sum();
+            header + items
+        })
+        .sum();
+    let mut out = String::with_capacity(total_bytes);
     for report in reports {
+        out.push_str(&report.path);
         match &report.note {
-            Some(note) => out.push_str(&format!("{}: {note}\n", report.path)),
-            None => out.push_str(&format!("{} ({})\n", report.path, report.diagnostics.len())),
+            Some(note) => {
+                out.push_str(": ");
+                out.push_str(note);
+                out.push('\n');
+            }
+            None => {
+                out.push_str(" (");
+                push_usize(&mut out, report.diagnostics.len());
+                out.push_str(")\n");
+            }
         }
         for item in &report.diagnostics {
-            out.push_str(&format!(
-                "  [{}] {} {}:{} {}\n",
-                item.index, item.severity, item.line, item.column, item.message
-            ));
+            out.push_str("  [");
+            push_usize(&mut out, item.index);
+            out.push_str("] ");
+            if writeln!(out, "{} {}:{} {}", item.severity, item.line, item.column, item.message).is_err() {
+                return out;
+            }
         }
     }
     if reports.iter().all(|r| r.diagnostics.is_empty() && r.note.is_none()) {
@@ -98,10 +150,17 @@ pub fn handoff(reports: &[FileReport], selected: &[usize]) -> anyhow::Result<(Ve
         if !paths.contains(&report.path) {
             paths.push(report.path.clone());
         }
-        brief.push_str(&format!(
-            "- {}:{}:{} {}: {}\n",
-            report.path, item.line, item.column, item.severity, item.message
-        ));
+        if std::fmt::Write::write_fmt(
+            &mut brief,
+            format_args!(
+                "- {}:{}:{} {}: {}\n",
+                report.path, item.line, item.column, item.severity, item.message
+            ),
+        )
+        .is_err()
+        {
+            return Ok((paths, brief));
+        }
     }
     Ok((paths, brief))
 }

@@ -109,21 +109,13 @@ impl Agent {
     /// [`crate::packages::PackageTextResources::load`], which reuses an unchanged
     /// package's cached text and revalidates a replaced or tampered copy.
     pub(super) fn package_text_resources(&self) -> Option<std::sync::Arc<crate::packages::PackageTextResources>> {
-        let snapshot = self.package_snapshot()?;
+        let session = crate::extensions::package_snapshot::for_session(&self.session.id)?;
+        let snapshot = session.current()?;
         if snapshot.is_empty() {
             return None;
         }
-        let store = match crate::packages::PackageStore::for_current_user() {
-            Ok(store) => store,
-            Err(error) => {
-                logging::warn(&format!(
-                    "package text resources for session {} are unavailable: {error:#}",
-                    self.session.id
-                ));
-                return None;
-            }
-        };
-        let resources = crate::packages::PackageTextResources::load(&store, snapshot.workspace(), snapshot.packages());
+        let resources =
+            crate::packages::PackageTextResources::load(session.store(), snapshot.workspace(), snapshot.packages());
         if resources.is_empty() {
             return None;
         }
