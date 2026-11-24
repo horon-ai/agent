@@ -1114,15 +1114,8 @@ class WorkflowTest(unittest.TestCase):
 
 
 class MeasurementPlanTest(unittest.TestCase):
-    def test_no_measurement_builds_a_release_binary(self):
+    def test_every_measurement_parses_to_explicit_target_and_filter(self):
         for measurement in gate.MEASUREMENTS:
-            command = gate.measurement_command(measurement)
-            self.assertNotIn("--release", command, f"{measurement['section']} must run in debug")
-
-    def test_every_measurement_uses_locked_and_explicit_target_kind(self):
-        for measurement in gate.MEASUREMENTS:
-            command = gate.measurement_command(measurement)
-            self.assertIn("--locked", command, f"{measurement['section']} must preserve --locked")
             package, kind, target_name, test_filter = gate.parse_measurement_target(measurement)
             self.assertTrue(package)
             self.assertIn(kind, ("lib", "test"))
@@ -1130,9 +1123,10 @@ class MeasurementPlanTest(unittest.TestCase):
             if kind == "test":
                 self.assertTrue(target_name)
 
-    def test_unified_compile_command_builds_unique_packages_once(self):
+    def test_unified_compile_command_builds_locked_debug_targets_once(self):
         cmd = gate.compile_command()
         self.assertEqual(cmd[:3], ["cargo", "test", "--locked"])
+        self.assertNotIn("--release", cmd, "structural gate measurements must compile in debug")
         self.assertIn("--lib", cmd)
         self.assertNotIn("--tests", cmd)
         for target in ("hash_stream", "e2e", "tool_dispatch_perf", "package_cost"):
@@ -1159,11 +1153,15 @@ class MeasurementPlanTest(unittest.TestCase):
                 "#!/usr/bin/env python3\n"
                 "import os, sys\n"
                 "assert os.getcwd().endswith('app-core'), os.getcwd()\n"
-                "assert '--exact' in sys.argv and '--test-threads=1' in sys.argv\n"
-                "if '--format' not in sys.argv or 'terse' not in sys.argv:\n"
-                "    sys.stdout.write('test fake::case ... ')\n"
-                "    sys.stdout.flush()\n"
-                "print('STRUCTURAL_PERF section=page events=1000 page_limit=20 warm_replayed=0 warm_flattened=20 warm_index_builds=0 warm_read_bytes=8192 log_bytes=262144')\n"
+                "for flag in ('--exact', '--nocapture', '--test-threads=1', '--format', 'terse'):\n"
+                "    assert flag in sys.argv, (flag, sys.argv)\n"
+                "assert os.environ.get('CARGO_MANIFEST_DIR', '').endswith('app-core')\n"
+                "assert os.environ.get('CARGO_PKG_NAME') == 'horon-agent-app-core'\n"
+                "assert os.environ.get('CARGO') == 'cargo'\n"
+                "if os.environ.get('FORCE_FAIL') == '1':\n"
+                "    sys.stderr.write('simulated crash\\n')\n"
+                "    sys.exit(2)\n"
+                "sys.stderr.write('STRUCTURAL_PERF section=page events=1000 page_limit=20 warm_replayed=0 warm_flattened=20 warm_index_builds=0 warm_read_bytes=8192 log_bytes=262144\\n')\n"
                 "if os.environ.get('FORCE_ZERO') == '1':\n"
                 "    print('test result: ok. 0 passed; 0 failed')\n"
                 "else:\n"
@@ -1207,6 +1205,13 @@ class MeasurementPlanTest(unittest.TestCase):
             page_m = gate.selected_measurements({"page"})[0]
             self.assertEqual(gate.select_executable(artifacts, page_m)[0], exe)
 
+            os.environ["FORCE_FAIL"] = "1"
+            try:
+                with self.assertRaises(gate.GateError):
+                    gate.run_compiled_measurement(ctx_m, artifacts)
+            finally:
+                os.environ.pop("FORCE_FAIL", None)
+
             os.environ["FORCE_ZERO"] = "1"
             try:
                 with self.assertRaises(gate.GateError):
@@ -1217,11 +1222,20 @@ class MeasurementPlanTest(unittest.TestCase):
             with self.assertRaises(gate.GateError):
                 gate.select_executable({}, ctx_m)
 
-    def test_every_measurement_runs_one_test_against_one_target_dir(self):
-        for measurement in gate.MEASUREMENTS:
-            command = gate.measurement_command(measurement)
-            self.assertIn("--test-threads=1", command, "process-wide counters need one test at a time")
-            self.assertIn("--exact", command)
+    def test_print_plan_emits_unified_compile_and_isolated_per_test_runs(self):
+        import contextlib, io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gate.print_plan()
+        self.assertEqual(rc, 0)
+        lines = buf.getvalue().splitlines()
+        self.assertEqual(lines[0], "# unified compile step")
+        self.assertIn("cargo test --locked", lines[1])
+        run_lines = [line for line in lines if line.startswith("<") or "HORON_AGENT_SOAK_CYCLES=" in line]
+        self.assertEqual(len(run_lines), len(gate.MEASUREMENTS))
+        for line in run_lines:
+            self.assertIn("--exact --nocapture --test-threads=1 --format terse", line)
 
     def test_the_soak_runs_short_and_the_page_check_covers_three_sizes(self):
         soak = [m for m in gate.MEASUREMENTS if m["section"] == "soak"]
