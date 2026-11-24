@@ -142,7 +142,7 @@ No setting narrows the trust set or disables verification. To use an internal CA
 
 ### Preparation
 
-No TTY, display or `XDG_RUNTIME_DIR` is required. The socket directory is taken from `HORON_AGENT_RUNTIME_DIR`, then `XDG_RUNTIME_DIR`, then the platform's per-user runtime directory, and when none is set the binary uses `horon-agent-<user discriminator>` under the temporary directory (`crates/harness-api/src/sockets.rs:16-31`). The discriminator is read from `UID`, then `USER`, keeping only alphanumerics, `-` and `_` and cutting to 64 characters. If nothing is left, it is `user`.
+No TTY, display or `XDG_RUNTIME_DIR` is required. The socket directory is taken from `HORON_AGENT_RUNTIME_DIR`, then `XDG_RUNTIME_DIR`, then the platform's per-user runtime directory, and when none is set the binary uses `horon-agent-<user discriminator>` under the temporary directory (`crates/harness-api/src/sockets.rs:16-36`). The discriminator is read from `UID`, then `USER`, keeping only alphanumerics, `-` and `_` and cutting to 64 characters. If nothing is left, it is `user`.
 
 Put the provider profile in `config.toml`. The location is `$HORON_HOME/config.toml` when `HORON_HOME` is set and `~/.horon/config.toml` otherwise. Keys and file locations are in [`../provider/MODEL.md`](/reference/provider/model).
 

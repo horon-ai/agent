@@ -201,7 +201,7 @@ Every auxiliary workload resolves its model inside the profile the session runs 
 
 ### Fallback and failover order
 
-The ordered list that #73 adds is `fallback_models = ["m2", "m3"]` on `[providers.<name>]`, not on a role, and it applies to whichever model the role resolved to. Recovery enters these steps in this fixed order, and each is entered only after the one before it is exhausted.
+`fallback_models = ["m2", "m3"]` lives on `[providers.<name>]`, not on a role, and it applies to whichever model the role resolved to. Recovery enters these steps in this fixed order, and each is entered only after the one before it is exhausted.
 
 1. Model fallback: the next entry of `fallback_models`, once per entry, after the retry budget for a retryable error is spent.
 2. Same-provider account failover (`same_provider_account_failover`, default `true`).
@@ -213,13 +213,13 @@ The switch lasts for the rest of the turn and the next turn starts again from th
 
 `horon provider failover [--json]` prints the order the current configuration produces: the retry budget, then same-provider account failover, cross-provider failover and the unattended switch. A step that cannot run says which setting excludes it. The command reads configuration only. It sends no model request, changes no account, quota or provider selection, and prints no credential.
 
-This build assigns no accounts across a set of inputs, so there is no distribution to preview. The preview shows the real failover order instead. Quota cooldowns and which saved accounts are available at this moment are held in memory by a running daemon, so the preview does not show them. `fallback_models` is not a setting in this build yet, so the preview does not list it.
+This build assigns no accounts across a set of inputs, so there is no distribution to preview. The preview shows the real failover order instead. Quota cooldowns and which saved accounts are available at this moment are held in memory by a running daemon, so the preview does not show them. Per-profile `fallback_models` (`crates/config-types/src/model_roles.rs`) is an in-profile model step inspected via `get_runtime_info` rather than `provider failover`.
 
-### Who implements it
+### Implementation
 
-#73 writes the shared type: the `roles` table flattened into `NamedProviderConfig` in `crates/config-types/src/named_provider.rs` and one resolution function that every caller uses. #70 adds only its own `[prewalk]` section and calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). Reason: #73 changes `NamedProviderConfig` in any case and is a declared dependency of #70 (`depends_on: [73, 112]`), so two implementations would drift; the `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
+The shared types live in `crates/config-types/src/model_roles.rs` (flattened into `NamedProviderConfig` in `crates/config-types/src/named_provider.rs`), adding `roles` and `fallback_models` with one resolution function that every caller uses. `[prewalk]` also calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). The `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
 
-An unset role configuration behaves exactly as the build does today: no `roles` table, no new key, the model chosen by the existing chain, and no extra attempt.
+An unset role configuration adds no `roles` table and no extra keys, resolves the model by the existing chain, and adds no extra attempt.
 
 ### The `image` role and the one model path
 
@@ -227,7 +227,7 @@ The build's rule is that one model path serves models: a turn posts to the endpo
 
 - It posts `POST {base_url}/images/generations` with a JSON body, or `POST {base_url}/images/edits` with a multipart body, on the **same** profile: same base URL, same credential, same `auth`, same `extra_body`.
 - Only a profile of type `openai-compatible` or `openai-responses` accepts this route. A profile on the Anthropic or Gemini wire cannot serve it, because neither wire carries an Images endpoint: the tool still registers when `roles.image` names a model, and each call fails with an error naming the profile and its type instead of sending a request to a URL that cannot answer (`crates/base/src/provider/external.rs` `image_endpoint`).
-- One provider runtime sends requests directly. `crates/provider-openai/src/images.rs` builds image requests beside `chat/`. Planned user-installed Rust packages sit outside the model path.
+- One provider runtime sends requests directly. `crates/provider-openai/src/images.rs` builds image requests beside `chat/`. User-installed Rust packages (`docs/runtime/PACKAGES.md`) sit outside the model path.
 - The model comes from `roles.image`, and the tool is registered only when that entry exists **and** `[tools] generate_image = true`. Both conditions are required: the switch alone would advertise a tool whose every call fails, and the role alone would register it for a session that never asked.
 - A call declares `WRITE | NETWORK`, so `approval_mode = "write"` asks first and an unattended run does not spend money without approval.
 - The model never receives image bytes. Files land in `~/.horon/generated-images/` and the result names paths, sizes and MIME types, which keeps a call at a few hundred tokens instead of megabytes in the context and the stored event log.
@@ -316,7 +316,7 @@ Key files get narrowed permissions when read. You can also write the key value d
 
 `provider add` writes the same table into `config.toml` and stores the key received on `--api-key-stdin` in the key file.
 
-`horon provider diagnose` checks every `[providers.<name>]` profile without a model call. It reports `no_providers`, `invalid_base_url`, `missing_credential` (no `api_key_env`, or the variable is unset), or `configured`, and exits 1 when anything needs attention. Add `--check` to request each endpoint's model list with the configured credentials, which reports `reachable` or `unreachable`. Output never contains a key or an upstream response body. Use `--json` for structured output.
+`horon provider diagnose` checks every `[providers.<name>]` profile without a model call. It reports `no_providers`, `invalid_base_url`, `missing_credential` (no `api_key_env`, or the variable is unset), or `configured`, and exits 1 when anything needs attention. Add `--check` to request each endpoint's model list with the configured credentials, which reports `reachable`, `unreachable`, or `connectivity_unsupported` (for endpoints without a model-list check). Output never contains a key or an upstream response body. Use `--json` for structured output.
 
 ```bash
 printf '%s' "$MY_GW_KEY" | horon provider add my-gw \

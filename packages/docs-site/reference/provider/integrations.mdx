@@ -126,9 +126,9 @@ one function so they cannot diverge (`crates/base/src/mcp/protocol.rs:144-157`).
 
 `roots` is declared only when the connection has a root list to serve, and that is off by default: the `[mcp] expose_roots`
 setting gates it, because answering tells every server which directory the session works in
-(`crates/base/src/config/default_file.rs:392-395`). With it on, the one root is the session project folder, or the process
-working directory when no project folder was given (`crates/base/src/mcp/client.rs:112-137`). Without a root list the
-capability is omitted and `roots/list` is refused (`crates/base/src/mcp/protocol.rs:76-99`). The list never changes after
+(`crates/base/src/config/default_file.rs:400-403`). With it on, the one root is the session project folder, or the process
+working directory when no project folder was given (`crates/base/src/mcp/client.rs:113-138`). Without a root list the
+capability is omitted and `roots/list` is refused (`crates/base/src/mcp/protocol.rs:76-102`). The list never changes after
 `initialize`, so a server is told it will hear no `notifications/roots/list_changed`.
 
 ### Startup, connection waits, and prompt caching
