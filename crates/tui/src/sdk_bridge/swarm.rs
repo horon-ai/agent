@@ -235,11 +235,11 @@ fn collapse(text: &str, max: usize) -> String {
     };
     let mut out = String::with_capacity(text.len().min(max.saturating_mul(4)).max(3));
     let keep_limit = max.saturating_sub(1);
-    let mut count = 0usize;
     let mut limit_byte = None;
-    for ch in first
+    for (count, ch) in first
         .chars()
         .chain(words.flat_map(|word| std::iter::once(' ').chain(word.chars())))
+        .enumerate()
     {
         if count == keep_limit && limit_byte.is_none() {
             limit_byte = Some(out.len());
@@ -251,7 +251,6 @@ fn collapse(text: &str, max: usize) -> String {
             return out;
         }
         out.push(ch);
-        count += 1;
     }
     out
 }
