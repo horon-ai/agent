@@ -43,6 +43,10 @@ pub use effective_settings::{EffectiveSetting, SettingSource};
 pub use events::*;
 pub use horon_agent_session_types::TurnStopReason;
 pub use horon_agent_tool_types::ToolVerdict;
+pub use horon_agent_tool_types::a2ui::{
+    A2UI_BASIC_CATALOG_V1_0, A2UI_MIME_TYPE, A2UI_URI_SCHEME, A2UI_VERSION_V0_9, A2UI_VERSION_V1_0,
+    A2uiSessionCapabilities,
+};
 pub use horon_agent_usage_types::{ModelUsage, compare_model_usage};
 pub use message_modes::MessageModes;
 pub use replication::*;
@@ -80,6 +84,9 @@ mod optional_field_tests;
 #[path = "harness_api_tests/tool_done_verdict.rs"]
 mod tool_done_verdict_tests;
 
+#[cfg(test)]
+mod a2ui_tests;
+
 /// The package-management request and receipt a client exchanges with the
 /// daemon's catalog. Defined once, beside the manifest declarations the
 /// installer validates, so the daemon, the bridge, both SDKs and the CLI cannot
@@ -92,7 +99,7 @@ pub use horon_agent_extension_types::control::{
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 31;
+pub const API_VERSION_MINOR: u32 = 32;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -203,6 +210,10 @@ pub const CAPABILITY_TURN_RETRY_V1: &str = "turn_retry_v1";
 ///
 /// An empty surface list is deliberate and not an omission: `monitor_v1`
 /// describes how to read an existing result rather than gating a method.
+/// Client can advertise A2UI v1.0 renderer capabilities and exchange A2UI
+/// configuration, surface envelopes, and user action events (`a2ui_v1`).
+pub const CAPABILITY_A2UI_V1: &str = "a2ui_v1";
+
 pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (
         CAPABILITY_DURABLE_RUNTIME_V1,
@@ -235,6 +246,17 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
         CAPABILITY_CONSULT_FORK_V1,
         &["fork_session.consult", "fork_session.boundary"],
     ),
+    (
+        CAPABILITY_A2UI_V1,
+        &[
+            "hello.a2ui",
+            "create_session.a2ui",
+            "attach_session.a2ui",
+            "configure_a2ui",
+            "a2ui_event",
+            "a2ui_envelope",
+        ],
+    ),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -253,13 +275,18 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_TODO_EDIT_V1,
     CAPABILITY_TURN_RETRY_V1,
     CAPABILITY_CONSULT_FORK_V1,
+    CAPABILITY_A2UI_V1,
 ];
 
 /// The event capabilities a connection opts into at handshake.
 ///
 /// A client requests these in `hello.event_capabilities`. The bridge echoes
 /// only capabilities that the daemon also supports.
-pub const OPT_IN_EVENT_CAPABILITIES: &[&str] = &[CAPABILITY_BACKGROUND_OUTPUT_V1, CAPABILITY_LIVE_TODO_V1];
+pub const OPT_IN_EVENT_CAPABILITIES: &[&str] = &[
+    CAPABILITY_BACKGROUND_OUTPUT_V1,
+    CAPABILITY_LIVE_TODO_V1,
+    CAPABILITY_A2UI_V1,
+];
 
 /// The structured refusal for a request this server cannot serve.
 ///

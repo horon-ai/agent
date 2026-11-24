@@ -244,7 +244,8 @@ fn other_error_frames_keep_their_wire_code_and_details() {
 fn requests_expose_the_session_id_they_act_on() {
     assert_eq!(
         ApiRequest::AttachSession {
-            session_id: "s1".to_string()
+            session_id: "s1".to_string(),
+            a2ui: None,
         }
         .session_id(),
         Some("s1")

@@ -21,7 +21,22 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 31
+API_VERSION_MINOR = 32
+
+A2UI_VERSION_V1_0 = "1.0"
+A2UI_VERSION_V0_9 = "v0.9"
+A2UI_BASIC_CATALOG_V1_0 = "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"
+A2UI_MIME_TYPE = "application/a2ui+json"
+A2UI_URI_SCHEME = "a2ui"
+
+
+class A2uiSessionCapabilities(TypedDict):
+    """A2UI v1.0 renderer capabilities advertised for a connection or session."""
+
+    version: str
+    supported_catalog_ids: list[str]
+    accepts_inline_catalogs: bool
+
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -44,6 +59,17 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("todo_edit_v1", ("set_todo_status",)),
     ("turn_retry_v1", ("send_message.expected_run_id",)),
     ("consult_fork_v1", ("fork_session.consult", "fork_session.boundary")),
+    (
+        "a2ui_v1",
+        (
+            "hello.a2ui",
+            "create_session.a2ui",
+            "attach_session.a2ui",
+            "configure_a2ui",
+            "a2ui_event",
+            "a2ui_envelope",
+        ),
+    ),
 )
 
 """Additive capabilities this protocol version defines, with the surfaces each
@@ -56,7 +82,7 @@ back. ``structured_compaction_v1`` sets the same precedent.
 
 ADVERTISED_CAPABILITIES: tuple[str, ...] = tuple(capability for capability, _ in CAPABILITY_SURFACES)
 
-EVENT_CAPABILITIES = ("background_output_v1", "live_todo_v1")
+EVENT_CAPABILITIES = ("background_output_v1", "live_todo_v1", "a2ui_v1")
 
 RuntimeCommand: TypeAlias = Literal[
     "skills",
@@ -998,6 +1024,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "cancel_turn_result",
     "tool_call_cancel_result",
     "background_work_list",
+    "a2ui_envelope",
 )
 
 #: Every request tag the SDK can send.
@@ -1078,6 +1105,8 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "cancel_background_terminal",
     "list_background_work",
     "ping",
+    "configure_a2ui",
+    "a2ui_event",
 )
 
 

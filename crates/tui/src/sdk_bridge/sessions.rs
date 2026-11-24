@@ -32,6 +32,7 @@ pub(super) struct Dial {
     ensure_runtime: bool,
     supports_user_response: bool,
     supports_ask_requests: bool,
+    a2ui: Option<horon_agent_sdk::A2uiSessionCapabilities>,
 }
 
 impl Dial {
@@ -44,6 +45,7 @@ impl Dial {
             ensure_runtime: options.ensure_runtime,
             supports_user_response: options.supports_user_response,
             supports_ask_requests: options.supports_ask_requests,
+            a2ui: options.a2ui.clone(),
         }
     }
 
@@ -56,6 +58,7 @@ impl Dial {
             ensure_runtime: self.ensure_runtime,
             supports_user_response: self.supports_user_response,
             supports_ask_requests: self.supports_ask_requests,
+            a2ui: self.a2ui.clone(),
         }
     }
 }
@@ -242,7 +245,8 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | ToolCallCancelResult { session_id, .. }
         | BackgroundWorkList { session_id, .. }
         | MessageModes { session_id, .. }
-        | EffectiveSettings { session_id, .. } => Some(session_id.as_str()),
+        | EffectiveSettings { session_id, .. }
+        | A2uiEnvelope { session_id, .. } => Some(session_id.as_str()),
         Attached { session } | SessionForked { session } => Some(session.session_id.as_str()),
         // A report narrowed to one session names it; a full report names none,
         // so it belongs to the connection rather than to a conversation.

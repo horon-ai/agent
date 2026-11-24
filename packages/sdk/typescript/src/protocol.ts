@@ -8,7 +8,19 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 31;
+export const API_VERSION_MINOR = 32;
+
+export const A2UI_VERSION_V1_0 = "1.0" as const;
+export const A2UI_VERSION_V0_9 = "v0.9" as const;
+export const A2UI_BASIC_CATALOG_V1_0 = "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json" as const;
+export const A2UI_MIME_TYPE = "application/a2ui+json" as const;
+export const A2UI_URI_SCHEME = "a2ui" as const;
+
+export interface A2uiSessionCapabilities {
+  version: string;
+  supported_catalog_ids: string[];
+  accepts_inline_catalogs: boolean;
+}
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -23,10 +35,7 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["monitor_v1", []],
   ["snapshot_marker_v1", ["get_snapshot", "snapshot_marker"]],
   ["ask_receipts_v1", ["ask_response.answer_id"]],
-  [
-    "cancellable_work_v1",
-    ["cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"],
-  ],
+  ["cancellable_work_v1", ["cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"]],
   ["background_output_v1", ["background_output"]],
   ["live_todo_v1", ["todo_changed"]],
   ["effective_settings_v1", ["get_effective_settings"]],
@@ -36,12 +45,16 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["todo_edit_v1", ["set_todo_status"]],
   ["turn_retry_v1", ["send_message.expected_run_id"]],
   ["consult_fork_v1", ["fork_session.consult", "fork_session.boundary"]],
+  [
+    "a2ui_v1",
+    ["hello.a2ui", "create_session.a2ui", "attach_session.a2ui", "configure_a2ui", "a2ui_event", "a2ui_envelope"],
+  ],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
 export const ADVERTISED_CAPABILITIES: readonly string[] = CAPABILITY_SURFACES.map(([capability]) => capability);
 
-export const EVENT_CAPABILITIES = ["background_output_v1", "live_todo_v1"] as const;
+export const EVENT_CAPABILITIES = ["background_output_v1", "live_todo_v1", "a2ui_v1"] as const;
 
 export type RuntimeCommand =
   | "skills"
@@ -148,12 +161,7 @@ export interface AskSelection {
 }
 
 export type ErrorCode =
-  | "unsupported_version"
-  | "unknown_request"
-  | "unknown_session"
-  | "invalid_request"
-  | "internal"
-  | "unsupported";
+  "unsupported_version" | "unknown_request" | "unknown_session" | "invalid_request" | "internal" | "unsupported";
 
 /** Cumulative built-in file-tool changes, not net worktree diff. */
 export interface SessionEditStats {
@@ -666,13 +674,7 @@ export interface RuntimeStopSummary {
 }
 
 /** What is known about one control operation. */
-export type RuntimeControlOutcome =
-  | "applying"
-  | "terminal"
-  | "replay"
-  | "conflict"
-  | "unknown"
-  | "indeterminate";
+export type RuntimeControlOutcome = "applying" | "terminal" | "replay" | "conflict" | "unknown" | "indeterminate";
 
 export interface RuntimeControlReceipt {
   operation_id: string;
@@ -737,14 +739,15 @@ export type ApiRequest =
       supports_user_response?: boolean;
       supports_ask_requests?: boolean;
       event_capabilities?: readonly string[];
+      a2ui?: A2uiSessionCapabilities;
     }
   | { req: "list_sessions"; include_archived?: boolean; limit?: number }
   | { req: "archive_session"; session_id: string }
   | { req: "restore_session"; session_id: string }
   | { req: "delete_session"; session_id: string; confirm?: boolean }
   | { req: "set_retention_policy"; archive_after_days?: number }
-  | { req: "create_session"; working_dir?: string; system_prompt?: string }
-  | { req: "attach_session"; session_id: string }
+  | { req: "create_session"; working_dir?: string; system_prompt?: string; a2ui?: A2uiSessionCapabilities }
+  | { req: "attach_session"; session_id: string; a2ui?: A2uiSessionCapabilities }
   | {
       req: "fork_session";
       session_id: string;
@@ -949,7 +952,9 @@ export type ApiRequest =
    * to the daemon. Reusing `operation_id` reports the recorded result instead of
    * applying the operation twice.
    */
-  | { req: "package_control"; operation_id: string; operation: PackageControlOperation };
+  | { req: "package_control"; operation_id: string; operation: PackageControlOperation }
+  | { req: "configure_a2ui"; session_id: string; capabilities?: A2uiSessionCapabilities | null }
+  | { req: "a2ui_event"; session_id: string; envelope: unknown; data_model?: unknown };
 
 /** What a `compactHandoff` request did. */
 export type CompactHandoffOutcome =
@@ -980,6 +985,14 @@ export type ApiEvent =
   | { ev: "message_modes"; session_id: string; modes: MessageModes }
   | { ev: "effective_settings"; session_id: string; settings: EffectiveSetting[] }
   | { ev: "package_control"; receipt: PackageControlReceipt }
+  | {
+      ev: "a2ui_envelope";
+      session_id: string;
+      tool_call_id: string;
+      sequence: number;
+      envelope: unknown;
+      fallback_text?: string;
+    }
   | { ev: "tool_call"; session_id: string; call_id: string; name: string; input: unknown }
   | {
       ev: "tool_done";
@@ -1229,7 +1242,14 @@ export type ApiEvent =
       total_size: number;
       complete: boolean;
     }
-  | { ev: "session_blob_status"; session_id: string; sha256: string; received: number; total_size: number; complete: boolean }
+  | {
+      ev: "session_blob_status";
+      session_id: string;
+      sha256: string;
+      received: number;
+      total_size: number;
+      complete: boolean;
+    }
   | {
       ev: "session_record_blob_status";
       session_id: string;
@@ -1371,6 +1391,7 @@ export const KNOWN_EVENT_KINDS = [
   "cancel_turn_result",
   "tool_call_cancel_result",
   "background_work_list",
+  "a2ui_envelope",
 ] as const;
 
 /** Every request tag the SDK can send. */
@@ -1451,6 +1472,8 @@ export const KNOWN_REQUEST_KINDS = [
   "package_control",
   "export_session_markdown",
   "export_session_html",
+  "configure_a2ui",
+  "a2ui_event",
 ] as const;
 
 export function isKnownEvent(frame: AnyApiEvent): frame is ApiEvent {

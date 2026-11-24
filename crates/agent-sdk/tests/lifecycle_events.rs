@@ -204,7 +204,7 @@ fn serve_connection(
                     .collect();
                 reply(frame.id, ApiEvent::Sessions { sessions: listed }, &mut writer);
             }
-            ApiRequest::AttachSession { session_id } => {
+            ApiRequest::AttachSession { session_id, .. } => {
                 reply(
                     frame.id,
                     ApiEvent::Attached {
