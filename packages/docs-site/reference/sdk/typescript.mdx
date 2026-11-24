@@ -500,7 +500,7 @@ const turn = await client.run(session.session_id, "Build a deployment confirmati
 console.log(turn.a2uiEnvelopes);
 await client.sendA2uiEvent(session.session_id, {
   version: "1.0",
-  action: { name: "confirm", surfaceId: "main" },
+  action: { name: "confirm", surfaceId: "main", sourceComponentId: "confirm_btn" },
 });
 ```
 

@@ -723,7 +723,7 @@ mod tests {
             role: horon_agent_message_types::Role::Assistant,
             content: vec![horon_agent_message_types::ContentBlock::A2ui {
                 envelopes: vec![serde_json::json!({
-                    "version": "v0.9",
+                    "version": horon_agent_tool_types::a2ui::A2UI_VERSION_V1_0,
                     "createSurface": {
                         "surfaceId": "main",
                         "catalogId": horon_agent_tool_types::a2ui::A2UI_BASIC_CATALOG_V1_0

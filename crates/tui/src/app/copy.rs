@@ -107,7 +107,7 @@ impl App {
     /// The last block is the one the model just wrote, which is what a reader
     /// reaching for this key wants; the list copies any other block.
     pub(crate) fn copy_newest_code(&mut self) {
-        let Some(answer) = self.answer_at(0).map(str::to_string) else {
+        let Some(answer) = self.answer_at(0).map(std::borrow::Cow::into_owned) else {
             self.warn("copy: there is no answer to copy from yet");
             return;
         };
@@ -181,7 +181,7 @@ impl App {
 
     /// Copy one answer back, or one of its code blocks.
     fn copy_answer(&mut self, back: usize, block: Option<usize>) {
-        let Some(answer) = self.answer_at(back).map(str::to_string) else {
+        let Some(answer) = self.answer_at(back).map(std::borrow::Cow::into_owned) else {
             self.warn("copy: there is no answer to copy yet");
             return;
         };
@@ -196,23 +196,28 @@ impl App {
     }
 
     /// The `back`-th newest answer, counting a streamed one as the newest.
-    fn answer_at(&self, back: usize) -> Option<&str> {
+    fn answer_at(&self, back: usize) -> Option<std::borrow::Cow<'_, str>> {
         answer_in_transcript(&self.transcript, back)
     }
 }
 
-fn answer_in_transcript(transcript: &Transcript, back: usize) -> Option<&str> {
+fn answer_in_transcript(transcript: &Transcript, back: usize) -> Option<std::borrow::Cow<'_, str>> {
     let mut seen = 0;
     if let Some(text) = transcript.open_text() {
         if back == 0 {
-            return Some(text);
+            return Some(std::borrow::Cow::Borrowed(text));
         }
         seen = 1;
     }
     for item in transcript.items().iter().rev() {
-        if let Item::Assistant(text) = item {
+        let answer = match item {
+            Item::Assistant(text) => Some(std::borrow::Cow::Borrowed(text.as_str())),
+            Item::A2ui(card) if !card.lines.is_empty() => Some(std::borrow::Cow::Owned(card.lines.join("\n"))),
+            _ => None,
+        };
+        if let Some(answer) = answer {
             if seen == back {
-                return Some(text.as_str());
+                return Some(answer);
             }
             seen += 1;
         }
@@ -230,7 +235,7 @@ fn build_copy_rows(transcript: &Transcript) -> Vec<Row> {
             break;
         };
         let name = answer_name(back);
-        for (index, block) in code_blocks(answer).into_iter().enumerate() {
+        for (index, block) in code_blocks(&answer).into_iter().enumerate() {
             if rows.len() >= MAX_ROWS {
                 break;
             }
@@ -249,7 +254,7 @@ fn build_copy_rows(transcript: &Transcript) -> Vec<Row> {
             );
         }
         if rows.len() < MAX_ROWS {
-            rows.push(row(name.as_ref(), &format!("answer:{back}"), answer));
+            rows.push(row(name.as_ref(), &format!("answer:{back}"), &answer));
         }
     }
     rows
