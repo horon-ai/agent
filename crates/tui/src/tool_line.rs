@@ -201,15 +201,20 @@ pub fn cut_output(output: &str, lines: usize) -> Option<OutputHead> {
     if keep == 0 {
         return None;
     }
-    let total_rows = output.lines().count();
+    let mut rows = Vec::new();
+    let mut total_rows = 0usize;
+    for row in output.lines() {
+        total_rows += 1;
+        if rows.len() < keep {
+            if rows.is_empty() {
+                rows.reserve(keep);
+            }
+            rows.push(truncate_cells(row, MAX_PREVIEW_CELLS));
+        }
+    }
     if total_rows == 0 {
         return None;
     }
-    let rows = output
-        .lines()
-        .take(keep)
-        .map(|row| truncate_cells(row, MAX_PREVIEW_CELLS))
-        .collect();
     Some(OutputHead { rows, total_rows })
 }
 
@@ -220,6 +225,16 @@ pub fn cut_output(output: &str, lines: usize) -> Option<OutputHead> {
 /// display width.
 pub fn truncate_cells(text: &str, width: usize) -> String {
     let width = width.max(1);
+    if text.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+        if text.len() <= width {
+            return text.to_string();
+        }
+        let budget = width - 1;
+        let mut out = String::with_capacity(budget + '…'.len_utf8());
+        out.push_str(&text[..budget]);
+        out.push('…');
+        return out;
+    }
     if text.width() <= width {
         return text.to_string();
     }
@@ -261,12 +276,44 @@ fn display_error(message: &str) -> &str {
 
 /// How long a call took, in the shortest form that stays readable.
 pub fn format_elapsed(millis: u64) -> String {
+    let mut out = String::with_capacity(12);
+    push_elapsed(&mut out, millis);
+    out
+}
+
+/// Append `value` in base 10 directly into `out`.
+pub(crate) fn push_u64(out: &mut String, mut value: u64) {
+    let mut digits = [0u8; 20];
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    for &byte in &digits[start..] {
+        out.push(byte as char);
+    }
+}
+
+/// Append [`format_elapsed`]'s representation directly into `out`.
+pub(crate) fn push_elapsed(out: &mut String, millis: u64) {
     if millis < 60_000 {
-        return format!("{:.1}s", millis as f64 / 1000.0);
+        use std::fmt::Write as _;
+        if write!(out, "{:.1}s", millis as f64 / 1000.0).is_err() {
+            // `fmt::Write` for `String` is infallible.
+        }
+        return;
     }
     let minutes = millis / 60_000;
     let seconds = (millis % 60_000) / 1000;
-    format!("{minutes}m {seconds:02}s")
+    push_u64(out, minutes);
+    out.push_str("m ");
+    out.push((b'0' + (seconds / 10) as u8) as char);
+    out.push((b'0' + (seconds % 10) as u8) as char);
+    out.push('s');
 }
 
 /// The rows one tool call occupies.

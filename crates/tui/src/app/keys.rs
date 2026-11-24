@@ -466,15 +466,20 @@ impl App {
         }
         // Without a measurement from a held frame there is no row to map, and
         // the selection is left where it was rather than guessed.
-        let heights = self.scroll.heights().map(|heights| heights.to_vec());
-        let (Some(heights), Some(view)) = (heights, self.viewport_height) else {
+        let Self {
+            scroll,
+            transcript,
+            viewport_height,
+            ..
+        } = self;
+        let (Some(heights), Some(view)) = (scroll.heights(), *viewport_height) else {
             return;
         };
         let view = usize::from(view.saturating_sub(1).max(1));
-        let open = self.scroll.open_heights();
+        let open = scroll.open_heights();
         let total = heights.iter().sum::<usize>() + open[0] + open[1];
-        let top = total.saturating_sub(self.scroll.offset()).saturating_sub(view);
-        self.transcript.select_tool_at(&heights, top, view);
+        let top = total.saturating_sub(scroll.offset()).saturating_sub(view);
+        transcript.select_tool_at(heights, top, view);
     }
 
     /// Draw or hide the record of finished tool calls for this session.

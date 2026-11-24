@@ -49,7 +49,7 @@ fn live_a2ui_envelopes_coalesce_in_sequence_order_and_ignore_other_sessions() {
         tool_call_id: "call-1".into(),
         sequence: 1,
         envelope: json!({
-            "version": "v0.9",
+            "version": "1.0",
             "updateComponents": {
                 "surfaceId": "deploy",
                 "components": [
@@ -67,7 +67,7 @@ fn live_a2ui_envelopes_coalesce_in_sequence_order_and_ignore_other_sessions() {
         tool_call_id: "call-1".into(),
         sequence: 0,
         envelope: json!({
-            "version": "v0.9",
+            "version": "1.0",
             "createSurface": { "surfaceId": "deploy", "catalogId": A2UI_BASIC_CATALOG_V1_0 }
         }),
         fallback_text: None,
@@ -79,7 +79,7 @@ fn live_a2ui_envelopes_coalesce_in_sequence_order_and_ignore_other_sessions() {
         tool_call_id: "call-1".into(),
         sequence: 0,
         envelope: json!({
-            "version": "v0.9",
+            "version": "1.0",
             "createSurface": { "surfaceId": "deploy", "catalogId": A2UI_BASIC_CATALOG_V1_0 }
         }),
         fallback_text: None,
@@ -91,7 +91,7 @@ fn live_a2ui_envelopes_coalesce_in_sequence_order_and_ignore_other_sessions() {
         tool_call_id: "call-2".into(),
         sequence: 0,
         envelope: json!({
-            "version": "v0.9",
+            "version": "1.0",
             "createSurface": { "surfaceId": "foreign", "catalogId": A2UI_BASIC_CATALOG_V1_0 }
         }),
         fallback_text: Some("Foreign".into()),
@@ -211,4 +211,106 @@ fn oversized_a2ui_card_caps_visible_lines() {
     assert!(rendered.len() <= 37);
     let last = line_text(rendered.last().expect("summary line").line());
     assert!(last.contains("more lines"), "expected truncation marker, got {last}");
+}
+
+#[test]
+fn replay_accepts_one_char_closed_headers_rejects_blank_ids_and_keeps_code_fences_in_cards() {
+    let mut app = app();
+    app.attach_session(
+        AttachedSession {
+            description: "socket · s3".to_string(),
+            session_id: "s3".to_string(),
+            status: "idle".to_string(),
+            model: None,
+            effort: None,
+            title: None,
+            history: vec![HistoryMessage {
+                role: "assistant".to_string(),
+                content: "[A2UI surface:   ]\nNot a card\n[A2UI surface: review]\nRun check:\n```sh\nhoron run --a2ui\n[A2UI surface: inside_fence]\n```\n[Button Ship -> ship]\n[A2UI closed: x]".to_string(),
+                response_stats: None,
+                answer: None,
+                message_id: Some("msg-1".to_string()),
+            }],
+        },
+        false,
+    );
+
+    let items = app.transcript.items();
+    let assistants: Vec<&str> = items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Assistant(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(assistants, vec!["[A2UI surface:   ]\nNot a card"]);
+
+    let cards: Vec<&[String]> = items
+        .iter()
+        .filter_map(|item| match item {
+            Item::A2ui(card) => Some(card.lines.as_slice()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(cards.len(), 2);
+    assert!(cards[0].contains(&"[Button Ship -> ship]".to_string()));
+    assert!(!cards.iter().any(|lines| lines[0] == "[A2UI surface: inside_fence]"));
+    assert_eq!(cards[1], &["[A2UI closed: x]"]);
+}
+
+#[test]
+fn inplace_a2ui_update_recounts_scroll_heights_and_registers_as_copyable_answer() {
+    let mut app = app();
+    app.session_id = Some("s1".to_string());
+
+    app.apply_event(&ApiEvent::A2uiEnvelope {
+        session_id: "s1".into(),
+        tool_call_id: "call-1".into(),
+        sequence: 0,
+        envelope: json!({
+            "version": "1.0",
+            "createSurface": { "surfaceId": "main", "catalogId": A2UI_BASIC_CATALOG_V1_0 }
+        }),
+        fallback_text: Some("Short".into()),
+    });
+
+    app.scroll.up(1);
+    let look = look_with(80, SymbolPreset::Unicode.symbols());
+    let before = app.scroll.measure(80, app.transcript.items().len(), [0, 0], 10, |idx| {
+        wrap::wrap_rows(item_lines::lines(&app.transcript.items()[idx], &look, None), 80).len()
+    });
+
+    app.apply_event(&ApiEvent::A2uiEnvelope {
+        session_id: "s1".into(),
+        tool_call_id: "call-1".into(),
+        sequence: 1,
+        envelope: json!({
+            "version": "1.0",
+            "updateComponents": {
+                "surfaceId": "main",
+                "components": [
+                    { "id": "root", "component": "Column", "children": ["t1", "f1", "b1"] },
+                    { "id": "t1", "component": "Text", "text": "Deploy release" },
+                    { "id": "f1", "component": "TextField", "label": "Target" },
+                    { "id": "b1", "component": "Button", "child": "Confirm", "action": { "event": { "name": "confirm" } } }
+                ]
+            }
+        }),
+        fallback_text: None,
+    });
+
+    let after = app.scroll.measure(80, app.transcript.items().len(), [0, 0], 10, |idx| {
+        wrap::wrap_rows(item_lines::lines(&app.transcript.items()[idx], &look, None), 80).len()
+    });
+    assert!(
+        after > before,
+        "expected scroll recount after in-place card growth ({before} -> {after})"
+    );
+
+    app.copy_newest_code();
+    let last_warning = app.transcript.items().iter().rev().find_map(|item| match item {
+        Item::Warning(text) => Some(text.as_str()),
+        _ => None,
+    });
+    assert_eq!(last_warning, Some("copy: the last answer has no code block"));
 }

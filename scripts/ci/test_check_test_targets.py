@@ -301,6 +301,36 @@ class IntegrationTargetGateTests(unittest.TestCase):
         self.assertEqual([entry["target"] for entry in document["entries"]], ["orphan"])
         self.assertTrue(document["entries"][0]["reason"].startswith("TODO"))
 
+    def test_same_target_name_in_different_package_does_not_excuse_unrun_target(self) -> None:
+        workflow = self.write_workflow(
+            "run: |\n"
+            "  packages=(-p horon-agent-sdk -p horon-agent-app-core)\n"
+            '  cargo test --locked "${packages[@]}" --lib --bins --no-run\n'
+            "  cargo test --locked -p horon-agent-sdk --test tool_verdict -- --nocapture\n"
+            "  python3 scripts/ci/run_integration_targets.py --artifacts x.jsonl\n"
+        )
+        manifest = self.write_manifest([])
+        allowlist = self.write_allowlist([])
+        targets = [
+            self.target("horon-agent-sdk", "tool_verdict"),
+            {"package": "horon-agent-app-core", "target": "tool_verdict", "path": "crates/app-core/tests/tool_verdict.rs"},
+        ]
+        code, out, _ = self.run_gate(workflow, manifest, allowlist, targets)
+        self.assertEqual(code, 1)
+        self.assertIn("horon-agent-app-core: integration target tool_verdict", out)
+
+    def test_no_run_compile_line_does_not_count_as_executed(self) -> None:
+        workflow = self.write_workflow(
+            "run: |\n"
+            "  cargo test --locked -p horon-agent --lib --bins --test orphan --no-run\n"
+            "  python3 scripts/ci/run_integration_targets.py --artifacts x.jsonl\n"
+        )
+        manifest = self.write_manifest([])
+        allowlist = self.write_allowlist([])
+        code, out, _ = self.run_gate(workflow, manifest, allowlist, [self.target("horon-agent", "orphan")])
+        self.assertEqual(code, 1)
+        self.assertIn("horon-agent: integration target orphan", out)
+
 
 if __name__ == "__main__":
     unittest.main()

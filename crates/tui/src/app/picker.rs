@@ -39,31 +39,36 @@ impl App {
     /// The answer is also the catalog the cycle keys check `models.shortlist`
     /// against, so checking an entry costs no second request.
     pub fn show_models(&mut self, models: Vec<String>, current: Option<String>) {
-        let mut rows: Vec<Row> = {
-            let provider = self.provider.as_deref();
-            let shortlist = &self.model_shortlist;
-            models
-                .iter()
-                .map(|model| {
-                    let marked = current.as_deref() == Some(model.as_str());
-                    let preview = model_preview(model.as_str(), provider, marked, shortlist);
-                    Row::new(model.as_str(), model.as_str())
-                        .marked(marked)
-                        .with_preview(preview)
-                })
-                .collect()
-        };
-        if let Some(current) = &current
-            && !rows.iter().any(|row| row.current)
-        {
-            let preview = model_preview(current, self.provider.as_deref(), true, &self.model_shortlist);
-            rows.insert(
-                0,
-                Row::new(current.clone(), current.clone())
-                    .marked(true)
-                    .with_preview(preview),
-            );
-        }
+        let rows: Option<Vec<Row>> = self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| picker.kind() == Kind::Models)
+            .then(|| {
+                let provider = self.provider.as_deref();
+                let shortlist = &self.model_shortlist;
+                let mut rows: Vec<Row> = models
+                    .iter()
+                    .map(|model| {
+                        let marked = current.as_deref() == Some(model.as_str());
+                        let preview = model_preview(model.as_str(), provider, marked, shortlist);
+                        Row::new(model.as_str(), model.as_str())
+                            .marked(marked)
+                            .with_preview(preview)
+                    })
+                    .collect();
+                if let Some(current) = &current
+                    && !rows.iter().any(|row| row.current)
+                {
+                    let preview = model_preview(current, provider, true, shortlist);
+                    rows.insert(
+                        0,
+                        Row::new(current.clone(), current.clone())
+                            .marked(true)
+                            .with_preview(preview),
+                    );
+                }
+                rows
+            });
         // The answer is also the catalog the cycle keys check
         // `models.shortlist` against, so checking an entry costs no second
         // request. An empty list is the harness saying it has nothing to
@@ -74,7 +79,9 @@ impl App {
         if !self.model_catalog_loaded && self.model_cycle_pending.take().is_some() {
             self.warn("the harness returned no models to cycle");
         }
-        self.fill(Kind::Models, rows);
+        if let Some(rows) = rows {
+            self.fill(Kind::Models, rows);
+        }
     }
 
     /// `app.cycle_model` and `app.cycle_model_back`: step through
@@ -116,30 +123,69 @@ impl App {
 
     /// The walk itself, once the catalog says which entries the harness has.
     fn walk_model(&mut self, forward: bool) -> Option<Action> {
-        // One list of the entries the harness lists and one of those it does
-        // not, owned rather than borrowed: the notices below change this
-        // state, and the walk has to read it as it was when the key arrived.
-        let mut supported: Vec<String> = Vec::with_capacity(self.model_shortlist.len());
-        let mut skipped: Vec<String> = Vec::new();
-        for model in &self.model_shortlist {
+        // A waiting change is the newest intent, then one already sent, then
+        // the model the harness last reported.
+        let current = self
+            .model_after_turn
+            .as_deref()
+            .or(self.model_requested.as_deref())
+            .or(self.model.as_deref());
+        let mut first_supported: Option<usize> = None;
+        let mut last_supported: Option<usize> = None;
+        let mut after_current: Option<usize> = None;
+        let mut before_current: Option<usize> = None;
+        let mut saw_current = false;
+        let mut skipped_count = 0usize;
+        let mut skipped_changed = false;
+
+        for (index, model) in self.model_shortlist.iter().enumerate() {
             if self.model_catalog.iter().any(|listed| listed == model.as_str()) {
-                supported.push(model.clone());
+                if first_supported.is_none() {
+                    first_supported = Some(index);
+                }
+                if saw_current && after_current.is_none() {
+                    after_current = Some(index);
+                }
+                if current == Some(model.as_str()) {
+                    saw_current = true;
+                }
+                if !saw_current {
+                    before_current = Some(index);
+                }
+                last_supported = Some(index);
             } else {
-                skipped.push(model.clone());
+                if self.model_shortlist_skipped.get(skipped_count).map(String::as_str) != Some(model.as_str()) {
+                    skipped_changed = true;
+                }
+                skipped_count += 1;
             }
         }
-        if supported.is_empty() {
+        skipped_changed |= skipped_count != self.model_shortlist_skipped.len();
+
+        let next_index = if forward {
+            after_current.or(first_supported)
+        } else {
+            (if saw_current { before_current } else { None }).or(last_supported)
+        };
+        let Some(next_index) = next_index else {
+            let skipped: Vec<&str> = self.model_shortlist.iter().map(String::as_str).collect();
             self.warn(format!(
                 "none of the models in models.shortlist is in the harness catalog: {}; open the \
                  model list to see the models it offers",
                 join_names(&skipped)
             ));
             return None;
-        }
+        };
         // A press that skips the same entries as the last one stays quiet: the
         // notice is about the file, and repeating it on every step would bury
         // the model the press is changing to.
-        if skipped != self.model_shortlist_skipped {
+        if skipped_changed {
+            let mut skipped: Vec<String> = Vec::with_capacity(skipped_count);
+            for model in &self.model_shortlist {
+                if !self.model_catalog.iter().any(|listed| listed == model.as_str()) {
+                    skipped.push(model.clone());
+                }
+            }
             if !skipped.is_empty() {
                 self.transcript.push_notice(format!(
                     "models.shortlist: the harness does not list {}; skipped",
@@ -148,23 +194,8 @@ impl App {
             }
             self.model_shortlist_skipped = skipped;
         }
-        // A waiting change is the newest intent, then one already sent, then
-        // the model the harness last reported.
-        let current = self
-            .model_after_turn
-            .as_deref()
-            .or(self.model_requested.as_deref())
-            .or(self.model.as_deref());
-        let start = current.and_then(|model| supported.iter().position(|entry| entry == model));
-        let next = match (start, forward) {
-            (Some(index), true) => &supported[(index + 1) % supported.len()],
-            (Some(index), false) => &supported[(index + supported.len() - 1) % supported.len()],
-            // A model the shortlist does not hold is exactly when there is no
-            // list position to step from: the walk starts at the near end.
-            (None, true) => &supported[0],
-            (None, false) => &supported[supported.len() - 1],
-        };
-        self.ask_model(next)
+        let next = self.model_shortlist[next_index].clone();
+        self.ask_model(&next)
     }
 
     /// The walk a cycle press asked for while the catalog was being read.
@@ -983,11 +1014,23 @@ fn model_preview(model: &str, provider: Option<&str>, current: bool, shortlist: 
 }
 
 /// The models of a list as one readable phrase: `a`, `a and b`, `a, b and c`.
-fn join_names(names: &[String]) -> String {
+fn join_names<S: AsRef<str>>(names: &[S]) -> String {
     match names {
         [] => String::new(),
-        [only] => only.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [only] => only.as_ref().to_string(),
+        [rest @ .., last] => {
+            let total = names.iter().map(|s| s.as_ref().len()).sum::<usize>() + (names.len() - 1) * 2 + 3;
+            let mut out = String::with_capacity(total);
+            for (index, name) in rest.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(name.as_ref());
+            }
+            out.push_str(" and ");
+            out.push_str(last.as_ref());
+            out
+        }
     }
 }
 

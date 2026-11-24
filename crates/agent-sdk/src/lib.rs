@@ -165,7 +165,7 @@
 //! println!("received {} A2UI envelopes", turn.a2ui_envelopes.len());
 //! client.send_a2ui_event(
 //!     &session.session_id,
-//!     json!({ "version": "1.0", "action": { "name": "confirm", "surfaceId": "main" } }),
+//!     json!({ "version": "1.0", "action": { "name": "confirm", "surfaceId": "main", "sourceComponentId": "confirm_btn" } }),
 //!     None,
 //! )?;
 //! # Ok(())

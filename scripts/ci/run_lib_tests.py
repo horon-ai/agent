@@ -281,6 +281,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.artifacts.is_file():
         return _usage_error(f"artifacts file not found: {args.artifacts}")
 
+    scoped_raw = os.environ.get("HORON_CI_SCOPED_PACKAGES", "").strip()
+    if scoped_raw:
+        scoped_packages = {item.strip() for item in scoped_raw.split(",") if item.strip()}
+        if args.package not in scoped_packages:
+            print(f"==> Skipping {args.package} (outside HORON_CI_SCOPED_PACKAGES)")
+            return 0
+
     artifacts = list(_load_artifacts(args.artifacts))
     try:
         executable = select_executable(

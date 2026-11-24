@@ -395,10 +395,27 @@ pub(crate) fn lease_owner(label: &str, token: u64) -> String {
             },
         );
     }
-    if std::fmt::write(&mut name, format_args!("-{pid}-{token}")).is_err() {
-        name.push('-');
-    }
+    name.push('-');
+    push_decimal(&mut name, u64::from(pid));
+    name.push('-');
+    push_decimal(&mut name, token);
     name
+}
+
+fn push_decimal(out: &mut String, mut value: u64) {
+    let mut buf = [0u8; 20];
+    let mut pos = buf.len();
+    loop {
+        pos -= 1;
+        buf[pos] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    for &byte in &buf[pos..] {
+        out.push(byte as char);
+    }
 }
 
 fn decimal_digits(mut value: u64) -> usize {

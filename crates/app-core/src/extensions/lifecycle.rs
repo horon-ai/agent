@@ -198,16 +198,16 @@ impl PackageLifecycleRegistry {
         report
     }
 
-    /// Revoke every package that moved out of `Installed` between two published
-    /// generation maps.
+    /// Revoke every package that moved out of `Installed` between the last
+    /// published generation and the one being published now.
     ///
-    /// This is the daemon's whole call into the registry: `previous` and `next`
-    /// are the record states of the generation it last published and the one it
-    /// is publishing now.
-    pub fn apply_states(
+    /// This is the daemon's whole call into the registry: `previous_state`
+    /// resolves the last published state for a package ID and `next` yields the
+    /// current `(package_id, state)` pairs.
+    pub fn apply_states<'a>(
         &self,
-        previous: &BTreeMap<String, PackageState>,
-        next: &BTreeMap<String, PackageState>,
+        mut previous_state: impl FnMut(&str) -> Option<PackageState>,
+        next: impl IntoIterator<Item = (&'a str, PackageState)>,
         generation: u64,
     ) -> RevocationReport {
         let mut report = RevocationReport::default();
@@ -217,7 +217,7 @@ impl PackageLifecycleRegistry {
                 PackageState::Disabled => RevocationCause::Disabled,
                 PackageState::Revoked => RevocationCause::Removed,
             };
-            if previous.get(package_id) == Some(state) {
+            if previous_state(package_id) == Some(state) {
                 continue;
             }
             let fired = self.revoke(package_id, generation, cause);

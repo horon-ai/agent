@@ -1,5 +1,8 @@
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::borrow::Cow;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
@@ -47,9 +50,7 @@ pub(super) fn code_fits_frame(code: &str) -> bool {
     true
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum Frame {
+pub(super) enum Frame {
     Started {
         id: u64,
     },
@@ -75,6 +76,280 @@ enum Frame {
         name: String,
         args: serde_json::Value,
     },
+}
+
+#[derive(Clone, Copy)]
+enum FrameKind {
+    Started,
+    Stdout,
+    Stderr,
+    Error,
+    Done,
+    ToolCall,
+}
+
+impl<'de> Deserialize<'de> for FrameKind {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct KindVisitor;
+        impl Visitor<'_> for KindVisitor {
+            type Value = FrameKind;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("eval frame type")
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match value {
+                    "started" => Ok(FrameKind::Started),
+                    "stdout" => Ok(FrameKind::Stdout),
+                    "stderr" => Ok(FrameKind::Stderr),
+                    "error" => Ok(FrameKind::Error),
+                    "done" => Ok(FrameKind::Done),
+                    "tool_call" => Ok(FrameKind::ToolCall),
+                    other => Err(de::Error::unknown_variant(
+                        other,
+                        &["started", "stdout", "stderr", "error", "done", "tool_call"],
+                    )),
+                }
+            }
+        }
+        deserializer.deserialize_str(KindVisitor)
+    }
+}
+
+enum FrameField {
+    Type,
+    Id,
+    Text,
+    Ok,
+    Seq,
+    Name,
+    Args,
+}
+
+const FRAME_FIELDS: &[&str] = &["type", "id", "text", "ok", "seq", "name", "args"];
+
+impl<'de> Deserialize<'de> for FrameField {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FieldVisitor;
+        impl Visitor<'_> for FieldVisitor {
+            type Value = FrameField;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("frame field name")
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match value {
+                    "type" => Ok(FrameField::Type),
+                    "id" => Ok(FrameField::Id),
+                    "text" => Ok(FrameField::Text),
+                    "ok" => Ok(FrameField::Ok),
+                    "seq" => Ok(FrameField::Seq),
+                    "name" => Ok(FrameField::Name),
+                    "args" => Ok(FrameField::Args),
+                    other => Err(de::Error::unknown_field(other, FRAME_FIELDS)),
+                }
+            }
+        }
+        deserializer.deserialize_identifier(FieldVisitor)
+    }
+}
+
+impl<'de> Deserialize<'de> for Frame {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FrameVisitor;
+        impl<'de> Visitor<'de> for FrameVisitor {
+            type Value = Frame;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an eval control frame object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut kind: Option<FrameKind> = None;
+                let mut id: Option<Option<u64>> = None;
+                let mut text: Option<String> = None;
+                let mut ok: Option<bool> = None;
+                let mut seq: Option<u32> = None;
+                let mut name: Option<String> = None;
+                let mut args: Option<serde_json::Value> = None;
+
+                while let Some(field) = map.next_key::<FrameField>()? {
+                    match field {
+                        FrameField::Type => {
+                            if kind.is_some() {
+                                return Err(de::Error::duplicate_field("type"));
+                            }
+                            kind = Some(map.next_value()?);
+                        }
+                        FrameField::Id => {
+                            if id.is_some() {
+                                return Err(de::Error::duplicate_field("id"));
+                            }
+                            id = Some(map.next_value()?);
+                        }
+                        FrameField::Text => {
+                            if text.is_some() {
+                                return Err(de::Error::duplicate_field("text"));
+                            }
+                            text = Some(map.next_value()?);
+                        }
+                        FrameField::Ok => {
+                            if ok.is_some() {
+                                return Err(de::Error::duplicate_field("ok"));
+                            }
+                            ok = Some(map.next_value()?);
+                        }
+                        FrameField::Seq => {
+                            if seq.is_some() {
+                                return Err(de::Error::duplicate_field("seq"));
+                            }
+                            seq = Some(map.next_value()?);
+                        }
+                        FrameField::Name => {
+                            if name.is_some() {
+                                return Err(de::Error::duplicate_field("name"));
+                            }
+                            name = Some(map.next_value()?);
+                        }
+                        FrameField::Args => {
+                            if args.is_some() {
+                                return Err(de::Error::duplicate_field("args"));
+                            }
+                            args = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let kind = kind.ok_or_else(|| de::Error::missing_field("type"))?;
+                let require_id = |id: Option<Option<u64>>| -> std::result::Result<u64, A::Error> {
+                    match id {
+                        Some(Some(value)) => Ok(value),
+                        Some(None) => Err(de::Error::invalid_type(de::Unexpected::Unit, &"u64")),
+                        None => Err(de::Error::missing_field("id")),
+                    }
+                };
+                let forbid = |field: &'static str, expected: &'static [&'static str]| -> A::Error {
+                    de::Error::unknown_field(field, expected)
+                };
+
+                match kind {
+                    FrameKind::Started => {
+                        const EXPECTED: &[&str] = &["type", "id"];
+                        if text.is_some() {
+                            return Err(forbid("text", EXPECTED));
+                        }
+                        if ok.is_some() {
+                            return Err(forbid("ok", EXPECTED));
+                        }
+                        if seq.is_some() {
+                            return Err(forbid("seq", EXPECTED));
+                        }
+                        if name.is_some() {
+                            return Err(forbid("name", EXPECTED));
+                        }
+                        if args.is_some() {
+                            return Err(forbid("args", EXPECTED));
+                        }
+                        Ok(Frame::Started { id: require_id(id)? })
+                    }
+                    FrameKind::Stdout | FrameKind::Stderr => {
+                        const EXPECTED: &[&str] = &["type", "id", "text"];
+                        if ok.is_some() {
+                            return Err(forbid("ok", EXPECTED));
+                        }
+                        if seq.is_some() {
+                            return Err(forbid("seq", EXPECTED));
+                        }
+                        if name.is_some() {
+                            return Err(forbid("name", EXPECTED));
+                        }
+                        if args.is_some() {
+                            return Err(forbid("args", EXPECTED));
+                        }
+                        let id = require_id(id)?;
+                        let text = text.ok_or_else(|| de::Error::missing_field("text"))?;
+                        Ok(if matches!(kind, FrameKind::Stdout) {
+                            Frame::Stdout { id, text }
+                        } else {
+                            Frame::Stderr { id, text }
+                        })
+                    }
+                    FrameKind::Error => {
+                        const EXPECTED: &[&str] = &["type", "id", "text"];
+                        if ok.is_some() {
+                            return Err(forbid("ok", EXPECTED));
+                        }
+                        if seq.is_some() {
+                            return Err(forbid("seq", EXPECTED));
+                        }
+                        if name.is_some() {
+                            return Err(forbid("name", EXPECTED));
+                        }
+                        if args.is_some() {
+                            return Err(forbid("args", EXPECTED));
+                        }
+                        let text = text.ok_or_else(|| de::Error::missing_field("text"))?;
+                        Ok(Frame::Error { id: id.flatten(), text })
+                    }
+                    FrameKind::Done => {
+                        const EXPECTED: &[&str] = &["type", "id", "ok"];
+                        if text.is_some() {
+                            return Err(forbid("text", EXPECTED));
+                        }
+                        if seq.is_some() {
+                            return Err(forbid("seq", EXPECTED));
+                        }
+                        if name.is_some() {
+                            return Err(forbid("name", EXPECTED));
+                        }
+                        if args.is_some() {
+                            return Err(forbid("args", EXPECTED));
+                        }
+                        Ok(Frame::Done {
+                            id: require_id(id)?,
+                            ok: ok.ok_or_else(|| de::Error::missing_field("ok"))?,
+                        })
+                    }
+                    FrameKind::ToolCall => {
+                        const EXPECTED: &[&str] = &["type", "id", "seq", "name", "args"];
+                        if text.is_some() {
+                            return Err(forbid("text", EXPECTED));
+                        }
+                        if ok.is_some() {
+                            return Err(forbid("ok", EXPECTED));
+                        }
+                        Ok(Frame::ToolCall {
+                            id: require_id(id)?,
+                            seq: seq.ok_or_else(|| de::Error::missing_field("seq"))?,
+                            name: name.ok_or_else(|| de::Error::missing_field("name"))?,
+                            args: args.ok_or_else(|| de::Error::missing_field("args"))?,
+                        })
+                    }
+                }
+            }
+        }
+        deserializer.deserialize_map(FrameVisitor)
+    }
 }
 
 pub(super) struct Kernel {
@@ -258,20 +533,39 @@ pub(in crate::tool) fn stop_child(mut child: Child) {
 
 async fn find_python(cwd: &Path) -> Result<PathBuf> {
     let path = std::env::var_os("PATH").context("PATH is missing; install Python 3.10 or later for eval")?;
-    let names = [
-        format!("python3{}", std::env::consts::EXE_SUFFIX),
-        format!("python{}", std::env::consts::EXE_SUFFIX),
-    ];
-    for dir in std::env::split_paths(&path).filter(|dir| dir.is_absolute()) {
-        let Ok(canonical_dir) = tokio::fs::canonicalize(&dir).await else {
+    let cwd = cwd.to_path_buf();
+    tokio::task::spawn_blocking(move || find_python_sync(&cwd, &path))
+        .await
+        .context("search PATH for Python interpreter")?
+}
+
+fn find_python_sync(cwd: &Path, path: &std::ffi::OsStr) -> Result<PathBuf> {
+    let suffix = std::env::consts::EXE_SUFFIX;
+    let (py3, py): (Cow<'static, str>, Cow<'static, str>) = if suffix.is_empty() {
+        (Cow::Borrowed("python3"), Cow::Borrowed("python"))
+    } else {
+        (
+            Cow::Owned(format!("python3{suffix}")),
+            Cow::Owned(format!("python{suffix}")),
+        )
+    };
+    let names = [py3.as_ref(), py.as_ref()];
+    for dir in std::env::split_paths(path).filter(|dir| dir.is_absolute()) {
+        if !std::fs::metadata(&dir).is_ok_and(|meta| meta.is_dir()) {
+            continue;
+        }
+        let Ok(canonical_dir) = std::fs::canonicalize(&dir) else {
             continue;
         };
         if canonical_dir.starts_with(cwd) {
             continue;
         }
-        for name in &names {
+        for name in names {
             let candidate = dir.join(name);
-            if let Ok(target) = tokio::fs::canonicalize(&candidate).await
+            if std::fs::symlink_metadata(&candidate).is_err() {
+                continue;
+            }
+            if let Ok(target) = std::fs::canonicalize(&candidate)
                 && !target.starts_with(cwd)
                 && horon_agent_platform::fs::is_executable(&target)
             {

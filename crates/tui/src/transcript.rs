@@ -281,23 +281,7 @@ impl CacheMiss {
 
     /// The one line the marker draws.
     pub fn summary(&self) -> String {
-        format!(
-            "{}, ~{} tokens resent",
-            self.cause.label(),
-            compact_tokens(self.missed_tokens)
-        )
-    }
-}
-
-/// A token count at the width the marker can spare, as the daemon's own summary
-/// writes it.
-fn compact_tokens(value: u64) -> String {
-    if value >= 1_000_000 {
-        format!("{:.1}M", value as f64 / 1_000_000.0)
-    } else if value >= 1_000 {
-        format!("{}K", value / 1_000)
-    } else {
-        value.to_string()
+        crate::item_lines::cache_miss_summary(self)
     }
 }
 
@@ -1030,16 +1014,17 @@ impl Transcript {
     /// id means the call that started most recently, which is what the daemon
     /// says when it sends no id.
     pub fn tool_input(&mut self, call_id: &str, delta: &str) {
+        let Self { starts, items, .. } = self;
         let target = if call_id.is_empty() {
-            self.starts.last().map(|start| start.call_id.clone())
+            let Some(last) = starts.last() else {
+                return;
+            };
+            last.call_id.as_str()
         } else {
-            Some(call_id.to_string())
+            call_id
         };
-        let Some(target) = target else {
-            return;
-        };
-        let Some(call) = self.items.iter_mut().find_map(|item| match item {
-            Item::Tool(call) if call.is_call(&target) => Some(call),
+        let Some(call) = items.iter_mut().rev().find_map(|item| match item {
+            Item::Tool(call) if call.is_call(target) => Some(call),
             _ => None,
         }) else {
             return;
@@ -1136,20 +1121,18 @@ impl Transcript {
     /// result belongs to; the newest is wrong, because that is the call still
     /// starting.
     fn call_for(&mut self, call_id: &str, name: &str) -> Option<&mut ToolCall> {
-        let found = self
-            .items
-            .iter()
-            .position(|item| matches!(item, Item::Tool(call) if call.is_call(call_id)));
-        let index: Option<usize> = match found {
-            Some(index) => Some(index),
+        let index: Option<usize> = if !call_id.is_empty() {
+            self.items
+                .iter()
+                .rposition(|item| matches!(item, Item::Tool(call) if call.is_call(call_id)))
+        } else {
             // With no id there is no identity, and calls without ids are
             // sequential, so the oldest unfinished call of that name is the one
             // this result belongs to.
-            None if call_id.is_empty() => self.items.iter().position(|item| match item {
+            self.items.iter().position(|item| match item {
                 Item::Tool(call) => call.state == ToolState::Running && call.name == name,
                 _ => false,
-            }),
-            None => None,
+            })
         };
         let index = index?;
         match self.items.get_mut(index) {

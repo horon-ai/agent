@@ -490,6 +490,26 @@ class WorkflowGuardTests(unittest.TestCase):
             with self.subTest(e2e_test=full_name):
                 self.assertIn(f'fn {fn_name}(', source)
 
+    def test_workspace_impact_scoping_and_parallel_integration_targets(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        build_block = workflow.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
+        checkout_block = build_block.split('\n      - name: Verify Python eval runner', 1)[0]
+        self.assertIn('fetch-depth: 0', checkout_block)
+        self.assertIn('scripts/ci/workspace_impact.py', build_block)
+        self.assertIn('HORON_CI_SCOPED_PACKAGES=', build_block)
+        self.assertIn('if [ "$token" = "horon-agent" ]; then', build_block)
+        self.assertIn('${extra_test_targets[@]+"${extra_test_targets[@]}"}', build_block)
+        self.assertIn('--jobs 4', build_block)
+
+        joined = re.sub(r'\\\n\s*', ' ', build_block)
+        base_calls = [
+            m.group(0)
+            for m in re.finditer(r'run_lib_tests\.py\s+[^\n]*--package horon-agent-base\b[^\n]*', joined)
+        ]
+        self.assertEqual(len(base_calls), 2, base_calls)
+        for call in base_calls:
+            self.assertNotIn(' -- ', call, call)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -116,13 +116,15 @@ impl App {
         fallback_text: Option<&str>,
     ) {
         let follows = self.session_id.as_deref().is_none_or(|current| current == session_id);
-        if follows {
-            self.transcript.apply_a2ui_envelope(
+        if follows
+            && self.transcript.apply_a2ui_envelope(
                 tool_call_id,
                 sequence,
                 envelope.clone(),
                 fallback_text.map(str::to_string),
-            );
+            )
+        {
+            self.scroll.reflow();
         }
     }
 }
@@ -153,8 +155,9 @@ pub(crate) fn push_replayed_assistant(transcript: &mut Transcript, content: Stri
                 fence = None;
             }
             match parts.last_mut() {
+                Some(Part::Card(buf)) => push_line(buf, trimmed),
                 Some(Part::Prose(buf)) => push_line(buf, raw_line),
-                _ => parts.push(Part::Prose(raw_line.to_string())),
+                None => parts.push(Part::Prose(raw_line.to_string())),
             }
             continue;
         }
@@ -162,8 +165,9 @@ pub(crate) fn push_replayed_assistant(transcript: &mut Transcript, content: Stri
         if let Some((fence_ch, fence_len)) = opening_fence(trimmed) {
             fence = Some((fence_ch, fence_len));
             match parts.last_mut() {
+                Some(Part::Card(buf)) => push_line(buf, trimmed),
                 Some(Part::Prose(buf)) => push_line(buf, raw_line),
-                _ => parts.push(Part::Prose(raw_line.to_string())),
+                None => parts.push(Part::Prose(raw_line.to_string())),
             }
             continue;
         }
@@ -270,9 +274,10 @@ fn is_card_header(line: &str) -> bool {
     if line == "[A2UI response]" {
         return true;
     }
-    (line.starts_with("[A2UI surface: ") || line.starts_with("[A2UI closed: "))
-        && line.ends_with(']')
-        && line.len() > 16
+    line.strip_prefix("[A2UI surface: ")
+        .or_else(|| line.strip_prefix("[A2UI closed: "))
+        .and_then(|rest| rest.strip_suffix(']'))
+        .is_some_and(|id| !id.trim().is_empty())
 }
 
 fn opening_fence(line: &str) -> Option<(char, usize)> {
