@@ -1,7 +1,8 @@
 # Abnormal turn outcomes
 
-Harness API minor 8 advertises `turn_stop_reasons`. Rust consumers can import
-`ApiEvent` and `TurnStopReason` directly from `horon_agent_sdk`.
+Harness API minor 8 introduced `turn_stop_reasons` (current minor `32`
+continues to advertise it). Rust consumers can import `ApiEvent` and
+`TurnStopReason` directly from `horon_agent_sdk`.
 
 ```json
 {"v":1,"ev":"turn_stopped","session_id":"s1","reason":"interrupted","message":"The turn was interrupted by a cancellation request."}

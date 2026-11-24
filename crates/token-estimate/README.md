@@ -50,15 +50,16 @@ this worse fails the suite rather than passing silently.
 
 ## Two constants, not one
 
+In sibling crate `horon-agent-compaction-core` (`crates/compaction-core/src/lib.rs`),
 `CHARS_PER_TOKEN_UPPER_BOUND` (value 4) exists only for the token-to-character
 inverse, where the caller needs a character budget and must not exceed it. The
-forward direction uses `estimate_tokens`, which prices each script. Using the
+forward direction uses `estimate_tokens` in this crate, which prices each script. Using the
 estimator for the inverse would be wrong in the other direction: dividing a
 token budget by a content-dependent rate can produce a character allowance
 larger than the budget intends.
 
-`TOKEN_ESTIMATE_VERSION` names the model so a stored estimate can be attributed
-to the rates that produced it.
+`TOKEN_ESTIMATE_VERSION` (`"script-aware-v2"`, also in `crates/compaction-core/src/lib.rs`)
+names the model so a stored estimate can be attributed to the rates that produced it.
 
 ## The CJK merge discount
 
