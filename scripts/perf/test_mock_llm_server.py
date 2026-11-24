@@ -669,6 +669,61 @@ class ScenarioPlanTests(ServerCase):
         self.assertEqual(name, "mcp__bench__bench_echo")
         self.assertTrue(arguments["text"].startswith("bench-nonce-"))
 
+    def test_background_mcp_uses_tool_search_until_server_registers(self) -> None:
+        # Agents whose cold MCP connect finishes in the background (omo / senpi)
+        # send request 1 with `tool_search` and no deferred listing yet.
+        search = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "tool_search",
+                    "description": "Search the catalog of deferred tools.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "source": {"type": "string", "enum": ["mcp", "extension"]},
+                        },
+                        "required": ["query"],
+                    },
+                },
+            }
+        ]
+        name, arguments = tool_call_of(self.chat(self.MCP_PROMPT, search))
+        self.assertEqual(name, "tool_search")
+        self.assertEqual(arguments, {"query": "bench_echo", "source": "mcp"})
+        entry = self.requests()[0]
+        self.assertEqual(entry["via"], "tool-search")
+        self.assertFalse(entry["bench_echo_exposed"])
+        # Once background discovery exposes `mcp_bench_bench_echo`, request 2 calls it.
+        mcp_tool = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp_bench_bench_echo",
+                    "description": "Echo text back.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"text": {"type": "string"}},
+                        "required": ["text"],
+                    },
+                },
+            }
+        ]
+        messages = [
+            {"role": "user", "content": self.MCP_PROMPT},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "call_mock_1", "type": "function",
+                             "function": {"name": "tool_search",
+                                          "arguments": json.dumps(arguments)}}]},
+            {"role": "tool", "tool_call_id": "call_mock_1", "content": "No catalog tools matched."},
+        ]
+        name, call_args = tool_call_of(self.chat(self.MCP_PROMPT, search + mcp_tool, messages))
+        self.assertEqual(name, "mcp_bench_bench_echo")
+        self.assertTrue(call_args["text"].startswith("bench-nonce-"))
+        self.assertEqual(self.requests()[1]["via"], "mcp-tool")
+        self.assertTrue(self.requests()[1]["bench_echo_exposed"])
+
     def test_mcp_route_is_read_through_the_write_tool(self) -> None:
         system = "- \"bench_echo\" -> `xd://mcp__bench_echo`"
         messages = [

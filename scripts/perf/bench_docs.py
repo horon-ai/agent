@@ -119,6 +119,7 @@ VERSIONS_END = "<!-- bench-versions:end -->"
 # value comes from the run's compare.json through bench_charts' metric readers.
 SUMMARY_METRICS = ("03-oneshot-time", "05-skill-time", "06-mcp-time",
                    "04-oneshot-memory", "08-per-session-memory", "02-install-size")
+EXPECTED_COMPETITORS = ("jcode", "claude_code", "codex", "opencode", "pi", "omp", "omo")
 # Groups that must all have at least one artifact before RESULTS.md's recorded
 # block may be replaced: a compare-only run must not overwrite startup, loading
 # and TUI records from an earlier full run with "not measured".
@@ -392,20 +393,36 @@ def missing_suite_groups(dirs: dict[str, Path]) -> list[str]:
     return missing
 
 
+def missing_competitors(dirs: dict[str, Path]) -> list[str]:
+    """Competitors absent from an OS comparison or unmeasured on every OS."""
+    compare = bench_charts.load_compare(dirs)
+    if not compare:
+        return list(EXPECTED_COMPETITORS)
+    measured_anywhere = {
+        result.get("name")
+        for run in compare.values()
+        for result in run.get("results", [])
+        if isinstance(result, dict) and not result.get("error")
+    }
+    missing: list[str] = []
+    for name in EXPECTED_COMPETITORS:
+        in_every_os = all(
+            name in (
+                {r.get("name") for r in run.get("results", []) if isinstance(r, dict)}
+                | {s.get("name") for s in run.get("skipped", []) if isinstance(s, dict)}
+            )
+            for run in compare.values()
+        )
+        if not in_every_os or name not in measured_anywhere:
+            missing.append(name)
+    return missing
+
+
 def _tool_result(run: dict | None, name: str) -> dict | None:
     for result in (run or {}).get("results", []):
         if isinstance(result, dict) and result.get("name") == name:
             return result
     return None
-
-
-def _values(run: dict | None, metric: bench_charts.Metric) -> tuple[float | None, float | None]:
-    """(horon, jcode) values for one metric; a failed result counts as absent."""
-    out = []
-    for name in ("horon", "jcode"):
-        result = _tool_result(run, name)
-        out.append(None if result is None or result.get("error") else metric.pick(result))
-    return out[0], out[1]
 
 
 def _fmt(metric: bench_charts.Metric, value: float | None, lang: str) -> str:
@@ -460,19 +477,25 @@ def _release_sentence(dirs: dict[str, Path], compare: dict[str, dict], lang: str
     return text["summary_release_unknown"]
 
 
-def _request_bytes(run: dict | None) -> tuple[str | None, str | None]:
-    def first(name: str) -> str | None:
+def _request_bytes_cells(run: dict | None, tools: list[tuple[str, str]]) -> list[str] | None:
+    cells: list[str] = []
+    any_value = False
+    for name, _ in tools:
         result = _tool_result(run, name)
         entry = brb.first_request((result or {}).get("oneshot"))
         if not entry:
-            return None
-        body, tools = entry.get("body_bytes"), entry.get("tools_bytes")
-        if body is None and tools is None:
-            return None
-        if body is None or tools is None:
-            return "—"
-        return f"{body:,} / {tools:,}"
-    return first("horon"), first("jcode")
+            cells.append("—")
+            continue
+        body, tool_bytes = entry.get("body_bytes"), entry.get("tools_bytes")
+        if body is None and tool_bytes is None:
+            cells.append("—")
+        elif body is None or tool_bytes is None:
+            any_value = True
+            cells.append("—")
+        else:
+            any_value = True
+            cells.append(f"{body:,} / {tool_bytes:,}")
+    return cells if any_value else None
 
 
 def summary_body(dirs: dict[str, Path], commit: str, lang: str = "en") -> str:
@@ -481,6 +504,7 @@ def summary_body(dirs: dict[str, Path], commit: str, lang: str = "en") -> str:
     compare = bench_charts.load_compare(dirs)
     if not compare:
         return text["summary_none"]
+    tools = bench_charts._tools(compare) or [("horon", "horon"), ("jcode", "jcode")]
     metrics = {metric.stem: metric for metric in bench_charts.METRICS}
     lines = [
         text["summary_intro"],
@@ -489,23 +513,26 @@ def summary_body(dirs: dict[str, Path], commit: str, lang: str = "en") -> str:
         _release_sentence(dirs, compare, lang),
         "",
     ]
+    header_tail = " | ".join(_cell(label) for _, label in tools)
+    sep_row = "| " + " | ".join("---" for _ in range(len(tools) + 1)) + " |"
     for key, title in PLATFORMS:
         run = compare.get(key)
         directory = dirs.get(key)
         runner = (_read(directory / "runner.txt") if directory else None) or "—"
-        lines.append(f"| {title} (`{runner}`) | horon | jcode |")
-        lines.append("| --- | --- | --- |")
+        lines.append(f"| {title} (`{runner}`) | {header_tail} |")
+        lines.append(sep_row)
         if run is None:
-            lines.append("| — | — | — |")
+            lines.append("| " + " | ".join("—" for _ in range(len(tools) + 1)) + " |")
             lines.append("")
             continue
         for stem in SUMMARY_METRICS:
             metric = metrics[stem]
-            h, j = _values(run, metric)
-            lines.append(f"| {metric.title[lang]} | {_fmt(metric, h, lang)} | {_fmt(metric, j, lang)} |")
-        hb, jb = _request_bytes(run)
-        if hb or jb:
-            lines.append(f"| {text['request_bytes']} | {hb or '—'} | {jb or '—'} |")
+            values = bench_charts._values(run, metric, tools)
+            formatted = " | ".join(_fmt(metric, value, lang) for value in values)
+            lines.append(f"| {metric.title[lang]} | {formatted} |")
+        req_cells = _request_bytes_cells(run, tools)
+        if req_cells is not None:
+            lines.append(f"| {text['request_bytes']} | " + " | ".join(req_cells) + " |")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -519,15 +546,22 @@ def versions_body(dirs: dict[str, Path], commit: str, lang: str = "en") -> str:
     lines = [text["versions_intro"].format(commit=commit, when=bench_charts._measured_at(compare)), "",
              f"| {text['version_tool']} | {text['version_value']} |", "| --- | --- |"]
     seen: set[tuple[str, str]] = set()
+    rows: list[tuple[str, str, str]] = []
     for key, _ in PLATFORMS:
         for result in (compare.get(key) or {}).get("results", []):
             if not isinstance(result, dict):
                 continue
-            label = str(result.get("label") or result.get("name") or "")
+            name = str(result.get("name") or "")
+            if name != "horon" and name.startswith("horon-"):
+                continue
+            label = str(result.get("label") or name or "")
             version = str(result.get("version") or "—")
             if label and (label, version) not in seen:
                 seen.add((label, version))
-                lines.append(f"| {_cell(label)} | `{_cell(version)}` |")
+                rows.append((name, label, version))
+    rows.sort(key=lambda item: item[0] != "horon")
+    for _, label, version in rows:
+        lines.append(f"| {_cell(label)} | `{_cell(version)}` |")
     lines += ["", text["release_intro"], "",
               f"| {text['release_os']} | {text['release_tag']} | {text['release_commit']} | "
               f"{text['release_asset']} | {text['release_sha']} | {text['release_served']} |",
@@ -677,6 +711,8 @@ def main(argv: list[str]) -> int:
                       help="refuse to replace the full results until each suite group has artifacts")
     mode.add_argument("--comparison-only", action="store_true",
                       help="refresh comparison summaries and versions while keeping the full record and charts")
+    render.add_argument("--require-all-competitors", action="store_true",
+                        help="refuse to update when any of the 7 expected competitors is missing")
     last = sub.add_parser("last-commit", help="print the commit recorded in the block")
     last.add_argument("--doc", required=True, type=Path)
     args = parser.parse_args(argv)
@@ -689,6 +725,14 @@ def main(argv: list[str]) -> int:
         if not args.results.is_dir():
             raise DocError(f"results directory not found: {args.results}")
         dirs = find_platform_dirs(args.results)
+        if args.require_all_competitors:
+            lacking = missing_competitors(dirs)
+            if lacking:
+                raise DocError(
+                    "the comparison is missing expected competitor(s): "
+                    + ", ".join(lacking)
+                    + "; refusing to overwrite published comparison tables"
+                )
         wrote = False
         has_auto = START_RE.search(text) is not None or END in text
         if has_auto and not args.comparison_only:
