@@ -389,9 +389,8 @@ fn scan_code_blocks<'a>(text: &'a str, mut visit: impl FnMut(BlockSpan<'a>) -> b
             .or_else(|| chunk.strip_suffix('\n'))
             .unwrap_or(chunk);
         let trimmed = line.trim_end();
-        if let Some(state) = open.as_mut() {
+        if let Some(mut state) = open.take() {
             if closes_fence(trimmed, state.marker) {
-                let state = open.take().expect("open fence");
                 let span = BlockSpan {
                     language: state.language,
                     body_start: state.body_start,
@@ -411,6 +410,7 @@ fn scan_code_blocks<'a>(text: &'a str, mut visit: impl FnMut(BlockSpan<'a>) -> b
                     state.preview[state.preview_len] = trimmed;
                     state.preview_len += 1;
                 }
+                open = Some(state);
             }
             continue;
         }

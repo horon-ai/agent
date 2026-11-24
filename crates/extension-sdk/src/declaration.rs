@@ -92,7 +92,6 @@ impl Declaration {
             });
         }
         if manifest.protocol != EXTENSION_PROTOCOL {
-            let _ = ProtocolVersion::parse(&manifest.protocol);
             return Err(LoadError::Protocol {
                 declared: manifest.protocol.clone(),
             });

@@ -465,7 +465,10 @@ impl<'de> Deserialize<'de> for Maybe<u64> {
                 Ok(Maybe(Some(value)))
             }
             fn visit_i64<E: DeError>(self, value: i64) -> Result<Self::Value, E> {
-                Ok(Maybe(u64::try_from(value).ok()))
+                let Ok(value) = u64::try_from(value) else {
+                    return Ok(Maybe(None));
+                };
+                Ok(Maybe(Some(value)))
             }
             fn visit_f64<E: DeError>(self, _: f64) -> Result<Self::Value, E> {
                 Ok(Maybe(None))
