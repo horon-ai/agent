@@ -57,5 +57,8 @@ pub(crate) fn register(
     if session.consult {
         crate::tool::mark_session_consult_policy(&session.id);
     }
+    if session.is_memory_only() {
+        crate::tool::register_session_memory_only(&session.id, true);
+    }
     registration
 }

@@ -240,6 +240,8 @@ struct SessionToolPolicy {
     listed_mcp_surface: bool,
     /// A read-only consult child: no client tool configuration can widen its stored allow list.
     consult: bool,
+    /// Ephemeral `--no-session` run: skip sidecar persistence under `$HORON_HOME/sessions/`.
+    memory_only: bool,
     owner: Option<u64>,
 }
 
@@ -523,6 +525,26 @@ pub(crate) fn session_lists_mcp_surface(session_id: &str) -> bool {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(session_id)
         .is_some_and(|policy| policy.listed_mcp_surface)
+}
+
+/// Mark whether `session_id` is an ephemeral `--no-session` run that must never
+/// write sidecars beneath `$HORON_HOME/sessions/`.
+pub(crate) fn register_session_memory_only(session_id: &str, memory_only: bool) {
+    let mut policies = SESSION_TOOL_POLICIES
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(policy) = policies.get_mut(session_id).map(Arc::make_mut) {
+        policy.memory_only = memory_only;
+    }
+}
+
+/// Whether `session_id` is marked ephemeral (`--no-session`).
+pub(crate) fn session_is_memory_only(session_id: &str) -> bool {
+    SESSION_TOOL_POLICIES
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(session_id)
+        .is_some_and(|policy| policy.memory_only)
 }
 
 #[cfg(test)]

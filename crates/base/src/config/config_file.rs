@@ -268,9 +268,12 @@ impl Config {
         }
         let write_marker = || {
             if let Some(parent) = marker.parent() {
-                let _ = std::fs::create_dir_all(parent);
+                let _ = crate::storage::ensure_dir(parent);
             }
-            let _ = std::fs::write(&marker, "swarm_spawn_mode default migration: visible -> inline\n");
+            let _ = horon_agent_platform::fs::write_owner_only(
+                &marker,
+                b"swarm_spawn_mode default migration: visible -> inline\n",
+            );
         };
 
         let path = dir.join("config.toml");

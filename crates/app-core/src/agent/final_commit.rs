@@ -31,6 +31,7 @@ impl Agent {
     pub fn for_memory_only_run(provider: Arc<dyn Provider>, registry: Registry) -> Self {
         let mut agent = Self::new(provider, registry);
         agent.session.set_memory_only(true);
+        crate::tool::register_session_memory_only(agent.session_id(), true);
         agent
     }
 

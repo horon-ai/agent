@@ -19,6 +19,9 @@ fn changed_lines(old: &str, new: &str, approximate: bool) -> SessionEditStats {
 }
 
 pub(super) async fn record(ctx: &ToolContext, old: &str, new: &str, approximate: bool) {
+    if super::session_is_memory_only(&ctx.session_id) {
+        return;
+    }
     let id = ctx.session_id.clone();
     let old = old.to_owned();
     let new = new.to_owned();
@@ -220,5 +223,46 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stats().added, 306);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn memory_only_session_skips_edit_stats_under_sessions_dir() {
+        use crate::tool::{Tool, ToolExecutionMode};
+        use serde_json::json;
+        let _lock = crate::storage::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        struct Home(Option<std::ffi::OsString>);
+        impl Drop for Home {
+            fn drop(&mut self) {
+                if let Some(old) = self.0.take() {
+                    crate::env::set_var("HORON_HOME", old);
+                } else {
+                    crate::env::remove_var("HORON_HOME");
+                }
+            }
+        }
+        let _home = Home(std::env::var_os("HORON_HOME"));
+        crate::env::set_var("HORON_HOME", home.path());
+        let session_id = "mem_only_edit_stats_test";
+        let _reg = crate::tool::register_session_tool_policy(session_id, None, Default::default());
+        crate::tool::register_session_memory_only(session_id, true);
+        let ctx = ToolContext {
+            session_id: session_id.into(),
+            message_id: "m".into(),
+            tool_call_id: "t".into(),
+            working_dir: Some(home.path().into()),
+            stdin_request_tx: None,
+            graceful_shutdown_signal: None,
+            execution_mode: ToolExecutionMode::Direct,
+        };
+        crate::tool::write::WriteTool
+            .execute(json!({"file_path":"note.txt","content":"hello\n"}), ctx)
+            .await
+            .unwrap();
+        assert!(
+            !home.path().join("sessions").exists(),
+            "--no-session (memory_only) edit must not create $HORON_HOME/sessions"
+        );
     }
 }

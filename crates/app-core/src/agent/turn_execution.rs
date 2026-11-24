@@ -1377,6 +1377,7 @@ impl Agent {
             self.disabled_tools.clone(),
         );
         crate::tool::register_session_load_tiers(&self.session.id, self.load_tiers.clone());
+        crate::tool::register_session_memory_only(&self.session.id, self.session.is_memory_only());
         // A restored session resolves its MCP fixed surface from the registry and
         // configuration it is attached to now, so the previous decision does not
         // carry over. A conversation reset keeps it: the session and its tool

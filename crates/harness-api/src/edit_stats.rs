@@ -84,12 +84,13 @@ pub fn record_session_edit(dir: &Path, id: &str, delta: SessionEditStats) -> std
         return Err(std::io::ErrorKind::InvalidInput.into());
     }
     let counter_dir = dir.join("edit-stats");
-    std::fs::create_dir_all(&counter_dir)?;
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(counter_dir.join(format!("{id}.lock")))?;
+    horon_agent_platform::create_private_dir(&counter_dir, true)?;
+    horon_agent_platform::fs::set_dir_permissions_owner_only(&counter_dir)?;
+    let mut lock_options = std::fs::OpenOptions::new();
+    lock_options.create(true).truncate(false).write(true);
+    horon_agent_platform::fs::request_owner_only_mode(&mut lock_options);
+    let lock = lock_options.open(counter_dir.join(format!("{id}.lock")))?;
+    horon_agent_platform::fs::set_permissions_owner_only_file(&lock)?;
     lock.lock()?;
     let path = counter_dir.join(format!("{id}.json"));
     let mut stats = if path.exists() {
@@ -106,10 +107,15 @@ pub fn record_session_edit(dir: &Path, id: &str, delta: SessionEditStats) -> std
     stats.removed = stats.removed.saturating_add(delta.removed);
     stats.approximate |= delta.approximate;
     let tmp = path.with_extension("json.tmp");
-    let mut file = std::fs::File::create(&tmp)?;
+    let mut tmp_options = std::fs::OpenOptions::new();
+    tmp_options.write(true).create(true).truncate(true);
+    horon_agent_platform::fs::request_owner_only_mode(&mut tmp_options);
+    let mut file = tmp_options.open(&tmp)?;
+    horon_agent_platform::fs::set_permissions_owner_only_file(&file)?;
     file.write_all(&serde_json::to_vec(&stats)?)?;
     file.sync_all()?;
-    std::fs::rename(tmp, path)?;
+    std::fs::rename(tmp, &path)?;
+    horon_agent_platform::fs::set_file_permissions_owner_only(&path)?;
     Ok(())
 }
 
@@ -665,5 +671,43 @@ mod tests {
         let file = std::fs::File::create(temp.0.join("large.json")).unwrap();
         file.set_len(MAX_LEGACY_BYTES + 1).unwrap();
         assert!(legacy_stats(&temp.0, "large").is_none());
+    }
+
+    #[test]
+    fn record_session_edit_creates_private_sessions_and_counter_modes() {
+        let root = std::env::temp_dir().join(format!(
+            "horon-edit-stats-perms-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let sessions_dir = root.join("sessions");
+        record_session_edit(
+            &sessions_dir,
+            "s_priv",
+            SessionEditStats {
+                added: 3,
+                ..Default::default()
+            },
+        )
+        .expect("record stats");
+
+        if let Some(bits) = horon_agent_platform::fs::mode_bits(&std::fs::metadata(&sessions_dir).unwrap()) {
+            assert_eq!(bits, 0o700, "sessions dir must be 0o700");
+        }
+        let counter_dir = sessions_dir.join("edit-stats");
+        if let Some(bits) = horon_agent_platform::fs::mode_bits(&std::fs::metadata(&counter_dir).unwrap()) {
+            assert_eq!(bits, 0o700, "edit-stats dir must be 0o700");
+        }
+        for name in ["s_priv.lock", "s_priv.json"] {
+            if let Some(bits) =
+                horon_agent_platform::fs::mode_bits(&std::fs::metadata(counter_dir.join(name)).unwrap())
+            {
+                assert_eq!(bits, 0o600, "{name} must be 0o600");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

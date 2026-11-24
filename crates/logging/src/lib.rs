@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -296,7 +296,7 @@ impl Logger {
         let date = log_date_stamp(Timestamp::now())?;
         let path = log_dir.join(format!("horon-agent-{}.log", date));
 
-        let file = OpenOptions::new().create(true).append(true).open(&path).ok()?;
+        let file = horon_agent_storage::open_owner_only_append(&path).ok()?;
 
         Some(Self {
             file,

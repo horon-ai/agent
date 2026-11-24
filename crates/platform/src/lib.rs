@@ -214,6 +214,7 @@ pub fn create_private_dir(path: &Path, recursive: bool) -> io::Result<()> {
         create_missing_private_levels(parent)?;
     }
     match Current::create_private_dir(path) {
+        Ok(()) => set_permissions_private_dir(path),
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
         other => other,
     }
@@ -231,6 +232,7 @@ fn create_missing_private_levels(path: &Path) -> io::Result<()> {
                 create_missing_private_levels(parent)?;
             }
             match Current::create_private_dir(path) {
+                Ok(()) => set_permissions_private_dir(path),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
                 other => other,
             }
