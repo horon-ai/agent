@@ -281,19 +281,39 @@ pub fn format_elapsed(millis: u64) -> String {
     out
 }
 
+/// Append `value` in base 10 directly into `out`.
+pub(crate) fn push_u64(out: &mut String, mut value: u64) {
+    let mut digits = [0u8; 20];
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    for &byte in &digits[start..] {
+        out.push(byte as char);
+    }
+}
+
 /// Append [`format_elapsed`]'s representation directly into `out`.
 pub(crate) fn push_elapsed(out: &mut String, millis: u64) {
-    use std::fmt::Write as _;
-    let result = if millis < 60_000 {
-        write!(out, "{:.1}s", millis as f64 / 1000.0)
-    } else {
-        let minutes = millis / 60_000;
-        let seconds = (millis % 60_000) / 1000;
-        write!(out, "{minutes}m {seconds:02}s")
-    };
-    if result.is_err() {
-        // `fmt::Write` for `String` is infallible.
+    if millis < 60_000 {
+        use std::fmt::Write as _;
+        if write!(out, "{:.1}s", millis as f64 / 1000.0).is_err() {
+            // `fmt::Write` for `String` is infallible.
+        }
+        return;
     }
+    let minutes = millis / 60_000;
+    let seconds = (millis % 60_000) / 1000;
+    push_u64(out, minutes);
+    out.push_str("m ");
+    out.push((b'0' + (seconds / 10) as u8) as char);
+    out.push((b'0' + (seconds % 10) as u8) as char);
+    out.push('s');
 }
 
 /// The rows one tool call occupies.

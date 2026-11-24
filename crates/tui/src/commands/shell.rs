@@ -423,14 +423,12 @@ fn bounded(raw: &str) -> String {
         if separator == 1 {
             kept.push('\n');
         }
-        let mut chars_seen = 0usize;
         let mut line_over = false;
-        for character in line.chars() {
+        for (chars_seen, character) in line.chars().enumerate() {
             if chars_seen == MAX_LINE_CHARS {
                 line_over = true;
                 break;
             }
-            chars_seen += 1;
             if character != '\t' && character.is_control() {
                 continue;
             }

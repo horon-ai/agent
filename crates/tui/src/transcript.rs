@@ -281,25 +281,7 @@ impl CacheMiss {
 
     /// The one line the marker draws.
     pub fn summary(&self) -> String {
-        let mut out = String::with_capacity(48);
-        self.push_summary(&mut out);
-        out
-    }
-
-    /// Append [`Self::summary`]'s text directly into `out`.
-    pub(crate) fn push_summary(&self, out: &mut String) {
-        use std::fmt::Write as _;
-        out.push_str(self.cause.label());
-        out.push_str(", ~");
-        let r = if self.missed_tokens >= 1_000_000 {
-            write!(out, "{:.1}M", self.missed_tokens as f64 / 1_000_000.0)
-        } else if self.missed_tokens >= 1_000 {
-            write!(out, "{}K", self.missed_tokens / 1_000)
-        } else {
-            write!(out, "{}", self.missed_tokens)
-        };
-        if r.is_err() {}
-        out.push_str(" tokens resent");
+        crate::item_lines::cache_miss_summary(self)
     }
 }
 

@@ -173,8 +173,33 @@ fn cache_miss(miss: &crate::transcript::CacheMiss, look: &Look<'_>) -> Vec<Inden
     let mut text = String::with_capacity(look.symbols.bullet.len() + 64);
     text.push_str(look.symbols.bullet);
     text.push_str(" cache miss: ");
-    miss.push_summary(&mut text);
+    push_cache_miss_summary(miss, &mut text);
     vec![Indented::new(Line::from(Span::styled(text, style)), INDENT)]
+}
+
+/// Format [`crate::transcript::CacheMiss::summary`] as a single owned string.
+pub(crate) fn cache_miss_summary(miss: &crate::transcript::CacheMiss) -> String {
+    let mut out = String::with_capacity(48);
+    push_cache_miss_summary(miss, &mut out);
+    out
+}
+
+/// Append a cache-miss summary directly into `out`.
+fn push_cache_miss_summary(miss: &crate::transcript::CacheMiss, out: &mut String) {
+    out.push_str(miss.cause.label());
+    out.push_str(", ~");
+    if miss.missed_tokens >= 1_000_000 {
+        use std::fmt::Write as _;
+        if write!(out, "{:.1}M", miss.missed_tokens as f64 / 1_000_000.0).is_err() {
+            // `fmt::Write` for `String` is infallible.
+        }
+    } else if miss.missed_tokens >= 1_000 {
+        tool_line::push_u64(out, miss.missed_tokens / 1_000);
+        out.push('K');
+    } else {
+        tool_line::push_u64(out, miss.missed_tokens);
+    }
+    out.push_str(" tokens resent");
 }
 
 /// The lines of one item, keeping a call's whole output as the text it came
