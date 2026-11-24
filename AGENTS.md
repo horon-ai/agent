@@ -1,5 +1,7 @@
 # AGENTS.md: horon `agent/`
 
+Language: **English** | [한국어](AGENTS.ko.md)
+
 This repository is horon agent: one agent with two equal modes. In headless
 mode a program drives a session (`run`, the `serve` daemon behind the SDKs and
 `api-bridge`, `acp` for editors, `rpc` for host programs). In TUI mode a person
@@ -125,13 +127,16 @@ A proposed change fits when it:
 4. does not break ACP v1/v2, the SDKs or stored sessions;
 5. does not reintroduce removed surface under another name.
 
-The user-installed Rust package design has one exception to item 3's graph
-limit. It may add the internal data-contract crate `extension-types`, with
-dependencies drawn from the existing workspace dependency set and no new
-external runtime dependencies. Keep the no-package performance and binary size
-baselines. Extend the GitHub Actions structural performance gate with a
-binary-size check and verify the no-package path against both baselines. Keep
-ACP v1/v2, the SDKs, the TUI dependency boundary, and stored sessions compatible.
+The user-installed Rust package implementation exercises one exception to item
+3's graph limit: the internal data-contract crate `extension-types`
+(`crates/extension-types`, package `horon-agent-extension-types`) draws only
+from the existing workspace dependency set and adds no new external runtime
+dependencies, while `horon-agent-extension-sdk` (`crates/extension-sdk`) and
+`horon-package-example` (`examples/packages/example`) stay outside the
+`horon-agent` binary graph. Keep the no-package performance and binary size
+baselines, enforce the zero-overhead `packages` bounds in the structural gate
+alongside a binary-size check when extending the surface, and keep ACP v1/v2,
+the SDKs, the TUI dependency boundary, and stored sessions compatible.
 
 Does not do: forced tool-call steps, streaming dry-run, a `report_issue` tool,
 per-tool `family@rev` versions, a KDL model catalog, wholesale `anyhow` or
@@ -170,24 +175,28 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   `Authorization: Bearer` for the two OpenAI kinds, `x-api-key` for Anthropic
   and `x-goog-api-key` for Gemini; an explicit `auth` always wins. Model calls
   use one provider runtime and reach the endpoint directly. Keep routers and
-  provider plugins out of that path. External tools currently come in over MCP.
-  When the active profile names `roles.image`, the optional `generate_image`
-  tool POSTs
+  provider plugins out of that path. External tools come in over MCP and
+  user-installed Rust packages (`docs/runtime/PACKAGES.md`). When the active
+  profile names `roles.image`, the optional `generate_image` tool POSTs
   `/images/generations` and `/images/edits` on that same profile, with the same
   base URL, credential and `extra_body`. It is a route beside the wires, not a
   runtime, and it is off unless `[tools] generate_image = true`. The `image`
   role is therefore the one role whose model does not speak Chat Completions,
   it is served only by an `openai-compatible` or `openai-responses` profile,
   and it is the only role with no text fallback.
-- User-installed Rust packages are an approved design (#635), pending
-  implementation. An extension declares a Rust executable. A plugin bundles
-  one extension and declared resources. Both use `horon package install` or
-  `$HORON_HOME/packages/inbox/<id>/`. Installation is consent. Register after
-  validation, apply the new package set at the next turn of an open session,
-  and check the recorded SHA-256 internally before starting the child. Load
-  packages only from the user's catalog. Run executable calls in a separate
-  child under the user's OS account and through the existing tool policy. Keep
-  in-process plugin loading prohibited and preserve the fixed requirements.
+- User-installed Rust packages are implemented (`docs/runtime/PACKAGES.md`). An
+  extension declares a Rust executable (`extension.toml`); a plugin bundles one
+  `extension.toml` and declared resources (`plugin.toml`). Both use
+  `horon package install|list|verify|disable|remove` or
+  `$HORON_HOME/packages/inbox/<id>/` (reconciled by a running daemon).
+  Installation is consent: `PackageStore` validates declarations and native
+  targets, records the SHA-256 of `extension.toml`, applies a new catalog
+  generation at the next turn boundary of an open session, and verifies that
+  SHA-256 before spawning each child. Executable calls, package MCP stdio
+  servers, and observers run in separate child processes under the user's OS
+  account through the existing tool and hosting policy gates
+  (`crates/base/src/packages/child_gate.rs`). Keep in-process plugin loading
+  prohibited and preserve the fixed requirements.
 - Hosting is opt-in through `HORON_AGENT_HOSTING_MODE` (`per-user-container`
   or `shared-worker`; absent means the operator's own home, and any other value
   is a startup error naming both). A hosted process carries
@@ -608,7 +617,9 @@ canonical English text and `X.ko.md` is its Korean counterpart in the same
 folder, as with `README.md` and `README.ko.md`. Change both in the same commit.
 Each pair keeps the same headings, tables, code fences and links, and links
 between docs stay inside their own language. `python3 scripts/ci/check_docs_pairs.py`
-checks this and runs in the Quality Guardrails job.
+checks `README`, `PHILOSOPHY`, and `docs/` in the Quality Guardrails job (and
+links between `AGENTS.md` and `AGENTS.ko.md`, plus all root `.md` relative
+links, are checked by `python3 scripts/ci/check_docs_links.py`).
 
 `docs/diagram/` holds hand-written SVG diagrams of the code on the branch they
 are on, each as `NN-name.svg` with English labels and `NN-name.ko.svg` with
@@ -641,22 +652,23 @@ still states the old behaviour. To find the pages:
 
 |Changed area|Documents to check|
 |---|---|
-|`src/cli/` commands, flags and dispatch, `src/main.rs`|`README.md`, `docs/release/INSTALL.md`, `docs/diagram/02-run-modes`|
-|`src/cli/tui_handoff.rs`, `crates/tui/`|`docs/runtime/TUI.md`, `docs/diagram/02-run-modes`|
-|`src/cli/acp/`, `src/cli/acp.rs`|`docs/protocol/ACP.md`, `docs/diagram/05-acp-negotiation`|
+|`src/cli/` commands, flags and dispatch, `src/main.rs`|`README.md`, `docs/release/INSTALL.md`, `docs/diagram/02-run-modes.svg`|
+|`src/cli/tui_handoff.rs`, `crates/tui/`|`docs/runtime/TUI.md`, `docs/diagram/02-run-modes.svg`|
+|`src/cli/acp/`, `src/cli/acp.rs`|`docs/protocol/ACP.md`, `docs/diagram/05-acp-negotiation.svg`|
 |`src/cli/rpc/`|`docs/protocol/RPC.md`|
 |`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`, `src/cli/api_credentials.rs`, `crates/base/src/harness_api.rs`, `crates/config-types/src/harness_api.rs`|`docs/protocol/HARNESS_API.md`|
-|`crates/app-core/src/server/`|`docs/architecture/SERVER.md`, `docs/runtime/TURNS.md`, `docs/diagram/03-turn-lifecycle`|
+|`crates/app-core/src/server/`|`docs/architecture/SERVER.md`, `docs/runtime/TURNS.md`, `docs/diagram/03-turn-lifecycle.svg`|
 |`crates/base/src/hosting.rs`, `crates/config-types/src/hosting.rs`, `crates/app-core/src/server/hosted_tenant.rs`, `crates/agent-sdk/src/launch_hosted.rs`, `scripts/hosting/`|`docs/architecture/HOSTING.md`|
-|`crates/session-store/`, `crates/storage/`, `[storage] sync`|`docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/diagram/06-session-storage`|
-|`crates/app-core/src/tool/`, `crates/tool-*`, `crates/edit-safety/`, tool profiles|`docs/runtime/TOOLS.md`, `docs/runtime/TOOL_SCHEDULING.md`, `docs/diagram/07-tool-loading`, "What this build is" above|
+|`crates/session-store/`, `crates/storage/`, `[storage] sync`|`docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/diagram/06-session-storage.svg`|
+|`crates/app-core/src/tool/`, `crates/tool-*`, `crates/edit-safety/`, tool profiles|`docs/runtime/TOOLS.md`, `docs/runtime/TOOL_SCHEDULING.md`, `docs/diagram/07-tool-loading.svg`, "What this build is" above|
+|`crates/extension-*`, `crates/base/src/packages/`, `crates/app-core/src/extensions/`, `src/cli/packages.rs`|`docs/runtime/PACKAGES.md`, "What this build is" above|
 |`crates/base/src/memory*`, `crates/memory-types/`, `horon memory migrate`, `horon volume`, `src/cli/volume.rs`|`docs/runtime/MEMORY.md`, `docs/runtime/TOOLS.md`, `docs/architecture/CRATES.md`, `docs/architecture/HOSTING.md`|
-|`crates/provider-*`, `crates/base/src/provider*`, `crates/config-types/`|`docs/provider/MODEL.md`, `docs/diagram/04-provider-wires`, "What this build is" above|
+|`crates/provider-*`, `crates/base/src/provider*`, `crates/config-types/`|`docs/provider/MODEL.md`, `docs/diagram/04-provider-wires.svg`, "What this build is" above|
 |`crates/irc-core/`, `crates/app-core/src/server/irc/`|`docs/runtime/IRC.md`|
 |`crates/plan/`, `crates/swarm-core/`|`docs/runtime/SWARM_TASK_GRAPH.md`|
 |approval, workspace trust, crash bundles, `scripts/ci/check_security.sh`|`docs/safety/SAFETY.md`, `docs/safety/SECURITY.md`|
-|`crates/platform*`, a crate added, removed or renamed in `Cargo.toml`|`docs/architecture/CRATES.md`, "Repository layout" above, `docs/diagram/01-system-overview`|
-|`.github/workflows/`, `scripts/ci/classify_changes.py`, `scripts/release/`|"CI gates by change type" and "Release and branch sync" above, `docs/release/`, `docs/diagram/08-branch-release-flow`|
+|`crates/platform*`, a crate added, removed or renamed in `Cargo.toml`|`docs/architecture/CRATES.md`, "Repository layout" above, `docs/diagram/01-system-overview.svg`|
+|`.github/workflows/`, `scripts/ci/classify_changes.py`, `scripts/release/`|"CI gates by change type" and "Release and branch sync" above, `docs/release/`, `docs/diagram/08-branch-release-flow.svg`|
 |`scripts/perf/`, `benchmark*.yml`, `scripts/perf/structural_budget.json`|`docs/performance/BENCHMARK.md`, `docs/performance/MEMORY.md`|
 |`packages/npm/`, `publish-*.yml`|`docs/release/NPM.md`, `docs/release/INSTALL.md`|
 |a value in "Configuration that must keep its default"|that table and the page that documents the setting|
