@@ -471,6 +471,7 @@ A package command answers as `/id:command`, where `id` is the package id and `co
 | `/jobs` | Inspect the current session's background work and cancel a selected terminal job |
 | `/keys` | List the keys in force and what each does |
 | `/links` | List links from recent assistant answers and open the selected URL |
+| `/live` | Drive an opt-in external real-time voice session adapter with text fallback |
 | `/mcp [probe <server>]` | List trusted MCP configuration or explicitly test a named connection |
 | `/model [name]` | Pick a model from a list, or switch to the one named |
 | `/new` | Start a new session in this directory |
@@ -505,7 +506,9 @@ Use `/voice consent` in the attached session before recording. Press Ctrl+Space 
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-eight commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
+`/live` drives an opt-in external real-time voice session adapter configured in `tui.toml` (`voice.live_enabled`, `voice.live_endpoint`, `voice.live_adapter`, `voice.live_api_key_env`, `voice.live_model`, `voice.live_command`, `voice.live_fallback_to_text`). It ships disabled with no preconfigured third-party endpoint and requires `/live consent` per session. Use `/live talk` and `/live end` for explicit active capture, `/live stop` or `/live reconnect` to retire old captures before reconnecting, and `/live leave` to return to text mode with your attached session and draft intact. `Alt+V` (`app.live_voice`) toggles live mode/capture while `Ctrl+L` stays bound to `app.repaint` (remappable in `keybindings.toml`).
+
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-nine commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -545,6 +548,7 @@ built-in commands:
   /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one
+  /live                opt-in real-time voice session adapter (consent, start, talk, end, stop, reconnect, leave, status)
   /mcp                 list trusted MCP servers or connect to one with /mcp probe <server>
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory

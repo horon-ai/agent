@@ -5,6 +5,7 @@ use super::{Action, App};
 use crate::commands::Local;
 use crate::links;
 use crate::overlays::picker::{Kind, Picker, Row};
+use crate::voice::live::{CONSENT as LIVE_CONSENT, LiveOutcome, LivePhase, LiveStart, USAGE as LIVE_USAGE};
 use crate::voice::{CONSENT, Outcome, Phase, Start, USAGE};
 
 /// Assistant answers `/links` reads back from the transcript.
@@ -191,6 +192,10 @@ impl App {
             // a draft rather than sent.
             Local::Voice => {
                 self.run_voice(arguments);
+                None
+            }
+            Local::Live => {
+                self.run_live_voice(arguments);
                 None
             }
         }
@@ -549,6 +554,146 @@ impl App {
             }
             Phase::Transcribing => Some("voice: recognizing on this device; /voice cancel discards it".to_string()),
             Phase::Speaking => Some("voice: speaking; /voice stop or esc stops it".to_string()),
+        }
+    }
+
+    /// `/live`: opt-in real-time voice session adapter with explicit capture and text fallback.
+    pub(crate) fn run_live_voice(&mut self, arguments: &str) {
+        let arguments = arguments.trim();
+        match arguments {
+            "" => self.toggle_live_voice(),
+            "consent" => {
+                self.voice.live.give_consent();
+                self.transcript.push_notice(
+                    "live voice: consent recorded for this session; switching sessions, disconnecting or leaving forgets it",
+                );
+            }
+            "forget" => {
+                self.voice.live.forget();
+                self.transcript
+                    .push_notice("live voice: consent forgotten and audio session stopped; text session active");
+            }
+            "start" => self.start_live_voice(),
+            "talk" | "capture" => self.begin_live_capture(),
+            "end" | "commit" => self.end_live_capture(true),
+            "stop" => {
+                self.voice.live.stop();
+                self.transcript
+                    .push_notice("live voice: stopped; unsubmitted captures retired and text session active");
+            }
+            "leave" | "off" | "exit" => {
+                self.voice.live.leave();
+                self.transcript
+                    .push_notice("live voice: left audio mode; text session remains active");
+            }
+            "reconnect" => match self.voice.live.reconnect() {
+                Ok(gen_id) => self.transcript.push_notice(format!(
+                    "live voice: reconnecting adapter (gen {gen_id}); older captures retired"
+                )),
+                Err(reason) => self.transcript.push_notice(format!("live voice: {reason}")),
+            },
+            "status" => {
+                let status = self.voice.live.status();
+                self.transcript.push_notice(status);
+            }
+            _ => self.transcript.push_notice(LIVE_USAGE),
+        }
+    }
+
+    /// Toggle opt-in live voice: start session, open capture, or commit active capture.
+    pub(crate) fn toggle_live_voice(&mut self) {
+        match self.voice.live.phase() {
+            LivePhase::Idle => self.start_live_voice(),
+            LivePhase::Ready => self.begin_live_capture(),
+            LivePhase::Capturing => self.end_live_capture(true),
+            LivePhase::Connecting | LivePhase::Reconnecting => self.transcript.push_notice(format!(
+                "live voice: {}; /live stop cancels and keeps text input active",
+                self.voice.live.phase().label()
+            )),
+        }
+    }
+
+    fn start_live_voice(&mut self) {
+        match self.voice.live.start() {
+            LiveStart::Started => self
+                .transcript
+                .push_notice("live voice: connecting adapter; /live leave returns to text mode anytime"),
+            LiveStart::NeedsConsent => self.transcript.push_notice(LIVE_CONSENT),
+            LiveStart::AlreadyActive(phase) => self.transcript.push_notice(format!(
+                "live voice: already {} (/live talk, /live end, /live stop, /live leave)",
+                phase.label()
+            )),
+            LiveStart::Fallback(reason) => self.transcript.push_notice(format!("live voice: {reason}")),
+        }
+    }
+
+    fn begin_live_capture(&mut self) {
+        match self.voice.live.begin_capture() {
+            Ok(_) => self
+                .transcript
+                .push_notice("live voice: capturing audio; /live end sends it, esc cancels without sending"),
+            Err(reason) => self.transcript.push_notice(format!("live voice: {reason}")),
+        }
+    }
+
+    fn end_live_capture(&mut self, commit: bool) {
+        match self.voice.live.end_capture(commit) {
+            Ok(()) if commit => self
+                .transcript
+                .push_notice("live voice: finishing capture; returning to ready"),
+            Ok(()) => self
+                .transcript
+                .push_notice("live voice: capture discarded; text session active"),
+            Err(reason) => self.transcript.push_notice(format!("live voice: {reason}")),
+        }
+    }
+
+    /// `esc` while live capturing: retire the capture cleanly without submitting.
+    pub(crate) fn cancel_live_voice(&mut self) {
+        if self.voice.live.phase() != LivePhase::Capturing {
+            return;
+        }
+        drop(self.voice.live.end_capture(false));
+        self.transcript
+            .push_notice("live voice: capture cancelled; draft and text session unchanged");
+    }
+
+    /// Drain live voice adapter events, retiring consent/captures if disconnected.
+    pub(crate) fn tick_live_voice(&mut self) -> bool {
+        if self.disconnected && (self.voice.live.consent_given() || self.voice.live.phase() != LivePhase::Idle) {
+            self.voice.live.forget();
+        }
+        let outcomes = self.voice.live.poll();
+        if outcomes.is_empty() {
+            return false;
+        }
+        for outcome in outcomes {
+            match outcome {
+                LiveOutcome::Submit(text) => {
+                    if let Some(Action::Send(queued_text)) = self.send_or_queue(text, None) {
+                        self.voice.live.set_pending_send(queued_text);
+                    }
+                }
+                LiveOutcome::Notice(message) => self.transcript.push_notice(message),
+                LiveOutcome::Fallback(reason) => {
+                    self.transcript
+                        .push_notice(format!("live voice: {reason}; text session stays active"));
+                }
+            }
+        }
+        true
+    }
+
+    /// Footer hint while opt-in live audio mode is active.
+    pub(crate) fn live_voice_hint(&self) -> Option<String> {
+        match self.voice.live.phase() {
+            LivePhase::Idle => None,
+            LivePhase::Connecting => Some("live voice: connecting; /live stop keeps text mode".to_string()),
+            LivePhase::Reconnecting => Some("live voice: reconnecting; /live stop keeps text mode".to_string()),
+            LivePhase::Ready => Some("live voice: ready; /live talk starts capture, /live leave exits".to_string()),
+            LivePhase::Capturing => {
+                Some("live voice: capturing; /live end sends, esc cancels, /live leave exits".to_string())
+            }
         }
     }
 }

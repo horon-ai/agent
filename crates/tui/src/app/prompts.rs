@@ -76,6 +76,11 @@ impl App {
             self.transcript
                 .push_notice("voice: capture cancelled because a prompt arrived");
         }
+        if self.voice.live.phase() == crate::voice::live::LivePhase::Capturing {
+            drop(self.voice.live.end_capture(false));
+            self.transcript
+                .push_notice("live voice: active capture cancelled because a prompt arrived");
+        }
         match &self.prompt {
             Some(_) => self.waiting_prompts.push_back(prompt),
             None => self.prompt = Some(prompt),

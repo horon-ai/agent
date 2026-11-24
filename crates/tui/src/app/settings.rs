@@ -118,6 +118,7 @@ impl App {
         for warning in motion_warnings {
             self.warn(format!("motion: {warning}"));
         }
+        self.voice.live.apply_settings(settings);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }

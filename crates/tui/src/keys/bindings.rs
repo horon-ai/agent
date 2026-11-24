@@ -70,6 +70,8 @@ pub mod ids {
     pub const APP_PLAN_MODE: &str = "app.plan_mode";
     /// Start or finish on-device voice input.
     pub const APP_VOICE: &str = "app.voice";
+    /// Toggle opt-in real-time live voice mode or active capture.
+    pub const APP_LIVE_VOICE: &str = "app.live_voice";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -220,6 +222,9 @@ pub const ACTIONS: &[ActionSpec] = &[
     // terminal that does not report it leaves `/voice` as the entry point, and
     // the key can be rebound in `keybindings.toml`.
     ActionSpec::new(ids::APP_VOICE, Scope::App, &["ctrl+space"]),
+    // Opt-in real-time voice session toggle. `ctrl+l` stays `app.repaint` (#482),
+    // and `alt+v` is unclaimed in the shipped map (remappable in `keybindings.toml`).
+    ActionSpec::new(ids::APP_LIVE_VOICE, Scope::App, &["alt+v"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
     ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),

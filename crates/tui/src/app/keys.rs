@@ -178,6 +178,10 @@ impl App {
             self.cancel_voice();
             return None;
         }
+        if key.code == KeyCode::Esc && self.voice.live.phase() == crate::voice::live::LivePhase::Capturing {
+            self.cancel_live_voice();
+            return None;
+        }
 
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
         let pressed = Key::from_event(key);
@@ -365,6 +369,10 @@ impl App {
             }
             Some(keys::ids::APP_VOICE) => {
                 self.toggle_voice();
+                return None;
+            }
+            Some(keys::ids::APP_LIVE_VOICE) => {
+                self.toggle_live_voice();
                 return None;
             }
             // Every edit ends a walk through the history: the draft on screen

@@ -80,6 +80,9 @@ impl App {
         if let Some(action) = self.package_send.take() {
             return Some(action);
         }
+        if let Some(text) = self.voice.live.take_pending_send() {
+            return Some(Action::Send(text));
+        }
         if self.pending_turn || self.disconnected {
             return None;
         }

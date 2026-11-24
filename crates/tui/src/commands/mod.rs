@@ -168,6 +168,8 @@ pub enum Local {
     /// Record, recognize or speak with on-device programs; nothing leaves the
     /// client.
     Voice,
+    /// Drive an opt-in external real-time voice session adapter (`/live`).
+    Live,
 }
 
 impl Local {
@@ -214,6 +216,7 @@ impl Local {
             "commit" => Some(Self::Commit),
             "swarm" => Some(Self::Swarm),
             "voice" => Some(Self::Voice),
+            "live" => Some(Self::Live),
             _ => None,
         }
     }
@@ -263,6 +266,7 @@ impl Local {
             Self::Commit => "commit",
             Self::Swarm => "swarm",
             Self::Voice => "voice",
+            Self::Live => "live",
         }
     }
 }
@@ -843,6 +847,7 @@ const LOCAL_NAMES: &[&str] = &[
     "jobs",
     "keys",
     "links",
+    "live",
     "mcp",
     "model",
     "new",

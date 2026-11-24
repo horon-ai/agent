@@ -88,6 +88,8 @@ Keys:
   Alt-M          put this session in read-only plan mode, like /plan on
   Ctrl-Space     start or finish on-device voice input; /voice has the rest
                  (consent, stop, cancel, say <text>, read, status)
+  Alt-V          toggle opt-in real-time live voice mode or capture; /live
+                 has the rest (Ctrl-L stays redraw; remappable in keybindings.toml)
   Alt-P          pick the model this session uses
   Ctrl-P         step forward through models.shortlist (Ctrl-Alt-P moves back)
   Alt-D          copy the draft to the terminal clipboard
@@ -127,6 +129,8 @@ Commands:
                  with Delete
   /keys          list the keys in force and what each does
   /links         list the http(s) links in recent answers and open one
+  /live [consent|forget|start|talk|end|stop|reconnect|leave|status]
+                 opt-in real-time voice session adapter with text fallback
   /mcp [probe <server>] list trusted MCP servers or test one connection
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
@@ -246,6 +250,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         "put this session in read-only plan mode, like /plan on",
     ),
     (ids::APP_VOICE, "start or finish on-device voice input"),
+    (
+        ids::APP_LIVE_VOICE,
+        "toggle opt-in real-time live voice mode or capture",
+    ),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
     (ids::EDITOR_LEFT, "move the cursor one character left"),
@@ -312,6 +320,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "stats" => "show the attached session's recorded token usage",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
+        "live" => "opt-in real-time voice session adapter (consent, start, talk, end, stop, reconnect, leave, status)",
         "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
