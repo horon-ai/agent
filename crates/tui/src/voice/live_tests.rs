@@ -529,11 +529,34 @@ for raw in sys.stdin:
     app.run_live_voice("consent");
     app.run_live_voice("start");
 
-    let (mut conn, _) = listener
-        .accept()
-        .expect("adapter subprocess connects to loopback socket");
+    listener
+        .set_nonblocking(true)
+        .expect("configure nonblocking loopback listener");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut conn = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for adapter subprocess connection (phase={}, notice={})",
+                    app.voice.live.phase().label(),
+                    last_notice(&app)
+                );
+                app.tick_live_voice();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(err) => panic!("loopback accept failed: {err}"),
+        }
+    };
+    conn.set_nonblocking(false).expect("restore blocking socket");
     conn.set_read_timeout(Some(std::time::Duration::from_secs(5)))
         .expect("set read timeout");
+
+    // Dropping an unrelated App / Voice instance or cancelling /voice must not kill LiveVoice's child.
+    let unrelated = app_with_live_settings(false, "");
+    drop(unrelated);
+    app.run_voice("cancel");
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
