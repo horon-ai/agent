@@ -337,6 +337,12 @@ class StraceTests(unittest.TestCase):
         self.assertIsNone(bench.parse_strace_summary("strace: nothing matched\n"))
         self.assertIsNone(bench.parse_strace_summary(""))
 
+    def test_clean_empty_strace_summary_records_zero_fsync_calls(self) -> None:
+        self.assertEqual(bench.resolve_strace_counts("", None), {"total": 0, "fsync": 0, "fdatasync": 0})
+        self.assertIsNone(bench.resolve_strace_counts("", "exit 1: failed"))
+        self.assertIsNone(bench.resolve_strace_counts("strace: nothing matched\n", "exit 2: failed"))
+        self.assertIsNone(bench.resolve_strace_counts(None, None))
+
     def test_strace_argv_keeps_the_measured_command(self) -> None:
         argv = bench.strace_argv(["/bin/tool", "run", "hi"], "/tmp/summary.txt")
         self.assertEqual(argv[0], "strace")

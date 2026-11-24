@@ -228,6 +228,11 @@ def has_tool_result(kind: str, body: dict) -> bool:
 # run then reports a failed round trip with its reason instead of a timeout.
 MAX_SCENARIO_TOOL_CALLS = 4
 
+# Brief backoff (seconds) between `tool_search` retries when an agent connects
+# stdio MCP servers asynchronously in the background (e.g. omo / senpi), so a
+# fast first model request waits long enough for `tools/list` to register.
+BACKGROUND_MCP_SEARCH_WAITS = (0.05, 0.15, 0.35)
+
 # `--retry-denied-tool`: the default plan repeats its `ls` once after a refusal,
 # which is how the PTY smoke test drives the approval round trip. The first call
 # is denied, the client answers the approval prompt, and the model's retry gets
@@ -867,6 +872,23 @@ class Handler(BaseHTTPRequestHandler):
                 tool_name = _tool_name(read_tool)
                 via = "mcp-route"
                 arguments = {prop: route}
+            elif tool_search is not None:
+                # Agents that attach stdio MCP servers in the background (omo /
+                # senpi `deadlineMs: 0`) can send request 1 with `tool_search`
+                # before `bench_echo` finishes `tools/list`. Search to keep the
+                # turn open until the server's tool registers on the next turn.
+                issued = tool_call_count(kind, body)
+                if issued < MAX_SCENARIO_TOOL_CALLS and BACKGROUND_MCP_SEARCH_WAITS:
+                    wait = BACKGROUND_MCP_SEARCH_WAITS[min(issued, len(BACKGROUND_MCP_SEARCH_WAITS) - 1)]
+                    if wait > 0:
+                        time.sleep(wait)
+                props = _tool_schema_props(tool_search)
+                prop = _first_prop(props, ("query",)) or "query"
+                tool_name = _tool_name(tool_search)
+                via = "tool-search"
+                arguments = {prop: MCP_TOOL_SUFFIX}
+                if "source" in props:
+                    arguments["source"] = "mcp"
         elif plan_name == "package":
             offered = find_package_tool(tools)
             named = PACKAGE_TOOL_NAME.search(transcript)

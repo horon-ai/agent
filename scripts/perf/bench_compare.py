@@ -835,6 +835,23 @@ def parse_strace_summary(text: str) -> dict | None:
     }
 
 
+def resolve_strace_counts(trace: str | None, error: str | None) -> dict | None:
+    """Resolve `strace -c` output into syscall counts, treating clean empty traces as zero.
+
+    ``strace -c -e trace=fsync,fdatasync -o <file>`` writes an empty file when
+    the traced process exits cleanly without calling either syscall; without this
+    distinction a genuine zero-flush run is misreported as ``not measured``.
+    """
+    if trace is None:
+        return None
+    parsed = parse_strace_summary(trace)
+    if parsed is not None:
+        return parsed
+    if error is None and trace.strip() == "":
+        return {"total": 0, "fsync": 0, "fdatasync": 0}
+    return None
+
+
 def measure_oneshot(
     argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float,
     syscalls: bool | str = False,
@@ -956,7 +973,7 @@ def _measure_oneshot(
             root = os.path.dirname(os.path.abspath(cwd))
             fsync_paths = bfp.parse(trace, (os.path.realpath(root), root))
         elif trace is not None:
-            syscall_counts = parse_strace_summary(trace)
+            syscall_counts = resolve_strace_counts(trace, error)
     log_tail = _log_tail_since(env, log_marks)
     return {
         "ms": None if timed_out else round(elapsed_ms, 2),

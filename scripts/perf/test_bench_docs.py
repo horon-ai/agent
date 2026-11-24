@@ -676,5 +676,117 @@ class PartialRuns(unittest.TestCase):
             self.assertEqual(bench_docs.last_commit(doc.read_text(encoding="utf-8")), "abc1234")
 
 
+def eight_tool_results() -> list[dict]:
+    specs = [
+        ("horon", "horon", "horon-agent v0.1.0-dev (abc1234)", 45.0, 41e6, 37.0, 64.0, 380e3, 117e6),
+        ("horon-base", "horon-base", "horon-agent v0.1.0-dev (0001111)", 48.0, 42e6, 39.0, 66.0, 390e3, 118e6),
+        ("jcode", "jcode", "jcode v1.0.1 (10114429c)", 148.0, 80e6, 54.0, 165.0, 173e3, 191e6),
+        ("claude_code", "Claude Code", "2.1.317 (Claude Code)", 500.0, 200e6, 520.0, 650.0, 50e6, 230e6),
+        ("codex", "Codex CLI", "codex-cli 0.166.0", 290.0, 90e6, 310.0, 410.0, 45e6, 98e6),
+        ("opencode", "OpenCode", "1.19.5", 450.0, 150e6, 470.0, 580.0, 800e3, 165e6),
+        ("pi", "pi", "1.5.0", 510.0, 130e6, 530.0, 610.0, 95e6, 35e6),
+        ("omp", "oh-my-pi (omp)", "18.18.0", 620.0, 160e6, 650.0, 740.0, 110e6, 120e6),
+        ("omo", "oh-my-openagent (omo)", "5.1.64", 710.0, 220e6, 730.0, 820.0, 150e6, 250e6),
+    ]
+    rows = []
+    for name, label, version, oneshot, rss, skill, mcp, slope, install in specs:
+        entry = summary_result(name, version, oneshot, rss, skill, mcp, slope, install)
+        entry["label"] = label
+        rows.append(entry)
+    return rows
+
+
+class AllCompetitorGuardAndSummary(unittest.TestCase):
+    """Summaries, versions, charts and guards cover all 7 competitors and omit A/B rows."""
+
+    def test_summary_and_versions_include_all_competitors_without_horon_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            job_dir(results, "benchmark-linux-1", "linux", files={
+                "runner.txt": "ubuntu-24.04\n",
+                "compare.json": compare_json(*eight_tool_results()),
+                "jcode-release.json": json.dumps(RELEASE),
+            })
+            dirs = bench_docs.find_platform_dirs(results)
+            summary = bench_docs.summary_body(dirs, "abc1234", "en")
+            versions = bench_docs.versions_body(dirs, "abc1234", "en")
+            charts = bench_charts.render_charts(dirs, "abc1234", "en")
+
+        expected_header = (
+            "| Linux (`ubuntu-24.04`) | horon | jcode | Claude Code | Codex CLI | "
+            "OpenCode | pi | oh-my-pi (omp) | oh-my-openagent (omo) |"
+        )
+        self.assertIn(expected_header, summary)
+        self.assertNotIn("horon-base", summary)
+        for label in ("horon", "jcode", "Claude Code", "Codex CLI", "OpenCode", "pi", "oh-my-pi (omp)", "oh-my-openagent (omo)"):
+            self.assertIn(f"| {label} |", versions)
+        self.assertNotIn("horon-base", versions)
+        self.assertIn("horon against 7 tools", charts["00-summary.svg"])
+
+    def test_require_all_competitors_rejects_partial_run_and_accepts_full_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            partial_dir = root / "partial"
+            partial_dir.mkdir()
+            summary_results(partial_dir)
+            doc = root / "README.md"
+            doc.write_text(README_DOC, encoding="utf-8")
+
+            code = bench_docs.main([
+                "render", "--doc", str(doc), "--results", str(partial_dir),
+                "--commit", "abc1234", "--require-all-competitors",
+            ])
+            self.assertEqual(code, 1)
+            self.assertEqual(doc.read_text(encoding="utf-8"), README_DOC)
+
+            full_dir = root / "full"
+            full_dir.mkdir()
+            for idx, key in enumerate(("linux", "macos", "windows"), start=1):
+                runner = {"linux": "ubuntu-24.04\n", "macos": "macos-latest\n", "windows": "windows-latest\n"}[key]
+                asset = {
+                    "linux": "jcode-linux-x86_64.tar.gz",
+                    "macos": "jcode-macos-aarch64.tar.gz",
+                    "windows": "jcode-windows-x86_64.exe",
+                }[key]
+                job_dir(full_dir, f"benchmark-{key}-{idx}", key, files={
+                    "runner.txt": runner,
+                    "compare.json": compare_json(*eight_tool_results()),
+                    "jcode-release.json": json.dumps({**RELEASE, "asset": asset}),
+                })
+            code = bench_docs.main([
+                "render", "--doc", str(doc), "--results", str(full_dir),
+                "--commit", "abc1234", "--require-all-competitors",
+            ])
+            self.assertEqual(code, 0)
+            self.assertIn("oh-my-openagent (omo)", doc.read_text(encoding="utf-8"))
+
+    def test_require_all_competitors_rejects_missing_or_failed_os_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            partial_os = root / "partial-os"
+            partial_os.mkdir()
+            job_dir(partial_os, "benchmark-linux-1", "linux", files={
+                "runner.txt": "ubuntu-24.04\n",
+                "compare.json": compare_json(*eight_tool_results()),
+                "jcode-release.json": json.dumps(RELEASE),
+            })
+            job_dir(partial_os, "benchmark-macos-2", "macos", status="failure", files={
+                "runner.txt": "macos-latest\n",
+            })
+            readme = root / "README.md"
+            readme.write_text(README_DOC, encoding="utf-8")
+            results_doc = root / "RESULTS.md"
+            results_doc.write_text(CHART_DOC, encoding="utf-8")
+
+            for doc in (readme, results_doc):
+                original = doc.read_text(encoding="utf-8")
+                code = bench_docs.main([
+                    "render", "--doc", str(doc), "--results", str(partial_os),
+                    "--commit", "abc1234", "--require-all-competitors",
+                ])
+                self.assertEqual(code, 1)
+                self.assertEqual(doc.read_text(encoding="utf-8"), original)
+
+
 if __name__ == "__main__":
     unittest.main()

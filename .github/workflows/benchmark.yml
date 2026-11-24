@@ -161,6 +161,7 @@ jobs:
       install: ${{ steps.plan.outputs.install }}
       run: ${{ steps.plan.outputs.run }}
       jcode: ${{ steps.plan.outputs.jcode }}
+      jcode_platforms: ${{ steps.plan.outputs.jcode_platforms }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -187,10 +188,16 @@ jobs:
           [[ ",$raw," != *,install,* ]] || install=true
           suites=",$raw,"
           suites="$(printf '%s' "$suites" | sed -E 's/,install,/,/' | strip)"
-          hosts=",${OS_INPUT:-all},"
-          hosts="$(printf '%s' "$hosts" | tr -d '[:space:]' | sed -E 's/,freebsd,/,/' | strip)"
+          all_os="$(printf '%s' ",${OS_INPUT:-all}," | tr -d '[:space:]' | strip)"
+          hosts="$(printf '%s' ",$all_os," | sed -E 's/,freebsd,/,/' | strip)"
           echo "install=$install" >> "$GITHUB_OUTPUT"
           echo "suites=$suites" >> "$GITHUB_OUTPUT"
+          if [ "$install" = true ]; then
+            jcode_platforms="${all_os:-all}"
+          else
+            jcode_platforms="$hosts"
+          fi
+          echo "jcode_platforms=$jcode_platforms" >> "$GITHUB_OUTPUT"
           competitors=",${COMPETITORS//[[:space:]]/},"
           compare=false
           if [[ -n "${hosts//,/}" && ( ",$suites," == *,all,* || ",$suites," == *,compare,* ) ]]; then
@@ -239,10 +246,14 @@ jobs:
           # and never reaches a downloaded binary.
           GH_TOKEN: ${{ github.token }}
           JCODE_VERSION: ${{ inputs.jcode_version }}
+          JCODE_PLATFORMS: ${{ needs.plan.outputs.jcode_platforms }}
+          JCODE_INSTALL_SUITE: ${{ needs.plan.outputs.install }}
         run: |
           set -euo pipefail
-          python3 scripts/perf/jcode_release.py resolve \
-            --metadata jcode-release.json --github-output "$GITHUB_OUTPUT"
+          args=(resolve --metadata jcode-release.json --github-output "$GITHUB_OUTPUT")
+          [ -z "${JCODE_PLATFORMS:-}" ] || args+=(--platforms "$JCODE_PLATFORMS")
+          [ "${JCODE_INSTALL_SUITE:-false}" != "true" ] || args+=(--install-suite)
+          python3 scripts/perf/jcode_release.py "${args[@]}"
           # The resolver writes only validated values; re-check before they are
           # handed to other jobs as shell-visible inputs.
           python3 - jcode-release.json <<'PY'

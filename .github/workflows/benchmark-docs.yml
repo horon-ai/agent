@@ -127,6 +127,7 @@ jobs:
       ref: ${{ needs.gate.outputs.sha }}
       os: all
       suites: all
+      competitors: jcode,claude_code,codex,opencode,pi,omp,omo
 
   docs:
     name: Write RESULTS.md on main and dev
@@ -190,7 +191,8 @@ jobs:
               for pair in "$DOC:en" "$DOC_KO:ko"; do
                 if ! python3 "$RUNNER_TEMP/bench_docs.py" render --doc "${pair%:*}" \
                     --results "$RUNNER_TEMP/bench-results" --commit "$SHA" \
-                    --run-url "$RUN_URL" --lang "${pair#*:}" --require-complete; then
+                    --run-url "$RUN_URL" --lang "${pair#*:}" --require-complete \
+                    --require-all-competitors; then
                   echo "::error::$branch: ${pair%:*} has no usable bench-auto block"
                   rendered=false
                 fi
@@ -198,7 +200,7 @@ jobs:
               for pair in "README.md:en" "README.ko.md:ko"; do
                 if ! python3 "$RUNNER_TEMP/bench_docs.py" render --doc "${pair%:*}" \
                     --results "$RUNNER_TEMP/bench-results" --commit "$SHA" \
-                    --run-url "$RUN_URL" --lang "${pair#*:}"; then
+                    --run-url "$RUN_URL" --lang "${pair#*:}" --require-all-competitors; then
                   echo "::error::$branch: ${pair%:*} has no usable bench-summary block"
                   rendered=false
                 fi

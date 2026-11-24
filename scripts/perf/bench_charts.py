@@ -231,7 +231,12 @@ def _tools(runs: dict[str, dict]) -> list[tuple[str, str]]:
     for key, _ in PLATFORMS:
         for result in (runs.get(key) or {}).get("results", []):
             if isinstance(result, dict) and isinstance(result.get("name"), str):
-                seen.setdefault(result["name"], str(result.get("label") or result["name"]))
+                name = result["name"]
+                # Ephemeral A/B baseline builds (`horon-base`) belong in job reports,
+                # not in published competitor comparison charts and summaries.
+                if name != HIGHLIGHT and name.startswith("horon-"):
+                    continue
+                seen.setdefault(name, str(result.get("label") or name))
     names = sorted(seen, key=lambda name: name != HIGHLIGHT)
     return [(name, seen[name]) for name in names]
 

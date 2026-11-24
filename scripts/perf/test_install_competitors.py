@@ -68,9 +68,13 @@ STUB_CURL = textwrap.dedent(
       https://api.github.com/repos/1jehuang/jcode/releases/latest)
         [ "$STUB_LATEST" = ok ] || fail 503
         src="$STUB_ROOT/latest.json" ;;
+      https://api.github.com/repos/1jehuang/jcode/releases\\?per_page=*)
+        [ "$STUB_LATEST" = ok ] || fail 503
+        src="$STUB_ROOT/releases.json" ;;
       https://api.github.com/repos/1jehuang/jcode/releases/tags/*)
         [ "$STUB_LATEST" = ok ] || fail 503
-        src="$STUB_ROOT/latest.json" ;;
+        tag_file="$STUB_ROOT/tags/${url##*/}.json"
+        if [ -f "$tag_file" ]; then src="$tag_file"; else src="$STUB_ROOT/latest.json"; fi ;;
       https://api.github.com/repos/1jehuang/jcode/git/ref/tags/*)
         [ "$STUB_LATEST" = ok ] || fail 503
         src="$STUB_ROOT/ref.json" ;;
@@ -170,6 +174,7 @@ class JcodeReleaseInstallTests(unittest.TestCase):
             "STUB_DOWNLOAD": download,
             "STUB_API": api,
             "STUB_LATEST": latest,
+            "NPM_INSTALL_RETRY_DELAY": "0",
         })
         env.pop("JCODE_VERSION", None)
         env.pop("JCODE_RELEASE_COMMIT", None)
@@ -348,6 +353,95 @@ class JcodeReleaseInstallTests(unittest.TestCase):
         self.bin_path(result)
         self.assertIn("codex\tnpm install failed", self.failures())
         self.assertEqual((self.stub / "npm-env").read_text().splitlines(), ["unset", "unset"])
+
+    def test_transient_npm_install_failure_retries_and_succeeds(self) -> None:
+        npm = self.stub / "bin" / "npm"
+        npm.write_text(textwrap.dedent("""\
+            #!/usr/bin/env bash
+            count_file="$STUB_ROOT/npm-calls"
+            calls=0
+            [ -f "$count_file" ] && calls="$(cat "$count_file")"
+            calls=$((calls + 1))
+            echo "$calls" >"$count_file"
+            prefix=""
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --prefix) prefix="$2"; shift 2 ;;
+                *) shift ;;
+              esac
+            done
+            if [ "$calls" -eq 1 ]; then
+              mkdir -p "$prefix/node_modules"
+              touch "$prefix/node_modules/stale.txt"
+              exit 1
+            fi
+            mkdir -p "$prefix/node_modules/.bin"
+            printf '#!/bin/sh\\necho "codex 0.166.0"\\n' >"$prefix/node_modules/.bin/codex"
+            chmod +x "$prefix/node_modules/.bin/codex"
+            exit 0
+            """))
+        npm.chmod(0o755)
+        result = self.run_installer(tools="jcode,codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--bin codex=", result.stdout)
+        self.assertEqual(self.failures(), "")
+        self.assertFalse((self.dest / "codex" / "node_modules" / "stale.txt").exists())
+        self.assertEqual((self.stub / "npm-calls").read_text().strip(), "2")
+
+    def test_resolve_platforms_skips_single_os_latest_when_other_oses_requested(self) -> None:
+        def rel(tag: str, asset_names: list[str], *, prerelease: bool = False) -> dict:
+            return {
+                "tag_name": tag,
+                "draft": False,
+                "prerelease": prerelease,
+                "assets": [{"id": idx + 1, "name": name} for idx, name in enumerate(asset_names)],
+            }
+
+        linux_only = rel("v1.1.2", ["jcode-linux-x86_64.tar.gz", "SHA256SUMS"])
+        rc = rel("v1.1.0-rc1", ["jcode-linux-x86_64.tar.gz", "jcode-macos-aarch64.tar.gz", "jcode-windows-x86_64.exe", "SHA256SUMS"], prerelease=True)
+        full = rel("v1.0.3", ["jcode-linux-x86_64.tar.gz", "jcode-macos-aarch64.tar.gz", "jcode-windows-x86_64.exe", "SHA256SUMS"])
+
+        (self.stub / "latest.json").write_text(json.dumps(linux_only))
+        (self.stub / "releases.json").write_text(json.dumps([linux_only, rc, full]))
+        (self.stub / "tags").mkdir(exist_ok=True)
+        (self.stub / "tags" / "v1.1.2.json").write_text(json.dumps(linux_only))
+        (self.stub / "tags" / "v1.0.3.json").write_text(json.dumps(full))
+
+        env = dict(os.environ)
+        env["PATH"] = f"{self.stub / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+        env["STUB_ROOT"] = str(self.stub)
+        env["STUB_LATEST"] = "ok"
+        env["STUB_DOWNLOAD"] = "ok"
+        env["STUB_API"] = "ok"
+        env.pop("JCODE_VERSION", None)
+
+        # Single Linux request keeps latest v1.1.2 without fetching the list endpoint.
+        meta_linux = self.tmp / "meta-linux.json"
+        res_linux = subprocess.run(
+            [sys.executable, str(HERE / "jcode_release.py"), "resolve", "--platforms", "linux", "--metadata", str(meta_linux)],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+        self.assertEqual(res_linux.returncode, 0, res_linux.stderr)
+        self.assertEqual(json.loads(meta_linux.read_text())["tag"], "v1.1.2")
+
+        # Multi-OS request skips Linux-only v1.1.2 and prerelease v1.1.0-rc1, choosing v1.0.3.
+        meta_all = self.tmp / "meta-all.json"
+        res_all = subprocess.run(
+            [sys.executable, str(HERE / "jcode_release.py"), "resolve", "--platforms", "all", "--metadata", str(meta_all)],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+        self.assertEqual(res_all.returncode, 0, res_all.stderr)
+        rec_all = json.loads(meta_all.read_text())
+        self.assertEqual(rec_all["tag"], "v1.0.3")
+        self.assertEqual(rec_all["selection"], "latest")
+
+        # Explicit pin refuses to fall back when requested platform assets are absent.
+        res_pin = subprocess.run(
+            [sys.executable, str(HERE / "jcode_release.py"), "resolve", "--tag", "v1.1.2", "--platforms", "all"],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+        self.assertNotEqual(res_pin.returncode, 0)
+        self.assertIn("pinned release v1.1.2 has no asset(s)", res_pin.stderr)
 
 
 class ReleaseHelpers(unittest.TestCase):
