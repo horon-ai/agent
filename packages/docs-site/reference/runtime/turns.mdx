@@ -79,7 +79,7 @@ The `/judge` command is a different workload. It spawns a reviewer worker inside
 
 ### At most two auto continuations per turn
 
-Synthetic continuations are capped by `MAX_AUTO_CONTINUATIONS = 2` (`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState` never exceeds that value (`crates/agent-runtime/src/turn_state.rs:633-636`; `record_auto_continuation` clamps at the ceiling), and a new turn starts at 0 with `TurnState::new()`, so the budget resets (`crates/agent-runtime/src/turn_state.rs:489-491`, test `crates/agent-runtime/src/turn_state_tests.rs:200-208`). Once the limit is used up, recovery stops and the user is told (`crates/app-core/src/agent/turn_recovery_wiring.rs:167-179`).
+Synthetic continuations are capped by `MAX_AUTO_CONTINUATIONS = 2` (`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState` never exceeds that value (`crates/agent-runtime/src/turn_state.rs:713-716`; `record_auto_continuation` clamps at the ceiling), and a new turn starts at 0 with `TurnState::new()`, so the budget resets (`crates/agent-runtime/src/turn_state.rs:489-491`, test `crates/agent-runtime/src/turn_state_tests.rs:200-208`). Once the limit is used up, recovery stops and the user is told (`crates/app-core/src/agent/turn_recovery_wiring.rs:167-179`).
 
 ### Tool calls written as text
 
@@ -114,13 +114,13 @@ still answers `None` at once and the message takes the queue path, as before.
 ### A finished turn closes before the next prompt is read
 
 The request loop reads a finished turn's report ahead of client input
-(`crates/app-core/src/server/client_lifecycle.rs:829-833`, the biased
+(`crates/app-core/src/server/client_lifecycle.rs:844-848`, the biased
 `processing_done_rx.recv()` arm). The turn task sends that report before it
 sends its terminal event, so a client that answers `Done` with the next prompt
 finds the turn already closed instead of meeting `Already processing a
-message` (`crates/app-core/src/server/client_lifecycle.rs:3827-3835`). A rejected
+message` (`crates/app-core/src/server/client_lifecycle.rs:3911-3913`). A rejected
 turn reports in the same order, before its error event
-(`crates/app-core/src/server/client_lifecycle.rs:3761-3763`). The next turn's
+(`crates/app-core/src/server/client_lifecycle.rs:3838-3845`). The next turn's
 task still holds the agent until this turn's idle state is out, so its `running`
 cannot precede that idle.
 
@@ -133,14 +133,14 @@ no turn registered the message takes the agent once, waiting at most
 `AGENT_LOCK_BACKGROUND_WAIT` (500 ms) for the hold to end: a completion tail
 frees in microseconds, and a hold that outlives the bound is answered busy
 instead of parking the loop
-(`crates/app-core/src/server/client_lifecycle.rs:3502-3549`). The append runs
+(`crates/app-core/src/server/client_lifecycle.rs:3588-3638`). The append runs
 under that single guard, so the message is stored exactly once and acknowledged
 with `ContextMessageAdded`.
 
 A cancel is the one reply the request loop writes straight to the client rather
 than through the turn's forwarder, so it waits for the session's forwarders to
 drain first: `fanout_flush::flush` with a 500 ms bound, then `Interrupted` and
-`Done` (`crates/app-core/src/server/client_lifecycle.rs:4032-4034`). Without that
+`Done` (`crates/app-core/src/server/client_lifecycle.rs:4109-4111`). Without that
 wait the cancelled turn's last tool frame would land after its `Done`, inside
 the next prompt. A forwarder registers its flush channel at spawn, answers a
 flush only when its event queue was empty when the request arrived, and drops
@@ -152,7 +152,7 @@ flush that runs out its bound logs a warning and lets the reply go
 
 ### Overview
 
-Soft interrupts are implemented in this build. Adding a message to a running turn does not cancel the current generation. Instead of breaking the flow and restarting, the message is queued and attached to the conversation history at a safe point after the agent loop finishes executing tools. The implementation has three pieces: two protocol requests (`crates/protocol/src/wire.rs:175-197`), the per-session queue (`crates/agent-runtime/src/lib.rs:18-175`), and the injection points in the turn loop (`crates/app-core/src/agent/interrupts.rs:536-669`).
+Soft interrupts are implemented in this build. Adding a message to a running turn does not cancel the current generation. Instead of breaking the flow and restarting, the message is queued and attached to the conversation history at a safe point after the agent loop finishes executing tools. The implementation has three pieces: two protocol requests (`crates/protocol/src/wire.rs:175-197`), the per-session queue (`crates/agent-runtime/src/lib.rs:18-175`), and the injection points in the turn loop (`crates/app-core/src/agent/interrupts.rs:695-908`).
 
 ### Difference from a hard interrupt
 
@@ -255,15 +255,15 @@ The server emits three events.
 
 The queue is kept in a per-session file at `<agent data directory>/pending-soft-interrupts/<session-id>.json` (`crates/base/src/soft_interrupt_store.rs:69-75`).
 
-- When the server queues a message it also appends it to disk (`crates/app-core/src/server/state.rs:1288-1298`).
-- A cancel request removes only the entries matching `client_ids` from disk (`crates/app-core/src/server/client_lifecycle.rs:3821`). A full cancel empties the file (`:3851`).
-- The agent rewrites the snapshot on every state change (`crates/app-core/src/agent.rs:1369`, `:1401` → `crates/app-core/src/agent/interrupts.rs:181-200`).
+- When the server queues a message it also appends it to disk (`crates/app-core/src/server/state.rs:1377-1434`).
+- A cancel request removes only the entries matching `client_ids` from disk (`crates/app-core/src/server/client_lifecycle.rs:4292`). A full cancel empties the file (`:4328`).
+- The agent rewrites the snapshot on every state change (`crates/app-core/src/agent.rs:1642`, `:1648` → `crates/app-core/src/agent/interrupts.rs:264-287`).
 
-Restoring a session reads the on-disk queue into memory (`crates/app-core/src/agent/turn_execution.rs:1170` → `crates/app-core/src/agent/interrupts.rs:143-175`). That read is not destructive. The disk copy is not removed until the first turn commits successfully, so messages are injected exactly once across restarts and retries.
+Restoring a session reads the on-disk queue into memory (`crates/app-core/src/agent/turn_execution.rs:1393` → `crates/app-core/src/agent/interrupts.rs:192-262`). That read is not destructive. The disk copy is not removed until the first turn commits successfully, so messages are injected exactly once across restarts and retries.
 
 ### Cancelled turns
 
-Nothing is injected when the user cancels a turn. `inject_soft_interrupts` returns an empty list when a normal-termination signal is set and leaves the messages in the queue (`crates/app-core/src/agent/interrupts.rs:536-554`). That keeps the next prompt the user types from appearing in history as an unanswered message, and lets the client send it as the next turn.
+Nothing is injected when the user cancels a turn. `inject_soft_interrupts` returns an empty list when a normal-termination signal is set and leaves the messages in the queue (`crates/app-core/src/agent/interrupts.rs:695-713`). That keeps the next prompt the user types from appearing in history as an unanswered message, and lets the client send it as the next turn.
 
 ### Relationship to stream rule injection
 
@@ -285,7 +285,7 @@ Urgent mode (`urgent = true`) means the remaining tools may be skipped at point 
 
 1. **Several soft interrupts**: group them by origin and join with `\n\n` into one message.
 2. **A soft interrupt while only text is streaming**: inject at point B and continue the loop.
-3. **The turn was cancelled**: do not inject and leave the messages queued. The client sends them as the next turn (`crates/app-core/src/agent/interrupts.rs:536-554`).
+3. **The turn was cancelled**: do not inject and leave the messages queued. The client sends them as the next turn (`crates/app-core/src/agent/interrupts.rs:695-713`).
 4. **The turn failed or panicked**: `InFlightGuard` returns the injected messages to the front of the queue (`crates/app-core/src/agent/interrupts.rs:58-70`).
 5. **The queue lock was poisoned**: skip the injection and log a warning (`crates/app-core/src/agent/interrupts.rs:556-565`).
 
@@ -300,8 +300,8 @@ Urgent mode (`urgent = true`) means the remaining tools may be skipped at point 
 
 The harness API advertises this feature only when the connected daemon's safety-feature probe reports `runtime_commands`.
 Older daemons return an explicit unsupported error.
-This is an additive API (the current minor version is 27), available from all three SDKs
-(`crates/harness-api/src/lib.rs:88-91`).
+This is an additive API (the current minor version is 32), available from all three SDKs
+(`crates/harness-api/src/lib.rs:102`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -740,4 +740,4 @@ The report names each parked tool call, counts eligible and parked sessions, and
 
 `/save` and `/unsave` are slash commands of a client, and the shipped client does not have them. The
 save label attached to a session survives as the `save_label` field in harness API
-responses (`crates/harness-api-server/src/translate.rs:255`, `:883`).
+responses (`crates/harness-api-server/src/translate.rs:299`, `:911`).
