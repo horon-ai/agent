@@ -1,5 +1,5 @@
 use super::MultiProvider;
-use super::selection::{ActiveProvider, ConfigProviderSelection, ProviderAvailability};
+use super::selection::ConfigProviderSelection;
 use crate::auth::AuthStatus;
 use crate::config::Config;
 
@@ -116,19 +116,9 @@ impl<'a> ProviderState<'a> {
             .and_then(|provider| MultiProvider::resolve_config_provider_selection(provider, self.config))
     }
 
-    pub(crate) fn preferred_active_provider(&self) -> Option<ActiveProvider> {
-        self.default_provider_selection()
-            .map(|selection| selection.active_provider())
-    }
-
     pub(crate) fn preferred_provider_display_label(&self) -> Option<String> {
         self.default_provider_selection()
             .map(|selection| selection.display_label())
-    }
-
-    pub(crate) fn preferred_provider_is_configured(&self, availability: ProviderAvailability) -> Option<bool> {
-        self.preferred_active_provider()
-            .map(|provider| availability.is_configured(provider))
     }
 }
 

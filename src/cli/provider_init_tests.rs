@@ -173,6 +173,27 @@ async fn a_malformed_named_profile_is_a_named_configuration_error() {
     assert!(message.contains("missing"), "{message}");
     assert!(message.contains("[providers.missing]"), "{message}");
 
+    let serve_err = match init_provider_for_serve(&ProviderChoice::Auto, None).await {
+        Ok(_) => panic!("serve with unknown default_provider must fail instead of returning unconfigured"),
+        Err(error) => error,
+    };
+    assert!(serve_err.to_string().contains("missing"), "{serve_err}");
+
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[provider]\ndefault_provider = \"mock\"\n\n[providers.mock]\ntype = \"openai-compatible\"\nbase_url = \"http://127.0.0.1:18080/v1\"\nauth = \"none\"\ndefault_model = \"mock-model\"\n",
+    )
+    .expect("write mock config");
+    crate::config::invalidate_config_cache();
+    let serve_provider = init_provider_for_serve(&ProviderChoice::Auto, None)
+        .await
+        .expect("serve must honor default_provider");
+    let session_provider = serve_provider.fork_for_new_session();
+    assert_eq!(session_provider.display_name(), "mock");
+    assert_eq!(session_provider.model(), "mock-model");
+    assert_eq!(session_provider.session_provider_key().as_deref(), Some("mock"));
+    assert!(session_provider.unavailable_reason().is_none());
+
     match saved_home {
         Some(home) => crate::env::set_var("HORON_HOME", home),
         None => crate::env::remove_var("HORON_HOME"),

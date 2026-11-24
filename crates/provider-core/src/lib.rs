@@ -183,6 +183,13 @@ pub trait Provider: Send + Sync {
         self.name().to_string()
     }
 
+    /// Canonical session `provider_key` for this provider's current runtime
+    /// selection when it differs from [`Provider::name`] (for example a direct
+    /// OpenAI-compatible or `[providers.<name>]` profile behind `MultiProvider`).
+    fn session_provider_key(&self) -> Option<String> {
+        None
+    }
+
     /// Opaque process-local identity for safely sharing a complete catalog.
     ///
     /// Equal identities must imply equal catalog rows, availability, display

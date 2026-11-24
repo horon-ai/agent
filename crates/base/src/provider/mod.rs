@@ -830,6 +830,12 @@ impl Provider for MultiProvider {
         self.name().to_string()
     }
 
+    fn session_provider_key(&self) -> Option<String> {
+        matches!(self.active_provider(), ActiveProvider::OpenAI)
+            .then(|| ProviderRegistry::new(self).active_compatible_profile_id())
+            .flatten()
+    }
+
     fn model(&self) -> String {
         match self.active_provider() {
             ActiveProvider::OpenAI => self
@@ -1270,7 +1276,11 @@ impl Provider for MultiProvider {
 
         // An explicit CLI initial provider/model remains the starting selection
         // for new sessions, while each session can switch freely afterward.
-        if self.initial_provider.is_some() {
+        // Also preserve a configured template runtime if config reload yielded
+        // no active execution provider (e.g. a profile bound programmatically).
+        if self.initial_provider.is_some()
+            || (provider.execution_provider().is_none() && self.execution_provider().is_some())
+        {
             let active = self.active_provider();
             let current_model = self.model();
             let switch_request = self.fork_model_switch_request(active, &current_model);
