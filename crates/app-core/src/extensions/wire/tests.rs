@@ -1003,6 +1003,28 @@ async fn a_refusal_never_quotes_the_frame() {
     drop(peer);
 }
 
+#[test]
+fn parse_frame_rejects_non_objects_unknown_shapes_and_unknown_fields() {
+    for raw in [
+        b"[1, 2]".as_slice(),
+        br#""text""#.as_slice(),
+        b"42".as_slice(),
+        b"true".as_slice(),
+        b"null".as_slice(),
+        b"{}".as_slice(),
+    ] {
+        assert_eq!(parse_frame(raw), Err(FrameError::UnknownShape));
+    }
+    for malformed in [
+        br#"{"jsonrpc":"2.0","id":1,"method":"initialize","extra":1}"#.as_slice(),
+        br#"{"jsonrpc":"2.0","method":"observer/notify","extra":1}"#.as_slice(),
+        br#"{"jsonrpc":"2.0","id":1,"result":null,"extra":1}"#.as_slice(),
+        br#"{"jsonrpc":"1.0","id":1,"method":"shutdown"}"#.as_slice(),
+    ] {
+        assert_eq!(parse_frame(malformed), Err(FrameError::Malformed));
+    }
+}
+
 /// Env marker for the child role below. Only the spawned process sees it.
 const CHILD_ENV: &str = "HORON_EXTENSION_WIRE_CHILD";
 

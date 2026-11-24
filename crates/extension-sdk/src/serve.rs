@@ -18,8 +18,8 @@ use std::thread;
 use horon_agent_extension_types::ObserverEvent;
 use horon_agent_extension_types::wire::{
     CancelParams, Capability, CapabilitySet, CommandInvokeParams, FrameError, HandshakeError, InitializeParams,
-    MAX_FRAME_BYTES, MAX_QUEUED_FRAMES, ObserverParams, RpcError, ToolCallParams, WireFrame, WireMethod,
-    WireNotification, WireRequest, WireResponse, encode_frame, parse_frame,
+    JsonRpcVersion, MAX_FRAME_BYTES, MAX_QUEUED_FRAMES, ObserverParams, RpcError, ToolCallParams, WireFrame,
+    WireMethod, WireNotification, WireRequest, WireResponse, encode_frame_into, parse_frame,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -68,7 +68,7 @@ pub trait Extension {
 
 /// What a handler may do while it answers one frame.
 pub struct Context<'a> {
-    cancel: &'a Cancel,
+    cancel: &'a AtomicBool,
     observations: &'a mut Vec<ObserverParams>,
 }
 
@@ -76,7 +76,7 @@ impl Context<'_> {
     /// Whether the host cancelled this request. A long call should poll it and
     /// stop; the server answers nothing for a cancelled call.
     pub fn is_cancelled(&self) -> bool {
-        self.cancel.is_cancelled()
+        self.cancel.load(Ordering::SeqCst)
     }
 
     /// Report one observation to the host. Bounded: past
@@ -254,7 +254,7 @@ where
     W: Write,
 {
     declaration.check(&extension)?;
-    let writer = Arc::new(Mutex::new(Writer { output }));
+    let writer = Writer::new(output);
     let tokens: Arc<Mutex<HashMap<u64, Cancel>>> = Arc::new(Mutex::new(HashMap::new()));
     // The id of the call the main thread is inside, or zero, and whether the
     // host's stream has ended. The reader uses both when the stream ends: it
@@ -293,17 +293,18 @@ where
         ended,
         granted: CapabilitySet::default(),
         initialized: false,
+        observations: Vec::new(),
     };
     loop {
-        let frame = match receiver.recv() {
-            Ok(Inbound::Frame(frame)) => frame,
+        let (frame, cancel) = match receiver.recv() {
+            Ok(Inbound::Frame(frame, cancel)) => (frame, cancel),
             Ok(Inbound::End) => return Ok(()),
             Ok(Inbound::Failed(error)) => return Err(error),
             Err(_) => return Ok(()),
         };
         match frame {
             WireFrame::Request(request) => {
-                if server.request(request)? {
+                if server.request(request, cancel)? {
                     return Ok(());
                 }
             }
@@ -317,23 +318,24 @@ where
 struct Server<'a, E, W> {
     extension: &'a E,
     declaration: &'a Declaration,
-    writer: Arc<Mutex<Writer<W>>>,
+    writer: Writer<W>,
     tokens: Arc<Mutex<HashMap<u64, Cancel>>>,
     running: Arc<AtomicU64>,
     ended: Arc<AtomicBool>,
     granted: CapabilitySet,
     initialized: bool,
+    observations: Vec<ObserverParams>,
 }
 
 impl<E: Extension, W: Write> Server<'_, E, W> {
     /// Route one request. `Ok(true)` means `shutdown` settled and serving is over.
-    fn request(&mut self, request: WireRequest) -> Result<bool, ServeError> {
+    fn request(&mut self, request: WireRequest, cancel: Option<Cancel>) -> Result<bool, ServeError> {
         match request.method {
             WireMethod::Initialize => self.initialize(request),
-            WireMethod::ToolCall => self.call(request, Capability::ToolCall),
-            WireMethod::CommandInvoke => self.call(request, Capability::CommandInvoke),
+            WireMethod::ToolCall => self.call(request, Capability::ToolCall, cancel),
+            WireMethod::CommandInvoke => self.call(request, Capability::CommandInvoke, cancel),
             WireMethod::Shutdown => {
-                self.reply(request.id, Value::Null)?;
+                self.reply_ref(request.id, &Value::Null)?;
                 Ok(true)
             }
             WireMethod::Cancel | WireMethod::ObserverNotify => {
@@ -347,38 +349,40 @@ impl<E: Extension, W: Write> Server<'_, E, W> {
     }
 
     fn initialize(&mut self, request: WireRequest) -> Result<bool, ServeError> {
+        let id = request.id;
         if self.initialized {
-            self.fail(request.id, invalid_request("initialize was already answered"))?;
+            self.fail(id, invalid_request("initialize was already answered"))?;
             return Ok(false);
         }
-        let params: InitializeParams = match request.parse_params() {
+        let params: InitializeParams = match request.into_params() {
             Ok(params) => params,
             Err(_) => {
-                self.fail(request.id, invalid_params())?;
+                self.fail(id, invalid_params())?;
                 return Ok(false);
             }
         };
         match self.declaration.accept(&params) {
             Ok(result) => {
-                let value = to_value(&result)?;
+                self.reply_ref(id, &result)?;
                 self.granted = result.capabilities;
-                self.reply(request.id, value)?;
                 self.initialized = true;
                 Ok(false)
             }
             Err(error) => {
-                self.fail(request.id, refusal(&error))?;
+                self.fail(id, refusal(&error))?;
                 Err(ServeError::Handshake(error))
             }
         }
     }
 
-    fn call(&mut self, request: WireRequest, capability: Capability) -> Result<bool, ServeError> {
+    fn call(
+        &mut self,
+        request: WireRequest,
+        capability: Capability,
+        cancel: Option<Cancel>,
+    ) -> Result<bool, ServeError> {
         let id = request.id;
-        // The reader registered this token when it read the frame, and it stays
-        // registered while the handler runs so a `cancel` can find it. Every
-        // return path forgets it again.
-        let cancel = self.clone_cancel(id);
+        let cancel = cancel.unwrap_or_else(Cancel::new);
         let outcome = self.dispatch(request, capability, &cancel);
         self.forget_cancel(id);
         outcome
@@ -395,14 +399,14 @@ impl<E: Extension, W: Write> Server<'_, E, W> {
             return Ok(false);
         }
         let call = match capability {
-            Capability::ToolCall => match request.parse_params::<ToolCallParams>() {
+            Capability::ToolCall => match request.into_params::<ToolCallParams>() {
                 Ok(params) => Call::Tool(params),
                 Err(_) => {
                     self.fail(id, invalid_params())?;
                     return Ok(false);
                 }
             },
-            Capability::CommandInvoke => match request.parse_params::<CommandInvokeParams>() {
+            Capability::CommandInvoke => match request.into_params::<CommandInvokeParams>() {
                 Ok(params) => Call::Command(params),
                 Err(_) => {
                     self.fail(id, invalid_params())?;
@@ -439,11 +443,11 @@ impl<E: Extension, W: Write> Server<'_, E, W> {
             self.running.store(0, Ordering::SeqCst);
             return Ok(false);
         }
-        let mut observations = Vec::new();
+        self.observations.clear();
         let outcome = {
             let mut context = Context {
-                cancel,
-                observations: &mut observations,
+                cancel: &cancel.flag,
+                observations: &mut self.observations,
             };
             match &call {
                 Call::Tool(params) => self.extension.call_tool(&params.tool, &params.arguments, &mut context),
@@ -461,48 +465,38 @@ impl<E: Extension, W: Write> Server<'_, E, W> {
         if cancel.is_cancelled() {
             return Ok(false);
         }
-        self.flush_observations(&observations)?;
+        self.flush_observations()?;
         if cancel.is_cancelled() {
             return Ok(false);
         }
         match outcome {
-            Ok(value) => self.reply(id, value)?,
+            Ok(value) => self.reply_ref(id, &value)?,
             Err(error) => self.fail(id, error)?,
         }
         Ok(false)
     }
 
     fn notification(&mut self, notification: WireNotification) -> Result<(), ServeError> {
+        static NEVER_CANCELLED: AtomicBool = AtomicBool::new(false);
         if notification.method != WireMethod::ObserverNotify || !self.initialized {
             return Ok(());
         }
         if !self.granted.contains(&Capability::ObserverNotify) {
             return Ok(());
         }
-        let params: ObserverParams = match notification.parse_params() {
+        let params: ObserverParams = match notification.into_params() {
             Ok(params) => params,
             Err(_) => return Ok(()),
         };
-        let cancel = Cancel::new();
-        let mut observations = Vec::new();
+        self.observations.clear();
         {
             let mut context = Context {
-                cancel: &cancel,
-                observations: &mut observations,
+                cancel: &NEVER_CANCELLED,
+                observations: &mut self.observations,
             };
             self.extension.observe(params.event, &params.metadata, &mut context);
         }
-        self.flush_observations(&observations)
-    }
-
-    /// The token the reader registered for this call, or a fresh one when the
-    /// entry is already gone.
-    fn clone_cancel(&self, id: u64) -> Cancel {
-        let tokens = match self.tokens.lock() {
-            Ok(tokens) => tokens,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        tokens.get(&id).cloned().unwrap_or_else(Cancel::new)
+        self.flush_observations()
     }
 
     fn forget_cancel(&self, id: u64) {
@@ -513,30 +507,45 @@ impl<E: Extension, W: Write> Server<'_, E, W> {
         tokens.remove(&id);
     }
 
-    fn flush_observations(&self, observations: &[ObserverParams]) -> Result<(), ServeError> {
+    fn flush_observations(&mut self) -> Result<(), ServeError> {
         if !self.granted.contains(&Capability::ObserverNotify) {
             return Ok(());
         }
-        for observation in observations {
-            let params = to_value(observation)?;
-            let frame = WireNotification::new(WireMethod::ObserverNotify, Some(params));
-            self.send(&frame)?;
+        for observation in &self.observations {
+            self.writer.send(&WireNotificationRef {
+                jsonrpc: JsonRpcVersion::V2,
+                method: WireMethod::ObserverNotify,
+                params: observation,
+            })?;
         }
         Ok(())
     }
 
-    fn reply(&self, id: u64, result: Value) -> Result<(), ServeError> {
-        self.send(&WireResponse::reply(id, result))
+    fn reply_ref(&mut self, id: u64, result: &impl Serialize) -> Result<(), ServeError> {
+        self.writer.send(&WireReplyRef {
+            jsonrpc: JsonRpcVersion::V2,
+            id,
+            result,
+        })
     }
 
-    fn fail(&self, id: u64, error: RpcError) -> Result<(), ServeError> {
-        self.send(&WireResponse::fail(id, error))
+    fn fail(&mut self, id: u64, error: RpcError) -> Result<(), ServeError> {
+        self.writer.send(&WireResponse::fail(id, error))
     }
+}
 
-    fn send(&self, frame: &impl Serialize) -> Result<(), ServeError> {
-        let mut writer = self.writer.lock().map_err(|_| ServeError::Poisoned)?;
-        writer.send(frame)
-    }
+#[derive(Serialize)]
+struct WireReplyRef<'a, R: Serialize + ?Sized> {
+    jsonrpc: JsonRpcVersion,
+    id: u64,
+    result: &'a R,
+}
+
+#[derive(Serialize)]
+struct WireNotificationRef<'a, P: Serialize + ?Sized> {
+    jsonrpc: JsonRpcVersion,
+    method: WireMethod,
+    params: &'a P,
 }
 
 enum Call {
@@ -577,21 +586,29 @@ impl Cancel {
 
 struct Writer<W> {
     output: W,
+    buf: Vec<u8>,
 }
 
 impl<W: Write> Writer<W> {
+    fn new(output: W) -> Self {
+        Self {
+            output,
+            buf: Vec::with_capacity(256),
+        }
+    }
+
     /// One whole frame, one write, flushed: a reader never sees half a frame and
     /// two frames never interleave.
     fn send(&mut self, frame: &impl Serialize) -> Result<(), ServeError> {
-        let bytes = encode_frame(frame)?;
-        self.output.write_all(&bytes)?;
+        encode_frame_into(frame, &mut self.buf)?;
+        self.output.write_all(&self.buf)?;
         self.output.flush()?;
         Ok(())
     }
 }
 
 enum Inbound {
-    Frame(WireFrame),
+    Frame(WireFrame, Option<Cancel>),
     Failed(ServeError),
     End,
 }
@@ -661,23 +678,26 @@ fn read<R: Read>(
         };
         match frame {
             WireFrame::Request(request) => {
-                register(tokens, &request);
-                if sender.send(Inbound::Frame(WireFrame::Request(request))).is_err() {
+                let cancel = register(tokens, &request);
+                if sender
+                    .send(Inbound::Frame(WireFrame::Request(request), cancel))
+                    .is_err()
+                {
                     return;
                 }
             }
             WireFrame::Notification(notification) if notification.method == WireMethod::Cancel => {
                 // Settled here, not on the main thread: a full queue must never
                 // hide a cancellation behind a call the handler is still running.
-                cancel(tokens, &notification);
+                cancel(tokens, notification);
             }
             WireFrame::Notification(notification) => {
                 // An event the host reported is best effort. A full queue drops
                 // it instead of blocking the reader that also delivers cancels.
-                let _queued = sender.try_send(Inbound::Frame(WireFrame::Notification(notification)));
+                let _queued = sender.try_send(Inbound::Frame(WireFrame::Notification(notification), None));
             }
             response => {
-                if sender.send(Inbound::Frame(response)).is_err() {
+                if sender.send(Inbound::Frame(response, None)).is_err() {
                     return;
                 }
             }
@@ -703,22 +723,24 @@ fn cancel_running(tokens: &Mutex<HashMap<u64, Cancel>>, running: &AtomicU64) {
 
 /// A call the server may have to cancel gets its token before the main thread
 /// can see the frame, so a `cancel` that arrives first is never lost.
-fn register(tokens: &Mutex<HashMap<u64, Cancel>>, request: &WireRequest) {
+fn register(tokens: &Mutex<HashMap<u64, Cancel>>, request: &WireRequest) -> Option<Cancel> {
     if !matches!(request.method, WireMethod::ToolCall | WireMethod::CommandInvoke) {
-        return;
+        return None;
     }
+    let cancel = Cancel::new();
     let mut tokens = match tokens.lock() {
         Ok(tokens) => tokens,
         Err(poisoned) => poisoned.into_inner(),
     };
-    tokens.insert(request.id, Cancel::new());
+    tokens.insert(request.id, cancel.clone());
+    Some(cancel)
 }
 
-fn cancel(tokens: &Mutex<HashMap<u64, Cancel>>, notification: &WireNotification) {
+fn cancel(tokens: &Mutex<HashMap<u64, Cancel>>, notification: WireNotification) {
     if notification.method != WireMethod::Cancel {
         return;
     }
-    let params: CancelParams = match notification.parse_params() {
+    let params: CancelParams = match notification.into_params() {
         Ok(params) => params,
         Err(_) => return,
     };
@@ -729,10 +751,6 @@ fn cancel(tokens: &Mutex<HashMap<u64, Cancel>>, notification: &WireNotification)
     if let Some(cancel) = tokens.get(&params.request_id) {
         cancel.cancel();
     }
-}
-
-fn to_value(value: &impl Serialize) -> Result<Value, ServeError> {
-    serde_json::to_value(value).map_err(|_| ServeError::Frame(FrameError::InvalidParams))
 }
 
 fn invalid_request(message: &str) -> RpcError {

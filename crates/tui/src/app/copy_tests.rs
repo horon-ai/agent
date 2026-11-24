@@ -309,3 +309,19 @@ fn a_copy_over_the_cap_reports_the_cut_and_still_decodes() {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
     );
 }
+
+#[test]
+fn crlf_trailing_blank_and_unclosed_fence_match_block_rules() {
+    let mut app = app();
+    let answer = "first:\r\n```rust\r\nfn ok() {}\r\n\r\n```\r\n\r\nunfinished:\r\n```rust\r\nfn wip() {}";
+    app.transcript.push_assistant(answer);
+
+    app.copy_newest_code();
+    let copied = app.take_copy().expect("closed block before unclosed fence copies");
+    assert_eq!(copied.text, "fn ok() {}\n");
+
+    assert_eq!(submit(&mut app, "/copy"), None);
+    let picker = app.picker.as_ref().expect("/copy opened picker");
+    assert_eq!(picker.visible().len(), 2);
+    assert_eq!(picker.visible()[0].detail, "rust · 2 lines");
+}

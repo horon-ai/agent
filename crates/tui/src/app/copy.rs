@@ -107,14 +107,18 @@ impl App {
     /// The last block is the one the model just wrote, which is what a reader
     /// reaching for this key wants; the list copies any other block.
     pub(crate) fn copy_newest_code(&mut self) {
-        let Some(answer) = self.answer_at(0).map(std::borrow::Cow::into_owned) else {
-            self.warn("copy: there is no answer to copy from yet");
-            return;
-        };
-        let blocks = code_blocks(&answer);
-        match blocks.last() {
-            Some(block) => self.request_copy("the newest code block", block.text()),
-            None => self.warn(format!("copy: {} has no code block", answer_name(0))),
+        let outcome = self.answer_at(0).map(|answer| {
+            let mut last = None;
+            scan_code_blocks(&answer, |span| {
+                last = Some((span.body_start, span.body_end, span.raw_bytes));
+                true
+            });
+            last.map(|(start, end, cap)| materialize_block(&answer, start, end, cap))
+        });
+        match outcome {
+            None => self.warn("copy: there is no answer to copy from yet"),
+            Some(Some(text)) => self.request_copy("the newest code block", text),
+            Some(None) => self.warn(format!("copy: {} has no code block", answer_name(0))),
         }
     }
 
@@ -181,17 +185,34 @@ impl App {
 
     /// Copy one answer back, or one of its code blocks.
     fn copy_answer(&mut self, back: usize, block: Option<usize>) {
-        let Some(answer) = self.answer_at(back).map(std::borrow::Cow::into_owned) else {
-            self.warn("copy: there is no answer to copy yet");
-            return;
-        };
         let name = answer_name(back);
         match block {
-            None => self.request_copy(name, answer),
-            Some(index) => match code_blocks(&answer).get(index) {
-                Some(found) => self.request_copy(format!("code block {} of {name}", index + 1), found.text()),
-                None => self.warn(format!("copy: {name} has no code block {}", index + 1)),
+            None => match self.answer_at(back).map(Cow::into_owned) {
+                Some(owned) => self.request_copy(name, owned),
+                None => self.warn("copy: there is no answer to copy yet"),
             },
+            Some(index) => {
+                let outcome = self.answer_at(back).map(|answer| {
+                    let mut seen = 0;
+                    let mut target = None;
+                    scan_code_blocks(&answer, |span| {
+                        if seen == index {
+                            target = Some((span.body_start, span.body_end, span.raw_bytes));
+                            return false;
+                        }
+                        seen += 1;
+                        true
+                    });
+                    target.map(|(start, end, cap)| materialize_block(&answer, start, end, cap))
+                });
+                match outcome {
+                    None => self.warn("copy: there is no answer to copy yet"),
+                    Some(Some(text)) => {
+                        self.request_copy(format!("code block {} of {name}", index + 1), text);
+                    }
+                    Some(None) => self.warn(format!("copy: {name} has no code block {}", index + 1)),
+                }
+            }
         }
     }
 
@@ -235,24 +256,27 @@ fn build_copy_rows(transcript: &Transcript) -> Vec<Row> {
             break;
         };
         let name = answer_name(back);
-        for (index, block) in code_blocks(&answer).into_iter().enumerate() {
+        let mut index = 0;
+        scan_code_blocks(&answer, |span| {
             if rows.len() >= MAX_ROWS {
-                break;
+                return false;
             }
-            let language = if block.language.is_empty() {
+            let language = if span.language.is_empty() {
                 "code"
             } else {
-                block.language
+                span.language
             };
-            let detail = format!("{language} · {} lines", block.lines.len());
+            let detail = format!("{language} · {} lines", span.line_count);
             let label = format!("code block {} of {name}", index + 1);
             let value = format!("code:{back}:{index}");
             rows.push(
                 Row::new(label, value)
                     .with_detail(detail)
-                    .with_preview(preview_lines(block.lines.iter().copied())),
+                    .with_preview(preview_lines(span.preview[..span.preview_len].iter().copied())),
             );
-        }
+            index += 1;
+            rows.len() < MAX_ROWS
+        });
         if rows.len() < MAX_ROWS {
             rows.push(row(name.as_ref(), &format!("answer:{back}"), &answer));
         }
@@ -315,48 +339,95 @@ fn preview_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
         .collect()
 }
 
-/// A fenced block of one answer.
-struct CodeBlock<'a> {
-    /// The language named after the opening fence, empty when none was.
+struct BlockSpan<'a> {
     language: &'a str,
-    /// The block's lines, without the fences.
-    lines: Vec<&'a str>,
+    body_start: usize,
+    body_end: usize,
+    line_count: usize,
+    raw_bytes: usize,
+    preview: [&'a str; PREVIEW_LINES],
+    preview_len: usize,
 }
 
-impl CodeBlock<'_> {
-    /// The block as text, which is what a copy carries.
-    fn text(&self) -> String {
-        self.lines.join("\n")
+struct OpenFence<'a> {
+    marker: &'static str,
+    language: &'a str,
+    body_start: usize,
+    raw_count: usize,
+    raw_bytes: usize,
+    preview: [&'a str; PREVIEW_LINES],
+    preview_len: usize,
+}
+
+fn materialize_block(text: &str, body_start: usize, body_end: usize, exact_bytes: usize) -> String {
+    let mut out = String::with_capacity(exact_bytes);
+    let mut first = true;
+    for line in text[body_start..body_end].lines() {
+        if !first {
+            out.push('\n');
+        }
+        first = false;
+        out.push_str(line.trim_end());
     }
+    out
 }
 
-/// Every closed fenced block of `text`, in the order the answer wrote them.
+/// Visit every closed fenced block of `text`, in the order the answer wrote them.
 ///
 /// The rules are `markdown`'s: an opening fence starts a line with three
 /// backticks or three tildes, and only a line of at least as many of the same
 /// character closes it. A fence with no end is dropped, because its code is
 /// still arriving: copying half a block would be worse than saying there is
 /// nothing there yet.
-fn code_blocks(text: &str) -> Vec<CodeBlock<'_>> {
-    let mut blocks = Vec::new();
-    let mut open: Option<(&'static str, &str, Vec<&str>)> = None;
-    for line in text.lines() {
+fn scan_code_blocks<'a>(text: &'a str, mut visit: impl FnMut(BlockSpan<'a>) -> bool) {
+    let mut offset = 0usize;
+    let mut open: Option<OpenFence<'a>> = None;
+    for chunk in text.split_inclusive('\n') {
+        let chunk_start = offset;
+        offset += chunk.len();
+        let line = chunk
+            .strip_suffix("\r\n")
+            .or_else(|| chunk.strip_suffix('\n'))
+            .unwrap_or(chunk);
         let trimmed = line.trim_end();
-        if let Some((marker, language, mut lines)) = open.take() {
-            if closes_fence(trimmed, marker) {
-                blocks.push(CodeBlock { language, lines });
+        if let Some(mut state) = open.take() {
+            if closes_fence(trimmed, state.marker) {
+                let span = BlockSpan {
+                    language: state.language,
+                    body_start: state.body_start,
+                    body_end: chunk_start,
+                    line_count: state.raw_count,
+                    raw_bytes: state.raw_bytes + state.raw_count.saturating_sub(1),
+                    preview: state.preview,
+                    preview_len: state.preview_len,
+                };
+                if !visit(span) {
+                    return;
+                }
             } else {
-                lines.push(trimmed);
-                open = Some((marker, language, lines));
+                state.raw_count += 1;
+                state.raw_bytes += trimmed.len();
+                if state.preview_len < PREVIEW_LINES {
+                    state.preview[state.preview_len] = trimmed;
+                    state.preview_len += 1;
+                }
+                open = Some(state);
             }
             continue;
         }
         if let Some((marker, info)) = fence_info(trimmed.trim_start()) {
             let language = info.split_whitespace().next().unwrap_or("");
-            open = Some((marker, language, Vec::new()));
+            open = Some(OpenFence {
+                marker,
+                language,
+                body_start: offset,
+                raw_count: 0,
+                raw_bytes: 0,
+                preview: [""; PREVIEW_LINES],
+                preview_len: 0,
+            });
         }
     }
-    blocks
 }
 
 /// The fence marker this line opens a block with, and its info string.
@@ -371,7 +442,7 @@ fn fence_info(line: &str) -> Option<(&'static str, &str)> {
 
 /// Whether this line ends a block opened with `marker`.
 fn closes_fence(line: &str, marker: &str) -> bool {
-    let character = marker.chars().next().unwrap_or('`');
+    let byte = marker.as_bytes()[0];
     let trimmed = line.trim();
-    trimmed.chars().count() >= marker.len() && trimmed.chars().all(|found| found == character)
+    trimmed.len() >= marker.len() && trimmed.bytes().all(|found| found == byte)
 }

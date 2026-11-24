@@ -565,3 +565,8 @@ fn a_replayed_body_is_split_at_the_daemons_reasoning_markup() {
     assert_eq!(reasoning.as_deref(), Some("thinking only"));
     assert!(answer.is_empty());
 }
+
+#[test]
+fn ascii_control_and_unicode_whitespace_produce_matching_keys() {
+    assert_eq!(assistant("\t\x0bthe\r\nanswer  "), assistant("the\u{2003}answer"));
+}
