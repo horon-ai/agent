@@ -21,7 +21,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 /// The schema this build writes.
 const VERSION: u64 = 1;
@@ -335,16 +335,10 @@ fn parse(text: &str) -> Result<Parsed, PinFault> {
 }
 
 /// The file's contents for a set of endpoint lists.
-fn to_value(scopes: &ByScope) -> Value {
-    let mut stored = Map::new();
-    for (scope, pinned) in scopes {
-        let ids = pinned.iter().cloned().map(Value::String).collect();
-        stored.insert(scope.clone(), Value::Array(ids));
-    }
-    let mut root = Map::new();
-    root.insert("version".to_string(), Value::from(VERSION));
-    root.insert("scopes".to_string(), Value::Object(stored));
-    Value::Object(root)
+#[derive(serde::Serialize)]
+struct StoredPins<'a> {
+    scopes: &'a ByScope,
+    version: u64,
 }
 
 /// The file as another writer left it, read under the save lock.
@@ -383,7 +377,11 @@ fn lock_path(path: &Path) -> PathBuf {
 /// is [`crate::app::state_file::write_atomic`]'s job: the pins file shares its
 /// durability rule with the notes file, so the sequence is written once.
 fn write_atomic(path: &Path, scopes: &ByScope) -> Result<(), PinFault> {
-    let bytes = serde_json::to_vec_pretty(&to_value(scopes)).map_err(|error| PinFault::new(error.to_string()))?;
+    let stored = StoredPins {
+        scopes,
+        version: VERSION,
+    };
+    let bytes = serde_json::to_vec_pretty(&stored).map_err(|error| PinFault::new(error.to_string()))?;
     crate::app::state_file::write_atomic(path, &bytes, "tui-pins").map_err(PinFault::new)
 }
 
