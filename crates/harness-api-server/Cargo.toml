@@ -53,3 +53,7 @@ path = "src/bin/bridge.rs"
 [[bench]]
 name = "opt_r3_hosting"
 harness = false
+
+[[bench]]
+name = "opt_part5_core"
+harness = false

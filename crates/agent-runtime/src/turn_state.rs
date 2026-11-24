@@ -143,9 +143,19 @@ impl StopProvenance {
 /// A failure whose own message names a timeout is a timeout the transport
 /// reported; every other failure is the provider error the loop received. This
 /// reads the message it was handed and never guesses from its absence.
+#[inline]
+fn contains_ascii_ignore_case(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
 pub fn provider_failure_provenance(message: &str) -> StopProvenance {
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("timed out") || lower.contains("timeout") {
+    let bytes = message.as_bytes();
+    if contains_ascii_ignore_case(bytes, b"timed out") || contains_ascii_ignore_case(bytes, b"timeout") {
         StopProvenance::Timeout
     } else {
         StopProvenance::ProviderError
@@ -413,7 +423,10 @@ fn ledgers() -> MutexGuard<'static, HashMap<String, RunLedger>> {
 /// Run one operation against a session's ledger, creating it if needed.
 pub fn with_run_ledger<T>(session_id: &str, body: impl FnOnce(&mut RunLedger) -> T) -> T {
     let mut map = ledgers();
-    if !map.contains_key(session_id) && map.len() >= MAX_TRACKED_SESSIONS {
+    if let Some(ledger) = map.get_mut(session_id) {
+        return body(ledger);
+    }
+    if map.len() >= MAX_TRACKED_SESSIONS {
         let oldest_stopped = map
             .iter()
             .filter(|(_, ledger)| ledger.current().is_none() || ledger.current_stop().is_some())
@@ -434,10 +447,7 @@ pub fn with_run_ledger<T>(session_id: &str, body: impl FnOnce(&mut RunLedger) ->
 /// Begin a run for `session_id`, carrying the session's earlier stops forward.
 pub fn begin_run(session_id: &str, identity: RunIdentity, start_persisted: bool) {
     with_run_ledger(session_id, |ledger| {
-        let mut fresh = RunLedger::default();
-        fresh.carry_over(ledger);
-        fresh.begin_run(identity, start_persisted);
-        *ledger = fresh;
+        ledger.begin_run(identity, start_persisted);
     });
 }
 
@@ -524,11 +534,11 @@ pub fn outcome_for_stop_reason(stop_reason: Option<&str>) -> TurnOutcome {
     let Some(reason) = stop_reason.map(str::trim).filter(|reason| !reason.is_empty()) else {
         return TurnOutcome::Stop;
     };
-    let reason = reason.to_ascii_lowercase();
-    let truncated = reason == "length"
-        || reason.contains("max_tokens")
-        || reason.contains("max_output_tokens")
-        || reason.contains("trunc");
+    let bytes = reason.as_bytes();
+    let truncated = reason.eq_ignore_ascii_case("length")
+        || contains_ascii_ignore_case(bytes, b"max_tokens")
+        || contains_ascii_ignore_case(bytes, b"max_output_tokens")
+        || contains_ascii_ignore_case(bytes, b"trunc");
     if truncated {
         TurnOutcome::Length
     } else {

@@ -60,10 +60,16 @@ const KNOWN_KEYS: [&str; 21] = [
 pub const PAGE_SCHEMA: i64 = 1;
 
 /// Render a page as its file text.
+#[cfg(test)]
 pub fn encode(page: &MemoryPage) -> Result<String> {
+    validate(page)?;
+    encode_validated(page)
+}
+
+/// Render a page whose invariants were already checked by [`validate`].
+pub(super) fn encode_validated(page: &MemoryPage) -> Result<String> {
     use std::fmt::Write;
 
-    validate(page)?;
     let mut out = String::with_capacity(512 + page.body.len());
     out.push_str("---\n");
 
@@ -191,7 +197,7 @@ fn parse_trust(text: &str) -> Result<TrustLevel> {
 /// id when the frontmatter carries no `id`; `fallback_time` stamps pages whose
 /// frontmatter carries no timestamps (a page written by hand).
 pub fn decode(text: &str, file_stem: &str, fallback_time: Timestamp) -> Result<MemoryPage> {
-    let document = Document::parse(text)?;
+    let mut document = Document::parse(text)?;
     for (key, _) in &document.fields {
         if !KNOWN_KEYS.contains(&key.as_str()) {
             bail!("frontmatter field `{key}` is not part of the page schema");
@@ -208,41 +214,52 @@ pub fn decode(text: &str, file_stem: &str, fallback_time: Timestamp) -> Result<M
         Some(raw) => PageId::parse(raw)?,
         None => PageId::from_file_stem(file_stem)?,
     };
-    let title = string_field(&document, "title")?.unwrap_or_else(String::new);
-    let kind = match string_field(&document, "kind")? {
+    let title = take_string_field(&mut document, "title")?.unwrap_or_else(String::new);
+    let kind = match document.get_str("kind") {
         Some(raw) => {
-            PageKind::parse(&raw).ok_or_else(|| anyhow::anyhow!("frontmatter `kind` names no known kind: `{raw}`"))?
+            PageKind::parse(raw).ok_or_else(|| anyhow::anyhow!("frontmatter `kind` names no known kind: `{raw}`"))?
         }
-        None => bail!("page has no `kind` field"),
+        None => match document.get("kind") {
+            None | Some(Value::Null) => bail!("page has no `kind` field"),
+            Some(_) => bail!("frontmatter `kind` must be a string or null"),
+        },
     };
-    let category = match string_field(&document, "category")? {
-        Some(raw) if !raw.is_empty() => raw.parse::<MemoryCategory>()?,
-        _ => kind.default_category(),
+    let category = match document.get("category") {
+        None | Some(Value::Null) => kind.default_category(),
+        Some(Value::Str(raw)) => {
+            if raw.is_empty() {
+                kind.default_category()
+            } else {
+                raw.parse::<MemoryCategory>()?
+            }
+        }
+        Some(_) => bail!("frontmatter `category` must be a string or null"),
     };
     let page = MemoryPage {
         id,
         kind,
         category,
         title,
-        tags: string_list_field(&document, "tags")?,
-        entities: string_list_field(&document, "entities")?,
+        tags: take_string_list_field(&mut document, "tags")?,
+        entities: take_string_list_field(&mut document, "entities")?,
         links: parse_links(&document)?,
-        project: string_field(&document, "project")?,
-        valid_from: string_field(&document, "valid_from")?,
-        valid_to: string_field(&document, "valid_to")?,
+        project: take_string_field(&mut document, "project")?,
+        valid_from: take_string_field(&mut document, "valid_from")?,
+        valid_to: take_string_field(&mut document, "valid_to")?,
         confidence: float_field(&document, "confidence")?.unwrap_or(1.0),
-        source: string_field(&document, "source")?,
+        source: take_string_field(&mut document, "source")?,
         created_at: timestamp_field(&document, "created_at")?.unwrap_or(fallback_time),
         updated_at: timestamp_field(&document, "updated_at")?.unwrap_or(fallback_time),
         access_count: u32_field(&document, "access_count")?.unwrap_or(0),
-        trust: match string_field(&document, "trust")? {
-            Some(raw) => parse_trust(&raw)?,
-            None => TrustLevel::default(),
+        trust: match document.get("trust") {
+            None | Some(Value::Null) => TrustLevel::default(),
+            Some(Value::Str(raw)) => parse_trust(raw)?,
+            Some(_) => bail!("frontmatter `trust` must be a string or null"),
         },
         strength: u32_field(&document, "strength")?.unwrap_or(1),
         active: bool_field(&document, "active")?.unwrap_or(true),
-        superseded_by: string_field(&document, "superseded_by")?,
-        reinforcements: parse_reinforcements(&document)?,
+        superseded_by: take_string_field(&mut document, "superseded_by")?,
+        reinforcements: take_reinforcements(&mut document)?,
         body: document.body,
     };
     validate(&page)?;
@@ -283,8 +300,8 @@ fn parse_links(document: &Document) -> Result<Vec<PageLink>> {
     Ok(links)
 }
 
-fn parse_reinforcements(document: &Document) -> Result<Vec<Reinforcement>> {
-    let Some(items) = document.get_map_list("reinforcements") else {
+fn take_reinforcements(document: &mut Document) -> Result<Vec<Reinforcement>> {
+    let Some(Value::MapList(items)) = document.take("reinforcements") else {
         return Ok(Vec::new());
     };
     let mut reinforcements = Vec::with_capacity(items.len());
@@ -294,9 +311,9 @@ fn parse_reinforcements(document: &Document) -> Result<Vec<Reinforcement>> {
         let mut timestamp = None;
         for (key, value) in entries {
             match (key.as_str(), value) {
-                ("session", Value::Str(text)) => session = Some(text.clone()),
+                ("session", Value::Str(text)) => session = Some(text),
                 ("message_index", Value::Int(number)) => {
-                    message_index = Some(u64::try_from(*number).unwrap_or(0));
+                    message_index = Some(u64::try_from(number).unwrap_or(0));
                 }
                 ("timestamp", Value::Str(text)) => timestamp = Some(text.parse::<Timestamp>()?),
                 (other, _) => bail!("reinforcement carries the unknown field `{other}`"),
@@ -321,29 +338,29 @@ fn value_field<'a>(document: &'a Document, key: &str) -> Result<Option<&'a Value
     }
 }
 
-fn string_field(document: &Document, key: &str) -> Result<Option<String>> {
-    match value_field(document, key)? {
-        None => Ok(None),
-        Some(Value::Str(text)) => Ok(Some(text.clone())),
+fn take_string_field(document: &mut Document, key: &str) -> Result<Option<String>> {
+    match document.take(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Str(text)) => Ok(Some(text)),
         Some(_) => bail!("frontmatter `{key}` must be a string or null"),
     }
 }
 
-fn string_list_field(document: &Document, key: &str) -> Result<Vec<String>> {
-    let Some(items) = document.get_list(key) else {
-        if document.get(key).is_some() {
-            bail!("frontmatter `{key}` must be a list");
+fn take_string_list_field(document: &mut Document, key: &str) -> Result<Vec<String>> {
+    match document.take(key) {
+        None => Ok(Vec::new()),
+        Some(Value::List(items)) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    Value::Str(text) => values.push(text),
+                    _ => bail!("frontmatter `{key}` must hold strings"),
+                }
+            }
+            Ok(values)
         }
-        return Ok(Vec::new());
-    };
-    let mut values = Vec::with_capacity(items.len());
-    for item in items {
-        match item {
-            Value::Str(text) => values.push(text.clone()),
-            _ => bail!("frontmatter `{key}` must hold strings"),
-        }
+        Some(_) => bail!("frontmatter `{key}` must be a list"),
     }
-    Ok(values)
 }
 
 fn u32_field(document: &Document, key: &str) -> Result<Option<u32>> {
@@ -448,15 +465,15 @@ pub fn validate(page: &MemoryPage) -> Result<()> {
     if page.links.len() > MAX_LINKS {
         bail!("page carries more than {MAX_LINKS} links");
     }
-    let mut seen = Vec::with_capacity(page.links.len());
+    let mut seen: Vec<(PageLinkKind, &str)> = Vec::with_capacity(page.links.len());
     for link in &page.links {
         if link.dst == page.id {
             bail!("page links to itself");
         }
-        if seen.contains(&(link.kind, link.dst.clone())) {
+        if seen.contains(&(link.kind, link.dst.as_str())) {
             bail!("page repeats the link {} -> {}", link.kind, link.dst);
         }
-        seen.push((link.kind, link.dst.clone()));
+        seen.push((link.kind, link.dst.as_str()));
         match link.kind {
             PageLinkKind::RelatesTo => match link.weight {
                 Some(weight) if weight.is_finite() && (0.0..=1.0).contains(&weight) => {}

@@ -182,10 +182,10 @@ impl MemoryWiki {
         super::export::fence::ensure_writable(&self.root)?;
         document::validate(page)?;
         let relative = relative_slash(&document::relative_path(page)?)?;
-        let text = document::encode(page)?;
+        let text = document::encode_validated(page)?;
         let wiki = self.wiki_root();
         let target = delete::safe_join(&wiki, &relative)?;
-        let previous = self.index.page_row(page.id.as_str())?.map(|row| row.path);
+        let previous = self.index.page_path(page.id.as_str())?;
         write_atomic(&target, text.as_bytes())?;
         let metadata =
             std::fs::metadata(&target).with_context(|| format!("cannot stat the page file {}", target.display()))?;
@@ -220,26 +220,10 @@ impl MemoryWiki {
 
     /// Read one page from its markdown file.
     pub fn page(&self, id: &PageId) -> Result<Option<MemoryPage>> {
-        let Some(row) = self.index.page_row(id.as_str())? else {
+        let Some(rel_path) = self.index.page_path(id.as_str())? else {
             return Ok(None);
         };
-        let path = delete::safe_join(&self.wiki_root(), &row.path)?;
-        let metadata = match std::fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(anyhow!(error).context(format!("cannot stat the page file {}", path.display())));
-            }
-        };
-        if metadata.file_type().is_symlink() {
-            return Err(anyhow!("page file {} is a symlink", path.display()));
-        }
-        let bytes = std::fs::read(&path).with_context(|| format!("cannot read the page file {}", path.display()))?;
-        let text = String::from_utf8(bytes).map_err(|_| anyhow!("page file {} is not UTF-8", path.display()))?;
-        let fallback = reindex::stamp_of(&metadata);
-        let fallback_time =
-            Timestamp::from_timestamp_millis(fallback.mtime_ns.max(0) / 1_000_000).unwrap_or(Timestamp::UNIX_EPOCH);
-        document::decode(&text, id.file_stem().as_str(), fallback_time).map(Some)
+        read_page_at(&self.wiki_root(), id.file_stem().as_str(), &rel_path)
     }
 
     /// Pages matching `filter`, newest first, with the id as the final tie-break.
@@ -280,27 +264,19 @@ impl MemoryWiki {
     /// [`MemoryWiki::page`] reports one damaged file, so a single broken page
     /// does not hide the rest of the scope.
     pub fn scope_pages(&self, project: Option<&str>) -> Result<Vec<MemoryPage>> {
-        // `ListFilter::project` cannot express "the user-level pages": `None`
-        // there means "do not filter", so the scope is applied to the rows here.
-        let rows = self.list(&ListFilter {
-            include_inactive: true,
-            ..ListFilter::default()
-        })?;
-        let rows: Vec<PageRow> = rows
-            .into_iter()
-            .filter(|row| row.project.as_deref() == project)
-            .collect();
+        let rows = self.index.scope_paths(project)?;
+        let wiki = self.wiki_root();
         let mut pages = Vec::with_capacity(rows.len());
-        for row in rows {
-            let Ok(id) = PageId::parse(&row.id) else {
-                crate::logging::warn(&format!("memory index holds the unstorable page id {}", row.id));
+        for (raw_id, rel_path) in rows {
+            let Ok(id) = PageId::parse(&raw_id) else {
+                crate::logging::warn(&format!("memory index holds the unstorable page id {raw_id}"));
                 continue;
             };
-            match self.page(&id) {
+            match read_page_at(&wiki, id.file_stem().as_str(), &rel_path) {
                 Ok(Some(page)) => pages.push(page),
                 Ok(None) => {}
                 Err(error) => {
-                    crate::logging::warn(&format!("cannot read memory page {}: {error}", row.id));
+                    crate::logging::warn(&format!("cannot read memory page {raw_id}: {error}"));
                 }
             }
         }
@@ -309,10 +285,10 @@ impl MemoryWiki {
 
     /// The absolute path of one page file, when the page is indexed.
     pub fn page_path(&self, id: &PageId) -> Result<Option<PathBuf>> {
-        let Some(row) = self.index.page_row(id.as_str())? else {
+        let Some(rel_path) = self.index.page_path(id.as_str())? else {
             return Ok(None);
         };
-        Ok(Some(delete::safe_join(&self.wiki_root(), &row.path)?))
+        Ok(Some(delete::safe_join(&self.wiki_root(), &rel_path)?))
     }
 
     /// The stored body of one page, from the index.
@@ -324,6 +300,38 @@ impl MemoryWiki {
     pub fn versions(&self, id: &PageId) -> Result<Vec<VersionRow>> {
         self.index.versions(id.as_str())
     }
+}
+
+/// Read and decode one markdown page under `wiki_root`, returning both the
+/// decoded page and its raw file bytes.
+pub(crate) fn read_page_and_bytes(
+    wiki_root: &Path,
+    file_stem: &str,
+    rel_path: &str,
+) -> Result<Option<(MemoryPage, Vec<u8>)>> {
+    let path = delete::safe_join(wiki_root, rel_path)?;
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(anyhow!(error).context(format!("cannot stat the page file {}", path.display())));
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(anyhow!("page file {} is a symlink", path.display()));
+    }
+    let bytes = std::fs::read(&path).with_context(|| format!("cannot read the page file {}", path.display()))?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| anyhow!("page file {} is not UTF-8", path.display()))?;
+    let fallback = reindex::stamp_of(&metadata);
+    let fallback_time =
+        Timestamp::from_timestamp_millis(fallback.mtime_ns.max(0) / 1_000_000).unwrap_or(Timestamp::UNIX_EPOCH);
+    let page = document::decode(text, file_stem, fallback_time)?;
+    Ok(Some((page, bytes)))
+}
+
+/// Read and decode one markdown page under `wiki_root` using its relative path.
+fn read_page_at(wiki_root: &Path, file_stem: &str, rel_path: &str) -> Result<Option<MemoryPage>> {
+    Ok(read_page_and_bytes(wiki_root, file_stem, rel_path)?.map(|(page, _)| page))
 }
 
 /// Create a directory owner-only, and tighten an existing one.

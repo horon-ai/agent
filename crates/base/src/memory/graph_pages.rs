@@ -97,15 +97,19 @@ pub(crate) fn page_for_entry(
     }
     // A page may not repeat a link, and the graph can hold the same pair twice
     // when an earlier store appended edges. Keep the first, which is the oldest.
-    let mut seen: Vec<(PageLinkKind, String)> = Vec::with_capacity(links.len());
-    links.retain(|link| {
-        let key = (link.kind, link.dst.as_str().to_string());
-        if seen.contains(&key) {
-            return false;
+    let mut unique_len = 0usize;
+    for idx in 0..links.len() {
+        let is_dup = links[..unique_len]
+            .iter()
+            .any(|prev| prev.kind == links[idx].kind && prev.dst == links[idx].dst);
+        if !is_dup {
+            if unique_len != idx {
+                links.swap(unique_len, idx);
+            }
+            unique_len += 1;
         }
-        seen.push(key);
-        true
-    });
+    }
+    links.truncate(unique_len);
     page.links = links;
     Ok(page)
 }

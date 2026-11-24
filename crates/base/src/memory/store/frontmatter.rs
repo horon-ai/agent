@@ -90,14 +90,6 @@ impl Document {
         }
     }
 
-    /// The list value of `key`, when it is a list.
-    pub fn get_list(&self, key: &str) -> Option<&[Value]> {
-        match self.get(key) {
-            Some(Value::List(items)) => Some(items),
-            _ => None,
-        }
-    }
-
     /// The map-list value of `key`, when it is a list of maps.
     pub fn get_map_list(&self, key: &str) -> Option<&[Vec<(String, Value)>]> {
         match self.get(key) {
@@ -106,12 +98,20 @@ impl Document {
         }
     }
 
+    /// Take and remove the value of `key` by replacing it with `Value::Null`.
+    pub fn take(&mut self, key: &str) -> Option<Value> {
+        self.fields
+            .iter_mut()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| std::mem::replace(value, Value::Null))
+    }
+
     /// Parse `text` in the dialect described by the module documentation.
     pub fn parse(text: &str) -> Result<Self> {
         let Some(mut rest) = text.strip_prefix("---\n") else {
             bail!("page does not start with a `---` line");
         };
-        let mut fields: Vec<(String, Value)> = Vec::new();
+        let mut fields: Vec<(String, Value)> = Vec::with_capacity(21);
         loop {
             let Some((line, tail)) = rest.split_once('\n') else {
                 bail!("frontmatter block is not closed by a `---` line");
@@ -167,26 +167,42 @@ fn is_key(key: &str) -> bool {
 }
 
 struct Cursor<'a> {
-    chars: std::iter::Peekable<std::str::Chars<'a>>,
+    text: &'a str,
+    pos: usize,
 }
 
 impl<'a> Cursor<'a> {
     fn new(text: &'a str) -> Self {
-        Self {
-            chars: text.chars().peekable(),
+        Self { text, pos: 0 }
+    }
+
+    fn rest(&self) -> &'a str {
+        &self.text[self.pos..]
+    }
+
+    fn peek(&self) -> Option<char> {
+        let b = *self.text.as_bytes().get(self.pos)?;
+        if b < 0x80 {
+            Some(b as char)
+        } else {
+            self.rest().chars().next()
         }
     }
 
-    fn peek(&mut self) -> Option<char> {
-        self.chars.peek().copied()
-    }
-
     fn next(&mut self) -> Option<char> {
-        self.chars.next()
+        let b = *self.text.as_bytes().get(self.pos)?;
+        if b < 0x80 {
+            self.pos += 1;
+            Some(b as char)
+        } else {
+            let ch = self.rest().chars().next()?;
+            self.pos += ch.len_utf8();
+            Some(ch)
+        }
     }
 
-    fn at_end(&mut self) -> bool {
-        self.peek().is_none()
+    fn at_end(&self) -> bool {
+        self.pos >= self.text.len()
     }
 
     fn take(&mut self, expected: char) -> Result<()> {
@@ -198,8 +214,8 @@ impl<'a> Cursor<'a> {
 
     /// Skip the optional single space a writer puts after a comma or a colon.
     fn skip_optional_space(&mut self) {
-        if self.peek() == Some(' ') {
-            self.next();
+        if self.text.as_bytes().get(self.pos) == Some(&b' ') {
+            self.pos += 1;
         }
     }
 }
@@ -222,26 +238,24 @@ fn parse_value(cursor: &mut Cursor<'_>, depth: usize) -> Result<Value> {
 }
 
 fn parse_literal(cursor: &mut Cursor<'_>, text: &str, value: Value) -> Result<Value> {
-    for expected in text.chars() {
-        if cursor.next() != Some(expected) {
-            bail!("frontmatter literal `{text}` is misspelled");
-        }
+    if !cursor.rest().starts_with(text) {
+        bail!("frontmatter literal `{text}` is misspelled");
     }
+    cursor.pos += text.len();
     Ok(value)
 }
 
 fn parse_number(cursor: &mut Cursor<'_>) -> Result<Value> {
-    let mut text = String::new();
-    if cursor.peek() == Some('-') {
-        text.push('-');
-        cursor.next();
+    let bytes = cursor.text.as_bytes();
+    let start = cursor.pos;
+    if bytes.get(cursor.pos) == Some(&b'-') {
+        cursor.pos += 1;
     }
     let mut digits = 0usize;
-    while let Some(ch) = cursor.peek() {
-        if ch.is_ascii_digit() {
-            text.push(ch);
+    while let Some(&b) = bytes.get(cursor.pos) {
+        if b.is_ascii_digit() {
             digits += 1;
-            cursor.next();
+            cursor.pos += 1;
         } else {
             break;
         }
@@ -250,16 +264,14 @@ fn parse_number(cursor: &mut Cursor<'_>) -> Result<Value> {
         bail!("frontmatter number has no digits");
     }
     let mut is_float = false;
-    if cursor.peek() == Some('.') {
+    if bytes.get(cursor.pos) == Some(&b'.') {
         is_float = true;
-        text.push('.');
-        cursor.next();
+        cursor.pos += 1;
         let mut fraction = 0usize;
-        while let Some(ch) = cursor.peek() {
-            if ch.is_ascii_digit() {
-                text.push(ch);
+        while let Some(&b) = bytes.get(cursor.pos) {
+            if b.is_ascii_digit() {
                 fraction += 1;
-                cursor.next();
+                cursor.pos += 1;
             } else {
                 break;
             }
@@ -268,20 +280,17 @@ fn parse_number(cursor: &mut Cursor<'_>) -> Result<Value> {
             bail!("frontmatter number has no fraction digits");
         }
     }
-    if cursor.peek() == Some('e') || cursor.peek() == Some('E') {
+    if matches!(bytes.get(cursor.pos), Some(b'e' | b'E')) {
         is_float = true;
-        text.push('e');
-        cursor.next();
-        if cursor.peek() == Some('-') || cursor.peek() == Some('+') {
-            let sign = cursor.next().unwrap_or('+');
-            text.push(sign);
+        cursor.pos += 1;
+        if matches!(bytes.get(cursor.pos), Some(b'-' | b'+')) {
+            cursor.pos += 1;
         }
         let mut exponent = 0usize;
-        while let Some(ch) = cursor.peek() {
-            if ch.is_ascii_digit() {
-                text.push(ch);
+        while let Some(&b) = bytes.get(cursor.pos) {
+            if b.is_ascii_digit() {
                 exponent += 1;
-                cursor.next();
+                cursor.pos += 1;
             } else {
                 break;
             }
@@ -290,25 +299,55 @@ fn parse_number(cursor: &mut Cursor<'_>) -> Result<Value> {
             bail!("frontmatter number has no exponent digits");
         }
     }
+    let slice = &cursor.text[start..cursor.pos];
     if is_float {
-        let value: f32 = text
+        let value: f32 = slice
             .parse()
-            .map_err(|_| anyhow!("frontmatter number `{text}` is not a finite decimal"))?;
+            .map_err(|_| anyhow!("frontmatter number `{slice}` is not a finite decimal"))?;
         if !value.is_finite() {
-            bail!("frontmatter number `{text}` is not finite");
+            bail!("frontmatter number `{slice}` is not finite");
         }
         Ok(Value::Float(value))
     } else {
-        let value: i64 = text
+        let value: i64 = slice
             .parse()
-            .map_err(|_| anyhow!("frontmatter integer `{text}` is out of range"))?;
+            .map_err(|_| anyhow!("frontmatter integer `{slice}` is out of range"))?;
         Ok(Value::Int(value))
     }
 }
 
 fn parse_string(cursor: &mut Cursor<'_>) -> Result<Value> {
     cursor.take('"')?;
-    let mut text = String::new();
+    let bytes = cursor.text.as_bytes();
+    let start = cursor.pos;
+    let mut i = start;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b < 0x80 {
+            match b {
+                b'"' => {
+                    cursor.pos = i + 1;
+                    return Ok(Value::Str(cursor.text[start..i].to_string()));
+                }
+                b'\\' => break,
+                _ if b < 0x20 || b == 0x7f => {
+                    bail!("frontmatter string holds a bare control character");
+                }
+                _ => i += 1,
+            }
+        } else {
+            let Some(ch) = cursor.text[i..].chars().next() else {
+                break;
+            };
+            if is_forbidden_raw(ch) {
+                bail!("frontmatter string holds a bare control character");
+            }
+            i += ch.len_utf8();
+        }
+    }
+    let mut text = String::with_capacity(i.saturating_sub(start) + 16);
+    text.push_str(&cursor.text[start..i]);
+    cursor.pos = i;
     loop {
         let Some(ch) = cursor.next() else {
             bail!("frontmatter string is not closed");
@@ -409,18 +448,20 @@ fn parse_map_entries(cursor: &mut Cursor<'_>, depth: usize) -> Result<Vec<(Strin
         if entries.len() >= MAX_MAP_KEYS {
             bail!("frontmatter map has more than {MAX_MAP_KEYS} keys");
         }
-        let mut key = String::new();
-        while let Some(ch) = cursor.peek() {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
-                key.push(ch);
-                cursor.next();
+        let key_start = cursor.pos;
+        let bytes = cursor.text.as_bytes();
+        while let Some(&b) = bytes.get(cursor.pos) {
+            if b.is_ascii_alphanumeric() || b == b'_' {
+                cursor.pos += 1;
             } else {
                 break;
             }
         }
-        if !is_key(&key) {
-            bail!("frontmatter map key `{key}` is not a lowercase identifier");
+        let key_slice = &cursor.text[key_start..cursor.pos];
+        if !is_key(key_slice) {
+            bail!("frontmatter map key `{key_slice}` is not a lowercase identifier");
         }
+        let key = key_slice.to_string();
         cursor.take(':')?;
         cursor.skip_optional_space();
         let value = parse_value(cursor, depth + 1)?;
@@ -436,6 +477,15 @@ fn parse_map_entries(cursor: &mut Cursor<'_>, depth: usize) -> Result<Vec<(Strin
 
 pub(super) fn render_string(out: &mut String, text: &str) {
     use std::fmt::Write;
+    if !text
+        .bytes()
+        .any(|b| b == b'"' || b == b'\\' || b < 0x20 || b == 0x7f || b == 0xc2)
+    {
+        out.push('"');
+        out.push_str(text);
+        out.push('"');
+        return;
+    }
     out.push('"');
     for ch in text.chars() {
         match ch {

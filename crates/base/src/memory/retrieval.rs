@@ -149,16 +149,24 @@ pub(crate) fn hybrid_fuse(
 }
 
 /// Every memory of `scope`, with the id as nothing but a set membership test.
+#[cfg(test)]
 pub(crate) fn collect_memories_scoped(manager: &MemoryManager, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
-    let mut entries = Vec::new();
-    if scope.includes_project()
-        && let Ok(graph) = manager.load_project_graph()
-    {
+    let project = if scope.includes_project() {
+        manager.load_project_graph_arc().ok()
+    } else {
+        None
+    };
+    let global = if scope.includes_global() {
+        manager.load_global_graph_arc().ok()
+    } else {
+        None
+    };
+    let total = project.as_ref().map_or(0, |g| g.memories.len()) + global.as_ref().map_or(0, |g| g.memories.len());
+    let mut entries = Vec::with_capacity(total);
+    if let Some(graph) = project {
         entries.extend(graph.all_memories().cloned());
     }
-    if scope.includes_global()
-        && let Ok(graph) = manager.load_global_graph()
-    {
+    if let Some(graph) = global {
         entries.extend(graph.all_memories().cloned());
     }
     Ok(entries)
@@ -175,12 +183,12 @@ pub(crate) fn collect_memories_with_embeddings_scoped(
 ) -> Result<Vec<MemoryEntry>> {
     let mut entries: Vec<MemoryEntry> = Vec::new();
     if scope.includes_project()
-        && let Ok(project) = manager.load_project_graph()
+        && let Ok(project) = manager.load_project_graph_arc()
     {
         entries.extend(project.active_memories().filter(|m| m.embedding.is_some()).cloned());
     }
     if scope.includes_global()
-        && let Ok(global) = manager.load_global_graph()
+        && let Ok(global) = manager.load_global_graph_arc()
     {
         entries.extend(global.active_memories().filter(|m| m.embedding.is_some()).cloned());
     }
