@@ -508,10 +508,6 @@ def compile_measurements(measurements: list[dict] | tuple[dict, ...]) -> dict[tu
     return parse_compiled_artifacts(completed.stdout)
 
 
-def measurement_command(measurement: dict) -> list[str]:
-    return ["cargo", "test", "--locked", "-q", *measurement["args"], "--", "--exact", "--nocapture", "--test-threads=1"]
-
-
 def print_plan(sections: set[str] | None = None) -> int:
     active = selected_measurements(sections)
     print("# unified compile step")
@@ -546,41 +542,13 @@ def run_compiled_measurement(
         text=True,
         env=env,
     )
-    combined = completed.stdout + completed.stderr
-    if completed.returncode != 0:
-        tail = "\n".join(combined.strip().splitlines()[-25:])
-        raise GateError(
-            "measurement failed: %s exited %d\n%s"
-            % (" ".join(measurement["args"]), completed.returncode, tail)
-        )
-    passed = sum(int(match) for match in RESULT_RE.findall(combined))
-    if passed < 1:
-        tail = "\n".join(combined.strip().splitlines()[-25:])
-        raise GateError(
-            "measurement selected no test (0 passed): %s\n%s"
-            % (" ".join(measurement["args"]), tail)
-        )
-    return combined
-
-
-def run_measurement(measurement: dict) -> str:
-    env = dict(os.environ)
-    env.update(measurement.get("env") or {})
-    completed = subprocess.run(
-        measurement_command(measurement),
-        cwd=REPO_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-    )
     # The tests print their line with `println!` on stdout and the soak prints
     # with `eprintln!`, so both streams are scanned.
     combined = completed.stdout + completed.stderr
     if completed.returncode != 0:
         tail = "\n".join(combined.strip().splitlines()[-25:])
         raise GateError(
-            "measurement failed: cargo test %s exited %d\n%s"
+            "measurement failed: %s exited %d\n%s"
             % (" ".join(measurement["args"]), completed.returncode, tail)
         )
     passed = sum(int(match) for match in RESULT_RE.findall(combined))

@@ -463,22 +463,48 @@ and do not merge or report success before then.
 ## CI gates by change type
 
 `ci.yml` and `structural-perf.yml` start with a `Changed Paths` job
-(`scripts/ci/classify_changes.py`) that classifies a change by its files: a pull
-request against its base, and a first-attempt push to `dev` against the head of
-the last successful `dev` push run of the same workflow (two-dot diff).
+(`scripts/ci/classify_changes.py`, emitting 16 boolean lanes) that classifies a
+change by its files: a pull request against its base, and a first-attempt push
+to `dev` against the head of the last successful `dev` push run of the same
+workflow (two-dot diff).
 
-- **Documentation only** (README, `PHILOSOPHY*.md`, `docs/`, `AGENTS.md`, templates): runs
-  `Documentation Checks` (links, UTF-8, English/Korean pairs) and
+- **Documentation only** (`README`, `PHILOSOPHY*.md`, `docs/`, `AGENTS.md`,
+  templates; `docs_only=true`): runs `Documentation Checks` (links, UTF-8,
+  English/Korean pairs, install claim table consistency) and
   `Documentation Corpus Test` (`docs/` is compiled into the binary, so the
-  `horon_agent_docs` tests still run). The release build, the three-OS test
-  matrix, the SDK jobs and the structural performance gate are skipped.
-- **Anything else** (code, workflows, scripts, dependencies, lockfiles): every
-  gate runs.
-- **Site pages count as code.** `packages/docs-site/` is not in the documentation
-  list of `classify_changes.py`, so a change to a site page runs every gate.
-- **Pushes to `main`, manual dispatches and re-runs of a `dev` push always run
-  everything.** A `dev` push whose head is already in `origin/main`, and any
-  lookup or diff failure, also runs everything. Release evidence
+  `horon_agent_docs` tests still run). Release builds, the OS test matrix,
+  SDK jobs, `Quality Guardrails` and the structural performance gate are skipped.
+- **Scoped non-Rust lanes:**
+  - `packages/docs-site/` (`docs_site=true`, `rust=false`) runs only
+    `Documentation Site` (`sync_docs_site.py --check`, Mintlify build and
+    broken-links check), skipping Rust, SDK and structural gates.
+  - `.github/workflows/*` (`workflows=true`, `rust=false`) runs
+    `Workflow Lint` (`actionlint`), `Release Automation` and
+    `PowerShell Syntax`, skipping Rust builds.
+  - Standalone TypeScript SDK, Python SDK, npm launcher or install-script
+    edits (`ts_sdk`, `py_sdk`, `npm_pkg`, `install_scripts` with `rust=false`)
+    run their matching lane (`TypeScript SDK`, `Python SDK`, `Setup Friction Eval`,
+    `PowerShell Syntax`, `Release Automation`) plus non-Rust `Quality Guardrails`
+    checks, skipping `Build & Test`, Windows cross-checks and `structural-perf`.
+- **Rust changes (`rust=true`):** runs `Quality Guardrails`, `Build & Test`
+  (pull requests use `scripts/ci/workspace_impact.py` to compile and test only
+  impacted crates and integration targets, falling back to the full workspace
+  on manifests, lockfiles, shared infra or `ci:all-os`/`ci:full`),
+  `windows-cross-check` (`cargo-xwin`), `windows-arm64-check` (`justrust`),
+  `Release Automation` and `Structural performance gate` (unified `--no-run`
+  compilation with `mold` on Linux).
+- **Pull request OS and soak scoping:** portable Rust pull requests run
+  `ubuntu-latest` plus the two Linux-hosted Windows cross-checks with
+  `HORON_AGENT_SOAK_CYCLES=20`. `macos-latest`, native `windows-build-test` and
+  `tui_smoke` run on pull requests only when matching platform/TUI paths, shared
+  Linux-macOS `#[path]` sources, manifests, lockfiles or the
+  `ci:all-os`/`ci:full` label trigger them. Any ambiguous diff or lookup failure
+  resolves conservatively to `rust=true` and `full_matrix=true`.
+- **Pushes to `dev`, `main`, manual dispatches and re-runs:** non-docs pushes to
+  `dev` run all three OSes, the full crate/target suite and
+  `HORON_AGENT_SOAK_CYCLES=200`. A `dev` push whose head is already in
+  `origin/main`, a push to `main`, a manual dispatch, a `dev` re-run and any
+  lookup or diff failure run everything. Release evidence
   (`scripts/release/check_ci.py`) accepts only a fully successful push run; a
   documentation-only `dev` run is not release evidence, and `Re-run all jobs` on
   that run produces a full run.
