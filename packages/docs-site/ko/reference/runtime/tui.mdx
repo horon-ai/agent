@@ -115,6 +115,13 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--add-dir <dir>]... 
 | `transcript.work_notes` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_WORK_NOTES` |
 | `transcript.visual_blocks` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 | `models.shortlist` | 모델 ID 배열 | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
+| `voice.live_enabled` | 참·거짓 | `false` | `HORON_TUI_VOICE_LIVE_ENABLED` |
+| `voice.live_adapter` | 문자열 | `""` | `HORON_TUI_VOICE_LIVE_ADAPTER` |
+| `voice.live_endpoint` | 문자열 | `""` | `HORON_TUI_VOICE_LIVE_ENDPOINT` |
+| `voice.live_api_key_env` | 문자열 | `""` | `HORON_TUI_VOICE_LIVE_API_KEY_ENV` |
+| `voice.live_model` | 문자열 | `""` | `HORON_TUI_VOICE_LIVE_MODEL` |
+| `voice.live_command` | 문자열 배열 | `[]` | `HORON_TUI_VOICE_LIVE_COMMAND` |
+| `voice.live_fallback_to_text` | 참·거짓 | `true` | `HORON_TUI_VOICE_LIVE_FALLBACK` |
 
 이 표는 설정 레지스트리(`crates/tui/src/settings/registry.rs`)를 따르고, 설정 화면도 이 레지스트리로 그린다. 선택 항목인 `usage`와 `cost` 세그먼트는 따로 키를 두지 않고 `statusline.left`와 `statusline.right`로 고르므로 레지스트리에 키를 더하지 않는다.
 
@@ -255,6 +262,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.repaint` | `ctrl+l` | 초안, 선택 항목과 스크롤 위치를 유지하면서 터미널 화면을 지우고 다시 그린다 |
 | `app.toggle_thinking` | `ctrl+t` | 이 세션에서 모델 추론을 보이게 하거나 숨긴다 |
 | `app.plan_mode` | `alt+m` | `/plan on`처럼 이 세션을 읽기 전용 플랜 모드로 둔다 |
+| `app.voice` | `ctrl+space` | 기기 내 음성 받아쓰기를 시작하거나 멈춰 초안에 넣는다 |
+| `app.live_voice` | `alt+v` | `ctrl+l`을 `app.repaint`로 유지한 채 선택형 실시간 음성 모드·수집을 전환한다 |
 | `editor.backspace` | `backspace` | 커서 앞 글자를 지운다 |
 | `editor.delete` | `delete` | 커서 자리 글자를 지운다 |
 | `editor.left` | `left`, `ctrl+b` | 커서를 한 글자 왼쪽으로 옮긴다 |
@@ -509,7 +518,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요합니다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생합니다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생합니다. `/voice status`에서 빠진 항목을 확인할 수 있습니다. 필요한 프로그램과 모델은 사용자가 직접 설치합니다. 필요한 프로그램이 없어도 키보드로 입력할 수 있습니다.
 
-`/live`는 `tui.toml`(`voice.live_enabled`, `voice.live_endpoint`, `voice.live_adapter`, `voice.live_api_key_env`, `voice.live_model`, `voice.live_command`, `voice.live_fallback_to_text`)에 설정한 선택형 외부 실시간 음성 세션 어댑터를 제어합니다. 기본값은 꺼져 있으며 사전 설정된 서드파티 엔드포인트 없이 세션별 `/live consent`를 요구합니다. `/live talk`와 `/live end`로 명시적 수집을 시작·전송하고, `/live stop`·`/live reconnect`로 이전 수집을 폐기한 뒤 재연결하며, `/live leave`로 연결된 세션과 초안을 유지한 채 텍스트 모드로 돌아옵니다. `Alt+V`(`app.live_voice`)가 전환 키이며 `Ctrl+L`은 `app.repaint`로 유지됩니다(`keybindings.toml`에서 재지정 가능).
+`/live`는 `tui.toml`(`voice.live_enabled`, `voice.live_endpoint`, `voice.live_adapter`, `voice.live_api_key_env`, `voice.live_model`, `voice.live_command`, `voice.live_fallback_to_text`)에 설정한 선택형 외부 실시간 음성 세션 어댑터를 제어합니다. 기본값은 꺼져 있으며 사전 설정된 서드파티 엔드포인트 없이 세션별 `/live consent`를 요구합니다. `/live talk`와 `/live end`로 명시적 수집을 시작·전송하고, `/live stop`·`/live reconnect`로 이전 수집을 폐기한 뒤 재연결하며, `/live leave`로 세션 동의를 철회하고 연결된 세션과 초안을 유지한 채 텍스트 모드로 돌아옵니다. `Alt+V`(`app.live_voice`)가 전환 키이며 `Ctrl+L`은 `app.repaint`로 유지됩니다(`keybindings.toml`에서 재지정 가능).
 
 이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른아홉 명령을 이름 순으로 적었다. `/tools`는 데몬이 현재 세션에 제공하는 도구 목록을 읽고, 데몬이 로딩 단계를 보고하지 않으면 `unknown`으로 표시한다.
 

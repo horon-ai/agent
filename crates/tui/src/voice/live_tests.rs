@@ -271,8 +271,9 @@ fn live_voice_leave_restores_text_mode_and_preserves_session_state() {
     app.run_live_voice("talk");
     let cap = app.voice.live.active_capture_id().expect("capture");
 
-    // Leave live audio mode: text session, transcript history, and draft survive intact.
+    // Leave live audio mode: consent is forgotten while text session, transcript history, and draft survive intact.
     app.run_live_voice("leave");
+    assert!(!app.voice.live.consent_given());
     assert_eq!(app.voice.live.phase(), LivePhase::Idle);
     assert_eq!(app.session_id.as_deref(), Some("sess-text-1"));
     assert_eq!(app.input.text(), "unsent text draft");
@@ -292,6 +293,10 @@ fn live_voice_leave_restores_text_mode_and_preserves_session_state() {
     });
     app.tick_live_voice();
     assert_eq!(app.take_queued(), None);
+
+    // Leaving forgot consent, so starting live mode again prompts for fresh /live consent.
+    app.run_live_voice("start");
+    assert!(last_notice(&app).contains("Type /live consent"));
 
     // Typing/sending in the text session still works.
     assert_eq!(
@@ -361,4 +366,228 @@ fn live_command_and_keybinding_coexist_with_ctrl_l_repaint() {
     // Alt+V invokes live voice toggle cleanly without crashing.
     app.on_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT));
     assert!(last_notice(&app).contains("live voice"));
+}
+
+#[test]
+fn live_voice_forget_preserves_already_accepted_pending_turn_and_disconnect_clears_it() {
+    let mut app = app_with_live_settings(true, "wss://voice.internal.example/live");
+    let mock = MockLiveAdapter::new();
+    app.voice.live.set_adapter(Box::new(mock.clone()));
+    app.run_live_voice("consent");
+    app.run_live_voice("start");
+    app.tick_live_voice();
+    let gen_id = app.voice.live.generation();
+    app.run_live_voice("talk");
+    let cap = app.voice.live.active_capture_id().expect("capture");
+    app.run_live_voice("end");
+
+    mock.push_event(LiveAdapterEvent::Transcript {
+        generation: gen_id,
+        capture_id: cap,
+        text: "accepted before forget".to_string(),
+        is_final: true,
+    });
+    app.tick_live_voice();
+
+    // Forgetting/leaving after the turn was accepted revokes consent without dropping the queued Action::Send.
+    app.run_live_voice("forget");
+    assert!(!app.voice.live.consent_given());
+    assert_eq!(
+        app.take_queued(),
+        Some(Action::Send("accepted before forget".to_string()))
+    );
+
+    // Re-consent and deliver another transcript, then drop the connection before take_queued drains it.
+    app.run_live_voice("consent");
+    app.run_live_voice("start");
+    app.tick_live_voice();
+    let gen_id = app.voice.live.generation();
+    app.run_live_voice("talk");
+    let cap = app.voice.live.active_capture_id().expect("capture");
+    app.run_live_voice("end");
+    mock.push_event(LiveAdapterEvent::Transcript {
+        generation: gen_id,
+        capture_id: cap,
+        text: "stale across disconnect".to_string(),
+        is_final: true,
+    });
+    app.tick_live_voice();
+    app.disconnected = true;
+    app.tick_live_voice();
+    assert!(!app.voice.live.consent_given());
+    assert_eq!(app.take_queued(), None);
+}
+
+#[test]
+fn live_voice_reconnect_failure_stops_active_capture_and_sanitizes_control_bytes() {
+    let mut app = app_with_live_settings(true, "wss://voice.internal.example/live");
+    let mock = MockLiveAdapter::new();
+    app.voice.live.set_adapter(Box::new(mock.clone()));
+    app.run_live_voice("consent");
+    app.run_live_voice("start");
+    app.tick_live_voice();
+    let gen_id = app.voice.live.generation();
+    app.run_live_voice("talk");
+    let cap = app.voice.live.active_capture_id().expect("capture");
+    app.run_live_voice("end");
+
+    mock.push_event(LiveAdapterEvent::Transcript {
+        generation: gen_id,
+        capture_id: cap,
+        text: "hello\x1b[31m\n\x07world\x1b[0m".to_string(),
+        is_final: true,
+    });
+    app.tick_live_voice();
+    assert_eq!(app.take_queued(), Some(Action::Send("hello[31m world[0m".to_string())));
+
+    app.run_live_voice("talk");
+    assert_eq!(app.voice.live.phase(), LivePhase::Capturing);
+
+    let mut broken = Settings::defaults();
+    broken.apply_overrides(&[
+        ("voice.live_enabled", SettingValue::Bool(true)),
+        ("voice.live_adapter", SettingValue::Str("mock".to_string())),
+        (
+            "voice.live_endpoint",
+            SettingValue::Str("ftp://invalid.example/live".to_string()),
+        ),
+    ]);
+    app.refresh_settings(&broken);
+    app.run_live_voice("reconnect");
+    assert_eq!(app.voice.live.phase(), LivePhase::Idle);
+    assert_eq!(app.voice.live.active_capture_id(), None);
+    assert!(last_notice(&app).contains("voice.live_endpoint"));
+}
+
+#[test]
+fn command_live_adapter_subprocess_lifecycle_handles_events_and_shutdown() {
+    use std::io::Read as _;
+
+    let python = ["python3", "python"]
+        .into_iter()
+        .find(|bin| {
+            std::process::Command::new(bin)
+                .arg("-V")
+                .output()
+                .is_ok_and(|out| out.status.success())
+        })
+        .expect("python3 or python is required to exercise CommandLiveAdapter");
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback socket");
+    let port = listener.local_addr().expect("listener addr").port();
+    let script = r#"
+import json, os, socket, sys
+hold = socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=5)
+for raw in sys.stdin:
+    line = raw.strip()
+    if not line:
+        continue
+    msg = json.loads(line)
+    kind = msg.get("type")
+    gen = msg.get("generation", 0)
+    if kind == "start":
+        if os.environ.get("HORON_LIVE_MODEL") != "live-model-test":
+            print(json.dumps({"type": "error", "generation": gen, "reason": "missing model env"}), flush=True)
+            sys.exit(1)
+        if os.environ.get("HORON_LIVE_ENDPOINT") != "wss://voice.internal.example/live":
+            print(json.dumps({"type": "error", "generation": gen, "reason": "missing endpoint env"}), flush=True)
+            sys.exit(1)
+        print(json.dumps({"type": "ready", "generation": gen}), flush=True)
+    elif kind == "begin_capture":
+        cap = msg.get("capture_id", 0)
+        print(json.dumps({"type": "transcript", "generation": gen, "capture_id": cap, "text": "partial", "final": False}), flush=True)
+    elif kind == "end_capture":
+        cap = msg.get("capture_id", 0)
+        if msg.get("commit"):
+            print(json.dumps({"type": "transcript", "generation": gen, "capture_id": cap, "text": "hello\x1b[7m subproc", "final": True}), flush=True)
+    elif kind == "stop":
+        break
+"#;
+
+    let mut app = app();
+    let mut settings = Settings::defaults();
+    settings.apply_overrides(&[
+        ("voice.live_enabled", SettingValue::Bool(true)),
+        ("voice.live_adapter", SettingValue::Str("command".to_string())),
+        (
+            "voice.live_endpoint",
+            SettingValue::Str("wss://voice.internal.example/live".to_string()),
+        ),
+        ("voice.live_model", SettingValue::Str("live-model-test".to_string())),
+        (
+            "voice.live_command",
+            SettingValue::List(vec![
+                python.to_string(),
+                "-u".to_string(),
+                "-c".to_string(),
+                script.to_string(),
+                port.to_string(),
+            ]),
+        ),
+    ]);
+    app.refresh_settings(&settings);
+    app.run_live_voice("consent");
+    app.run_live_voice("start");
+
+    let (mut conn, _) = listener
+        .accept()
+        .expect("adapter subprocess connects to loopback socket");
+    conn.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .expect("set read timeout");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        app.tick_live_voice();
+        if app.voice.live.phase() == LivePhase::Ready {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(app.voice.live.phase(), LivePhase::Ready);
+
+    app.run_live_voice("talk");
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    app.tick_live_voice();
+    assert_eq!(app.take_queued(), None, "partial transcript must not submit");
+
+    app.run_live_voice("end");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut sent = None;
+    while std::time::Instant::now() < deadline {
+        app.tick_live_voice();
+        if let Some(action) = app.take_queued() {
+            sent = Some(action);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(sent, Some(Action::Send("hello[7m subproc".to_string())));
+
+    // Leaving shuts down the child subprocess (closing its OS socket FD) and revokes consent.
+    app.run_live_voice("leave");
+    assert!(!app.voice.live.consent_given());
+    assert_eq!(app.voice.live.phase(), LivePhase::Idle);
+    let mut eof = [0u8; 8];
+    let bytes = conn.read(&mut eof).expect("read EOF after adapter termination");
+    assert_eq!(bytes, 0, "leaving live mode must terminate the adapter child");
+
+    // Non-existent command falls back immediately without leaving active state.
+    let mut missing = Settings::defaults();
+    missing.apply_overrides(&[
+        ("voice.live_enabled", SettingValue::Bool(true)),
+        ("voice.live_adapter", SettingValue::Str("command".to_string())),
+        (
+            "voice.live_endpoint",
+            SettingValue::Str("wss://voice.internal.example/live".to_string()),
+        ),
+        (
+            "voice.live_command",
+            SettingValue::List(vec!["horon-nonexistent-live-adapter-bin".to_string()]),
+        ),
+    ]);
+    app.refresh_settings(&missing);
+    app.run_live_voice("consent");
+    app.run_live_voice("start");
+    assert_eq!(app.voice.live.phase(), LivePhase::Idle);
+    assert!(last_notice(&app).contains("cannot start live voice adapter"));
 }

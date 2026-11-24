@@ -693,6 +693,7 @@ impl App {
         self.exit_code = 1;
         self.disconnected = true;
         self.pending_turn = false;
+        self.voice.live.clear_pending_send();
         // No end-of-turn frame can arrive over a dead socket, so the turn being
         // measured has no completed turn to describe.
         self.transcript.discard_turn();

@@ -1496,6 +1496,57 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
         raise Failure("local playback sent a model request")
 
 
+def live_voice_smoke(terminal: Terminal) -> None:
+    terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before live voice command")
+    before = len(terminal.transcript)
+    terminal.send("/live status\r")
+    terminal.read_until(
+        "no consent yet",
+        STEP_TIMEOUT,
+        "live voice defaults disabled without consent",
+        since=before,
+    )
+    before_start = len(terminal.transcript)
+    terminal.send("/live start\r")
+    terminal.read_until(
+        "Type /live consent",
+        STEP_TIMEOUT,
+        "live voice requires session consent",
+        since=before_start,
+    )
+    terminal.send("/live consent\r")
+    terminal.read_until(
+        "consent recorded for this session",
+        STEP_TIMEOUT,
+        "live voice consent recorded",
+        since=before_start,
+    )
+    fallback_start = len(terminal.transcript)
+    terminal.send("/live start\r")
+    terminal.read_until(
+        "voice.live_enabled = true",
+        STEP_TIMEOUT,
+        "live voice falls back to text when disabled",
+        since=fallback_start,
+    )
+    leave_start = len(terminal.transcript)
+    terminal.send("/live leave\r")
+    terminal.read_until(
+        "consent forgotten",
+        STEP_TIMEOUT,
+        "leaving live voice forgets consent",
+        since=leave_start,
+    )
+    after_leave = len(terminal.transcript)
+    terminal.send("/live start\r")
+    terminal.read_until(
+        "Type /live consent",
+        STEP_TIMEOUT,
+        "consent required again after /live leave",
+        since=after_leave,
+    )
+
+
 def context_request_smoke(terminal: Terminal, home: str, base_url: str) -> None:
     from pathlib import Path
     from urllib.request import urlopen
@@ -1687,6 +1738,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until("workspace is not this machine's", STEP_TIMEOUT, "explicit socket refused local Git")
         if POSIX:
             voice_input_smoke(terminal, case_root, base_url)
+            live_voice_smoke(terminal)
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and

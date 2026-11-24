@@ -564,6 +564,7 @@ impl App {
         // given for that session: both go with it, so its audio cannot become
         // a draft in the session being attached.
         self.voice.forget();
+        self.voice.live.clear_pending_send();
         self.voice.live.forget();
         self.resend_held = false;
         self.session_status = Some(session.status);
