@@ -69,15 +69,17 @@ RESULT_PREFIX = "STRUCTURAL_PERF_RESULT "
 NOTE_PREFIX = "STRUCTURAL_PERF_NOTE "
 LINE_PATTERN = re.compile(r"^STRUCTURAL_PERF\s+(.*)$")
 
-# One cargo invocation per measurement. `--test-threads=1` and `--exact` keep a
-# process-wide counter from being raised by a sibling test, and the soak keeps
-# its own cycle count small: 20 cycles resolves a per-cycle leak and costs about
-# a minute, where the gate default of 200 costs ten.
+RESULT_RE = re.compile(r"test result: ok\. (\d+) passed")
+
+# Unified pre-compile (`cargo test --locked ... --no-run`) builds all needed
+# structural targets in one feature-unification pass, then each measurement binary
+# executes sequentially with `--test-threads=1 --exact` so process-wide counters
+# stay isolated without per-measurement Cargo rebuilds (#814).
 MEASUREMENTS = (
     {
         "section": "queue",
         "source": "agent-runtime",
-        "args": ["-p", "horon-agent-agent-runtime", "queue_tests::queue_high_water_increases_under_a_burst"],
+        "args": ["-p", "horon-agent-agent-runtime", "--lib", "queue_tests::queue_high_water_increases_under_a_burst"],
     },
     {
         "section": "queue",
@@ -85,6 +87,7 @@ MEASUREMENTS = (
         "args": [
             "-p",
             "horon-agent-app-core",
+            "--lib",
             "server::queue_tests::a_soft_interrupt_burst_raises_the_queue_high_water_counter",
         ],
     },
@@ -94,6 +97,7 @@ MEASUREMENTS = (
         "args": [
             "-p",
             "horon-agent-harness-api-server",
+            "--lib",
             "translate::tests::pending_request_gauge_rises_on_a_request_and_falls_on_its_reply",
         ],
     },
@@ -103,6 +107,7 @@ MEASUREMENTS = (
         "args": [
             "-p",
             "horon-agent-harness-api-server",
+            "--lib",
             "translate::history_page_perf_tests::one_page_cost_does_not_grow_with_the_session",
         ],
     },
@@ -128,6 +133,7 @@ MEASUREMENTS = (
         "args": [
             "-p",
             "horon-agent-harness-api-server",
+            "--lib",
             "framing_tests::the_frame_cap_is_exact_and_reported_to_the_structural_gate",
         ],
     },
@@ -137,6 +143,7 @@ MEASUREMENTS = (
         "args": [
             "-p",
             "horon-agent-harness-api",
+            "--lib",
             "schema_snapshot_tests::read_frame_cap_is_exact_and_reported_to_the_structural_gate",
         ],
     },
@@ -349,18 +356,211 @@ def load_budget(path: str) -> dict[str, int]:
     return bounds
 
 
-def measurement_command(measurement: dict) -> list[str]:
-    return ["cargo", "test", "-q", *measurement["args"], "--", "--exact", "--nocapture", "--test-threads=1"]
-
-
-def print_plan() -> int:
+def selected_measurements(sections: set[str] | None = None) -> list[dict]:
+    selected: list[dict] = []
     for measurement in MEASUREMENTS:
+        if sections is not None and measurement["section"] not in sections:
+            continue
+        if measurement.get("unix_only") and sys.platform == "win32":
+            continue
+        selected.append(measurement)
+    return selected
+
+
+def parse_measurement_target(measurement: dict) -> tuple[str, str, str | None, str]:
+    args = list(measurement["args"])
+    package: str | None = None
+    kind: str | None = None
+    target_name: str | None = None
+    test_filter: str | None = None
+    idx = 0
+    while idx < len(args):
+        token = args[idx]
+        if token in ("-p", "--package"):
+            if idx + 1 >= len(args):
+                raise GateError(f"measurement {measurement['section']} missing package after {token}")
+            package = args[idx + 1]
+            idx += 2
+        elif token == "--lib":
+            kind = "lib"
+            target_name = None
+            idx += 1
+        elif token == "--test":
+            if idx + 1 >= len(args):
+                raise GateError(f"measurement {measurement['section']} missing target after --test")
+            kind = "test"
+            target_name = args[idx + 1]
+            idx += 2
+        elif not token.startswith("-") and test_filter is None:
+            test_filter = token
+            idx += 1
+        else:
+            raise GateError(f"unexpected measurement argument {token!r} in {measurement['section']}")
+    if not package or not kind or not test_filter:
+        raise GateError(
+            f"measurement {measurement['section']} ({measurement['source']}) must specify -p, --lib/--test, and test filter"
+        )
+    return package, kind, target_name, test_filter
+
+
+def compile_command(measurements: list[dict] | tuple[dict, ...] = MEASUREMENTS) -> list[str]:
+    if not measurements:
+        raise GateError("no structural measurements selected")
+    packages: list[str] = []
+    seen_packages: set[str] = set()
+    test_targets: list[str] = []
+    seen_tests: set[str] = set()
+    needs_lib = False
+    for measurement in measurements:
+        package, kind, target_name, _ = parse_measurement_target(measurement)
+        if package not in seen_packages:
+            seen_packages.add(package)
+            packages.append(package)
+        if kind == "lib":
+            needs_lib = True
+        elif kind == "test" and target_name and target_name not in seen_tests:
+            seen_tests.add(target_name)
+            test_targets.append(target_name)
+    cmd = ["cargo", "test", "--locked"]
+    for package in packages:
+        cmd.extend(["-p", package])
+    if needs_lib:
+        cmd.append("--lib")
+    for target_name in test_targets:
+        cmd.extend(["--test", target_name])
+    cmd.extend(["--no-run", "--message-format=json-render-diagnostics"])
+    return cmd
+
+
+def package_name_from_id(package_id: str) -> str:
+    if "#" in package_id:
+        return package_id.rsplit("#", 1)[1].split("@", 1)[0]
+    return package_id.split(" ", 1)[0]
+
+
+def parse_compiled_artifacts(stdout: str) -> dict[tuple[str, str, str | None], tuple[Path, Path]]:
+    artifacts: dict[tuple[str, str, str | None], tuple[Path, Path]] = {}
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if message.get("reason") != "compiler-artifact":
+            continue
+        if not (message.get("profile") or {}).get("test"):
+            continue
+        executable = message.get("executable")
+        if not executable:
+            continue
+        target = message.get("target") or {}
+        kinds = target.get("kind") or []
+        package = package_name_from_id(str(message.get("package_id", "")))
+        manifest_path = message.get("manifest_path")
+        package_dir = Path(manifest_path).parent if manifest_path else REPO_ROOT
+        exe_path = Path(executable)
+        if "lib" in kinds:
+            key = (package, "lib", None)
+            if key in artifacts and artifacts[key][0] != exe_path:
+                raise GateError(f"ambiguous lib test executable for {package!r}")
+            artifacts[key] = (exe_path, package_dir)
+        if "test" in kinds:
+            target_name = target.get("name")
+            key = (package, "test", target_name)
+            if key in artifacts and artifacts[key][0] != exe_path:
+                raise GateError(f"ambiguous test executable {target_name!r} for {package!r}")
+            artifacts[key] = (exe_path, package_dir)
+    return artifacts
+
+
+def select_executable(
+    artifacts: dict[tuple[str, str, str | None], tuple[Path, Path]],
+    measurement: dict,
+) -> tuple[Path, Path, str]:
+    package, kind, target_name, test_filter = parse_measurement_target(measurement)
+    entry = artifacts.get((package, kind, target_name))
+    if entry is None:
+        raise GateError(
+            f"missing compiled {kind} test executable for {package!r} target={target_name!r}"
+        )
+    exe_path, package_dir = entry
+    if not exe_path.is_file():
+        raise GateError(f"compiled test executable does not exist on disk: {exe_path}")
+    return exe_path, package_dir, test_filter
+
+
+def compile_measurements(measurements: list[dict] | tuple[dict, ...]) -> dict[tuple[str, str, str | None], tuple[Path, Path]]:
+    command = compile_command(measurements)
+    completed = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        tail = "\n".join(completed.stderr.strip().splitlines()[-30:])
+        raise GateError(
+            f"unified compile failed (exit {completed.returncode}): {' '.join(command)}\n{tail}"
+        )
+    return parse_compiled_artifacts(completed.stdout)
+
+
+def measurement_command(measurement: dict) -> list[str]:
+    return ["cargo", "test", "--locked", "-q", *measurement["args"], "--", "--exact", "--nocapture", "--test-threads=1"]
+
+
+def print_plan(sections: set[str] | None = None) -> int:
+    active = selected_measurements(sections)
+    print("# unified compile step")
+    print(" ".join(compile_command(active)))
+    for measurement in active:
+        package, kind, target_name, test_filter = parse_measurement_target(measurement)
         env = measurement.get("env") or {}
         prefix = " ".join(f"{key}={value}" for key, value in env.items())
-        command = " ".join(measurement_command(measurement))
+        target_label = f"{package}::{kind}" if target_name is None else f"{package}::test::{target_name}"
+        command = f"<{target_label}> {test_filter} --exact --nocapture --test-threads=1 --format terse"
         print(f"# section {measurement['section']} ({measurement['source']})")
         print(f"{prefix + ' ' if prefix else ''}{command}")
     return 0
+
+
+def run_compiled_measurement(
+    measurement: dict,
+    artifacts: dict[tuple[str, str, str | None], tuple[Path, Path]],
+) -> str:
+    exe_path, package_dir, test_filter = select_executable(artifacts, measurement)
+    package, _, _, _ = parse_measurement_target(measurement)
+    env = dict(os.environ)
+    env.setdefault("CARGO_MANIFEST_DIR", str(package_dir))
+    env.setdefault("CARGO_PKG_NAME", package)
+    env.setdefault("CARGO", "cargo")
+    env.update(measurement.get("env") or {})
+    completed = subprocess.run(
+        [str(exe_path), test_filter, "--exact", "--nocapture", "--test-threads=1", "--format", "terse"],
+        cwd=package_dir,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    combined = completed.stdout + completed.stderr
+    if completed.returncode != 0:
+        tail = "\n".join(combined.strip().splitlines()[-25:])
+        raise GateError(
+            "measurement failed: %s exited %d\n%s"
+            % (" ".join(measurement["args"]), completed.returncode, tail)
+        )
+    passed = sum(int(match) for match in RESULT_RE.findall(combined))
+    if passed < 1:
+        tail = "\n".join(combined.strip().splitlines()[-25:])
+        raise GateError(
+            "measurement selected no test (0 passed): %s\n%s"
+            % (" ".join(measurement["args"]), tail)
+        )
+    return combined
 
 
 def run_measurement(measurement: dict) -> str:
@@ -382,6 +582,13 @@ def run_measurement(measurement: dict) -> str:
         raise GateError(
             "measurement failed: cargo test %s exited %d\n%s"
             % (" ".join(measurement["args"]), completed.returncode, tail)
+        )
+    passed = sum(int(match) for match in RESULT_RE.findall(combined))
+    if passed < 1:
+        tail = "\n".join(combined.strip().splitlines()[-25:])
+        raise GateError(
+            "measurement selected no test (0 passed): %s\n%s"
+            % (" ".join(measurement["args"]), tail)
         )
     return combined
 
@@ -1199,19 +1406,19 @@ def emit(report: Report, missing: list[str], skipped: list[str], checked: list[s
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    sections = set(args.only) if args.only else set(REQUIRED_SECTIONS)
+    unknown = sections - set(REQUIRED_SECTIONS)
+    if unknown:
+        print(f"Structural performance gate: unknown section(s): {', '.join(sorted(unknown))}", file=sys.stderr)
+        return 2
+
     if args.print_plan:
-        return print_plan()
+        return print_plan(sections if args.only else None)
 
     try:
         bounds = load_budget(args.budget)
     except GateError as error:
         print(f"Structural performance gate: {error}", file=sys.stderr)
-        return 2
-
-    sections = set(args.only) if args.only else set(REQUIRED_SECTIONS)
-    unknown = sections - set(REQUIRED_SECTIONS)
-    if unknown:
-        print(f"Structural performance gate: unknown section(s): {', '.join(sorted(unknown))}", file=sys.stderr)
         return 2
 
     if args.read:
@@ -1222,14 +1429,16 @@ def main(argv: list[str] | None = None) -> int:
         text = path.read_text(encoding="utf-8", errors="replace")
         records = parse_lines(text)
     else:
+        active = selected_measurements(sections)
+        try:
+            artifacts = compile_measurements(active)
+        except GateError as error:
+            print(f"Structural performance gate: {error}", file=sys.stderr)
+            return 2
         text = ""
-        for measurement in MEASUREMENTS:
-            if measurement["section"] not in sections:
-                continue
-            if measurement.get("unix_only") and sys.platform == "win32":
-                continue
+        for measurement in active:
             try:
-                text += run_measurement(measurement) + "\n"
+                text += run_compiled_measurement(measurement, artifacts) + "\n"
             except GateError as error:
                 print(f"Structural performance gate: {error}", file=sys.stderr)
                 return 2

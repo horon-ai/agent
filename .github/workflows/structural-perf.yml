@@ -82,6 +82,7 @@ jobs:
       # crate, so the rustup proxy would honour it from that crate's CWD. Pin the
       # job's own toolchain, as the Build & Test job does.
       RUSTUP_TOOLCHAIN: stable
+      CARGO_BUILD_RUSTC_WRAPPER: ""
     steps:
       # The cleanup lives in the repository, so the checkout comes first: the
       # shared script is not on disk until the workspace exists.
@@ -106,6 +107,19 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
           cache-on-failure: "false"
 
+      - name: Install mold linker (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          installed=0
+          for attempt in 1 2 3; do
+            if sudo apt-get update -qq && sudo apt-get install -y -qq clang mold; then
+              installed=1
+              break
+            fi
+            sleep $((attempt * 10))
+          done
+          [ "$installed" = 1 ]
+
       - name: Contract test the structural gate
         # Fast and compile-free: proves the bounds file, the report template and
         # the violation path before paying for a build.
@@ -118,7 +132,18 @@ jobs:
       - name: Run the structural performance gate
         # Independent of the steps above, so one failure does not hide the rest.
         if: ${{ !cancelled() }}
-        run: python3 scripts/perf/check_structural.py
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            mkdir -p .cargo
+            cat > .cargo/config.toml << 'EOF'
+          [target.x86_64-unknown-linux-gnu]
+          linker = "clang"
+          rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+          EOF
+            CARGO_BUILD_JOBS="$(nproc)"
+            export CARGO_BUILD_JOBS
+          fi
+          python3 scripts/perf/check_structural.py
 
   # Always finishes: a documentation-only pull request or `dev` push skips the
   # gate by design and must not leave a required check pending.

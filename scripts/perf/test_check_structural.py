@@ -1105,12 +1105,117 @@ class WorkflowTest(unittest.TestCase):
     def test_it_declares_read_only_permissions(self):
         self.assertIn("permissions:\n  contents: read", self.workflow())
 
+    def test_it_tunes_mold_and_parallel_build_jobs(self):
+        text = self.workflow()
+        self.assertIn('CARGO_BUILD_RUSTC_WRAPPER: ""', text)
+        self.assertIn("apt-get install -y -qq clang mold", text)
+        self.assertIn("-fuse-ld=mold", text)
+        self.assertIn("CARGO_BUILD_JOBS=", text)
+
 
 class MeasurementPlanTest(unittest.TestCase):
     def test_no_measurement_builds_a_release_binary(self):
         for measurement in gate.MEASUREMENTS:
             command = gate.measurement_command(measurement)
             self.assertNotIn("--release", command, f"{measurement['section']} must run in debug")
+
+    def test_every_measurement_uses_locked_and_explicit_target_kind(self):
+        for measurement in gate.MEASUREMENTS:
+            command = gate.measurement_command(measurement)
+            self.assertIn("--locked", command, f"{measurement['section']} must preserve --locked")
+            package, kind, target_name, test_filter = gate.parse_measurement_target(measurement)
+            self.assertTrue(package)
+            self.assertIn(kind, ("lib", "test"))
+            self.assertTrue(test_filter)
+            if kind == "test":
+                self.assertTrue(target_name)
+
+    def test_unified_compile_command_builds_unique_packages_once(self):
+        cmd = gate.compile_command()
+        self.assertEqual(cmd[:3], ["cargo", "test", "--locked"])
+        self.assertIn("--lib", cmd)
+        self.assertNotIn("--tests", cmd)
+        for target in ("hash_stream", "e2e", "tool_dispatch_perf", "package_cost"):
+            self.assertIn(target, cmd)
+        self.assertIn("--no-run", cmd)
+        self.assertIn("--message-format=json-render-diagnostics", cmd)
+        lib_only = gate.compile_command(gate.selected_measurements({"page"}))
+        self.assertIn("--lib", lib_only)
+        self.assertNotIn("--test", lib_only)
+        soak_only = gate.compile_command(gate.selected_measurements({"soak"}))
+        self.assertNotIn("--lib", soak_only)
+        self.assertEqual(soak_only[3:7], ["-p", "horon-agent", "--test", "e2e"])
+        with self.assertRaises(gate.GateError):
+            gate.compile_command([])
+
+    def test_parse_artifacts_and_direct_execution_enforce_non_zero_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pkg_dir = root / "crates" / "app-core"
+            pkg_dir.mkdir(parents=True)
+            exe = root / "target" / "debug" / "deps" / "horon_agent_app_core-abc.py"
+            exe.parent.mkdir(parents=True)
+            exe.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, sys\n"
+                "assert os.getcwd().endswith('app-core'), os.getcwd()\n"
+                "assert '--exact' in sys.argv and '--test-threads=1' in sys.argv\n"
+                "if '--format' not in sys.argv or 'terse' not in sys.argv:\n"
+                "    sys.stdout.write('test fake::case ... ')\n"
+                "    sys.stdout.flush()\n"
+                "print('STRUCTURAL_PERF section=page events=1000 page_limit=20 warm_replayed=0 warm_flattened=20 warm_index_builds=0 warm_read_bytes=8192 log_bytes=262144')\n"
+                "if os.environ.get('FORCE_ZERO') == '1':\n"
+                "    print('test result: ok. 0 passed; 0 failed')\n"
+                "else:\n"
+                "    print('test result: ok. 1 passed; 0 failed')\n",
+                encoding="utf-8",
+            )
+            exe.chmod(0o755)
+            probe = root / "target" / "debug" / "horon-package-probe"
+            probe.write_text("#!/bin/sh\n", encoding="utf-8")
+            probe.chmod(0o755)
+            stdout = "\n".join([
+                json.dumps({
+                    "reason": "compiler-artifact",
+                    "package_id": f"path+file://{pkg_dir}#horon-agent-app-core@0.1.0",
+                    "manifest_path": str(pkg_dir / "Cargo.toml"),
+                    "target": {"kind": ["bin"], "name": "horon-package-probe"},
+                    "profile": {"test": False},
+                    "executable": str(probe),
+                }),
+                json.dumps({
+                    "reason": "compiler-artifact",
+                    "package_id": f"path+file://{pkg_dir}#horon-agent-app-core@0.1.0",
+                    "manifest_path": str(pkg_dir / "Cargo.toml"),
+                    "target": {"kind": ["lib"], "name": "horon_agent_app_core"},
+                    "profile": {"test": True},
+                    "executable": str(exe),
+                }),
+                json.dumps({
+                    "reason": "compiler-artifact",
+                    "package_id": f"horon-agent-harness-api-server 0.1.0 (path+file://{root}/crates/harness-api-server)",
+                    "manifest_path": str(root / "crates" / "harness-api-server" / "Cargo.toml"),
+                    "target": {"kind": ["lib"], "name": "horon_agent_harness_api_server"},
+                    "profile": {"test": True},
+                    "executable": str(exe),
+                }),
+            ])
+            artifacts = gate.parse_compiled_artifacts(stdout)
+            ctx_m = gate.selected_measurements({"context"})[0]
+            out = gate.run_compiled_measurement(ctx_m, artifacts)
+            self.assertIn("STRUCTURAL_PERF section=page", out)
+            page_m = gate.selected_measurements({"page"})[0]
+            self.assertEqual(gate.select_executable(artifacts, page_m)[0], exe)
+
+            os.environ["FORCE_ZERO"] = "1"
+            try:
+                with self.assertRaises(gate.GateError):
+                    gate.run_compiled_measurement(ctx_m, artifacts)
+            finally:
+                os.environ.pop("FORCE_ZERO", None)
+
+            with self.assertRaises(gate.GateError):
+                gate.select_executable({}, ctx_m)
 
     def test_every_measurement_runs_one_test_against_one_target_dir(self):
         for measurement in gate.MEASUREMENTS:

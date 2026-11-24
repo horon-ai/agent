@@ -69,7 +69,7 @@ FreeBSD만 대화형 클라이언트가 없다. 릴리스는 에이전트만 내
 | `aarch64-pc-windows-msvc` | arm64 Windows | 예 |
 | `x86_64-pc-windows-msvc` | x86-64 Windows | 예 |
 
-`scripts/ci/package_compat.py docs-claims`는 이 표를 읽어, 통과한 보고서가 없는 타깃에 `Yes`(한국어판은 `예`)를 적으면 실패한다. `No`(한국어판은 `아니오`) 행은 보고서가 없어도 되지만, 실패한 타깃의 실행 자체는 집계 작업에서 계속 실패한다. 그래서 여기의 지원 표기는 초록 네이티브 실행 뒤에만 가능하다. FreeBSD와 나머지 플랫폼은 그 워크플로에 러너가 없어 표에 넣지 않으며, 이 문서는 그 플랫폼의 패키지 지원을 주장하지 않는다. 패키지 형식과 선언에 쓰는 여섯 타깃은 [`../runtime/PACKAGES.ko.md`](/ko/reference/runtime/packages)에 있다.
+`scripts/ci/package_compat.py docs-claims`는 이 표를 읽어, 통과한 보고서가 없는 타깃에 `Yes`(한국어판은 `예`)를 적으면 실패한다. `No`(한국어판은 `아니오`) 행은 보고서가 없어도 되지만, 실패한 타깃의 실행 자체는 집계 작업에서 계속 실패한다. 그래서 여기의 지원 표기는 초록 네이티브 실행 뒤에만 가능하다. `docs/release/INSTALL.md`나 `docs/release/INSTALL.ko.md`만 바꾸는 PR은 여섯 네이티브 타깃 전체를 다시 빌드하지 않고 가벼운 `docs-claims` 검증 경로만 실행한다. FreeBSD와 나머지 플랫폼은 그 워크플로에 러너가 없어 표에 넣지 않으며, 이 문서는 그 플랫폼의 패키지 지원을 주장하지 않는다. 패키지 형식과 선언에 쓰는 여섯 타깃은 [`../runtime/PACKAGES.ko.md`](/ko/reference/runtime/packages)에 있다.
 
 ## 설치 스크립트와의 관계
 
@@ -183,6 +183,8 @@ TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직�
 ### CI 가드
 
 `scripts/ci/check_linux_bare_runtime.sh <binary>`가 바이너리를 `debian:trixie-slim`에서 돌린다. 컨테이너에서 OpenSSL 라이브러리와 CA 저장소를 지우고, `ldd` 결과가 glibc 계열과 libgcc 허용 목록 안에 있는지 확인한다. 이어서 `--version`과 모의 프로바이더를 상대로 `run` 한 턴을 실행한다. CI `build` 작업의 Linux 항목이 release 프로필 빌드 뒤에 이 스크립트를 돌린다. Docker가 있으면 개발자 기계에서도 같은 명령을 돌릴 수 있다.
+
+PR에서는 `.github/workflows/ci.yml`이 크레이트 컴파일 범위(`scripts/ci/workspace_impact.py`), TUI PTY 스모크(`tui_smoke`), 운영체제 러너(이식 가능 Rust 변경은 `ubuntu-latest`와 Windows 교차 검증을 실행하고, 플랫폼 코드·공유 Linux-macOS `#[path]` 소스·매니페스트·잠금 파일·`ci:all-os` 라벨 시 `macos-latest`와 `windows-build-test` 추가), attach/detach soak 길이(`HORON_AGENT_SOAK_CYCLES=20`)를 영향 범위에 맞게 좁히며, 문서 전용·워크플로 전용 PR은 Rust 빌드를 생략하고 `CI Required`와 `Structural performance required` 집계 검사로 통과한다. `dev`와 `main` 푸시는 항상 전체 3개 운영체제 스위트, 200사이클 soak, 그리고 `scripts/release/check_ci.py`가 확인하는 모든 필수 릴리스 작업을 실행한다.
 
 ## 릴리스 번호와 자동 발행
 

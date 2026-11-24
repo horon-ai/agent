@@ -66,7 +66,7 @@ A log from a cross-compiled build is not execution evidence: a report whose `cro
 | `aarch64-pc-windows-msvc` | Windows on arm64 | Yes |
 | `x86_64-pc-windows-msvc` | Windows on x86-64 | Yes |
 
-`scripts/ci/package_compat.py docs-claims` reads this table and fails when a row says `Yes` for a target that has no passing report, so a claim here can only follow a green native run. FreeBSD and the other platforms have no runner in that workflow, so they are not listed and this page claims no package support there. The package format and the six declaration targets are described in [`../runtime/PACKAGES.md`](../runtime/PACKAGES.md).
+`scripts/ci/package_compat.py docs-claims` reads this table and fails when a row says `Yes` for a target that has no passing report, so a claim here can only follow a green native run. Pull requests that change only `docs/release/INSTALL.md` or `docs/release/INSTALL.ko.md` run that lightweight `docs-claims` verification job instead of rebuilding all six native targets. FreeBSD and the other platforms have no runner in that workflow, so they are not listed and this page claims no package support there. The package format and the six declaration targets are described in [`../runtime/PACKAGES.md`](../runtime/PACKAGES.md).
 
 ## How the install scripts use it
 
@@ -180,6 +180,8 @@ The shell installer verifies the checksum and checks every member name before pr
 ### CI guard
 
 `scripts/ci/check_linux_bare_runtime.sh <binary>` runs the binary in `debian:trixie-slim`. It deletes the OpenSSL libraries and the CA store inside the container and checks that `ldd` lists only the allowed glibc family and libgcc entries. It then runs `--version` and one `run` turn against a mock provider. The Linux entry of the CI `build` job runs this script after the release-profile build. The same command can run on a developer machine that has Docker.
+
+On pull requests, `.github/workflows/ci.yml` scopes crate compilation (`scripts/ci/workspace_impact.py`), TUI PTY smoke (`tui_smoke`), OS runners (running `ubuntu-latest` and the Windows cross-checks for portable Rust edits, adding `macos-latest` and `windows-build-test` when platform code, shared Linux-macOS `#[path]` sources, manifests, lockfiles or `ci:all-os` are present), and attach/detach soak length (`HORON_AGENT_SOAK_CYCLES=20`), while documentation-only and workflow-only pull requests skip Rust builds and satisfy the `CI Required` / `Structural performance required` aggregate checks. Pushes to `dev` and `main` always run the full 3-OS suite, the 200-cycle soak, and every mandatory release job verified by `scripts/release/check_ci.py`.
 
 ## Release numbers and automatic publishing
 
