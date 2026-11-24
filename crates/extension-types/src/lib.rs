@@ -1,4 +1,4 @@
-//! Data shared by the package installer, host and author SDK.
+//! Data shared by the package installer, host, and author SDK.
 
 use std::collections::BTreeMap;
 
