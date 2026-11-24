@@ -3,12 +3,15 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-static TAG: LazyLock<Regex> = LazyLock::new(|| {
-    // Accept namespace spellings seen in DeepSeek-compatible responses.
-    Regex::new(
-        r"(?i)<\s*(/)?\s*(?:[｜|]\s*)?(?:DSML\s*[｜|]?\s*)?(?:antml:)?(function_calls|tool_calls|calls|invoke|parameter)\b([^<>]*)(?:>|$)",
-    )
-    .expect("valid tool markup tag regex")
+const TAG_PATTERN: &str = r"(?i)<\s*(/)?\s*(?:[｜|]\s*)?(?:DSML\s*[｜|]?\s*)?(?:antml:)?(function_calls|tool_calls|calls|invoke|parameter)\b([^<>]*)(?:>|$)";
+const TAG_AT_START_PATTERN: &str = r"(?i)\A<\s*(/)?\s*(?:[｜|]\s*)?(?:DSML\s*[｜|]?\s*)?(?:antml:)?(function_calls|tool_calls|calls|invoke|parameter)\b([^<>]*)(?:>|$)";
+
+static TAGS: LazyLock<(Regex, Regex)> = LazyLock::new(|| {
+    // Accept namespace spellings seen in DeepSeek-compatible responses, and
+    // anchor the start-only matcher when walking standalone markup so prose avoids scanning.
+    Regex::new(TAG_PATTERN)
+        .and_then(|any| Regex::new(TAG_AT_START_PATTERN).map(|at_start| (any, at_start)))
+        .expect("valid tool markup tag regex")
 });
 
 static NAME_ATTR: LazyLock<Regex> =
@@ -41,11 +44,13 @@ fn standalone_markup(mut text: &str) -> bool {
     // including fenced, quoted and inline examples, out of the retry path.
     let mut saw_named_attempt = false;
     while !text.is_empty() {
-        let Some(tag) = TAG.captures(text) else { return false };
-        let whole = tag.get_match();
-        if whole.start() != 0 {
+        if !text.starts_with('<') {
             return false;
         }
+        let Some(tag) = TAGS.1.captures(text) else {
+            return false;
+        };
+        let whole = tag.get_match();
         let kind = &tag[2];
         let parameter = kind.eq_ignore_ascii_case("parameter");
         let opening = tag.get(1).is_none();
@@ -54,7 +59,8 @@ fn standalone_markup(mut text: &str) -> bool {
         }
         text = text[whole.end()..].trim_start();
         if opening && parameter {
-            let Some(end) = TAG
+            let Some(end) = TAGS
+                .0
                 .captures_iter(text)
                 .find(|tag| tag.get(1).is_some() && tag[2].eq_ignore_ascii_case("parameter"))
             else {
