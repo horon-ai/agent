@@ -20,6 +20,7 @@
 //! reports paths that belong to another machine.
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 /// The launch directory is a display fallback when the daemon reports none.
 pub(crate) fn launch_directory(explicit: Option<PathBuf>) -> Option<PathBuf> {
@@ -41,7 +42,7 @@ pub struct Choice {
     /// Where the completed token starts in the draft, counted in bytes.
     start: usize,
     /// The full relative paths of the candidates, as they are inserted.
-    candidates: Vec<String>,
+    candidates: Arc<Vec<String>>,
     /// The candidate the token holds, when it holds one.
     chosen: usize,
 }
@@ -70,10 +71,10 @@ pub fn complete(draft: &str, workspace: Option<&str>, previous: Option<&Choice>)
     {
         let next = (previous.chosen + 1) % previous.candidates.len();
         return Some((
-            replace(draft, start, &form.render(&previous.candidates[next])),
+            replace_rendered(draft, start, &form, &previous.candidates[next]),
             Choice {
                 start,
-                candidates: previous.candidates.clone(),
+                candidates: Arc::clone(&previous.candidates),
                 chosen: next,
             },
         ));
@@ -83,47 +84,46 @@ pub fn complete(draft: &str, workspace: Option<&str>, previous: Option<&Choice>)
     // Canonicalizing the one directory resolves every symlink in the path it
     // was written with, so the prefix check below is what keeps a link from
     // reading outside the workspace.
-    let listing = reachable(std::fs::canonicalize(root.join(directory)))?;
-    if !listing.starts_with(&root) || !listing.is_dir() {
-        return None;
-    }
-    let names = read_names(&listing, fragment)?;
-    let candidates: Vec<String> = names
-        .iter()
-        .map(|(name, is_dir)| entry(directory, name, *is_dir))
-        .collect();
-    let mut fill = match candidates.as_slice() {
-        [only] => only.clone(),
+    let listing = if directory.is_empty() {
+        root
+    } else {
+        let path = reachable(std::fs::canonicalize(root.join(directory)))?;
+        if !path.starts_with(&root) || !path.is_dir() {
+            return None;
+        }
+        path
+    };
+    let (candidates, prefix_len, common_len) = read_candidates(&listing, directory, fragment)?;
+    let (mut next, mut chosen) = match candidates.as_slice() {
+        [only] => (replace_rendered(draft, start, &form, only), 0),
         [first, ..] => {
-            let prefix = common_prefix(&names);
-            // A shared prefix no longer than what is already typed says the
-            // candidates differ here, so the first one is offered and the next
-            // press walks the rest.
-            if prefix.len() > fragment.len() {
-                entry(directory, &prefix, false)
+            if common_len > fragment.len() {
+                let prefix_end = prefix_len + common_len;
+                let fill = &first[..prefix_end];
+                let next = replace_rendered(draft, start, &form, fill);
+                let chosen = candidates.iter().position(|candidate| candidate == fill).unwrap_or(0);
+                (next, chosen)
             } else {
-                first.clone()
+                (replace_rendered(draft, start, &form, first), 0)
             }
         }
         [] => return None,
     };
-    let mut next = replace(draft, start, &form.render(&fill));
     // The first candidate can be exactly what is typed, as `foo` is beside
     // `foo.rs`: with more candidates the press means the next one rather than
     // nothing, or a typed name would shut the list it starts.
     if next == draft && candidates.len() > 1 {
-        fill = candidates[1].clone();
-        next = replace(draft, start, &form.render(&fill));
+        chosen = 1;
+        next = replace_rendered(draft, start, &form, &candidates[1]);
     }
     if next == draft {
         return None;
     }
-    let chosen = candidates.iter().position(|candidate| *candidate == fill).unwrap_or(0);
     Some((
         next,
         Choice {
             start,
-            candidates,
+            candidates: Arc::new(candidates),
             chosen,
         },
     ))
@@ -178,12 +178,31 @@ fn token_start(draft: &str) -> usize {
         .unwrap_or(line_start)
 }
 
-/// The draft with the token that starts at `start` replaced.
-fn replace(draft: &str, start: usize, rendered: &str) -> String {
-    let mut next = String::with_capacity(draft.len() + rendered.len());
+/// The draft with the token that starts at `start` replaced by the rendered candidate.
+fn replace_rendered(draft: &str, start: usize, form: &Form<'_>, path: &str) -> String {
+    let needs_quotes = form.quoted || has_whitespace(path);
+    let extra = usize::from(form.mention) + if needs_quotes { 2 } else { 0 };
+    let mut next = String::with_capacity(start + extra + path.len());
     next.push_str(&draft[..start]);
-    next.push_str(rendered);
+    if form.mention {
+        next.push('@');
+    }
+    if needs_quotes {
+        next.push('"');
+        next.push_str(path);
+        next.push('"');
+    } else {
+        next.push_str(path);
+    }
     next
+}
+
+fn has_whitespace(text: &str) -> bool {
+    if text.is_ascii() {
+        text.bytes().any(|b| b == b' ' || matches!(b, b'\t'..=b'\r'))
+    } else {
+        text.chars().any(char::is_whitespace)
+    }
 }
 
 /// The directory part of a token and the fragment the next name must start
@@ -195,17 +214,6 @@ fn split(path: &str) -> (&str, &str) {
         None => ("", path),
     };
     (directory.trim_end_matches('/'), fragment)
-}
-
-/// One candidate as it is inserted: the directory as typed, the name, and a
-/// separator for a directory so the next press descends into it.
-fn entry(directory: &str, name: &str, is_dir: bool) -> String {
-    let separator = if is_dir { "/" } else { "" };
-    if directory.is_empty() {
-        format!("{name}{separator}")
-    } else {
-        format!("{directory}/{name}{separator}")
-    }
 }
 
 /// The token as the draft wrote it: the mention marker, the quotes and the path.
@@ -240,27 +248,6 @@ impl<'a> Form<'a> {
                 .components()
                 .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
     }
-
-    /// The token as it goes back into the draft.
-    ///
-    /// A path with a space is quoted so it stays one token, and a token that
-    /// was already quoted keeps its quotes. The quotes are the same in every
-    /// shell that reads the draft later, which a backslash escape would not
-    /// be.
-    fn render(&self, path: &str) -> String {
-        let mut rendered = String::new();
-        if self.mention {
-            rendered.push('@');
-        }
-        if self.quoted || path.chars().any(char::is_whitespace) {
-            rendered.push('"');
-            rendered.push_str(path);
-            rendered.push('"');
-        } else {
-            rendered.push_str(path);
-        }
-        rendered
-    }
 }
 
 /// What a filesystem call returned, or nothing when the path is unreachable.
@@ -281,11 +268,13 @@ fn workspace_root(workspace: Option<&str>) -> Option<PathBuf> {
     root.is_dir().then_some(root)
 }
 
-/// The names in one directory that start with `fragment`, with their kind.
-fn read_names(directory: &Path, fragment: &str) -> Option<Vec<(String, bool)>> {
-    let mut names = Vec::new();
+/// Formatted candidate paths in `directory` starting with `fragment`, plus the
+/// byte offset of the entry name and the shared byte prefix length among names.
+fn read_candidates(listing: &Path, directory: &str, fragment: &str) -> Option<(Vec<String>, usize, usize)> {
+    let prefix_len = if directory.is_empty() { 0 } else { directory.len() + 1 };
+    let mut candidates = Vec::new();
     let mut seen = 0;
-    for entry in reachable(std::fs::read_dir(directory))? {
+    for entry in reachable(std::fs::read_dir(listing))? {
         seen += 1;
         if seen > MAX_ENTRIES {
             return None;
@@ -307,13 +296,40 @@ fn read_names(directory: &Path, fragment: &str) -> Option<Vec<(String, bool)>> {
             Ok(kind) => kind.is_dir(),
             Err(_) => false,
         };
-        names.push((name.to_string(), is_dir));
+        let mut full = String::with_capacity(prefix_len + name.len() + usize::from(is_dir));
+        if !directory.is_empty() {
+            full.push_str(directory);
+            full.push('/');
+        }
+        full.push_str(name);
+        if is_dir {
+            full.push('/');
+        }
+        candidates.push(full);
     }
-    if names.is_empty() {
+    if candidates.is_empty() {
         return None;
     }
-    names.sort();
-    Some(names)
+    candidates.sort_unstable_by(|a, b| sort_key(&a[prefix_len..]).cmp(&sort_key(&b[prefix_len..])));
+    let common_len = if candidates.len() > 1 {
+        let first = bare_name(&candidates[0][prefix_len..]);
+        let last = bare_name(&candidates[candidates.len() - 1][prefix_len..]);
+        common_prefix_len(first, last)
+    } else {
+        0
+    };
+    Some((candidates, prefix_len, common_len))
+}
+
+fn bare_name(entry: &str) -> &str {
+    entry.strip_suffix('/').unwrap_or(entry)
+}
+
+fn sort_key(entry: &str) -> (&str, bool) {
+    match entry.strip_suffix('/') {
+        Some(name) => (name, true),
+        None => (entry, false),
+    }
 }
 
 /// Whether a name can go back into the draft as written.
@@ -322,25 +338,24 @@ fn read_names(directory: &Path, fragment: &str) -> Option<Vec<(String, bool)>> {
 /// quoting form that every shell reads the same way, so such a name is left out
 /// rather than written in a form the user cannot trust.
 fn safe_name(name: &str) -> bool {
-    for character in name.chars() {
-        if character.is_control() || character == '"' || character == '\\' {
-            return false;
-        }
+    if name.is_ascii() {
+        !name.bytes().any(|b| b < 0x20 || b == 0x7f || b == b'"' || b == b'\\')
+    } else {
+        !name
+            .chars()
+            .any(|character| character.is_control() || character == '"' || character == '\\')
     }
-    true
 }
 
-/// The longest prefix every name shares.
-fn common_prefix(names: &[(String, bool)]) -> String {
-    let mut prefix = String::new();
-    for (position, character) in names[0].0.chars().enumerate() {
-        if names[1..]
-            .iter()
-            .any(|(name, _)| name.chars().nth(position) != Some(character))
-        {
-            break;
-        }
-        prefix.push(character);
+/// Longest UTF-8 byte prefix shared by two sorted boundary names.
+fn common_prefix_len(first: &str, last: &str) -> usize {
+    if first.is_ascii() && last.is_ascii() {
+        return first.bytes().zip(last.bytes()).take_while(|(a, b)| a == b).count();
     }
-    prefix
+    first
+        .chars()
+        .zip(last.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum()
 }
