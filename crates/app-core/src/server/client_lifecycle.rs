@@ -834,6 +834,7 @@ pub(super) async fn handle_client(
     // subscribe. Under heavy swarm file-activity load, ignored bus frames can
     // otherwise monopolize the select loop before the initial subscribe/read.
     let mut client_subscribed = false;
+    let mut prepared_disconnect = false;
     let mut provisional_session = true;
     let mut pending_request = Some(initial_request);
 
@@ -1321,6 +1322,7 @@ pub(super) async fn handle_client(
                 no_reply,
                 expected_run_id,
             } => {
+                prepared_disconnect = false;
                 if no_reply {
                     append_context_message(
                         id,
@@ -1731,6 +1733,7 @@ pub(super) async fn handle_client(
                 {
                     break;
                 }
+                prepared_disconnect = true;
             }
 
             Request::GetState { id } => {
@@ -1767,6 +1770,7 @@ pub(super) async fn handle_client(
                 a2ui: requested_a2ui,
                 fresh_session,
             } => {
+                prepared_disconnect = false;
                 if let Err(message) =
                     validated_subscribe_working_dir(
                         subscribe_working_dir.as_deref(), requested_continuation,
@@ -1849,7 +1853,27 @@ pub(super) async fn handle_client(
                         .write()
                         .unwrap_or_else(|e| e.into_inner()) = new_session_id.clone();
                     client_session_id = new_session_id;
-                    agent = new_agent_arc;
+                    let old_agent = std::mem::replace(&mut agent, new_agent_arc);
+                    let detached = super::client_session::cleanup_detached_source_session_if_unused(
+                        &old_session_id,
+                        &client_connection_id,
+                        old_agent,
+                        &sessions,
+                        &shutdown_signals,
+                        &soft_interrupt_queues,
+                        &client_connections,
+                        &swarm_members,
+                        &swarms_by_id,
+                        &file_touch,
+                        &swarm_plans,
+                        &swarm_coordinators,
+                    )
+                    .await;
+                    super::client_disconnect_cleanup::blocking_session_io(move || drop(detached));
+                    crate::process_memory::release_retained_heap_debounced(
+                        "server_session_switched",
+                        Duration::from_secs(5),
+                    );
                     registry = new_registry;
                     provider = new_provider;
                     provisional_session = true;
@@ -2211,6 +2235,7 @@ pub(super) async fn handle_client(
                 client_has_local_history,
                 allow_session_takeover,
             } => {
+                prepared_disconnect = false;
                 let pre_resume_session_id = client_session_id.clone();
                 let resume_working_dir = {
                     let agent_guard = agent.lock().await;
@@ -3471,18 +3496,34 @@ pub(super) async fn handle_client(
     settle_prewarm(&mut prewarm_task).await;
     drop(agent);
 
+    // Tear down both halves of the accepted stream and its forwarding tasks
+    // before disconnect cleanup or reconnect grace so `horon-agent.sock` FDs
+    // close synchronously when the client leaves.
+    drop(reader);
+    event_handle.abort();
+    let _ = event_handle.await;
+    drop(writer);
+    ask_forwarder.abort();
+    let _ = ask_forwarder.await;
+    pending_asks.lock().await.clear();
+
+    let effective_idle_reconnect_grace = if prepared_disconnect {
+        Duration::ZERO
+    } else {
+        idle_reconnect_grace
+    };
+
     // Cleanup serializes the successor decision against live attachment claims.
     // A successor must inherit the active owner, including its completion receiver,
     // rather than just an Agent whose processing task was already aborted.
-    let event_handle = if !continue_on_disconnect {
-        let retained = crate::hooks::with_client_terminal_env(
+    let retain_detached_turn = if !continue_on_disconnect {
+        crate::hooks::with_client_terminal_env(
             active_terminal_env.clone(),
             cleanup_client_connection(
                 &sessions,
                 &client_session_id,
                 client_is_processing,
                 &mut processing_task,
-                event_handle,
                 &swarm_members,
                 &swarms_by_id,
                 &swarm_coordinators,
@@ -3496,17 +3537,16 @@ pub(super) async fn handle_client(
                 &event_counter,
                 &swarm_event_tx,
                 &client_event_tx,
-                idle_reconnect_grace,
+                effective_idle_reconnect_grace,
             ),
         )
-        .await?;
-        match retained {
-            Some(handle) => handle,
-            None => return connection_result,
-        }
+        .await?
     } else {
-        event_handle
+        true
     };
+    if !retain_detached_turn {
+        return connection_result;
+    }
 
     {
         // Retain the existing turn owner, not the socket. Its JoinHandle and
@@ -3520,15 +3560,6 @@ pub(super) async fn handle_client(
             &swarm_members,
         )
         .await;
-        event_handle.abort();
-        drop(reader);
-        drop(writer);
-        // Dropping the pending answer channels ends a tool's wait instead of
-        // leaving the turn parked on a client that is gone. The forwarder is
-        // aborted without being awaited: it only relays prompts from a
-        // connection that has already closed.
-        ask_forwarder.abort();
-        pending_asks.lock().await.clear();
         if let Some(handle) = processing_task.take() {
             crate::logging::info(&format!(
                 "Retaining disconnected turn for session {}",
@@ -3573,7 +3604,6 @@ pub(super) async fn handle_client(
             &client_session_id,
             client_is_processing,
             &mut processing_task,
-            event_handle,
             &swarm_members,
             &swarms_by_id,
             &swarm_coordinators,
@@ -3587,7 +3617,7 @@ pub(super) async fn handle_client(
             &event_counter,
             &swarm_event_tx,
             &client_event_tx,
-            idle_reconnect_grace,
+            effective_idle_reconnect_grace,
         ),
     )
     .await?;
