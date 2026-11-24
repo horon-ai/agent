@@ -229,9 +229,15 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertNotIn('SCCACHE_CACHE_SIZE', workflow)
 
     def test_stable_toolchain_and_rust_cache_policy_hold(self):
+        toolchain_toml = (ROOT / 'rust-toolchain.toml').read_text()
+        match = re.search(r'^channel\s*=\s*"([^"]+)"', toolchain_toml, re.MULTILINE)
+        self.assertIsNotNone(match, 'rust-toolchain.toml missing channel')
+        pinned_channel = match.group(1)
         ci_text = (ROOT / '.github/workflows/ci.yml').read_text()
-        for job, nxt in (('quality', 'release-automation'),
-                         ('build', 'windows-build-test'),
+        quality_block = ci_text.split('\n  quality:\n', 1)[1].split('\n  release-automation:\n', 1)[0]
+        self.assertIn(f'RUSTUP_TOOLCHAIN: "{pinned_channel}"', quality_block)
+        self.assertIn(f'toolchain: "{pinned_channel}"', quality_block)
+        for job, nxt in (('build', 'windows-build-test'),
                          ('windows-build-test', 'typescript-sdk')):
             block = ci_text.split(f'\n  {job}:\n', 1)[1].split(f'\n  {nxt}:\n', 1)[0]
             with self.subTest(job=job):

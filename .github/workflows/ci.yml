@@ -119,7 +119,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      RUSTUP_TOOLCHAIN: stable
+      # Match rust-toolchain.toml for clippy/rustfmt parity while overriding nested
+      # dependency rust-toolchain.toml files (e.g. convert_case 1.83.0) without
+      # installing a second `stable` (1.100.0) toolchain.
+      RUSTUP_TOOLCHAIN: "1.99.1"
     steps:
       # Run after checkout because the cleanup lives in the repository now: the
       # shared script is not on disk until the workspace exists. It renames the
@@ -139,14 +142,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: stable
+          toolchain: "1.99.1"
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
           cache-on-failure: "false"
-          key: quality-${{ runner.os }}
+          key: quality-${{ runner.os }}-1.99.1
           cache-all-crates: "true"
 
       - name: Check module declarations resolve
