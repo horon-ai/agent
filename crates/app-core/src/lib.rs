@@ -44,6 +44,10 @@ pub mod durable_input_runtime;
 pub mod extensions;
 pub mod spend_cap;
 pub use horon_agent_base::external_auth;
+pub use horon_agent_tool_types::a2ui::{
+    A2UI_BASIC_CATALOG_V1_0, A2UI_VERSION_V1_0, A2uiSessionCapabilities, render_a2ui_text_card,
+    validate_renderer_to_agent_envelope,
+};
 pub mod network_retry;
 pub mod notifications;
 pub mod overnight;

@@ -59,6 +59,8 @@ impl Command {
                 append_system_prompt: None,
                 config_overlay: Vec::new(),
                 approve_plan: false,
+                a2ui: false,
+                a2ui_catalog: Vec::new(),
             },
             message,
         }

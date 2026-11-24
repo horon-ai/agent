@@ -19,7 +19,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
 /// How this client identifies itself to the daemon.
@@ -31,7 +31,7 @@ pub(super) const DISCONNECTED: &str = "HoronAgent daemon disconnected";
 pub(super) struct Daemon {
     writer: Arc<Mutex<WriteHalf>>,
     next_id: AtomicU64,
-    replies: Arc<Mutex<HashMap<u64, oneshot::Sender<ServerEvent>>>>,
+    replies: Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<ServerEvent>>>>,
     pump: JoinHandle<()>,
 }
 
@@ -56,23 +56,47 @@ impl Daemon {
         Ok(())
     }
 
-    async fn register(&self, id: u64) -> oneshot::Receiver<ServerEvent> {
-        let (tx, rx) = oneshot::channel();
+    async fn register(&self, id: u64) -> mpsc::UnboundedReceiver<ServerEvent> {
+        let (tx, rx) = mpsc::unbounded_channel();
         self.replies.lock().await.insert(id, tx);
         rx
     }
 
-    /// Send `request` (its id is already set) and wait for its reply.
+    /// Send `request` (its id is already set) and wait for its first reply.
     pub(super) async fn request(&self, request: &Request) -> Result<ServerEvent> {
         let id = request.id();
-        let reply = self.register(id).await;
+        let mut reply = self.register(id).await;
         if let Err(error) = self.send(request).await {
             self.replies.lock().await.remove(&id);
             return Err(error);
         }
-        reply
-            .await
-            .map_err(|_| anyhow::anyhow!("{DISCONNECTED} (request {id})"))
+        let received = reply.recv().await;
+        self.replies.lock().await.remove(&id);
+        received.ok_or_else(|| anyhow::anyhow!("{DISCONNECTED} (request {id})"))
+    }
+
+    /// Send `request` and wait past any initial `Ack` for its settlement reply
+    /// (`Done`, `ContextMessageAdded`, or `Error`).
+    pub(super) async fn request_settled(&self, request: &Request) -> Result<ServerEvent> {
+        let id = request.id();
+        let mut reply = self.register(id).await;
+        if let Err(error) = self.send(request).await {
+            self.replies.lock().await.remove(&id);
+            return Err(error);
+        }
+        loop {
+            match reply.recv().await {
+                Some(ServerEvent::Ack { .. }) => continue,
+                Some(event) => {
+                    self.replies.lock().await.remove(&id);
+                    return Ok(event);
+                }
+                None => {
+                    self.replies.lock().await.remove(&id);
+                    return Err(anyhow::anyhow!("{DISCONNECTED} (request {id})"));
+                }
+            }
+        }
     }
 }
 
@@ -93,6 +117,18 @@ pub(super) async fn connect(
     resume: Option<&str>,
     connector: Option<Connector>,
 ) -> Result<(Daemon, ServerEvent, mpsc::UnboundedReceiver<ServerEvent>)> {
+    connect_with_a2ui(provider_choice, model, provider_profile, cwd, resume, connector, None).await
+}
+
+pub(super) async fn connect_with_a2ui(
+    provider_choice: &ProviderChoice,
+    model: Option<&str>,
+    provider_profile: Option<&str>,
+    cwd: Option<&std::path::Path>,
+    resume: Option<&str>,
+    connector: Option<Connector>,
+    a2ui: Option<&super::command::A2uiCapabilities>,
+) -> Result<(Daemon, ServerEvent, mpsc::UnboundedReceiver<ServerEvent>)> {
     let (reader, writer) = match connector {
         Some(connector) => connector().await?,
         None => {
@@ -106,7 +142,7 @@ pub(super) async fn connect(
     };
 
     let (fg_tx, fg_rx) = mpsc::unbounded_channel();
-    let replies: Arc<Mutex<HashMap<u64, oneshot::Sender<ServerEvent>>>> = Arc::default();
+    let replies: Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<ServerEvent>>>> = Arc::default();
     let pump = tokio::spawn(pump_events(reader, fg_tx, Arc::clone(&replies)));
 
     let daemon = Daemon {
@@ -116,7 +152,7 @@ pub(super) async fn connect(
         pump,
     };
 
-    let subscribe = subscribe_request(daemon.next_id(), cwd, resume);
+    let subscribe = subscribe_request_with_a2ui(daemon.next_id(), cwd, resume, a2ui)?;
     daemon.request(&subscribe).await?;
 
     let history_request = Request::GetHistory { id: daemon.next_id() };
@@ -125,6 +161,42 @@ pub(super) async fn connect(
         anyhow::bail!("unexpected reply to get_history: {history_reply:?}");
     }
     Ok((daemon, history_reply, fg_rx))
+}
+
+pub(super) fn build_configure_a2ui_request(
+    id: u64,
+    capabilities: Option<&super::command::A2uiCapabilities>,
+) -> Result<Request> {
+    let payload = match capabilities {
+        Some(caps) => serde_json::json!({
+            "type": "configure_a2ui",
+            "id": id,
+            "capabilities": caps,
+        }),
+        None => serde_json::json!({
+            "type": "configure_a2ui",
+            "id": id,
+            "capabilities": serde_json::Value::Null,
+        }),
+    };
+    Ok(serde_json::from_value(payload)?)
+}
+
+pub(super) fn subscribe_request_with_a2ui(
+    id: u64,
+    cwd: Option<&std::path::Path>,
+    resume: Option<&str>,
+    a2ui: Option<&super::command::A2uiCapabilities>,
+) -> Result<Request> {
+    let base = subscribe_request(id, cwd, resume);
+    let Some(caps) = a2ui else {
+        return Ok(base);
+    };
+    let mut value = serde_json::to_value(&base)?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("a2ui".to_string(), serde_json::to_value(caps)?);
+    }
+    Ok(serde_json::from_value(value)?)
 }
 
 fn subscribe_request(id: u64, cwd: Option<&std::path::Path>, resume: Option<&str>) -> Request {
@@ -150,7 +222,7 @@ fn subscribe_request(id: u64, cwd: Option<&std::path::Path>, resume: Option<&str
 async fn pump_events(
     reader: ReadHalf,
     foreground: mpsc::UnboundedSender<ServerEvent>,
-    replies: Arc<Mutex<HashMap<u64, oneshot::Sender<ServerEvent>>>>,
+    replies: Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<ServerEvent>>>>,
 ) {
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -172,7 +244,7 @@ async fn pump_events(
             continue;
         };
         let waiter = match reply_id(&event) {
-            Some(id) => replies.lock().await.remove(&id),
+            Some(id) => replies.lock().await.get(&id).cloned(),
             None => None,
         };
         if let Some(waiter) = waiter {
@@ -193,6 +265,7 @@ fn reply_id(event: &ServerEvent) -> Option<u64> {
         ServerEvent::Ack { id }
         | ServerEvent::BackgroundWorkList { id, .. }
         | ServerEvent::CompactResult { id, .. }
+        | ServerEvent::ContextMessageAdded { id }
         | ServerEvent::Done { id }
         | ServerEvent::Error { id, .. }
         | ServerEvent::History { id, .. }
