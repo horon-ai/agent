@@ -247,3 +247,23 @@ fn a_parent_the_session_list_no_longer_carries_still_offers_the_way_back() {
         Some("enter still asks the harness to attach to it")
     );
 }
+
+#[test]
+fn a_reported_answer_trims_trailing_space_before_ellipsis_and_handles_multibyte() {
+    let mut rows = list(
+        &[
+            session("root", None, None, Some(1)),
+            session("child", Some("root"), Some("completed"), Some(2)),
+        ],
+        "root",
+    );
+    let row = rows.first_mut().expect("the child row");
+
+    let prefix = "가".repeat(super::PREVIEW_CHARS - 2);
+    apply_report(row, &format!("  {prefix}   rest  "));
+    assert_eq!(row.report.as_deref(), Some(format!("{prefix}…").as_str()));
+
+    let exact = "가".repeat(super::PREVIEW_CHARS);
+    apply_report(row, &exact);
+    assert_eq!(row.report.as_deref(), Some(exact.as_str()));
+}

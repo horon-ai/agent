@@ -119,17 +119,28 @@ pub(super) fn render_markdown_outline(text: &str, display: &str, total_lines: us
     }
 
     let &(first, _, _) = headings.first()?;
-    let mut body = String::from("[Markdown heading outline]\n");
+    let shown = headings.len().min(MAX_HEADINGS);
+    let mut body = String::with_capacity(64 + shown * 48 + display.len() + 64);
+    body.push_str("[Markdown heading outline]\n");
     for (index, &(start, level, title)) in headings.iter().take(MAX_HEADINGS).enumerate() {
         let end = headings.get(index + 1).map_or(total_lines, |&(line, _, _)| line - 1);
         let hashes = &"######"[..level];
         let title = crate::util::truncate_str(title, 240);
-        body.push_str(&format!("{start}-{end}\t{hashes} {title}\n"));
+        if std::fmt::write(&mut body, format_args!("{start}-{end}\t{hashes} {title}\n")).is_err() {
+            return None;
+        }
     }
     if headings.len() > MAX_HEADINGS {
         body.push_str("[More headings omitted]\n");
     }
-    body.push_str(&format!("\nRead source with path:A-B, e.g. {display}:{first}-{first}."));
+    if std::fmt::write(
+        &mut body,
+        format_args!("\nRead source with path:A-B, e.g. {display}:{first}-{first}."),
+    )
+    .is_err()
+    {
+        return None;
+    }
     Some(Rendered {
         body,
         total_lines,

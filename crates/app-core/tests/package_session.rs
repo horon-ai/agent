@@ -572,3 +572,27 @@ async fn a_restored_session_observes_the_current_generation() {
         .await
         .expect("the restored session may load the current generation");
 }
+
+#[tokio::test]
+async fn a_session_with_a_long_non_alphanumeric_label_pins_and_releases_copies() {
+    let home = tempdir().expect("horon home");
+    let store = PackageStore::for_horon_home(home.path());
+    let source = extension_fixture("owner-alpha", "1.0.0");
+    let record = install(&store, source.path(), PackageScope::Global);
+    let digest = digest_of(&record);
+    let session = PackageSession::open(
+        store.clone(),
+        "___invalid/prefix/and/very/long/session/label/exceeding/sixty/four/bytes___",
+    );
+    let snapshot = session.enter_turn(None).await.expect("turn");
+    assert!(snapshot.pinned_copies().contains(&digest));
+
+    store.remove("owner-alpha").expect("remove");
+    let held = store.collect().expect("collect while held");
+    assert!(held.retained.contains(&digest));
+
+    drop(snapshot);
+    drop(session);
+    let released = store.collect().expect("collect after drop");
+    assert!(released.collected.contains(&digest));
+}

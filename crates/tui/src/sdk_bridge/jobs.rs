@@ -118,10 +118,14 @@ fn output_lines(encoded: &str) -> Vec<String> {
         start += 1;
     }
     let text = String::from_utf8_lossy(&bytes[start..]);
-    let mut lines: Vec<String> = text.lines().map(sanitized).filter(|line| !line.is_empty()).collect();
-    if lines.len() > OUTPUT_LINES {
-        lines.drain(..lines.len() - OUTPUT_LINES);
-    }
+    let mut lines: Vec<String> = text
+        .lines()
+        .rev()
+        .map(sanitized)
+        .filter(|line| !line.is_empty())
+        .take(OUTPUT_LINES)
+        .collect();
+    lines.reverse();
     lines
 }
 

@@ -224,3 +224,34 @@ fn shared_output_budget_caps_the_saved_file_and_keeps_both_ends() {
     assert!(saved.starts_with("first\n") && saved.ends_with("last\n"));
     assert!(saved.contains("[ARTIFACT TRUNCATED:"));
 }
+
+#[test]
+fn column_cap_handles_exact_multibyte_boundaries_and_non_json_text() {
+    let _home = super::tests::IsolatedHome::new();
+    let exact_chars = "가나다라12345678\n123456789012";
+    assert!(
+        preview(
+            "cols",
+            "bash",
+            exact_chars,
+            BUDGET,
+            12,
+            crate::config::SecretsMode::Off,
+            &DEFAULT_SETTINGS,
+        )
+        .is_none()
+    );
+
+    let curly_non_json = "let x = { very_long_non_json_expression };";
+    let wrapped = preview(
+        "cols",
+        "bash",
+        curly_non_json,
+        BUDGET,
+        12,
+        crate::config::SecretsMode::Off,
+        &DEFAULT_SETTINGS,
+    )
+    .expect("long non-json text exceeding columns triggers preview");
+    assert!(wrapped.contains("artifact://"), "{wrapped}");
+}

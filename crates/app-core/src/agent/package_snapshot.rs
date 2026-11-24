@@ -377,20 +377,37 @@ fn next_lease_token() -> u64 {
 /// and cut to leave room for the process and acquisition suffix, which keeps
 /// every acquisition's name unique inside the package area.
 pub(crate) fn lease_owner(label: &str, token: u64) -> String {
-    let suffix = format!("-{}-{token}", std::process::id());
-    let mut name: String = label
-        .chars()
-        .map(|ch| match ch.to_ascii_lowercase() {
-            ch if ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_' => ch,
-            _ => '-',
-        })
-        .collect();
-    name.truncate(63usize.saturating_sub(suffix.len()));
-    if !name.starts_with(|ch: char| ch.is_ascii_alphanumeric()) {
-        name.insert(0, 's');
+    let pid = std::process::id();
+    let suffix_len = 2 + decimal_digits(u64::from(pid)) + decimal_digits(token);
+    let prefix_cap = 63usize.saturating_sub(suffix_len);
+    let first_alnum = prefix_cap > 0 && label.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric());
+    let mut name = String::with_capacity(prefix_cap.min(label.len()) + usize::from(!first_alnum) + suffix_len);
+    if !first_alnum {
+        name.push('s');
     }
-    name.push_str(&suffix);
+    for ch in label.chars().take(prefix_cap) {
+        let lower = ch.to_ascii_lowercase();
+        name.push(
+            if lower.is_ascii_lowercase() || lower.is_ascii_digit() || lower == '-' || lower == '_' {
+                lower
+            } else {
+                '-'
+            },
+        );
+    }
+    if std::fmt::write(&mut name, format_args!("-{pid}-{token}")).is_err() {
+        name.push('-');
+    }
     name
+}
+
+fn decimal_digits(mut value: u64) -> usize {
+    let mut digits = 1;
+    while value >= 10 {
+        value /= 10;
+        digits += 1;
+    }
+    digits
 }
 
 /// Read one turn's catalog under the store lock and pin the copies it names.

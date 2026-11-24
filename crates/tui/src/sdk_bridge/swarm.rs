@@ -228,15 +228,77 @@ fn label(session: &SessionInfo) -> String {
 /// that carried them would be drawn as a paragraph the list never planned for.
 /// The cut ends in an ellipsis so a shortened text does not read as the whole
 /// one.
-fn collapse(text: &str, max: usize) -> String {
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() <= max {
-        return collapsed;
+fn push_collapsed_segment(
+    segment: &str,
+    max: usize,
+    keep_limit: usize,
+    out: &mut String,
+    count: &mut usize,
+    limit_byte: &mut Option<usize>,
+    overflow: &mut bool,
+) -> bool {
+    for ch in segment.chars() {
+        if *count == keep_limit && limit_byte.is_none() {
+            *limit_byte = Some(out.len());
+        }
+        if *count >= max {
+            *overflow = true;
+            return false;
+        }
+        out.push(ch);
+        *count += 1;
     }
-    let mut kept: String = collapsed.chars().take(max.saturating_sub(1)).collect();
-    kept.truncate(kept.trim_end().len());
-    kept.push('…');
-    kept
+    true
+}
+
+fn collapse(text: &str, max: usize) -> String {
+    let mut words = text.split_whitespace();
+    let Some(first) = words.next() else {
+        return String::new();
+    };
+    let mut out = String::with_capacity(text.len().min(max.saturating_mul(4)).max(3));
+    let keep_limit = max.saturating_sub(1);
+    let mut count = 0usize;
+    let mut limit_byte = None;
+    let mut overflow = false;
+    if push_collapsed_segment(
+        first,
+        max,
+        keep_limit,
+        &mut out,
+        &mut count,
+        &mut limit_byte,
+        &mut overflow,
+    ) {
+        for word in words {
+            if !push_collapsed_segment(
+                " ",
+                max,
+                keep_limit,
+                &mut out,
+                &mut count,
+                &mut limit_byte,
+                &mut overflow,
+            ) || !push_collapsed_segment(
+                word,
+                max,
+                keep_limit,
+                &mut out,
+                &mut count,
+                &mut limit_byte,
+                &mut overflow,
+            ) {
+                break;
+            }
+        }
+    }
+    if !overflow {
+        return out;
+    }
+    out.truncate(limit_byte.unwrap_or(0));
+    out.truncate(out.trim_end().len());
+    out.push('…');
+    out
 }
 
 /// When the session was last written, as the local date and time.
