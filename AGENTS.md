@@ -673,3 +673,5 @@ in the same pull request.
   every session shares one hourly limit. Use `--interval 60`.
 - **Documentation-only `dev` run.** It is green without building anything and
   is not release evidence (see "CI gates by change type").
+
+<!-- temporary Wave 4 dry-run probe (Refs: #802) -->
