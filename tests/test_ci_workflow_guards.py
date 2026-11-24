@@ -510,6 +510,27 @@ class WorkflowGuardTests(unittest.TestCase):
         for call in base_calls:
             self.assertNotIn(' -- ', call, call)
 
+    def test_structural_perf_unified_compile_and_pr_soak_cycle_split(self):
+        ci_text = (ROOT / '.github/workflows/ci.yml').read_text()
+        build_block = ci_text.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
+        it_step = build_block.split('      - name: Run integration contracts\n', 1)[1].split('\n      - name:', 1)[0]
+        self.assertIn(
+            "HORON_AGENT_SOAK_CYCLES: ${{ github.event_name == 'pull_request' && '20' || '200' }}",
+            it_step,
+        )
+        soak_text = (ROOT / '.github/workflows/soak.yml').read_text()
+        self.assertIn("HORON_AGENT_SOAK_CYCLES: ${{ inputs.cycles || '1000' }}", soak_text)
+
+        sp_text = (ROOT / '.github/workflows/structural-perf.yml').read_text()
+        self.assertIn('CARGO_BUILD_RUSTC_WRAPPER: ""', sp_text)
+        self.assertIn('apt-get install -y -qq clang mold', sp_text)
+        self.assertIn('-fuse-ld=mold', sp_text)
+        self.assertIn('CARGO_BUILD_JOBS=', sp_text)
+
+        gate_text = (ROOT / 'scripts/perf/check_structural.py').read_text()
+        self.assertIn('"--no-run", "--message-format=json-render-diagnostics"', gate_text)
+        self.assertIn('"HORON_AGENT_SOAK_CYCLES": "20"', gate_text)
+
 
 if __name__ == '__main__':
     unittest.main()

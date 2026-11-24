@@ -2159,6 +2159,8 @@ jobs:
 
       - name: Run integration contracts
         shell: bash
+        env:
+          HORON_AGENT_SOAK_CYCLES: ${{ github.event_name == 'pull_request' && '20' || '200' }}
         # Compiles `--tests` above, so these are built; before #226 nothing
         # started them, and a target that only builds can break in a merged
         # pull request without turning a check red. The target list, package
