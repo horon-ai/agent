@@ -17,7 +17,9 @@ from __future__ import annotations
 
 from .binary import bundled_horon_agent_binary
 from .client import (
+    A2uiEnvelopeEvent,
     AssistantTextMessage,
+    AttachSessionOptions,
     ConnectOptions,
     CreateSessionOptions,
     EventBufferStats,
@@ -46,6 +48,11 @@ from .launch import (
     user_horon_agent_home,
 )
 from .protocol import (
+    A2UI_BASIC_CATALOG_V1_0,
+    A2UI_MIME_TYPE,
+    A2UI_URI_SCHEME,
+    A2UI_VERSION_V0_9,
+    A2UI_VERSION_V1_0,
     ADVERTISED_CAPABILITIES,
     API_VERSION_MAJOR,
     API_VERSION_MINOR,
@@ -57,6 +64,7 @@ from .protocol import (
     MAX_REPLICATION_PAGE_EVENTS,
     MAX_REPLICATION_WIRE_BYTES,
     REPLICATION_PROTOCOL_VERSION,
+    A2uiSessionCapabilities,
     ApprovalAckReceipt,
     ArtifactEntry,
     ArtifactKind,
@@ -142,6 +150,11 @@ from .tools import (
 __version__ = "1.2.0"
 
 __all__ = [
+    "A2UI_BASIC_CATALOG_V1_0",
+    "A2UI_MIME_TYPE",
+    "A2UI_URI_SCHEME",
+    "A2UI_VERSION_V0_9",
+    "A2UI_VERSION_V1_0",
     "ADVERTISED_CAPABILITIES",
     "API_VERSION_MAJOR",
     "API_VERSION_MINOR",
@@ -155,6 +168,8 @@ __all__ = [
     "MAX_REPLICATION_WIRE_BYTES",
     "MAX_RESIDUAL_BYTES",
     "REPLICATION_PROTOCOL_VERSION",
+    "A2uiEnvelopeEvent",
+    "A2uiSessionCapabilities",
     "ApprovalAckReceipt",
     "ArtifactEntry",
     "ArtifactKind",
@@ -162,6 +177,7 @@ __all__ = [
     "AskQuestion",
     "AskSelection",
     "AssistantTextMessage",
+    "AttachSessionOptions",
     "CanonicalRecordRef",
     "ConnectOptions",
     "CreateSessionOptions",

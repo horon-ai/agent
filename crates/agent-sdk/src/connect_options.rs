@@ -27,6 +27,10 @@ pub struct ConnectOptions {
     /// connection that says it can ask one, so a client without a question
     /// screen must not claim one.
     pub supports_ask_requests: bool,
+    /// Optional A2UI v1.0 renderer capabilities offered as the connection default.
+    ///
+    /// `None` by default so standard SDK sessions keep their prompt cache unchanged.
+    pub a2ui: Option<horon_agent_harness_api::A2uiSessionCapabilities>,
 }
 
 impl Default for ConnectOptions {
@@ -38,6 +42,7 @@ impl Default for ConnectOptions {
             ensure_runtime: true,
             supports_user_response: false,
             supports_ask_requests: false,
+            a2ui: None,
         }
     }
 }

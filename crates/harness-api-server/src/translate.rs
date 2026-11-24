@@ -1,6 +1,7 @@
 //! Pure JSON-to-JSON translation between the harness API and the legacy
 //! internal protocol. Kept side-effect free so it is trivially unit-testable.
 
+pub(crate) mod a2ui;
 mod cancellable_work;
 mod compact_handoff;
 mod consult;
@@ -84,6 +85,8 @@ const REQUIRES_ATTACH: &[&str] = &[
     "failover_ack",
     "permission_response",
     "ask_response",
+    "configure_a2ui",
+    "a2ui_event",
 ];
 
 const DEFAULT_FILE_BYTES: u64 = 1024 * 1024;
@@ -130,6 +133,10 @@ pub struct BridgeState {
     pub session_tools_supported: bool,
     /// The daemon answers `split_at`; used to refuse `fork_session_at` locally.
     pub session_fork_at_supported: bool,
+    /// The daemon supports `a2ui_v1` capabilities, configuration, and events.
+    pub a2ui_supported: bool,
+    /// Connection-level default A2UI capabilities from `hello.a2ui`.
+    pub default_a2ui: Option<horon_agent_harness_api::A2uiSessionCapabilities>,
     /// The daemon accepts soft interrupt ids and per-id cancellation, and
     /// replies to `background_tool` with a result.
     pub soft_interrupt_ids_supported: bool,
@@ -371,6 +378,7 @@ impl BridgeState {
                     Some(
                         "subscribe"
                             | "clear"
+                            | "configure_a2ui"
                             | "prepare_disconnect"
                             | "notify_auth_changed"
                             | "invalidate_openai_usage"
@@ -627,6 +635,13 @@ impl BridgeState {
                     // surface and the ACP tool bridges, which this client is not.
                     "history_message_ids": true,
                 });
+                if let Err(reply) = a2ui::attach_subscribe_a2ui(self, &mut subscribe, request, req, api_id) {
+                    self.pending_attach_id = None;
+                    self.pending_attach_subscribe_id = None;
+                    self.pending_model_probe = None;
+                    self.pending_create_dir = None;
+                    return reply;
+                }
                 if self.crash_on_disconnect {
                     subscribe["crash_on_disconnect"] = json!(true);
                 }
@@ -685,6 +700,7 @@ impl BridgeState {
             "fork_session" | "fork_session_at" | "transfer_session" => {
                 session_fork::request(self, request, api_id, req)
             }
+            "configure_a2ui" | "a2ui_event" => a2ui::request(self, request, api_id, req),
             "cancel" => {
                 let id = self.legacy_id();
                 self.pending_simple.push((id, api_id, SimpleKind::Ok));
@@ -1950,6 +1966,10 @@ impl BridgeState {
             })],
             "done" => {
                 let id = event["id"].as_u64().unwrap_or(0);
+                if let Some(api_id) = self.take_simple(id, SimpleKind::ConfigureA2ui) {
+                    self.pending_control_done_ids.remove(&id);
+                    return vec![ServerFrame::reply(api_id, ApiEvent::Ok)];
+                }
                 if let Some(api_id) = self.take_simple(id, SimpleKind::Delete) {
                     // A delete is not a turn: answering with `ok` ends the
                     // request, and the transcript is already gone.
@@ -2734,6 +2754,7 @@ impl BridgeState {
                     attempt: event["attempt"].as_u64().map(|n| n as u32).unwrap_or(0),
                 })]
             }
+            "a2ui_envelope" => a2ui::event(self, event),
             // Everything else on the legacy stream is not part of the stable
             // API surface yet; drop it.
             _ => vec![],

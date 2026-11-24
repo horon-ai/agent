@@ -29,6 +29,7 @@ from .protocol import (
     EVENT_CAPABILITIES,
     MAX_REPLICATION_WIRE_BYTES,
     REPLICATION_PROTOCOL_VERSION,
+    A2uiSessionCapabilities,
     ApprovalAckReceipt,
     ArtifactEntry,
     CanonicalRecordRef,
@@ -63,6 +64,8 @@ from .tools import (
 )
 
 __all__ = [
+    "A2uiEnvelopeEvent",
+    "AttachSessionOptions",
     "ConnectOptions",
     "CreateSessionOptions",
     "EventBufferStats",
@@ -446,6 +449,8 @@ class ConnectOptions:
     transport: Transport | None = None
     #: Milliseconds before a request without a reply raises. 0 disables.
     request_timeout_ms: float = 30_000
+    #: Optional A2UI v1.0 renderer capabilities offered as the connection default.
+    a2ui: A2uiSessionCapabilities | None = None
 
 
 @dataclass
@@ -461,6 +466,15 @@ class CreateSessionOptions:
     system_prompt: str | None = None
     #: Configured before the create request resolves, before any model turn starts.
     tools: SessionToolsOptions | None = None
+    #: Optional A2UI v1.0 renderer capabilities for the created session.
+    a2ui: A2uiSessionCapabilities | None = None
+
+
+@dataclass
+class AttachSessionOptions:
+    """Options fixed when attaching to an existing session."""
+
+    a2ui: A2uiSessionCapabilities | None = None
 
 
 @dataclass
@@ -507,6 +521,16 @@ class TurnUsage:
 
 
 @dataclass
+class A2uiEnvelopeEvent:
+    """One validated A2UI v1.0 envelope emitted by the assistant in a turn."""
+
+    tool_call_id: str
+    sequence: int
+    envelope: Any
+    fallback_text: str | None = None
+
+
+@dataclass
 class TurnResult:
     """One turn's collected output."""
 
@@ -522,6 +546,8 @@ class TurnResult:
     reasoning: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: TurnUsage | None = None
+    #: A2UI v1.0 envelopes emitted during this turn when ``a2ui_v1`` is active.
+    a2ui_envelopes: list[A2uiEnvelopeEvent] = field(default_factory=list)
 
 
 @dataclass
@@ -1134,6 +1160,8 @@ class HoronAgentClient:
             "supports_ask_requests": resolved.supports_ask_requests,
             "event_capabilities": EVENT_CAPABILITIES,
         }
+        if resolved.a2ui is not None:
+            hello["a2ui"] = resolved.a2ui
         frame = await client.request(hello)
         if frame.get("ev") != "hello_ok":
             await client.close()
@@ -1234,9 +1262,12 @@ class HoronAgentClient:
         ignored the negotiation: the client then keeps the same guarantee, and a
         subscriber never receives an event it has no branch for.
         """
-        if frame.get("ev") not in ("snapshot_marker", "snapshot"):
-            return False
-        return not self.supports("snapshot_marker_v1")
+        ev = frame.get("ev")
+        if ev in ("snapshot_marker", "snapshot"):
+            return not self.supports("snapshot_marker_v1")
+        if ev == "a2ui_envelope":
+            return not self.supports("a2ui_v1")
+        return False
 
     def _handle_close(self, error: BaseException | None) -> None:
         if self._closed:
@@ -1477,18 +1508,22 @@ class HoronAgentClient:
         working_dir: str | None = None,
         system_prompt: str | None = None,
         tools: SessionToolsOptions | None = None,
+        a2ui: A2uiSessionCapabilities | None = None,
     ) -> dict[str, Any]:
         """Create a session, optionally replacing the system prompt or configuring tools.
 
         Pass either a :class:`CreateSessionOptions` or the individual keywords.
         """
-        if options is not None and any(value is not None for value in (working_dir, system_prompt, tools)):
+        if options is not None and any(value is not None for value in (working_dir, system_prompt, tools, a2ui)):
             raise HarnessError("invalid_option", "pass CreateSessionOptions or keyword arguments, not both")
         resolved = options or CreateSessionOptions(
             working_dir=working_dir,
             system_prompt=system_prompt,
             tools=tools,
+            a2ui=a2ui,
         )
+        if resolved.a2ui is not None:
+            self._require_capability("a2ui_v1", "create_session with a2ui")
         if resolved.tools is not None:
             self._require_session_tools()
             prepare_tools(resolved.tools)
@@ -1497,6 +1532,8 @@ class HoronAgentClient:
             request["working_dir"] = resolved.working_dir
         if resolved.system_prompt is not None:
             request["system_prompt"] = resolved.system_prompt
+        if resolved.a2ui is not None:
+            request["a2ui"] = resolved.a2ui
         frame = await self._expect_reply(request, "attached")
         session = frame.get("session")
         if not isinstance(session, dict):
@@ -1583,11 +1620,53 @@ class HoronAgentClient:
         await self.submit_tool_result(session_id, call_id, result)
 
     async def attach_session(self, session_id: str) -> dict[str, Any]:
-        frame = await self._expect_reply({"req": "attach_session", "session_id": session_id}, "attached")
+        return await self.attach_session_with_options(session_id, AttachSessionOptions())
+
+    async def attach_session_with_options(
+        self,
+        session_id: str,
+        options: AttachSessionOptions | None = None,
+        *,
+        a2ui: A2uiSessionCapabilities | None = None,
+    ) -> dict[str, Any]:
+        """Attach to an existing session, optionally sending A2UI capabilities."""
+        if options is not None and a2ui is not None:
+            raise HarnessError("invalid_option", "pass AttachSessionOptions or keyword arguments, not both")
+        resolved = options or AttachSessionOptions(a2ui=a2ui)
+        request: dict[str, Any] = {"req": "attach_session", "session_id": session_id}
+        if resolved.a2ui is not None:
+            self._require_capability("a2ui_v1", "attach_session with a2ui")
+            request["a2ui"] = resolved.a2ui
+        frame = await self._expect_reply(request, "attached")
         session = frame.get("session")
         if not isinstance(session, dict):
             raise HarnessError("unexpected_reply", "attached without a session")
         return session
+
+    async def configure_a2ui(self, session_id: str, capabilities: A2uiSessionCapabilities | None) -> None:
+        """Update A2UI v1.0 renderer capabilities for an attached session."""
+        self._require_capability("a2ui_v1", "configure_a2ui")
+        await self._expect_reply(
+            {"req": "configure_a2ui", "session_id": session_id, "capabilities": capabilities},
+            "ok",
+        )
+
+    async def send_a2ui_event(
+        self,
+        session_id: str,
+        envelope: Any,
+        data_model: Any | None = None,
+    ) -> None:
+        """Forward a client-to-agent A2UI v1.0 envelope to an attached session."""
+        self._require_capability("a2ui_v1", "send_a2ui_event")
+        request: dict[str, Any] = {
+            "req": "a2ui_event",
+            "session_id": session_id,
+            "envelope": envelope,
+        }
+        if data_model is not None:
+            request["data_model"] = data_model
+        await self._expect_reply(request, "ok")
 
     async def fork_session(
         self,
@@ -3004,6 +3083,16 @@ class HoronAgentClient:
                 elif kind == "turn_stopped":
                     result.stop_reason = event.get("reason")
                     result.stop_message = event.get("message")
+                elif kind == "a2ui_envelope":
+                    fallback_text = event.get("fallback_text")
+                    result.a2ui_envelopes.append(
+                        A2uiEnvelopeEvent(
+                            tool_call_id=str(event.get("tool_call_id", "")),
+                            sequence=int(event.get("sequence", 0)),
+                            envelope=event.get("envelope"),
+                            fallback_text=fallback_text if isinstance(fallback_text, str) else None,
+                        )
+                    )
                 elif kind == "turn_done":
                     return finish()
                 elif kind == "error":

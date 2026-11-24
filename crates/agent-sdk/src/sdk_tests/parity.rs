@@ -37,6 +37,9 @@ const CAPABILITIES: &[Capability] = &[
     cap("create_session", "createSession"),
     cap("create_session_with_options", "createSession"),
     cap("attach_session", "attachSession"),
+    cap("attach_session_with_options", "attachSession"),
+    cap("configure_a2ui", "configureA2ui"),
+    cap("send_a2ui_event", "sendA2uiEvent"),
     cap("fork_session", "forkSession"),
     cap("fork_consult", "forkConsult"),
     cap("fork_session_at", "forkSessionAt"),
@@ -339,6 +342,7 @@ const PY_ONLY: &[(&str, &str)] = &[
 fn rust_client_source() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     [
+        "a2ui.rs",
         "client.rs",
         "consult.rs",
         "todo_client.rs",

@@ -14,11 +14,7 @@ fn minor_fourteen_requests_are_additive_and_keep_legacy_goldens() {
         matches!(&decoded.request, ApiRequest::AskResponse { answer_id: None, ask_id, .. } if ask_id == "a1"),
         "{decoded:?}"
     );
-    assert_eq!(
-        serde_json::to_string(&decoded).unwrap(),
-        legacy_ask,
-        "an answer without an id must serialize byte-identically to the legacy frame"
-    );
+    assert_eq!(serde_json::to_string(&decoded).unwrap(), legacy_ask);
 
     let hello = ClientFrame::new(
         1,
@@ -29,6 +25,7 @@ fn minor_fourteen_requests_are_additive_and_keep_legacy_goldens() {
             supports_user_response: false,
             supports_ask_requests: false,
             event_capabilities: Vec::new(),
+            a2ui: None,
         },
     );
     assert_eq!(
@@ -160,6 +157,7 @@ fn gated_requests_name_their_capability_and_refuse_an_unnegotiated_peer() {
         ApiRequest::Ping,
         ApiRequest::AttachSession {
             session_id: "s1".into(),
+            a2ui: None,
         },
         ApiRequest::GetHistory {
             session_id: "s1".into(),
@@ -585,6 +583,7 @@ fn create_session_system_prompt_roundtrip_and_legacy_default() {
         let request = ApiRequest::CreateSession {
             working_dir: None,
             system_prompt: Some(prompt.into()),
+            a2ui: None,
         };
         let wire = serde_json::to_value(&request).unwrap();
         assert_eq!(wire["system_prompt"], prompt);
@@ -839,6 +838,7 @@ fn request_roundtrip() {
                 crate::CAPABILITY_BACKGROUND_OUTPUT_V1.into(),
                 crate::CAPABILITY_LIVE_TODO_V1.into(),
             ],
+            a2ui: None,
         },
         ApiRequest::ListSessions {
             include_archived: false,
@@ -856,9 +856,11 @@ fn request_roundtrip() {
         ApiRequest::CreateSession {
             working_dir: None,
             system_prompt: None,
+            a2ui: None,
         },
         ApiRequest::AttachSession {
             session_id: "s1".into(),
+            a2ui: None,
         },
         ApiRequest::Cancel {
             session_id: "s1".into(),

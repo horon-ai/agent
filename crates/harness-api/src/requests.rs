@@ -55,6 +55,9 @@ pub enum ApiRequest {
         /// Optional event capabilities this client handles.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         event_capabilities: Vec<String>,
+        /// Optional A2UI v1.0 renderer capabilities offered as the connection default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        a2ui: Option<crate::A2uiSessionCapabilities>,
     },
 
     /// List sessions visible to this client.
@@ -95,10 +98,18 @@ pub enum ApiRequest {
         /// An empty string is an explicit empty override.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system_prompt: Option<String>,
+        /// Optional A2UI v1.0 renderer capabilities for the created session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        a2ui: Option<crate::A2uiSessionCapabilities>,
     },
 
     /// Attach to an existing session and subscribe to its event stream.
-    AttachSession { session_id: String },
+    AttachSession {
+        session_id: String,
+        /// Optional A2UI v1.0 renderer capabilities for this attachment.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        a2ui: Option<crate::A2uiSessionCapabilities>,
+    },
 
     /// Clone an attached session's transcript into a new, idle session.
     ///
@@ -705,6 +716,25 @@ pub enum ApiRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_bytes: Option<u64>,
     },
+    /// Update A2UI v1.0 renderer capabilities for the attached session.
+    ///
+    /// Pass `capabilities: None` to turn off A2UI rendering for the session.
+    /// Requires `a2ui_v1`. Replies with `Ok`.
+    ConfigureA2ui {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<crate::A2uiSessionCapabilities>,
+    },
+
+    /// Forward a validated client-to-agent A2UI v1.0 envelope to the attached session.
+    /// Requires `a2ui_v1`. Replies with `Ok`.
+    A2uiEvent {
+        session_id: String,
+        envelope: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data_model: Option<serde_json::Value>,
+    },
+
     /// Forward-compatibility catch-all. Servers reply with an error frame.
     #[serde(other)]
     Unknown,
@@ -735,7 +765,9 @@ impl ApiRequest {
             Self::ArchiveSession { session_id, .. } => Some(session_id.as_str()),
             Self::RestoreSession { session_id, .. } => Some(session_id.as_str()),
             Self::DeleteSession { session_id, .. } => Some(session_id.as_str()),
-            Self::AttachSession { session_id, .. } => Some(session_id.as_str()),
+            Self::AttachSession { session_id, .. }
+            | Self::ConfigureA2ui { session_id, .. }
+            | Self::A2uiEvent { session_id, .. } => Some(session_id.as_str()),
             Self::ForkSession { session_id, .. } => Some(session_id.as_str()),
             Self::ForkSessionAt { session_id, .. } => Some(session_id.as_str()),
             Self::TransferSession { session_id, .. } => Some(session_id.as_str()),
@@ -826,6 +858,10 @@ impl ApiRequest {
             Self::GetEffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
             Self::PackageControl { .. } => Some(crate::CAPABILITY_PACKAGE_CONTROL_V1),
             Self::ForkSessionAt { .. } => Some(crate::CAPABILITY_SESSION_FORK_AT_V1),
+            Self::CreateSession { a2ui: Some(_), .. }
+            | Self::AttachSession { a2ui: Some(_), .. }
+            | Self::ConfigureA2ui { .. }
+            | Self::A2uiEvent { .. } => Some(crate::CAPABILITY_A2UI_V1),
             _ => None,
         }
     }

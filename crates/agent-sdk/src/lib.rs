@@ -132,6 +132,7 @@
 //! policy governs it like any tool. A custom tool named `websearch` replaces it
 //! and is always called through your application.
 
+mod a2ui;
 mod cancellable_work;
 mod client;
 pub mod collections;
@@ -159,6 +160,7 @@ pub mod worktrees;
 #[path = "sdk_tests/parity.rs"]
 mod parity_tests;
 
+pub use a2ui::{A2uiEnvelopeEvent, AttachSessionOptions};
 pub use client::{
     AssistantTextMessage, ConnectOptions, CreateSessionOptions, EventStream, FileContent, FileStatus,
     GlobalEventStream, GlobalEventsOptions, HoronAgentClient, RunOptions, RuntimeInfo, SearchTextOptions, ToolCall,
@@ -220,10 +222,11 @@ pub mod transcript_text {
 /// The protocol types, re-exported so a client needs one dependency, not two.
 pub use horon_agent_harness_api as api;
 pub use horon_agent_harness_api::{
-    ApiEvent, ApiRequest, AskSelection, BackgroundWorkItem, CanonicalEventRecord, CanonicalRecordRef, EffectiveSetting,
-    HistoryMessage, MessageModes, ModelRouteInfo, PayloadRef, PermissionDecision, RenderedImage, RenderedImageAnchor,
-    RenderedImageSource, ResponseStats, SessionBlobChunk, SessionBlobStatus, SessionEventPage, SessionHeads,
-    SessionHistoryPage, SessionImportResult, SessionInfo, SessionRecordBlobStatus, SessionToolDefinition,
-    StoreErrorDetail, TextMatch, ToolConfiguration, TurnStopReason, api_socket_path,
+    A2UI_BASIC_CATALOG_V1_0, A2UI_MIME_TYPE, A2UI_URI_SCHEME, A2UI_VERSION_V0_9, A2UI_VERSION_V1_0,
+    A2uiSessionCapabilities, ApiEvent, ApiRequest, AskSelection, BackgroundWorkItem, CanonicalEventRecord,
+    CanonicalRecordRef, EffectiveSetting, HistoryMessage, MessageModes, ModelRouteInfo, PayloadRef, PermissionDecision,
+    RenderedImage, RenderedImageAnchor, RenderedImageSource, ResponseStats, SessionBlobChunk, SessionBlobStatus,
+    SessionEventPage, SessionHeads, SessionHistoryPage, SessionImportResult, SessionInfo, SessionRecordBlobStatus,
+    SessionToolDefinition, StoreErrorDetail, TextMatch, ToolConfiguration, TurnStopReason, api_socket_path,
 };
 pub use horon_agent_harness_api::{ModelUsage, RuntimeCommand, RuntimeCommandOutput, compare_model_usage};
