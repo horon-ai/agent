@@ -170,12 +170,13 @@ pub(crate) fn register_session_additional_dirs(session_id: &str, dirs: &[String]
 
 /// Extra workspace directories granted for `session_id` beyond `working_dir`.
 pub(crate) fn session_additional_dirs(session_id: &str) -> Vec<std::path::PathBuf> {
-    SESSION_TOOL_POLICIES
+    let policies = SESSION_TOOL_POLICIES
         .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(session_id)
-        .map(|policy| policy.additional_dirs.clone())
-        .unwrap_or_else(Vec::new)
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match policies.get(session_id) {
+        Some(policy) => policy.additional_dirs.clone(),
+        None => Vec::new(),
+    }
 }
 
 /// Update load tiers, ephemeral `--no-session` flag, and `--add-dir` roots in one call.
