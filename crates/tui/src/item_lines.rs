@@ -120,6 +120,7 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         Item::Reasoning(text) => reasoning(text, look),
         Item::Context(report) => crate::context::lines(report, look),
         Item::Report(report) => crate::report::lines(report, look),
+        Item::A2ui(card) => crate::a2ui::lines(card, look),
         Item::TurnUsage(metrics) => turn_usage(metrics, look),
         Item::CacheMiss(miss) => cache_miss(miss, look),
     }

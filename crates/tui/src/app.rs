@@ -1060,6 +1060,15 @@ impl App {
                 // mark a call that may still finish as already ended.
                 self.warn(message.clone());
             }
+            ApiEvent::A2uiEnvelope {
+                session_id,
+                tool_call_id,
+                sequence,
+                envelope,
+                fallback_text,
+            } => {
+                self.apply_a2ui_envelope(session_id, tool_call_id, *sequence, envelope, fallback_text.as_deref());
+            }
             _ => {}
         }
         self.record_new_assistants();

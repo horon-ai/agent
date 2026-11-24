@@ -147,6 +147,23 @@ The daemon owns the existing answer deadline. The adapter never restarts it. A d
 
 Use a fixture provider, controlled daemon clock and captured JSONL. Drive the clock to just before and then exactly to the daemon deadline. Check that the question remains pending at the first point and settles at the second. No network or terminal UI is required for the RPC subprocess fixture.
 
+## Opt-in A2UI v1.0 surface capability (`a2ui_v1`)
+
+Stdio RPC hosts can opt into A2UI v1.0 rendering before their first prompt without affecting unnegotiated hosts (`src/cli/rpc/command.rs`, `src/cli/rpc/frame.rs`).
+
+| Frame / field | Direction | Purpose |
+| --- | --- | --- |
+| `negotiate_protocol` (`capabilities: ["a2ui_v1"]`, optional `a2ui`) | Host -> Agent | Latches `a2ui_v1` and optional renderer capabilities (`version`, `supportedCatalogIds`, `acceptsInlineCatalogs`) for the connection |
+| `a2ui_update` | Agent -> Host | Streams one validated `agent_to_renderer` envelope (`toolCallId`, `sequence`, `envelope`, optional `fallbackText`) |
+| `message_end` / `get_messages` (`type: "a2ui"` part) | Agent -> Host | Preserves assistant A2UI content parts (`envelopes`, optional `fallbackText`) alongside text blocks |
+| `a2ui_event` | Host -> Agent | Submits a validated `action`, `callAgentFunction`, or `error` `envelope` (and optional `dataModel`) back to the active session |
+
+- Connections that omit `a2ui_v1` never unlock the `a2ui` tool, never emit `a2ui_update`, and reject `a2ui_event` with an error response.
+
+### One-shot `horon run` flags
+
+`horon-agent run` accepts `--a2ui` and repeatable `--a2ui-catalog <uri>` (`src/cli/commands/a2ui_run.rs`). Plain `horon run --a2ui` renders readable `[A2UI surface: ...]` fallback cards to stdout, `--json` adds `type: "a2ui"` blocks to the JSON response, and `--ndjson` emits `type: "a2ui"` stream frames (`sequence`, `envelope`, `fallback_text`). Running `horon run` without `--a2ui` keeps the default tool set and prompt prefix byte-for-byte unchanged.
+
 ## Verification
 
 The adapter has an integration test that scripts the daemon over an in-process socket pair, so the real protocol path runs without a daemon or a model. It covers the startup handshake, version negotiation, an unknown command, non-JSON lines, `get_state`, one full prompt turn, `abort` while idle, an oversized frame, `set_todos` persistence, and the model catalog projection.

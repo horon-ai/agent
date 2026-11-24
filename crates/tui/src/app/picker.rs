@@ -618,8 +618,7 @@ impl App {
                     // historical value for clients that do not know the field.
                     let answer = message.answer.clone().unwrap_or(split);
                     if !answer.is_empty() {
-                        self.transcript
-                            .push_assistant_stored(answer, message.message_id.clone());
+                        crate::a2ui::push_replayed_assistant(&mut self.transcript, answer, message.message_id.clone());
                     }
                 }
                 // Tool rows are the daemon's record of what ran, not the

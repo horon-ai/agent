@@ -16,6 +16,8 @@ pub use recording::{OUTPUT_NOT_RECORDED, WARNING_NOT_RECORDED};
 #[path = "transcript_turn_usage.rs"]
 mod turn_usage;
 
+#[path = "transcript_a2ui.rs"]
+mod a2ui_ops;
 #[path = "transcript_activity.rs"]
 mod activity;
 
@@ -188,6 +190,8 @@ pub enum Item {
     /// Boxed for the same reason as [`Item::Context`]: the payload behind it is
     /// large, and most items carry a message instead.
     Report(Box<crate::report::Report>),
+    /// Read-only A2UI surface fallback card.
+    A2ui(Box<crate::a2ui::A2uiCard>),
     /// What one completed turn cost, drawn under it when
     /// `transcript.turn_usage` is on.
     TurnUsage(TurnMetrics),

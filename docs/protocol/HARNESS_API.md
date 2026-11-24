@@ -812,6 +812,37 @@ same frames it did before.
 
 `todo_edit_v1` adds a revision to `todo_state` and enables `set_todo_status` for the attached session. Send `session_id`, `todo_id`, `expected_revision` and the requested `status`. The daemon saves the update only if the revision still matches. `todo_edit_result` includes `applied`, the current list and its revision, and `stale_revision` when a newer list takes precedence. Successful writes notify clients with the existing `todo_changed` event.
 
+## A2UI v1.0 surfaces (protocol 1.32)
+
+The harness API keeps major version 1 and advances to minor version 32. Everything here is **additive and opt-in**: a client that never negotiates `a2ui_v1` keeps the exact same tool catalog, system prompt bytes, and wire frames as before.
+
+### Handshake and session capability
+
+Advertise `a2ui_v1` in `hello.event_capabilities` to allow outbound `a2ui_envelope` events on that connection. Optionally declare `a2ui` renderer capabilities on `hello`, `create_session`, or `attach_session` (`A2uiSessionCapabilities`: `version`, `supported_catalog_ids`, `accepts_inline_catalogs`). When omitted, the daemon leaves the `a2ui` tool unregistered for that session so the prompt cache prefix stays unchanged.
+
+```json
+{ "v": 1, "id": 1, "req": "hello", "version": 1, "client": "my-ui", "event_capabilities": ["a2ui_v1"], "a2ui": { "version": "1.0", "supported_catalog_ids": ["https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"], "accepts_inline_catalogs": false } }
+```
+
+| Capability / frame | Direction | Required / Gated | Meaning |
+| --- | --- | --- | --- |
+| `hello.event_capabilities` (`a2ui_v1`) | Client -> Bridge | Opt-in | Permits delivery of `a2ui_envelope` events on the connection |
+| `hello.a2ui`, `create_session.a2ui`, `attach_session.a2ui` | Client -> Bridge | `a2ui_v1` | Enables the capability-gated `a2ui` tool with the declared catalogs |
+| `configure_a2ui` | Client -> Bridge | `a2ui_v1` | Updates or clears (`capabilities: null`) A2UI renderer capabilities for an attached session |
+| `a2ui_event` | Client -> Bridge | `a2ui_v1` | Submits a validated client-to-agent `action`, `callAgentFunction`, or `error` envelope |
+| `a2ui_envelope` | Bridge -> Client | `a2ui_v1` | Streams one validated `agent_to_renderer` envelope (`session_id`, `tool_call_id`, `sequence`, `envelope`, `fallback_text`) |
+
+### `configure_a2ui` and `a2ui_event`
+
+```json
+{ "v": 1, "id": 31, "req": "configure_a2ui", "session_id": "session_...", "capabilities": { "version": "1.0", "supported_catalog_ids": ["https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"], "accepts_inline_catalogs": false } }
+{ "v": 1, "id": 32, "req": "a2ui_event", "session_id": "session_...", "envelope": { "version": "1.0", "action": { "name": "confirm", "surfaceId": "main" } }, "data_model": { "step": 1 } }
+```
+
+- Both requests require `a2ui_v1`, attach to `session_id`, and reply `{ "ev": "ok" }` once accepted.
+- Invalid envelopes, forbidden components or URIs, oversized payloads (more than 256 KiB or depth 32), or empty identifiers are rejected with `invalid_request` before reaching the model loop.
+- The three SDKs expose `configure_a2ui` / `configureA2ui`, `send_a2ui_event` / `sendA2uiEvent`, `a2ui` fields on connect/create/attach options, and `TurnResult.a2ui_envelopes` / `a2uiEnvelopes` (`A2uiEnvelopeEvent`).
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -1191,7 +1222,8 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 - Request definitions: `GetRuntimeState`, `ApplyControl`, `GetControlReceipt`, `GetSnapshot` and `AskResponse.answer_id` in `crates/harness-api/src/requests.rs`, and the `approval_ack` and `failover_ack` requests (`ApprovalAck` and `FailoverAck` in the same file)
 - Event definitions: `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary` and `ControlReceipt` in `crates/harness-api/src/events.rs`, and the typed `approval_ack` and `failover_ack` events in the same file
 - Implementation: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
-- Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1` and `CAPABILITY_ASK_RECEIPTS_V1` in `crates/harness-api/src/lib.rs`
-- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
+- Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1` and `CAPABILITY_A2UI_V1` in `crates/harness-api/src/lib.rs`
+- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 32`
+- A2UI surface surface & bridge translation: `ConfigureA2ui` and `A2uiEvent` in `crates/harness-api/src/requests.rs`, `A2uiEnvelope` in `crates/harness-api/src/events.rs`, `A2uiSessionCapabilities` in `crates/tool-types/src/a2ui.rs`, translated by `crates/harness-api-server/src/translate/a2ui.rs`
 - `[messages]` modes: `GetMessageModes` in `crates/harness-api/src/requests.rs`, the `MessageModes` reply in `crates/harness-api/src/events.rs`, answered by the bridge itself in `crates/harness-api-server/src/message_modes.rs`
 - Effective settings: `GetEffectiveSettings` in `crates/harness-api/src/requests.rs`, the `EffectiveSettings` reply and `EffectiveSetting` row in `crates/harness-api/src/effective_settings.rs`, answered by the daemon in `crates/base/src/effective_settings.rs` and `crates/app-core/src/server/effective_settings.rs`, forwarded by the bridge in `crates/harness-api-server/src/translate.rs`, gated by `CAPABILITY_EFFECTIVE_SETTINGS_V1` in `crates/harness-api/src/lib.rs`
