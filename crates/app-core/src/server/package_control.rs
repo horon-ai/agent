@@ -270,11 +270,26 @@ impl PackageControl {
         // The callbacks run before the new generation is announced and before
         // the receipt of the operation that produced it is built, so a client
         // that reads `disabled` has seen every live holder cancelled.
-        let revoked = crate::extensions::lifecycle::PackageLifecycleRegistry::shared().apply_states(
-            &record_states(&previous),
-            &record_states(&next),
-            next.generation(),
-        );
+        let registry = crate::extensions::lifecycle::PackageLifecycleRegistry::shared();
+        let mut revoked = crate::extensions::lifecycle::RevocationReport::default();
+        for summary in next.packages() {
+            let cause = match summary.state {
+                PackageControlState::Installed => continue,
+                PackageControlState::Disabled => crate::extensions::lifecycle::RevocationCause::Disabled,
+                PackageControlState::Revoked => crate::extensions::lifecycle::RevocationCause::Removed,
+            };
+            if previous
+                .packages()
+                .iter()
+                .find(|prior| prior.id == summary.id)
+                .is_some_and(|prior| prior.state == summary.state)
+            {
+                continue;
+            }
+            let fired = registry.revoke(&summary.id, next.generation(), cause);
+            revoked.fired += fired.fired;
+            revoked.failed += fired.failed;
+        }
         if revoked.fired > 0 {
             crate::logging::info(&format!(
                 "package catalog generation {}: {} live package holders were cancelled",
@@ -674,22 +689,6 @@ fn log_inbox_report(report: &InboxReport) {
     for skip in skipped_entries(report) {
         crate::logging::warn(&format!("package inbox skipped {}: {}", skip.name, skip.reason));
     }
-}
-
-/// The record states of one published generation, keyed by package ID.
-fn record_states(catalog: &PublishedCatalog) -> BTreeMap<String, PackageState> {
-    catalog
-        .packages()
-        .iter()
-        .map(|summary| {
-            let state = match summary.state {
-                PackageControlState::Installed => PackageState::Installed,
-                PackageControlState::Disabled => PackageState::Disabled,
-                PackageControlState::Revoked => PackageState::Revoked,
-            };
-            (summary.id.clone(), state)
-        })
-        .collect()
 }
 
 fn read_published(store: &PackageStore) -> Result<PublishedCatalog> {
