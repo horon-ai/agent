@@ -15,6 +15,14 @@ description: "데스크톱·SDK 클라이언트가 로컬 소켓으로 쓰는 �
 스레드를 하나 붙잡아 두고 다른 스레드로 요청을 쓰며, Windows의 파이프는 겹친 입출력
 (overlapped I/O)으로 열려 대기 중인 읽기가 쓰기를 막지 않는다.
 
+## 목차
+
+- [자격 증명 설정](#자격-증명-설정) · [로컬 소켓 밖 노출](#로컬-소켓-밖-노출) · [내구성 런타임 API(1.14)](#내구성-런타임-api프로토콜-114)
+- [패키지 카탈로그 제어(1.26)](#패키지-카탈로그-제어프로토콜-126) · [패키지 명령(1.27)](#패키지-명령프로토콜-127) · [핸드오프 압축](#핸드오프-압축) · [되감기 브랜치 요약](#되감기-브랜치-요약)
+- [도구 인자 복구(1.16)](#도구-인자-복구프로토콜-116) · [저하 영수증(1.17)](#저하-영수증프로토콜-117) · [메시지 전달 모드(1.18)](#메시지-전달-모드프로토콜-118) · [도구 판정(1.19)](#도구-판정프로토콜-119)
+- [세션 영구 삭제(1.20)](#세션-영구-삭제프로토콜-120) · [Swarm 채팅 표면 제거(1.21)](#swarm-채팅-표면-제거프로토콜-121) · [백그라운드 실시간 출력(1.23)](#백그라운드-실시간-출력프로토콜-123) · [취소 가능한 작업(1.22)](#취소-가능한-작업프로토콜-122)
+- [실시간 할 일 갱신(1.24)](#실시간-할-일-갱신프로토콜-124) · [데몬 유효 설정(1.25)](#데몬-유효-설정프로토콜-125) · [A2UI v1.0 표면(1.32)](#a2ui-v10-표면프로토콜-132) · [세션 이벤트 저장소와 복제(1.12)](#세션-이벤트-저장소와-복제프로토콜-112) · [하네스 API 요청·이벤트 표면](#하네스-api-요청이벤트-표면-usage_report-search_sessions-list_artifacts-durable_runtime)
+
 ## 자격 증명 설정
 
 이 빌드에는 대화형 로그인 흐름이 없다. SDK가 자격 증명에 대해 노출하는 것은 둘이다.
@@ -29,9 +37,11 @@ description: "데스크톱·SDK 클라이언트가 로컬 소켓으로 쓰는 �
 
 OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `inherit_logins`(기본 켜짐)가
 사용자의 기존 CLI 자격 증명 파일을 인스턴스에 연결하고, 모델 요청은 그 파일을 그대로
-쓴다(`crates/agent-sdk/src/launch.rs`). 모델 호출은 `[providers.<name>]`의 OpenAI 호환
-프로파일로만 나가므로, 이 빌드에는 OAuth로 인증하는 모델 런타임이 없다. `openai-oauth:`
-접두사는 남아 있지만 그 런타임이 없어 호출 전에 실패한다(`docs/provider/MODEL.ko.md`).
+쓴다(`crates/agent-sdk/src/launch.rs`). 모델 호출은 `[providers.<name>]` 프로파일의
+`type`이 고른 방식(`openai-compatible`, `openai-responses`, `anthropic-compatible`,
+`gemini-compatible`)으로 해당 엔드포인트에 직접 나가므로, 이 빌드에는 OAuth로 인증하는
+모델 런타임이 없다. `openai-oauth:` 접두사는 남아 있지만 그 런타임이 없어 호출 전에
+실패한다(`docs/provider/MODEL.ko.md`).
 
 ## 로컬 소켓 밖 노출
 
@@ -68,7 +78,7 @@ bind 값은 리터럴 주소로 해석하며 이름을 조회하지 않는다. �
 
 어느 경로도 *사용자*를 인증하지 않는다. 사설 네트워크는 다른 조직을 막지만 그 위의 모든 프로세스는 동등하게 신뢰되며, 공개 포트는 공개다. 그래서 두 경로 모두 모든 TCP 연결이 토큰을 제시해야 하고, 프록시 확인은 TLS가 어디서 끝나는지만 밝히며 인증을 대신하지 않는다. 리스너는 전달 헤더를 신뢰하지 않으므로 `Fly-Client-IP`나 다른 프록시 헤더가 누구를 받아들일지에 영향을 주지 않는다.
 
-`docs/architecture/HOSTING.md`의 호스팅 대상인 Fly.io에서 공개 경로는 `fly.toml`(또는 Machine 설정)의 `services` 항목이고 `internal_port`가 `--api-bind`와 같아야 한다. Fly Proxy가 443에서 TLS를 종료하고 WireGuard 메시를 통해 평문을 프로세스로 전달하므로 그 경로는 `--api-insecure-behind-proxy`를 쓴다. 사설 경로는 조직의 6PN이다. 서비스가 IPv6 와일드카드(`[::]:PORT`)나 `fly-local-6pn`에 바인드하면 그곳에서 닿을 수 있고, `services` 항목도 앱 IP도 필요 없다. 6PN 주소는 `fdaa::/16` ULA의 IPv6 리터럴이므로 `[fdaa:…]:PORT`와 `[::]:PORT` 모두 루프백이 아닌 바인드이고 프록시 확인과 자격 증명이 필요하다. 정지되거나 유휴 상태인 Fly Machine에는 실행 중인 프로세스가 없으므로 리스너, 소켓, 메모리의 세션이 사라진다. 자격 증명 파일은 볼륨에 남아 다음 시작 뒤에도 동작한다. 그래서 리스너는 유휴 시간이나 시작 프로세스 종료로 스스로 끝나지 않으며(위 참조), 컨트롤 플레인의 autostop 정책이 이를 끝낸다. 이런 플랫폼 세부는 Fly.io 문서(`docs.fly.io/networking/tls-termination`, `docs.fly.io/networking/app-services`)가 설명한다. 이 저장소는 Fly API 호출도, 프록시 헤더 처리도, autostop도 구현하지 않는다.
+`docs/architecture/HOSTING.ko.md`의 호스팅 대상인 Fly.io에서 공개 경로는 `fly.toml`(또는 Machine 설정)의 `services` 항목이고 `internal_port`가 `--api-bind`와 같아야 한다. Fly Proxy가 443에서 TLS를 종료하고 WireGuard 메시를 통해 평문을 프로세스로 전달하므로 그 경로는 `--api-insecure-behind-proxy`를 쓴다. 사설 경로는 조직의 6PN이다. 서비스가 IPv6 와일드카드(`[::]:PORT`)나 `fly-local-6pn`에 바인드하면 그곳에서 닿을 수 있고, `services` 항목도 앱 IP도 필요 없다. 6PN 주소는 `fdaa::/16` ULA의 IPv6 리터럴이므로 `[fdaa:…]:PORT`와 `[::]:PORT` 모두 루프백이 아닌 바인드이고 프록시 확인과 자격 증명이 필요하다. 정지되거나 유휴 상태인 Fly Machine에는 실행 중인 프로세스가 없으므로 리스너, 소켓, 메모리의 세션이 사라진다. 자격 증명 파일은 볼륨에 남아 다음 시작 뒤에도 동작한다. 그래서 리스너는 유휴 시간이나 시작 프로세스 종료로 스스로 끝나지 않으며(위 참조), 컨트롤 플레인의 autostop 정책이 이를 끝낸다. 이런 플랫폼 세부는 Fly.io 문서(`docs.fly.io/networking/tls-termination`, `docs.fly.io/networking/app-services`)가 설명한다. 이 저장소는 Fly API 호출도, 프록시 헤더 처리도, autostop도 구현하지 않는다.
 
 ### 자격 증명 발급, 회전, 폐기
 
@@ -85,7 +95,7 @@ bind 값은 리터럴 주소로 해석하며 이름을 조회하지 않는다. �
 
 ## 세션 목표
 
-`runtime_command`에 명령 `goal`과 인자 `["1200", "Ship a fix"]`를 보내 선택한 세션에 목표를 연결합니다. 첫 인자는 양수인 토큰 상한입니다. 응답에는 저장한 목표와 표시할 메시지가 들어 있습니다. 이미 활성 목표가 있으면 그대로 두고 새 요청에 오류를 반환합니다.
+`runtime_command`에 명령 `goal`과 인자 `["1200", "Ship a fix"]`를 보내 선택한 세션에 목표를 연결한다. 첫 인자는 양수인 토큰 상한이다. 응답에는 저장한 목표와 표시할 메시지가 들어 있다. 이미 활성 목표가 있으면 그대로 두고 새 요청에 오류를 반환한다.
 
 ## 내구성 런타임 API(프로토콜 1.14)
 
@@ -179,13 +189,13 @@ bind 값은 리터럴 주소로 해석하며 이름을 조회하지 않는다. �
 
 ## 패키지 명령(프로토콜 1.27)
 
-하네스 API는 주 버전 1을 유지하고 부 버전 26에서 27로 옮겼습니다. 여기 있는 것은 모두
-추가형입니다. 패키지 명령을 조회하지 않는 클라이언트는 이전과 같은 프레임을 읽습니다.
+하네스 API는 주 버전 1을 유지하고 부 버전 26에서 27로 옮겼다. 여기 있는 것은 모두
+추가형이다. 패키지 명령을 조회하지 않는 클라이언트는 이전과 같은 프레임을 읽는다.
 
-브리지는 데몬이 `runtime_commands`를 보고했을 때만 `package_commands_v1`을 광고합니다.
-이 두 값은 별도 요청이 아니라 그 요청에 실려 가기 때문입니다. 클라이언트는 보내기 전에
+브리지는 데몬이 `runtime_commands`를 보고했을 때만 `package_commands_v1`을 광고한다.
+이 두 값은 별도 요청이 아니라 그 요청에 실려 가기 때문이다. 클라이언트는 보내기 전에
 기능을 확인하고, 세 SDK 모두 기능이 없으면 프로세스 안에서 호출을 거부하므로 구버전
-서버는 답할 수 없는 값을 받지 않습니다.
+서버는 답할 수 없는 값을 받지 않는다.
 
 | 값 | `args` | `runtime_command_result`의 `data` |
 | --- | --- | --- |
@@ -193,31 +203,31 @@ bind 값은 리터럴 주소로 해석하며 이름을 조회하지 않는다. �
 | `package_command` | `[package_id, command, …인자 단어]` | `PackageCommandOutcome`: 펼친 글 또는 자식의 답 |
 
 항목 하나는 입력할 이름, 선언한 패키지, 선언한 명령 이름, 방식, 설명 한 줄, 그리고
-자원이 선언했을 때의 `argument_hint`를 담습니다. `kind`는 사용자 메시지로 펼쳐지는
+자원이 선언했을 때의 `argument_hint`를 담는다. `kind`는 사용자 메시지로 펼쳐지는
 Markdown 자원이면 `template`, 패키지의 자식이 통신 계약으로 답하는 명령이면
-`executable`입니다.
+`executable`이다.
 
 ```json
 {"v":1,"id":9,"req":"runtime_command","session_id":"s-1","command":"package_commands"}
 {"v":1,"reply_to":9,"ev":"runtime_command_result","session_id":"s-1","command":"package_commands","data":{"generation":7,"commands":[{"name":"hello:greet","package_id":"hello","command":"greet","kind":"executable","description":"Report the arguments this executable command was called with."},{"name":"hello:review","package_id":"hello","command":"review","kind":"template","description":"Review a file","argument_hint":"<path>"}]},"message":"..."}
 ```
 
-결과는 `text`와 `output` 가운데 하나만 채웁니다. 템플릿은 클라이언트가 제출할 메시지인
+결과는 `text`와 `output` 가운데 하나만 채운다. 템플릿은 클라이언트가 제출할 메시지인
 `text`를, 실행형 명령은 자식의 값을 글자로 그린 `output`과 그리지 않은 같은 값을 담은
-`data`를 설정합니다. 결과 프레임의 `message`는 설정된 쪽을 그대로 다시 담으므로,
-메시지만 인쇄하는 클라이언트는 새로 해석할 것이 없습니다.
+`data`를 설정한다. 결과 프레임의 `message`는 설정된 쪽을 그대로 다시 담으므로,
+메시지만 인쇄하는 클라이언트는 새로 해석할 것이 없다.
 
-두 값 모두 세션이 턴 경계에서 고정한 패키지 세대를 읽습니다. 조회는 그 세대를 이름 짓고,
+두 값 모두 세션이 턴 경계에서 고정한 패키지 세대를 읽는다. 조회는 그 세대를 이름 짓고,
 실행은 그 세대에서 빠진 패키지의 항목을 파일을 읽거나 자식을 시작하기 전에 거부하며,
-오류는 그 항목이 오래됐다고 말합니다. 실행형 명령은 계획 모드, 승인 모드, 세션의 비활성
-이름과 `pre_tool` 훅을 확인하고, 도구 허용 목록은 확인하지 않습니다. 허용 목록은 모델이
-부를 수 있는 도구를 이름 짓고 사용자가 입력하는 명령은 다르기 때문입니다. 정책 이름은
-`ext__<package id>__<command>`입니다.
+오류는 그 항목이 오래됐다고 말한다. 실행형 명령은 계획 모드, 승인 모드, 세션의 비활성
+이름과 `pre_tool` 훅을 확인하고, 도구 허용 목록은 확인하지 않는다. 허용 목록은 모델이
+부를 수 있는 도구를 이름 짓고 사용자가 입력하는 명령은 다르기 때문이다. 정책 이름은
+`ext__<package id>__<command>`다.
 
 세 SDK는 이 쌍을 Rust와 Python에서 `list_package_commands`와 `run_package_command`로,
-TypeScript에서 `listPackageCommands`와 `runPackageCommand`로 노출합니다. ACP v1과 v2는
-바뀌지 않습니다. `available_commands_update`는 여전히 클라이언트 자체의 `/model`,
-`/models`, `/effort`를 싣습니다. 패키지 명령은 하네스 API 표면이고 ACP 표면이 아닙니다.
+TypeScript에서 `listPackageCommands`와 `runPackageCommand`로 노출한다. ACP v1과 v2는
+바뀌지 않는다. `available_commands_update`는 여전히 클라이언트 자체의 `/model`,
+`/models`, `/effort`를 싣는다. 패키지 명령은 하네스 API 표면이고 ACP 표면이 아니다.
 
 ## 핸드오프 압축
 
@@ -296,16 +306,16 @@ TypeScript에서 `listPackageCommands`와 `runPackageCommand`로 노출합니다
 
 ## 도구 인자 복구(프로토콜 1.16)
 
-프로바이더의 JSON 작성기는 때때로 도구 인자의 타입을 틀리게 씁니다. 숫자가
-들어갈 자리에 `"5000"`을, 불리언 자리에 `1`을 보내는 식입니다. 디스패처는
+프로바이더의 JSON 작성기는 때때로 도구 인자의 타입을 틀리게 쓴다. 숫자가
+들어갈 자리에 `"5000"`을, 불리언 자리에 `1`을 보내는 식이다. 디스패처는
 도구가 실행되기 전에 그것을 복구하고, 이제 그 복구를 세 가지 방법으로 볼 수
-있습니다. 여기서 추가된 것은 모두 덧붙이는 변경입니다. 이전 클라이언트는 예전과
-같은 요청을 보내고 예전과 같은 이벤트를 읽습니다.
+있다. 여기서 추가된 것은 모두 덧붙이는 변경이다. 이전 클라이언트는 예전과
+같은 요청을 보내고 예전과 같은 이벤트를 읽는다.
 
 ### 이벤트: `tool_args_repaired`
 
-해당 호출의 `tool_done` 바로 앞에, 복구된 호출마다 한 번 보냅니다. 이 이벤트를
-모르는 클라이언트는 무시하며, 호출은 어느 쪽이든 끝까지 진행됩니다.
+해당 호출의 `tool_done` 바로 앞에, 복구된 호출마다 한 번 보낸다. 이 이벤트를
+모르는 클라이언트는 무시하며, 호출은 어느 쪽이든 끝까지 진행된다.
 
 ```json
 {"ev":"tool_args_repaired","session_id":"s-1","call_id":"call-9","name":"bash",
@@ -313,73 +323,73 @@ TypeScript에서 `listPackageCommands`와 `runPackageCommand`로 노출합니다
 ```
 
 `original_input`은 모델이 보낸 그대로의 인자이고, `changes`는 복구를 적용한
-순서대로 한 줄에 하나씩 적은 목록입니다.
+순서대로 한 줄에 하나씩 적은 목록이다.
 
 ### 저장되는 기록
 
 저장된 도구 결과는 같은 두 값을 `original_input`과 `arg_repairs`로 함께
-보관합니다. 복구가 필요 없었던 호출에서는 두 값을 생략하므로, 나머지 기록은
-이 변경 전과 정확히 같은 바이트를 유지합니다.
+보관한다. 복구가 필요 없었던 호출에서는 두 값을 생략하므로, 나머지 기록은
+이 변경 전과 정확히 같은 바이트를 유지한다.
 
 ### 카운터
 
 `HORON_AGENT_PERF_COUNTERS=1`일 때 `snapshot().tool_arg_repairs`가 도구별
-복구 호출 수를 셉니다.
+복구 호출 수를 센다.
 
 ## 저하 영수증(프로토콜 1.17)
 
 프로바이더의 스키마 방언이 도구 목록의 일부를 표현하지 못하면 horon-agent는 요청을
-보내기 전에 그 부분을 줄입니다. 이제 줄인 내용을 하나하나 기록합니다. 여기서 추가된
-것은 모두 덧붙이는 변경입니다. 이전 클라이언트는 예전과 같은 요청을 보내고 예전과
-같은 이벤트를 읽습니다.
+보내기 전에 그 부분을 줄인다. 이제 줄인 내용을 하나하나 기록한다. 여기서 추가된
+것은 모두 덧붙이는 변경이다. 이전 클라이언트는 예전과 같은 요청을 보내고 예전과
+같은 이벤트를 읽는다.
 
 ### 이벤트: `degradation_receipts`
 
 스트리밍 턴의 어시스턴트 메시지가 저장된 뒤, 그 요청이 이 세션에서 아직 보고하지
-않은 손실을 냈을 때만 보냅니다. 이 이벤트를 모르는 클라이언트는 무시합니다.
+않은 손실을 냈을 때만 보낸다. 이 이벤트를 모르는 클라이언트는 무시한다.
 
 ```json
 {"ev":"degradation_receipts","session_id":"s-1","message_id":"m-7",
  "receipts":[{"kind":"schema_keyword_dropped","tool":"bash","target":"uniqueItems"}]}
 ```
 
-`kind`는 셋 중 하나입니다. `schema_keyword_dropped`는 방언 밖의 키워드나
+`kind`는 셋 중 하나다. `schema_keyword_dropped`는 방언 밖의 키워드나
 `format:<값>`을 뺀 경우, `strict_disabled`는 도구를 `strict: false`로 보낸 경우,
-`duplicate_tool_dropped`는 같은 이름의 두 번째 정의를 보내지 않은 경우입니다.
+`duplicate_tool_dropped`는 같은 이름의 두 번째 정의를 보내지 않은 경우다.
 같은 (kind, tool, target)은 요청마다가 아니라 세션마다 한 번 보고하며, 데몬을
-다시 시작하면 한 번 더 보고될 수 있습니다.
+다시 시작하면 한 번 더 보고될 수 있다.
 
 ### 저장되는 기록
 
 그 요청으로 추가된 어시스턴트 메시지는 같은 영수증을 `degradations`로 같은 추가
-쓰기에서 함께 보관합니다. 손실이 없었던 요청의 메시지는 이 필드를 생략하므로 이
-변경 전과 정확히 같은 바이트를 유지합니다.
+쓰기에서 함께 보관한다. 손실이 없었던 요청의 메시지는 이 필드를 생략하므로 이
+변경 전과 정확히 같은 바이트를 유지한다.
 
 ### 거절 뒤 재시도
 
 예방 단계는 선언된 허용 목록으로 도구 목록을 줄이므로, 목록 밖의 구성 요소는
-프로바이더에 도달하지 않습니다. 그러나 허용 목록은 완전할 수 없고, 프로바이더가
-그래도 거절하면 그 도구를 실은 모든 턴이 실패합니다.
+프로바이더에 도달하지 않는다. 그러나 허용 목록은 완전할 수 없고, 프로바이더가
+그래도 거절하면 그 도구를 실은 모든 턴이 실패한다.
 
-직접 Chat Completions 경로는 이제 같은 턴 안에서 그 거절을 회복합니다. 본문이
+직접 Chat Completions 경로는 이제 같은 턴 안에서 그 거절을 회복한다. 본문이
 스키마 키워드나 `format`을 지목한 `4xx`는 학습되고, 도구 목록은 그것을 빼고 다시
-만들어지며, 요청은 한 번 더 전송됩니다. 손실은 재시도한 요청에 평범한
+만들어지며, 요청은 한 번 더 전송된다. 손실은 재시도한 요청에 평범한
 `schema_keyword_dropped` 영수증으로 나타나므로, 클라이언트는 이미 처리하는 같은
-`degradation_receipts` 이벤트를 봅니다. 학습은 구성 요소마다 한 번으로 제한되므로,
-같은 것을 다시 지목한 두 번째 거절은 재시도 대신 보고됩니다.
+`degradation_receipts` 이벤트를 본다. 학습은 구성 요소마다 한 번으로 제한되므로,
+같은 것을 다시 지목한 두 번째 거절은 재시도 대신 보고된다.
 
-다이얼렉트를 배울 수 있는 것은 클라이언트 오류뿐입니다. `429`, `5xx`, `401/403`은
+다이얼렉트를 배울 수 있는 것은 클라이언트 오류뿐이다. `429`, `5xx`, `401/403`은
 일시적이거나 자격증명 문제이므로 회복 단계는 그것에서 배우지도, 재시도하지도
-않습니다. 따라서 공용 페일오버 분류는 이전과 같은 상태 코드를 봅니다. #713의
+않는다. 따라서 공용 페일오버 분류는 이전과 같은 상태 코드를 본다. #713의
 "schema must have a 'type' key"처럼 뺄 것이 없는 오류는 첫 실패에서 재시도가 도움이
-되지 않는다는 힌트와 함께 보고됩니다.
+되지 않는다는 힌트와 함께 보고된다.
 
 ## 메시지 전달 모드(프로토콜 1.18)
 
-턴이 도는 중에 도착한 메시지는 세션의 대기열에 남았다가 다음 전달 지점에서 주입됩니다.
+턴이 도는 중에 도착한 메시지는 세션의 대기열에 남았다가 다음 전달 지점에서 주입된다.
 `[messages]`는 그 지점마다 몇 개를 가져갈지와, 대기 중인 메시지가 실행 중인 도구를
-멈추는지를 정합니다. 여기서 추가된 것은 모두 덧붙이는 변경입니다. 이전 클라이언트는
-예전과 같은 요청을 보내고 예전과 같은 이벤트를 읽습니다.
+멈추는지를 정한다. 여기서 추가된 것은 모두 덧붙이는 변경이다. 이전 클라이언트는
+예전과 같은 요청을 보내고 예전과 같은 이벤트를 읽는다.
 
 | 키 | 값 | 기본값 | 뜻 |
 | --- | --- | --- | --- |
@@ -387,10 +397,10 @@ TypeScript에서 `listPackageCommands`와 `runPackageCommand`로 노출합니다
 | `steering_mode` | `all`, `one-at-a-time` | `all` | 같은 턴의 그 뒤 전달 지점이 가져가는 메시지 수 |
 | `interrupt_mode` | `wait`, `immediate` | `wait` | 대기 중인 메시지가 실행 중인 도구를 기다리는지, 남은 도구를 멈추는지 |
 
-두 큐 모드의 기본값 `all`은 지금까지의 horon 동작을 그대로 유지합니다. 이는 omp의
-기본값(`one-at-a-time`)과 일부러 다릅니다. 설정하지 않은 데몬이 예전에 함께 전달하던
-메시지를 나누어 보내기 시작하면 안 되기 때문입니다. `one-at-a-time`은 남은 메시지를
-순서대로 대기열에 두므로 메시지마다 따로 주입됩니다.
+두 큐 모드의 기본값 `all`은 지금까지의 horon 동작을 그대로 유지한다. 이는 omp의
+기본값(`one-at-a-time`)과 일부러 다르다. 설정하지 않은 데몬이 예전에 함께 전달하던
+메시지를 나누어 보내기 시작하면 안 되기 때문이다. `one-at-a-time`은 남은 메시지를
+순서대로 대기열에 두므로 메시지마다 따로 주입된다.
 
 ### 요청: `get_message_modes`
 
@@ -410,56 +420,56 @@ TypeScript에서 `listPackageCommands`와 `runPackageCommand`로 노출합니다
 ```
 
 문자열은 설정 파일에 쓰는 표기 그대로이므로 클라이언트가 열거형을 다시 문자로 바꾸지
-않습니다.
+않는다.
 
 ### 동작
 
-세 값은 세션 상태가 아니라 데몬 설정입니다. 브리지가
+세 값은 세션 상태가 아니라 데몬 설정이다. 브리지가
 `crates/harness-api-server/src/message_modes.rs`에서 데몬에 묻지 않고 직접 답하며,
-지목한 세션이 있는지와 무관하게 답합니다. 클라이언트는 대화 상대인 데몬의 모드를
-세션 전이나 세션 없이 읽습니다.
+지목한 세션이 있는지와 무관하게 답한다. 클라이언트는 대화 상대인 데몬의 모드를
+세션 전이나 세션 없이 읽는다.
 
-이 요청·응답 쌍을 게이트하는 기능은 없습니다. 추가형이므로 이 요청을 모르는 서버는
+이 요청·응답 쌍을 게이트하는 기능은 없다. 추가형이므로 이 요청을 모르는 서버는
 `unknown_request`로 답하고, 그 오류를 받은 클라이언트는 기본값을 가정하지 않고 모드를
-알 수 없음으로 다룹니다. SDK는 이 호출을 `get_message_modes`(Rust, Python)와
-`getMessageModes`(TypeScript)로 제공합니다.
+알 수 없음으로 다룬다. SDK는 이 호출을 `get_message_modes`(Rust, Python)와
+`getMessageModes`(TypeScript)로 제공한다.
 
-텍스트 도구 호출을 재시도할 때 `soft_interrupt_injected`는 `point: "native_tool_retry"`와 화면에 표시할 선택 필드 `notice`를 보냅니다. 안내는 이어질 재시도를 설명합니다. 표시할 안내가 없는 인터럽트는 이 필드를 생략합니다.
+텍스트 도구 호출을 재시도할 때 `soft_interrupt_injected`는 `point: "native_tool_retry"`와 화면에 표시할 선택 필드 `notice`를 보낸다. 안내는 이어질 재시도를 설명한다. 표시할 안내가 없는 인터럽트는 이 필드를 생략한다.
 
-`turn_retry_v1`을 제공하는 데몬은 실패한 턴을 이어가는 `send_message` 요청에서 `expected_run_id`를 검사합니다. 같은 세션 잠금에서 검증과 실행을 시작합니다. 다른 요청이 이미 실패한 턴을 이어가거나 새 턴을 시작했다면 메시지를 추가하기 전에 거부합니다.
+`turn_retry_v1`을 제공하는 데몬은 실패한 턴을 이어가는 `send_message` 요청에서 `expected_run_id`를 검사한다. 같은 세션 잠금에서 검증과 실행을 시작한다. 다른 요청이 이미 실패한 턴을 이어가거나 새 턴을 시작했다면 메시지를 추가하기 전에 거부한다.
 
 ## 도구 판정(프로토콜 1.19)
 
-하네스 API는 주 버전 1을 유지하고 부 버전 18에서 19로 옮겼습니다. 아래 내용은 모두
-추가형입니다. 새 필드를 보지 않는 클라이언트는 이전과 같은 이벤트를 읽습니다.
+하네스 API는 주 버전 1을 유지하고 부 버전 18에서 19로 옮겼다. 아래 내용은 모두
+추가형이다. 새 필드를 보지 않는 클라이언트는 이전과 같은 이벤트를 읽는다.
 
 도구 호출은 텍스트와 오류 표시만 보고했으므로, 호출이 실행됐는지, 일부만 끝났는지,
-거부됐는지 알려면 문장을 읽어야 했습니다. 저장된 `tool_result`는 이미 타입이 붙은
-판정을 담고 있고, 이 버전은 같은 값을 호출을 끝내는 이벤트에도 싣습니다.
+거부됐는지 알려면 문장을 읽어야 했다. 저장된 `tool_result`는 이미 타입이 붙은
+판정을 담고 있고, 이 버전은 같은 값을 호출을 끝내는 이벤트에도 싣는다.
 
 | 필드 | 타입 | 필수 | 의미 |
 | --- | --- | --- | --- |
 | `verdict` | string | 아니오 | 데몬이 판정을 저장했을 때, 그 호출이 어떻게 됐는지 |
 
-값은 저장된 결과가 쓰는 일곱 가지 전송 표기입니다.
+값은 저장된 결과가 쓰는 일곱 가지 전송 표기다.
 
 | 값 | 의미 |
 | --- | --- |
-| `ok` | 도구가 실행됐고 결과 전체를 돌려줬습니다 |
-| `partial` | 도구가 실행됐지만 작업 일부만 끝났습니다 |
-| `truncated` | 도구가 끝까지 실행됐고 돌려준 텍스트는 전체의 일부입니다 |
-| `withheld` | 도구가 실행됐고 결과 대신 거부 문장을 돌려줬습니다 |
-| `rejected` | 도구가 실행되기 전에 호출이 거부됐습니다 |
-| `failed` | 도구가 실행됐고 오류를 돌려줬습니다 |
-| `interrupted` | 사용자, 재적재, 취소로 호출이 건너뛰어지거나 중단됐습니다 |
+| `ok` | 도구가 실행됐고 결과 전체를 돌려줬다 |
+| `partial` | 도구가 실행됐지만 작업 일부만 끝났다 |
+| `truncated` | 도구가 끝까지 실행됐고 돌려준 텍스트는 전체의 일부다 |
+| `withheld` | 도구가 실행됐고 결과 대신 거부 문장을 돌려줬다 |
+| `rejected` | 도구가 실행되기 전에 호출이 거부됐다 |
+| `failed` | 도구가 실행됐고 오류를 돌려줬다 |
+| `interrupted` | 사용자, 재적재, 취소로 호출이 건너뛰어지거나 중단됐다 |
 
-어떤 계층도 호출에 판정을 남기지 않으면 필드는 없습니다. 대부분의 도구는 그냥 성공한
+어떤 계층도 호출에 판정을 남기지 않으면 필드는 없다. 대부분의 도구는 그냥 성공한
 호출에 아무것도 남기지 않으므로, 보통의 성공한 `tool_done`에는 판정이 없고 `ok`는
-도구가 직접 밝힌 경우에만 나옵니다. 백그라운드로 넘어간 호출에는 판정이 없고, 제공자가
+도구가 직접 밝힌 경우에만 나온다. 백그라운드로 넘어간 호출에는 판정이 없고, 제공자가
 자기 쪽에서 실행하는 도구(예: 호스팅 검색)에도 그 도구가 오류를 보고하더라도 판정이
-없습니다. 모델이 낸 도구 호출에 제공자가 준 결과는 오류 표시가 붙어 있으면
-`failed`입니다. 필드가 없으면 프레임은 프로토콜 1.18과 바이트 단위로 같고, 읽는 쪽은
-이전처럼 `error`로 성공과 실패를 가릅니다.
+없다. 모델이 낸 도구 호출에 제공자가 준 결과는 오류 표시가 붙어 있으면
+`failed`다. 필드가 없으면 프레임은 프로토콜 1.18과 바이트 단위로 같고, 읽는 쪽은
+이전처럼 `error`로 성공과 실패를 가른다.
 
 ### 이벤트: `tool_done`
 
@@ -469,9 +479,9 @@ TypeScript에서 `listPackageCommands`와 `runPackageCommand`로 노출합니다
  "verdict":"failed"}
 ```
 
-이 필드를 게이트하는 기능은 없습니다. 모든 클라이언트가 이미 읽는 이벤트에 실리므로
+이 필드를 게이트하는 기능은 없다. 모든 클라이언트가 이미 읽는 이벤트에 실리므로
 이전 클라이언트는 키를 무시하고, 판정을 원하는 클라이언트는 값을 읽고 없으면 `error`로
-대체합니다.
+대체한다.
 
 ## 세션 영구 삭제(프로토콜 1.20)
 
@@ -557,7 +567,7 @@ swarm 프레임을 말하는 외부 생산자가 없고, 하네스 API가 그 �
 
 ## 백그라운드 실시간 출력(프로토콜 1.23)
 
-실시간 프로세스 출력을 쓰는 클라이언트는 `hello.event_capabilities`에 `background_output_v1`을 넣습니다. 브리지는 연결된 클라이언트 중 기능을 요청한 곳에만 `background_output` 이벤트를 보냅니다. 이벤트에는 `session_id`와 작업, 표준 출력·오류 구분, 일치한 줄을 담은 제한된 길이의 `text`가 들어 있습니다. 완료 결과와 저장한 작업 출력은 기존 방식으로 받습니다.
+실시간 프로세스 출력을 쓰는 클라이언트는 `hello.event_capabilities`에 `background_output_v1`을 넣는다. 브리지는 연결된 클라이언트 중 기능을 요청한 곳에만 `background_output` 이벤트를 보낸다. 이벤트에는 `session_id`와 작업, 표준 출력·오류 구분, 일치한 줄을 담은 제한된 길이의 `text`가 들어 있다. 완료 결과와 저장한 작업 출력은 기존 방식으로 받는다.
 
 ## 취소 가능한 작업(프로토콜 1.22)
 
@@ -661,17 +671,17 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 
 ## 실시간 할 일 갱신(프로토콜 1.24)
 
-`hello.event_capabilities`에서 `live_todo_v1`을 요청하고 `hello_ok`에 같은 기능이 있는지 확인합니다. 데몬이 실시간 갱신을 지원해야 합니다. 할 일 변경을 저장하면 연결한 세션에 `session_id`가 담긴 `todo_changed`가 도착합니다. 이벤트에는 할 일 목록이 들어 있지 않습니다. 최초 `get_todo_state` 조회 전에 구독하고 연결 중인 세션의 변경 알림을 받으면 다시 조회합니다. 응답에는 최신 목록이 들어 있으므로 여러 알림에 한 번만 조회해도 됩니다. 기능을 요청하지 않은 클라이언트는 `todo_changed` 없이 목록을 계속 조회할 수 있습니다.
+`hello.event_capabilities`에서 `live_todo_v1`을 요청하고 `hello_ok`에 같은 기능이 있는지 확인한다. 데몬이 실시간 갱신을 지원해야 한다. 할 일 변경을 저장하면 연결한 세션에 `session_id`가 담긴 `todo_changed`가 도착한다. 이벤트에는 할 일 목록이 들어 있지 않다. 최초 `get_todo_state` 조회 전에 구독하고 연결 중인 세션의 변경 알림을 받으면 다시 조회한다. 응답에는 최신 목록이 들어 있으므로 여러 알림에 한 번만 조회해도 된다. 기능을 요청하지 않은 클라이언트는 `todo_changed` 없이 목록을 계속 조회할 수 있다.
 
 ## 읽기 전용 질문 세션 분기
 
-`consult_fork_v1`을 제공하는 데몬에 `consult: true`를 담은 `fork_session` 요청을 보내면 읽기 전용 질문 도구만 허용하는 별도 세션을 저장합니다. `boundary`로 저장 메시지를 지정하면 그 메시지 직전까지의 대화가 새 세션에 들어갑니다. 데몬은 오래된 메시지 식별자를 받으면 세션 생성 전에 거부합니다. 데몬을 다시 시작한 뒤 연결해도 도구 제한이 유지됩니다.
+`consult_fork_v1`을 제공하는 데몬에 `consult: true`를 담은 `fork_session` 요청을 보내면 읽기 전용 질문 도구만 허용하는 별도 세션을 저장한다. `boundary`로 저장 메시지를 지정하면 그 메시지 직전까지의 대화가 새 세션에 들어간다. 데몬은 오래된 메시지 식별자를 받으면 세션 생성 전에 거부한다. 데몬을 다시 시작한 뒤 연결해도 도구 제한이 유지된다.
 
 ## 데몬 유효 설정(프로토콜 1.25)
 
-하네스 API는 주 버전 1을 유지하고 부 버전 24에서 25로 옮겼습니다. 이 요청을 보내지 않는 클라이언트는 이전과 같은 프레임을 읽으므로 모두 추가형입니다.
+하네스 API는 주 버전 1을 유지하고 부 버전 24에서 25로 옮겼다. 이 요청을 보내지 않는 클라이언트는 이전과 같은 프레임을 읽으므로 모두 추가형이다.
 
-클라이언트 자체 선호만 보여 주는 설정 화면으로는 턴이 왜 그렇게 동작하는지 설명할 수 없습니다. `get_effective_settings`는 **고정 허용 목록**에 있는 데몬 값과 그 값을 공급한 계층을 보고합니다. 전부 덤프가 아니라 목록입니다. 다른 키를 담는 필드도, 원본 파일 텍스트도 없으므로 설정 파일에 자격 증명이 들어 있어도 어떤 형태로든 클라이언트에 닿지 않습니다. `effective_settings_v1`이 이 쌍을 게이트합니다.
+클라이언트 자체 선호만 보여 주는 설정 화면으로는 턴이 왜 그렇게 동작하는지 설명할 수 없다. `get_effective_settings`는 **고정 허용 목록**에 있는 데몬 값과 그 값을 공급한 계층을 보고한다. 전부 덤프가 아니라 목록이다. 다른 키를 담는 필드도, 원본 파일 텍스트도 없으므로 설정 파일에 자격 증명이 들어 있어도 어떤 형태로든 클라이언트에 닿지 않는다. `effective_settings_v1`이 이 쌍을 게이트한다.
 
 ### 요청: `get_effective_settings`
 
@@ -700,48 +710,48 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 | `source` | `default`, `cli`, `file`, `env` | 값을 공급한 계층 |
 | `origin` | 문자열, `default`면 없음 | `source`가 가리키는 플래그, 파일 경로, 변수 이름 |
 
-`value`가 문자열인 이유는 화면이 그대로 인쇄하기 때문입니다. 클라이언트가 숫자를 직접 렌더링하면 어느 키가 숫자인지 알아야 하고, 그 지식은 모든 클라이언트가 아니라 허용 목록 옆에 있어야 합니다.
+`value`가 문자열인 이유는 화면이 그대로 인쇄하기 때문이다. 클라이언트가 숫자를 직접 렌더링하면 어느 키가 숫자인지 알아야 하고, 그 지식은 모든 클라이언트가 아니라 허용 목록 옆에 있어야 한다.
 
 ### 허용 목록
 
-행은 `provider.openai_reasoning_effort`, `provider.anthropic_reasoning_effort`, `provider.stream_idle_timeout_secs`, `provider.max_retries`, `tools.profile`, `tools.mcp_tools`, `tools.approval_mode`, `tools.ask_policy`, `tools.secrets_mode`, `compaction.mode`, `messages.{follow_up,steering,interrupt}_mode`입니다. 데몬의 표에 키를 넣는 것만이 행을 만드는 방법이고, 그 밖의 값은 보고될 수 없습니다.
+행은 `provider.openai_reasoning_effort`, `provider.anthropic_reasoning_effort`, `provider.stream_idle_timeout_secs`, `provider.max_retries`, `tools.profile`, `tools.mcp_tools`, `tools.approval_mode`, `tools.ask_policy`, `tools.secrets_mode`, `compaction.mode`, `messages.{follow_up,steering,interrupt}_mode`다. 데몬의 표에 키를 넣는 것만이 행을 만드는 방법이고, 그 밖의 값은 보고될 수 없다.
 
 ### 동작
 
-답하는 쪽은 **데몬**입니다. 데몬이 실제로 불러온 설정으로 답합니다. 세션이 실제로 도는 프로세스는 데몬이고, 그 프로세스의 환경, 실행 플래그, 설정 파일이 곧 유효 값과 출처입니다. 브리지는 번역만 합니다. 내부 프로토콜로 `get_effective_settings`를 전달하고 돌아온 행을 그대로 넘깁니다. 표와 출처 판정은 `crates/base/src/effective_settings.rs`에 있고, `crates/app-core/src/server/effective_settings.rs`가 그 행을 이 응답으로 옮깁니다.
+답하는 쪽은 **데몬**이다. 데몬이 실제로 불러온 설정으로 답한다. 세션이 실제로 도는 프로세스는 데몬이고, 그 프로세스의 환경, 실행 플래그, 설정 파일이 곧 유효 값과 출처다. 브리지는 번역만 한다. 내부 프로토콜로 `get_effective_settings`를 전달하고 돌아온 행을 그대로 넘긴다. 표와 출처 판정은 `crates/base/src/effective_settings.rs`에 있고, `crates/app-core/src/server/effective_settings.rs`가 그 행을 이 응답으로 옮긴다.
 
-데몬은 ping에서 `effective_settings_api`를 광고합니다. 브리지는 `effective_settings_v1`을 항상 광고하고, 뒤에 있는 데몬이 그 요청을 광고하지 않으면 그 기능 이름을 담은 구조화된 `unsupported`로 거부합니다. 옛 데몬은 모르는 요청에 id 없는 프레임으로 답하므로, 그대로 전달하면 클라이언트가 자기 타임아웃만큼 기다리게 됩니다. 옛 브리지(기능 자체를 광고하지 않음)와 옛 데몬(이름을 붙여 거부됨)은 클라이언트에게 같은 "이 데몬은 설정을 보고하지 않는다" 상태로 보입니다.
+데몬은 ping에서 `effective_settings_api`를 광고한다. 브리지는 `effective_settings_v1`을 항상 광고하고, 뒤에 있는 데몬이 그 요청을 광고하지 않으면 그 기능 이름을 담은 구조화된 `unsupported`로 거부한다. 옛 데몬은 모르는 요청에 id 없는 프레임으로 답하므로, 그대로 전달하면 클라이언트가 자기 타임아웃만큼 기다리게 된다. 옛 브리지(기능 자체를 광고하지 않음)와 옛 데몬(이름을 붙여 거부됨)은 클라이언트에게 같은 "이 데몬은 설정을 보고하지 않는다" 상태로 보인다.
 
-계층은 근거가 강한 순서로 정합니다.
+계층은 근거가 강한 순서로 정한다.
 
-1. `cli` — 실행기가 기록한 플래그입니다. 실행기는 `--tool-profile`, `--mcp-tools` 같은 플래그를 환경 변수로 바꾸므로, 환경만 보아서는 플래그와 사용자가 내보낸 변수를 구분할 수 없습니다. 아무것도 선택하지 않아 실행기가 고른 기본값은 아예 보고하지 않습니다. 변수는 존재하지만 사용자가 설정한 것이 아닙니다.
-2. `env` — 이 프로세스가 읽었고 데몬이 적용하는 변수입니다. 데몬이 무시하는 변수(0인 타임아웃, 파싱되지 않는 재시도 횟수, 모르는 모드)는 유효 값의 출처로 보고하지 않습니다.
-3. `file` — 유효 설정 파일입니다. 데몬이 하는 것과 같은 엄격한 파싱으로 한 번에 읽은 문서이고, 파일이 선언한 값이 데몬이 적용하는 값이며 유효 값과 같을 때만 출처가 됩니다. 파싱되지 않는 파일은 아무것도 공급하지 않았으므로 그 행은 `default`로 읽힙니다. 데몬이 거부하는 형식의 값도 마찬가지입니다. 예를 들어 `approval_mode = "nonsense"`는 기본값으로 떨어지고, 파일은 그 기본값의 출처가 되지 않습니다.
-4. `default` — 함께 배포된 값입니다.
+1. `cli` — 실행기가 기록한 플래그다. 실행기는 `--tool-profile`, `--mcp-tools` 같은 플래그를 환경 변수로 바꾸므로, 환경만 보아서는 플래그와 사용자가 내보낸 변수를 구분할 수 없다. 아무것도 선택하지 않아 실행기가 고른 기본값은 아예 보고하지 않는다. 변수는 존재하지만 사용자가 설정한 것이 아니다.
+2. `env` — 이 프로세스가 읽었고 데몬이 적용하는 변수다. 데몬이 무시하는 변수(0인 타임아웃, 파싱되지 않는 재시도 횟수, 모르는 모드)는 유효 값의 출처로 보고하지 않는다.
+3. `file` — 유효 설정 파일이다. 데몬이 하는 것과 같은 엄격한 파싱으로 한 번에 읽은 문서이고, 파일이 선언한 값이 데몬이 적용하는 값이며 유효 값과 같을 때만 출처가 된다. 파싱되지 않는 파일은 아무것도 공급하지 않았으므로 그 행은 `default`로 읽힌다. 데몬이 거부하는 형식의 값도 마찬가지다. 예를 들어 `approval_mode = "nonsense"`는 기본값으로 떨어지고, 파일은 그 기본값의 출처가 되지 않는다.
+4. `default` — 함께 배포된 값이다.
 
-행은 데몬 자체 설정을 설명합니다. 세션이 실행 중에 자기 값만 바꾼 경우(예: `set_session_approval_mode`)는 여기에 반영되지 않습니다. 이 행은 데몬이 불러온 값을 보고하고, 한 세션이 나중에 덮어쓴 값은 보고하지 않습니다.
+행은 데몬 자체 설정을 설명한다. 세션이 실행 중에 자기 값만 바꾼 경우(예: `set_session_approval_mode`)는 여기에 반영되지 않는다. 이 행은 데몬이 불러온 값을 보고하고, 한 세션이 나중에 덮어쓴 값은 보고하지 않는다.
 
-쓰기는 없습니다. 요청은 구조상 읽기 전용이고, 읽지 못하는 클라이언트는 데몬 기본값으로 계속 동작합니다. SDK는 이 호출을 `get_effective_settings`(Rust, Python)와 `getEffectiveSettings`(TypeScript)로 노출하고, 기능이 광고되지 않았으면 보내기 전에 거부합니다. TUI의 `Daemon` 탭이 배포되는 소비자입니다.
+쓰기는 없다. 요청은 구조상 읽기 전용이고, 읽지 못하는 클라이언트는 데몬 기본값으로 계속 동작한다. SDK는 이 호출을 `get_effective_settings`(Rust, Python)와 `getEffectiveSettings`(TypeScript)로 노출하고, 기능이 광고되지 않았으면 보내기 전에 거부한다. TUI의 `Daemon` 탭이 배포되는 소비자다.
 
 ## 저장한 메시지 직전에서 세션 분기(프로토콜 1.28)
 
-하네스 API는 주 버전 1을 유지하고 부 버전 27에서 28로 옮겼습니다. 아래 요청은 추가형이므로 보내지 않는 클라이언트는 이전과 같은 프레임을 읽습니다.
+하네스 API는 주 버전 1을 유지하고 부 버전 27에서 28로 옮겼다. 아래 요청은 추가형이므로 보내지 않는 클라이언트는 이전과 같은 프레임을 읽는다.
 
-`session_fork_at_v1`은 `fork_session_at` 요청을 허용합니다. 연결된 `session_id`와 `get_history`에서 읽은 `boundary_message_id`를 전달합니다. 데몬은 해당 사용자 메시지 직전까지의 이력으로 새 세션을 저장하고 `session_forked`를 반환합니다. 원본에는 전체 이력이 남습니다. 선택한 메시지가 현재 이력의 경계에서 사라졌으면 데몬이 요청을 거부하고 클라이언트는 원본에 계속 연결됩니다.
+`session_fork_at_v1`은 `fork_session_at` 요청을 허용한다. 연결된 `session_id`와 `get_history`에서 읽은 `boundary_message_id`를 전달한다. 데몬은 해당 사용자 메시지 직전까지의 이력으로 새 세션을 저장하고 `session_forked`를 반환한다. 원본에는 전체 이력이 남는다. 선택한 메시지가 현재 이력의 경계에서 사라졌으면 데몬이 요청을 거부하고 클라이언트는 원본에 계속 연결된다.
 
 ## 할 일 항목 수정(프로토콜 1.29)
 
-하네스 API는 주 버전 1을 유지하고 부 버전 28에서 29로 옮겼습니다. 아래 요청은 추가형이므로 보내지 않는 클라이언트는 이전과 같은 프레임을 읽습니다.
+하네스 API는 주 버전 1을 유지하고 부 버전 28에서 29로 옮겼다. 아래 요청은 추가형이므로 보내지 않는 클라이언트는 이전과 같은 프레임을 읽는다.
 
-`todo_edit_v1`은 `todo_state`에 버전 식별자를 추가하고 연결된 세션에서 `set_todo_status`를 허용합니다. `session_id`, `todo_id`, `expected_revision`과 바꿀 `status`를 보냅니다. 데몬은 버전 식별자가 일치할 때만 저장합니다. `todo_edit_result`에는 `applied`, 현재 목록과 버전 식별자, 최신 목록이 있으면 `stale_revision`이 들어갑니다. 저장에 성공하면 기존 `todo_changed` 이벤트로 클라이언트에 알립니다.
+`todo_edit_v1`은 `todo_state`에 버전 식별자를 추가하고 연결된 세션에서 `set_todo_status`를 허용한다. `session_id`, `todo_id`, `expected_revision`과 바꿀 `status`를 보낸다. 데몬은 버전 식별자가 일치할 때만 저장한다. `todo_edit_result`에는 `applied`, 현재 목록과 버전 식별자, 최신 목록이 있으면 `stale_revision`이 들어간다. 저장에 성공하면 기존 `todo_changed` 이벤트로 클라이언트에 알린다.
 
 ## A2UI v1.0 표면(프로토콜 1.32)
 
-하네스 API는 주 버전 1을 유지하고 부 버전 32로 올랐습니다. 여기의 모든 표면은 **추가형이며 선택 참여(opt-in)** 입니다. `a2ui_v1`을 협상하지 않은 클라이언트는 이전과 완전히 같은 도구 목록, 시스템 프롬프트 바이트, 와이어 프레임을 유지합니다.
+하네스 API는 주 버전 1을 유지하고 부 버전 32로 올랐다. 여기의 모든 표면은 **추가형이며 선택 참여(opt-in)** 다. `a2ui_v1`을 협상하지 않은 클라이언트는 이전과 완전히 같은 도구 목록, 시스템 프롬프트 바이트, 와이어 프레임을 유지한다.
 
 ### 핸드셰이크와 세션 기능
 
-연결에서 아웃바운드 `a2ui_envelope` 이벤트를 받으려면 `hello.event_capabilities`에 `a2ui_v1`을 넣습니다. 선택적으로 `hello`, `create_session`, `attach_session`에 `a2ui` 렌더러 기능(`A2uiSessionCapabilities`: `version`, `supported_catalog_ids`, `accepts_inline_catalogs`)을 선언합니다. 생략하면 데몬은 그 세션에 `a2ui` 도구를 등록하지 않으므로 프롬프트 캐시 접두사가 변하지 않습니다.
+연결에서 아웃바운드 `a2ui_envelope` 이벤트를 받으려면 `hello.event_capabilities`에 `a2ui_v1`을 넣는다. 선택적으로 `hello`, `create_session`, `attach_session`에 `a2ui` 렌더러 기능(`A2uiSessionCapabilities`: `version`, `supported_catalog_ids`, `accepts_inline_catalogs`)을 선언한다. 생략하면 데몬은 그 세션에 `a2ui` 도구를 등록하지 않으므로 프롬프트 캐시 접두사가 변하지 않는다.
 
 ```json
 { "v": 1, "id": 1, "req": "hello", "min_version": 1, "max_version": 1, "client": "my-ui", "event_capabilities": ["a2ui_v1"], "a2ui": { "version": "1.0", "supported_catalog_ids": ["https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"], "accepts_inline_catalogs": false } }
@@ -762,9 +772,9 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 { "v": 1, "id": 32, "req": "a2ui_event", "session_id": "session_...", "envelope": { "version": "1.0", "action": { "name": "confirm", "surfaceId": "main", "sourceComponentId": "confirm_btn" } }, "data_model": { "step": 1 } }
 ```
 
-- 두 요청 모두 `a2ui_v1`과 `session_id` 연결이 필요하며 수락되면 `{ "ev": "ok" }`를 응답합니다.
-- 잘못된 봉투, 금지된 컴포넌트나 URI, 한도 초과 페이로드(256 KiB 초과 또는 깊이 32 초과), 빈 식별자는 모델 루프에 닿기 전에 `invalid_request`로 거절됩니다.
-- 세 SDK는 `configure_a2ui` / `configureA2ui`, `send_a2ui_event` / `sendA2uiEvent`, 연결·생성·연결 재개 옵션의 `a2ui` 필드, `TurnResult.a2ui_envelopes` / `a2uiEnvelopes` (`A2uiEnvelopeEvent`)를 제공합니다.
+- 두 요청 모두 `a2ui_v1`과 `session_id` 연결이 필요하며 수락되면 `{ "ev": "ok" }`를 응답한다.
+- 잘못된 봉투, 금지된 컴포넌트나 URI, 한도 초과 페이로드(256 KiB 초과 또는 깊이 32 초과), 빈 식별자는 모델 루프에 닿기 전에 `invalid_request`로 거절된다.
+- 세 SDK는 `configure_a2ui` / `configureA2ui`, `send_a2ui_event` / `sendA2uiEvent`, 연결·생성·연결 재개 옵션의 `a2ui` 필드, `TurnResult.a2ui_envelopes` / `a2uiEnvelopes` (`A2uiEnvelopeEvent`)를 제공한다.
 
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
@@ -920,7 +930,7 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 | --- | --- | --- | --- |
 | `supports_ask_requests` | 불리언 | `false` | 이 연결이 `ask` 도구의 질문을 그리고 답한다 |
 
-브리지는 이 필드를 `hello["supports_ask_requests"].as_bool().unwrap_or(false)`로 읽으므로(`crates/harness-api-server/src/lib.rs`), 이 필드가 없던 클라이언트는 아무것도 알리지 않은 채로 계속 동작한다. 이 필드는 능력 문자열도 프로토콜 마이너 협상도 아니다. 사람에게 묻는 방향을 정할 뿐이다. 붙어 있는 연결이 이 필드를 알린 세션은 그 연결에서 질문을 받고 호출이 답을 기다리며, 그런 연결이 없는 세션은 `ask_policy`로 넘어간다(`docs/safety/SAFETY.md`).
+브리지는 이 필드를 `hello["supports_ask_requests"].as_bool().unwrap_or(false)`로 읽으므로(`crates/harness-api-server/src/lib.rs`), 이 필드가 없던 클라이언트는 아무것도 알리지 않은 채로 계속 동작한다. 이 필드는 능력 문자열도 프로토콜 마이너 협상도 아니다. 사람에게 묻는 방향을 정할 뿐이다. 붙어 있는 연결이 이 필드를 알린 세션은 그 연결에서 질문을 받고 호출이 답을 기다리며, 그런 연결이 없는 세션은 `ask_policy`로 넘어간다(`docs/safety/SAFETY.ko.md`).
 
 SDK 셋은 이 값을 연결 옵션 하나로 내주고, 모두 기본값을 끔으로 둔다.
 
@@ -934,24 +944,24 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 ## 하네스 API 요청·이벤트 표면: usage_report, search_sessions, list_artifacts, durable_runtime
 
-이 문서는 하네스 API에서 추가된 요청 표면을 적습니다. 앞부분은 프로토콜 1.13의 세 요청과 그 응답 이벤트이고, 그다음은 1.14의 내구 런타임 표면 넷이고, 마지막은 1.16의 인자 복구입니다. 필드 이름과 타입은 `crates/harness-api/src/requests.rs`와 `crates/harness-api/src/events.rs`의 정의를 그대로 옮겼고, 동작과 한도는 `crates/harness-api-server/src/translate/`의 구현에서 확인한 값입니다.
+이 문서는 하네스 API에서 추가된 요청 표면을 적는다. 앞부분은 프로토콜 1.13의 세 요청과 그 응답 이벤트이고, 그다음은 1.14의 내구 런타임 표면 넷이고, 마지막은 1.16의 인자 복구다. 필드 이름과 타입은 `crates/harness-api/src/requests.rs`와 `crates/harness-api/src/events.rs`의 정의를 그대로 옮겼고, 동작과 한도는 `crates/harness-api-server/src/translate/`의 구현에서 확인한 값이다.
 
-세 요청 모두 추가형입니다. 이 요청들을 보내지 않는 클라이언트는 계속 동작하고, 브리지는 `hello_ok`의 `capabilities`에 `usage_report`, `session_search`, `artifacts`를 광고합니다(`crates/harness-api-server/src/lib.rs`의 `BRIDGE_CAPABILITIES`).
+세 요청 모두 추가형이다. 이 요청들을 보내지 않는 클라이언트는 계속 동작하고, 브리지는 `hello_ok`의 `capabilities`에 `usage_report`, `session_search`, `artifacts`를 광고한다(`crates/harness-api-server/src/lib.rs`의 `BRIDGE_CAPABILITIES`).
 
-`approval_ack`과 `failover_ack`은 `list_artifacts` 다음에 옵니다. 둘 다 클라이언트가 내구 승인이나 전환 알림을 정리하려고 보내는 ack이므로 자체 능력 뒤에 있지 않습니다. ack 태그를 모르는 데몬은 그 요청을 무시하지 않고 오류로 답합니다.
+`approval_ack`과 `failover_ack`은 `list_artifacts` 다음에 온다. 둘 다 클라이언트가 내구 승인이나 전환 알림을 정리하려고 보내는 ack이므로 자체 능력 뒤에 있지 않다. ack 태그를 모르는 데몬은 그 요청을 무시하지 않고 오류로 답한다.
 
 ### 공통 규칙
 
-- 프레임 하나는 JSON 객체 하나, 한 줄입니다(NDJSON). 요청은 `req`로 종류를 구분하고 `id`를 싣고, 응답은 `reply_to`로 그 `id`를 되돌려 줍니다.
-- 요청 본문은 `#[serde(tag = "req", rename_all = "snake_case")]`로 직렬화되므로 필드 이름은 snake_case입니다.
-- 모르는 필드는 무시하고, 모르는 이벤트 종류는 건너뜁니다.
-- 실패는 `{"ev":"error","code":...,"message":...}`로 옵니다. 이 표면들이 쓰는 `ErrorCode` 값은 `invalid_request`, `unknown_session`, `internal`입니다.
-- 세션을 지목하는 요청은 `session_id`를 받습니다. 없는 세션은 빈 결과가 아니라 `unknown_session`으로 답합니다. "이 세션은 아무것도 쓰지 않았다"와 "그런 세션이 없다"는 다른 사실이기 때문입니다.
-- `session_id`는 6자 이상인 앞부분 일부도 받습니다. 온전한 id가 항상 이기고, 연결이 이미 아는 id는 다시 해석하지 않습니다. 여러 세션이 공유하는 앞부분은 `details.accepted_ids`에 최대 10개의 후보를 담고 `details.store_code`를 `ambiguous_session`으로 둔 `unknown_session`으로 답합니다. 오류 코드 자체는 `unknown_session`으로 남아 이전 빌드의 클라이언트도 응답을 해석합니다. 아무 세션도 해당하지 않는 앞부분은 그대로 `unknown_session`으로 답합니다.
+- 프레임 하나는 JSON 객체 하나, 한 줄이다(NDJSON). 요청은 `req`로 종류를 구분하고 `id`를 싣고, 응답은 `reply_to`로 그 `id`를 되돌려 준다.
+- 요청 본문은 `#[serde(tag = "req", rename_all = "snake_case")]`로 직렬화되므로 필드 이름은 snake_case다.
+- 모르는 필드는 무시하고, 모르는 이벤트 종류는 건너뛴다.
+- 실패는 `{"ev":"error","code":...,"message":...}`로 온다. 이 표면들이 쓰는 `ErrorCode` 값은 `invalid_request`, `unknown_session`, `internal`이다.
+- 세션을 지목하는 요청은 `session_id`를 받는다. 없는 세션은 빈 결과가 아니라 `unknown_session`으로 답한다. "이 세션은 아무것도 쓰지 않았다"와 "그런 세션이 없다"는 다른 사실이기 때문이다.
+- `session_id`는 6자 이상인 앞부분 일부도 받는다. 온전한 id가 항상 이기고, 연결이 이미 아는 id는 다시 해석하지 않는다. 여러 세션이 공유하는 앞부분은 `details.accepted_ids`에 최대 10개의 후보를 담고 `details.store_code`를 `ambiguous_session`으로 둔 `unknown_session`으로 답한다. 오류 코드 자체는 `unknown_session`으로 남아 이전 빌드의 클라이언트도 응답을 해석한다. 아무 세션도 해당하지 않는 앞부분은 그대로 `unknown_session`으로 답한다.
 
 ### usage_report
 
-첨부된 세션과 저장된 모든 세션의 토큰 사용량, 컨텍스트 창, 모델별 집계를 돌려줍니다. 한도 필드(`limits`)는 남아 있지만 이 빌드에는 그 출처가 없어 항상 빈 배열입니다. 능력 이름은 `usage_report`입니다.
+첨부된 세션과 저장된 모든 세션의 토큰 사용량, 컨텍스트 창, 모델별 집계를 돌려준다. 한도 필드(`limits`)는 남아 있지만 이 빌드에는 그 출처가 없어 항상 빈 배열이다. 능력 이름은 `usage_report`다.
 
 #### 요청
 
@@ -961,9 +971,9 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 | 필드 | 타입 | 필수 | 뜻 |
 | --- | --- | --- | --- |
-| `session_id` | string | 아니요 | 이 세션으로 보고를 좁힙니다. 생략하면 저장된 모든 세션과 첨부된 세션을 함께 보고합니다 |
+| `session_id` | string | 아니요 | 이 세션으로 보고를 좁힌다. 생략하면 저장된 모든 세션과 첨부된 세션을 함께 보고한다 |
 
-없는 `session_id`는 `unknown_session`입니다.
+없는 `session_id`는 `unknown_session`이다.
 
 #### 응답: `usage_report`
 
@@ -985,14 +995,14 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 | 필드 | 타입 | 뜻 |
 | --- | --- | --- |
-| `session_id` | string, 없을 수 있음 | 보고를 좁힌 세션. 전체 보고에는 없습니다 |
+| `session_id` | string, 없을 수 있음 | 보고를 좁힌 세션. 전체 보고에는 없다 |
 | `sessions` | `UsageSession[]` | 범위 안의 세션마다 한 행, 세션 id 순 |
 | `totals` | `UsageTotals` | `sessions` 전체의 합 |
 | `models` | `UsageModel[]` | 모델별 집계, 모델 id 순 |
-| `context_window` | number, 없을 수 있음 | 첨부된 세션의 활성 경로 컨텍스트 창(토큰). 없으면 "모른다"이고 다른 모델의 기본 창이 아닙니다 |
+| `context_window` | number, 없을 수 있음 | 첨부된 세션의 활성 경로 컨텍스트 창(토큰). 없으면 "모른다"이고 다른 모델의 기본 창이 아니다 |
 | `limits` | `UsageLimitInfo[]` | 한도 목록. 이 빌드는 한도를 알리는 계정 출처가 없으므로 항상 빈 배열 |
-| `pricing` | string | 항상 `"unknown"`. 이 저장소에는 가격표가 없습니다 |
-| `estimated_cost` | number, 없을 수 있음 | 항상 `null`. 가격표가 없으니 비용 추정도 없습니다 |
+| `pricing` | string | 항상 `"unknown"`. 이 저장소에는 가격표가 없다 |
+| `estimated_cost` | number, 없을 수 있음 | 항상 `null`. 가격표가 없으니 비용 추정도 없다 |
 
 `UsageSession`:
 
@@ -1004,25 +1014,25 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 | `output` | number, 없을 수 있음 | 출력 토큰 합 |
 | `cache_read_input` | number, 없을 수 있음 | 캐시 읽기 입력 토큰 합 |
 | `cache_creation_input` | number, 없을 수 있음 | 캐시 쓰기 입력 토큰 합 |
-| `requests` | number | 사용량을 기록한 제공자 요청 수. 사용자 턴 수가 아닙니다. 한 턴이 여러 요청을 내고 도구 왕복이 따로 셉니다 |
+| `requests` | number | 사용량을 기록한 제공자 요청 수. 사용자 턴 수가 아니다. 한 턴이 여러 요청을 내고 도구 왕복이 따로 센다 |
 
-`UsageTotals`는 `input`, `output`, `cache_read_input`, `cache_creation_input`(각각 없을 수 있음), `requests`, `sessions`(합이 덮는 세션 수, 사용량이 없는 세션 포함)를 가집니다.
+`UsageTotals`는 `input`, `output`, `cache_read_input`, `cache_creation_input`(각각 없을 수 있음), `requests`, `sessions`(합이 덮는 세션 수, 사용량이 없는 세션 포함)를 가진다.
 
-`UsageModel`은 `model`(메타데이터가 모델을 밝히지 않은 세션은 `unknown`), 위 네 토큰 합, `requests`, `sessions`를 가집니다.
+`UsageModel`은 `model`(메타데이터가 모델을 밝히지 않은 세션은 `unknown`), 위 네 토큰 합, `requests`, `sessions`를 가진다.
 
-`UsageLimitInfo`는 `name`, `used`, `limit`, `unit`(예: `usd`), `resets_at`(RFC 3339)을 가집니다. `used`, `limit`, `resets_at`은 데몬이 알렸을 때만 있습니다.
+`UsageLimitInfo`는 `name`, `used`, `limit`, `unit`(예: `usd`), `resets_at`(RFC 3339)을 가진다. `used`, `limit`, `resets_at`은 데몬이 알렸을 때만 있다.
 
 #### 동작
 
-보고는 세 출처를 권위 순으로 합칩니다. 첨부된 세션의 데몬 누적치, 저장된 세션 원본의 `token_usage` 기록, 마지막 실시간 `token_usage` 이벤트입니다. 어떤 요청도 기록하지 않은 지표는 `0`이 아니라 `null`입니다. 제공자가 캐시 토큰을 보고하지 않은 것과 0을 보고한 것은 다른 사실이기 때문입니다.
+보고는 세 출처를 권위 순으로 합친다. 첨부된 세션의 데몬 누적치, 저장된 세션 원본의 `token_usage` 기록, 마지막 실시간 `token_usage` 이벤트다. 어떤 요청도 기록하지 않은 지표는 `0`이 아니라 `null`이다. 제공자가 캐시 토큰을 보고하지 않은 것과 0을 보고한 것은 다른 사실이기 때문이다.
 
-이 빌드에는 계정 구독이 없으므로 데몬은 한도를 알리지 않고 `limits`는 항상 빈 배열입니다. 빈 배열은 "이 계정에 한도가 없다"가 아니라 "이 빌드에 한도 출처가 없다"는 뜻입니다.
+이 빌드에는 계정 구독이 없으므로 데몬은 한도를 알리지 않고 `limits`는 항상 빈 배열이다. 빈 배열은 "이 계정에 한도가 없다"가 아니라 "이 빌드에 한도 출처가 없다"는 뜻이다.
 
-세 SDK는 Rust에서 `usage_report(session_id: Option<&str>)`로 보내며 `UsageReport`를 돌려주고, TypeScript에서는 `usageReport`, Python에서는 `usage_report`입니다.
+세 SDK는 Rust에서 `usage_report(session_id: Option<&str>)`로 보내며 `UsageReport`를 돌려주고, TypeScript에서는 `usageReport`, Python에서는 `usage_report`다.
 
 ### search_sessions
 
-첨부된 세션이 아니라 저장된 모든 세션의 트랜스크립트를 검색합니다. 능력 이름은 `session_search`입니다. 세션 전환기가 붙은 세션만 거르면 "그 대화가 어디 있었더라"에 답할 수 없기 때문에 필요합니다.
+첨부된 세션이 아니라 저장된 모든 세션의 트랜스크립트를 검색한다. 능력 이름은 `session_search`다. 세션 전환기가 붙은 세션만 거르면 "그 대화가 어디 있었더라"에 답할 수 없기 때문에 필요하다.
 
 #### 요청
 
@@ -1032,10 +1042,10 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 | 필드 | 타입 | 필수 | 뜻 |
 | --- | --- | --- | --- |
-| `query` | string | 예 | 검색어. 공백만 있으면 `invalid_request`입니다 |
+| `query` | string | 예 | 검색어. 공백만 있으면 `invalid_request`다 |
 | `limit` | number | 아니요 | 최대 적중 수. 기본 20, 상한 50 |
 
-`query`는 경로·glob·SQL 조각으로 해석하지 않습니다. 문자열 그대로 검색합니다. `limit`이 0이면 빈 결과를 돌려줍니다.
+`query`는 경로·glob·SQL 조각으로 해석하지 않는다. 문자열 그대로 검색한다. `limit`이 0이면 빈 결과를 돌려준다.
 
 #### 응답: `session_search_results`
 
@@ -1051,7 +1061,7 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 | 필드 | 타입 | 뜻 |
 | --- | --- | --- |
-| `query` | string | 요청의 검색어를 그대로 되돌려 줍니다. 검색을 여러 번 보낸 클라이언트가 화면에 남은 답을 구분할 수 있게 하려는 것입니다 |
+| `query` | string | 요청의 검색어를 그대로 되돌려 준다. 검색을 여러 번 보낸 클라이언트가 화면에 남은 답을 구분할 수 있게 하려는 것이다 |
 | `results` | `SessionSearchHit[]` | 적중 목록 |
 
 `SessionSearchHit`:
@@ -1061,18 +1071,18 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 | `session_id` | string | 적중이 속한 저장 세션 |
 | `title` | string, 없을 수 있음 | 그 세션의 표시 제목 |
 | `role` | string | `user`, `assistant`, 또는 제목·세션 수준 적중이면 `metadata` |
-| `preview` | string | 일치 지점 앞뒤를 잘라낸 평문 발췌. 잘린 구간은 `...`로 표시합니다 |
+| `preview` | string | 일치 지점 앞뒤를 잘라낸 평문 발췌. 잘린 구간은 `...`로 표시한다 |
 | `at` | string | 일치한 메시지의 RFC 3339 시각. 메타데이터 적중이면 세션 시각 |
 
 #### 동작
 
-에이전트 자신의 세션 검색과 같은 엔진, 같은 인덱스, 같은 점수를 씁니다. 그래서 에이전트에서 검색한 결과와 클라이언트에서 검색한 결과가 같습니다. 저장 디렉터리가 없으면 빈 결과이고, 엔진이 실패하면 `internal`입니다.
+에이전트 자신의 세션 검색과 같은 엔진, 같은 인덱스, 같은 점수를 쓴다. 그래서 에이전트에서 검색한 결과와 클라이언트에서 검색한 결과가 같다. 저장 디렉터리가 없으면 빈 결과이고, 엔진이 실패하면 `internal`이다.
 
-세 SDK는 Rust에서 `search_sessions(query, limit: Option<u32>)`, TypeScript에서 `searchSessions`, Python에서 `search_sessions`로 보냅니다.
+세 SDK는 Rust에서 `search_sessions(query, limit: Option<u32>)`, TypeScript에서 `searchSessions`, Python에서 `search_sessions`로 보낸다.
 
 ### list_artifacts
 
-대화가 만든 파일, 즉 대화가 실어 온 이미지와 세션이 시작된 뒤 작업 디렉터리에 쓰인 HTML·이미지 파일을 나열합니다. 능력 이름은 `artifacts`입니다.
+대화가 만든 파일, 즉 대화가 실어 온 이미지와 세션이 시작된 뒤 작업 디렉터리에 쓰인 HTML·이미지 파일을 나열한다. 능력 이름은 `artifacts`다.
 
 #### 요청
 
@@ -1082,7 +1092,7 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 | 필드 | 타입 | 필수 | 뜻 |
 | --- | --- | --- | --- |
-| `session_id` | string | 예 | 나열할 세션. 없거나 저장 기록이 없으면 `unknown_session`입니다 |
+| `session_id` | string | 예 | 나열할 세션. 없거나 저장 기록이 없으면 `unknown_session`이다 |
 
 #### 응답: `artifacts`
 
@@ -1105,22 +1115,22 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 | 필드 | 타입 | 뜻 |
 | --- | --- | --- |
-| `path` | string | 세션 작업 디렉터리 기준 상대 경로. `/` 구분자입니다 |
+| `path` | string | 세션 작업 디렉터리 기준 상대 경로. `/` 구분자다 |
 | `kind` | string | `html` 또는 `image` |
 | `bytes` | number | 응답 시점의 파일 크기 |
 | `mtime_ms` | number | 마지막 수정 시각, epoch 밀리초 |
 
 #### 동작
 
-메타데이터만 돌려줍니다. 바이트는 클라이언트가 `read_file`로 따로 읽습니다. 그래서 40MB짜리 HTML 보고서도 후보마다 `stat` 한 번이면 됩니다.
+메타데이터만 돌려준다. 바이트는 클라이언트가 `read_file`로 따로 읽는다. 그래서 40MB짜리 HTML 보고서도 후보마다 `stat` 한 번이면 된다.
 
-목록은 두 경로에서 모읍니다. 트랜스크립트가 지목한 경로와 작업 디렉터리 스캔입니다. 두 경로 모두 세션 루트 밖으로 나가는 경로와 심볼릭 링크를 거부하므로, 트랜스크립트가 `../../.ssh/id_rsa`를 지목해도 목록에 오르지 않습니다. 세션 시작 시각을 기록이 없으면 세션 파일의 수정 시각으로 대신하고, 그보다 오래된 파일은 제외합니다. 결과는 `mtime_ms` 내림차순, 같은 시각이면 경로 오름차순으로 정렬하고 200개에서 자릅니다.
+목록은 두 경로에서 모은다. 트랜스크립트가 지목한 경로와 작업 디렉터리 스캔이다. 두 경로 모두 세션 루트 밖으로 나가는 경로와 심볼릭 링크를 거부하므로, 트랜스크립트가 `../../.ssh/id_rsa`를 지목해도 목록에 오르지 않는다. 세션 시작 시각은 기록이 없으면 세션 파일의 수정 시각으로 대신하고, 그보다 오래된 파일은 제외한다. 결과는 `mtime_ms` 내림차순, 같은 시각이면 경로 오름차순으로 정렬하고 200개에서 자른다.
 
-세 SDK는 Rust에서 `list_artifacts(session_id)`, TypeScript에서 `listArtifacts`, Python에서 `list_artifacts`로 보냅니다.
+세 SDK는 Rust에서 `list_artifacts(session_id)`, TypeScript에서 `listArtifacts`, Python에서 `list_artifacts`로 보낸다.
 
 ### approval_ack
 
-`approval_resolved` 이벤트의 내구 사본을 정리해, 나중에 붙거나 재시작할 때 다시 보내지 않게 합니다. 승인은 ack 전까지 남습니다. 이것은 클라이언트가 보내는 ack이고 서버가 시작하는 표면이 아니므로, 응답은 `ok` 하나이고 그 뒤에 이벤트는 오지 않습니다. 이벤트 어휘의 `approval_ack`은 이 클라이언트 확인 응답에 붙은 이름이고, 데몬은 그 이벤트를 보내지 않습니다.
+`approval_resolved` 이벤트의 내구 사본을 정리해, 나중에 붙거나 재시작할 때 다시 보내지 않게 한다. 승인은 ack 전까지 남는다. 이것은 클라이언트가 보내는 ack이고 서버가 시작하는 표면이 아니므로, 응답은 `ok` 하나이고 그 뒤에 이벤트는 오지 않는다. 이벤트 어휘의 `approval_ack`은 이 클라이언트 확인 응답에 붙은 이름이고, 데몬은 그 이벤트를 보내지 않는다.
 
 #### 요청
 
@@ -1130,10 +1140,10 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 | 필드 | 타입 | 필수 | 뜻 |
 | --- | --- | --- | --- |
-| `session_id` | string | 예 | 승인이 속한 세션. 연결이 그 세션에 붙어 있어야 합니다 |
+| `session_id` | string | 예 | 승인이 속한 세션. 연결이 그 세션에 붙어 있어야 한다 |
 | `request_id` | string | 예 | `approval_resolved` 이벤트의 `request_id` |
 
-브리지가 넘기는 레거시 ack 프레임에는 세션 필드가 없으므로, 붙어 있는 연결에서 `session_id`를 빼거나 비우면 ack은 붙어 있는 세션에 적용됩니다.
+브리지가 넘기는 레거시 ack 프레임에는 세션 필드가 없으므로, 붙어 있는 연결에서 `session_id`를 빼거나 비우면 ack은 붙어 있는 세션에 적용된다.
 
 #### 응답
 
@@ -1143,14 +1153,14 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 #### 동작
 
-- 연결이 세션에 붙어 있어야 합니다. 붙으려 한 적이 없는 연결이나 붙어 있는 세션과 다른 `session_id`를 보낸 연결은 `unknown_session`입니다. 이 검사가 필드 검사보다 먼저이므로, 붙지 않은 연결이 빈 `request_id`를 보내면 `invalid_request`가 아니라 `unknown_session`입니다.
-- `request_id`가 비었거나 없으면 `invalid_request`입니다. 식별자 없는 ack은 아무것도 지우지 않으면서 성공을 보고하기 때문입니다.
-- 이미 레코드가 없는 `request_id`도 `ok`로 답합니다. 러너가 먼저 레코드를 지우고 ack이 늦게 도착할 수 있으므로 늦은 ack은 실패가 아닙니다.
-- 세 SDK는 Rust에서 `ack_approval(session_id, request_id)`로 보내고 `()`를 돌려주며, TypeScript에서는 `ackApproval`, Python에서는 `ack_approval`로 보내 `ok`를 기다린 뒤 보낸 값으로 만든 영수증을 돌려줍니다.
+- 연결이 세션에 붙어 있어야 한다. 붙으려 한 적이 없는 연결이나 붙어 있는 세션과 다른 `session_id`를 보낸 연결은 `unknown_session`이다. 이 검사가 필드 검사보다 먼저이므로, 붙지 않은 연결이 빈 `request_id`를 보내면 `invalid_request`가 아니라 `unknown_session`이다.
+- `request_id`가 비었거나 없으면 `invalid_request`다. 식별자 없는 ack은 아무것도 지우지 않으면서 성공을 보고하기 때문이다.
+- 이미 레코드가 없는 `request_id`도 `ok`로 답한다. 러너가 먼저 레코드를 지우고 ack이 늦게 도착할 수 있으므로 늦은 ack은 실패가 아니다.
+- 세 SDK는 Rust에서 `ack_approval(session_id, request_id)`로 보내고 `()`를 돌려주며, TypeScript에서는 `ackApproval`, Python에서는 `ack_approval`로 보내 `ok`를 기다린 뒤 보낸 값으로 만든 영수증을 돌려준다.
 
 ### failover_ack
 
-`failover_switched` 알림을 그대로 되받아 데몬이 지울 수 있게 합니다. 일부만 보내면 아무것도 지우지 못하거나 다른 전환으로 읽히므로, 알림 키 전체가 함께 갑니다.
+`failover_switched` 알림을 그대로 되받아 데몬이 지울 수 있게 한다. 일부만 보내면 아무것도 지우지 못하거나 다른 전환으로 읽히므로, 알림 키 전체가 함께 간다.
 
 #### 요청
 
@@ -1160,11 +1170,11 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 | 필드 | 타입 | 필수 | 뜻 |
 | --- | --- | --- | --- |
-| `session_id` | string | 예 | 알림이 속한 세션. 연결이 그 세션에 붙어 있어야 합니다 |
-| `chain_id` | string | 예 | 알림이 속한 전환 체인. 비어 있으면 안 됩니다 |
-| `from` | string | 예 | 그 체인이 벗어난 모델. 비어 있으면 안 됩니다 |
-| `to` | string | 예 | 그 체인이 옮겨 간 모델. 비어 있으면 안 됩니다 |
-| `attempt` | number | 예 | 이 전환의 시도 번호. 음이 아닌 정수입니다 |
+| `session_id` | string | 예 | 알림이 속한 세션. 연결이 그 세션에 붙어 있어야 한다 |
+| `chain_id` | string | 예 | 알림이 속한 전환 체인. 비어 있으면 안 된다 |
+| `from` | string | 예 | 그 체인이 벗어난 모델. 비어 있으면 안 된다 |
+| `to` | string | 예 | 그 체인이 옮겨 간 모델. 비어 있으면 안 된다 |
+| `attempt` | number | 예 | 이 전환의 시도 번호. 음이 아닌 정수다 |
 
 #### 응답
 
@@ -1174,15 +1184,15 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 #### 동작
 
-- 연결이 세션에 붙어 있어야 하며, `unknown_session` 응답과 필드 검사보다 앞선 순서는 `approval_ack`과 같습니다.
-- `chain_id`, `from`, `to`가 비었거나 없으면 `invalid_request`입니다. `attempt`가 없거나 음이 아닌 정수가 아니어도 `invalid_request`입니다.
-- 데몬이 그런 알림을 들고 있지 않은 키도 `ok`로 답합니다. 한 부분이라도 다른 키는 아무것도 지우지 않으므로, 클라이언트가 다섯 값을 모두 되돌려 보냅니다.
-- 세 SDK는 Rust에서 `ack_failover(session_id, chain_id, from, to, attempt)`로 보내고 `()`를 돌려주며, TypeScript에서는 `ackFailover`, Python에서는 `ack_failover`로 보내 `ok`를 기다린 뒤 보낸 값으로 만든 영수증을 돌려줍니다. Python 인자 이름은 `from`이 키워드라 `from_`이고, 전선 키는 `from`입니다.
+- 연결이 세션에 붙어 있어야 하며, `unknown_session` 응답과 필드 검사보다 앞선 순서는 `approval_ack`과 같다.
+- `chain_id`, `from`, `to`가 비었거나 없으면 `invalid_request`다. `attempt`가 없거나 음이 아닌 정수가 아니어도 `invalid_request`다.
+- 데몬이 그런 알림을 들고 있지 않은 키도 `ok`로 답한다. 한 부분이라도 다른 키는 아무것도 지우지 않으므로, 클라이언트가 다섯 값을 모두 되돌려 보낸다.
+- 세 SDK는 Rust에서 `ack_failover(session_id, chain_id, from, to, attempt)`로 보내고 `()`를 돌려주며, TypeScript에서는 `ackFailover`, Python에서는 `ack_failover`로 보내 `ok`를 기다린 뒤 보낸 값으로 만든 영수증을 돌려준다. Python 인자 이름은 `from`이 키워드라 `from_`이고, 전선 키는 `from`이다.
 
 ### durable_runtime_v1 · monitor_v1 · snapshot_marker_v1 · ask_receipts_v1
 
-프로토콜 minor 14가 추가한 네 표면입니다. 넷 다 **추가형**이라, 능력을 협상하지 않은 클라이언트는
-이 요청을 보내지도 받지도 않습니다. 기존 클라이언트의 동작은 바뀌지 않습니다.
+프로토콜 minor 14가 추가한 네 표면이다. 넷 다 **추가형**이라, 능력을 협상하지 않은 클라이언트는
+이 요청을 보내지도 받지도 않는다. 기존 클라이언트의 동작은 바뀌지 않는다.
 
 | 능력 | 여는 요청·이벤트 | 무엇을 보장하는가 |
 | --- | --- | --- |
@@ -1193,17 +1203,17 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 
 #### 경계 규칙
 
-- `SnapshotMarker`와 `Snapshot`은 다른 연결로 갈 수 없습니다. 마커를 받은 연결만 스냅샷을 받습니다.
-- 스냅샷 이후의 라이브 이벤트는 관측 소유자가 발급한 `seq`를 싣습니다. 클라이언트는 "N 이후는 새것"을
-  스스로 증명할 수 있고, 순서를 추측하지 않습니다.
-- `apply_control`은 지문을 서버가 만듭니다. 같은 id·같은 지문은 저장된 결과 재생, 같은 id·다른 지문은
-  `conflict`, 동시 applying은 `pending`이며 두 번째 실행은 하지 않습니다. 재시작에서 applying으로
-  남은 것은 `indeterminate`로 봉인하고 다시 실행하지 않습니다.
-- 보존 범위를 벗어난 operation id는 `unknown`입니다. SDK는 그 경우 자동 재시도하지 않습니다.
-- 지원 동작은 `abort_run(expected_run_id)`와 `cancel_inputs(input_ids)` 둘뿐입니다. 모델 변경·파일·셸·
-  임의 명령은 이 표면에 없습니다.
-- 브리지가 광고하지 않는 능력에 걸린 요청은 도달할 수 없습니다. 그래서 네 문자열이 모두
-  `BRIDGE_CAPABILITIES`에 있습니다.
+- `SnapshotMarker`와 `Snapshot`은 다른 연결로 갈 수 없다. 마커를 받은 연결만 스냅샷을 받는다.
+- 스냅샷 이후의 라이브 이벤트는 관측 소유자가 발급한 `seq`를 싣는다. 클라이언트는 "N 이후는 새것"을
+  스스로 증명할 수 있고, 순서를 추측하지 않는다.
+- `apply_control`은 지문을 서버가 만든다. 같은 id·같은 지문은 저장된 결과 재생, 같은 id·다른 지문은
+  `conflict`, 동시 applying은 `pending`이며 두 번째 실행은 하지 않는다. 재시작에서 applying으로
+  남은 것은 `indeterminate`로 봉인하고 다시 실행하지 않는다.
+- 보존 범위를 벗어난 operation id는 `unknown`이다. SDK는 그 경우 자동 재시도하지 않는다.
+- 지원 동작은 `abort_run(expected_run_id)`와 `cancel_inputs(input_ids)` 둘뿐이다. 모델 변경·파일·셸·
+  임의 명령은 이 표면에 없다.
+- 브리지가 광고하지 않는 능력에 걸린 요청은 도달할 수 없다. 그래서 네 문자열이 모두
+  `BRIDGE_CAPABILITIES`에 있다.
 
 ### 근거
 
