@@ -521,6 +521,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Verify Python eval runner
         run: python3 -B -m unittest -v scripts/ci/test_eval_runner.py
@@ -719,8 +720,42 @@ jobs:
         shell: bash
         run: scripts/ci/check_linux_bare_runtime.sh target/${{ matrix.target }}/release/horon-agent
 
+      - name: Compute workspace crate impact
+        id: impact
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          impact_env="$RUNNER_TEMP/workspace-impact.env"
+          python3 scripts/ci/workspace_impact.py \
+            --event "$GITHUB_EVENT_NAME" \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --runner-os "$RUNNER_OS" \
+            --format env > "$impact_env"
+          cat "$impact_env"
+          scoped=$(sed -n 's/^SCOPED=//p' "$impact_env")
+          scoped_csv=$(sed -n 's/^SCOPED_PACKAGES_CSV=//p' "$impact_env")
+          run_pkg_ex=$(sed -n 's/^RUN_PACKAGE_EXAMPLE=//p' "$impact_env")
+          pkg_flags=$(sed -n 's/^PACKAGES_FLAGS=//p' "$impact_env")
+          {
+            echo "scoped=$scoped"
+            echo "scoped_packages_csv=$scoped_csv"
+            echo "run_package_example=$run_pkg_ex"
+            echo "packages_flags=$pkg_flags"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$scoped" = "true" ] && [ -n "$scoped_csv" ]; then
+            echo "HORON_CI_SCOPED_PACKAGES=$scoped_csv" >> "$GITHUB_ENV"
+          fi
+
       - name: Compile library and binary tests
         shell: bash
+        env:
+          IMPACT_SCOPED: ${{ steps.impact.outputs.scoped }}
+          IMPACT_PACKAGES_FLAGS: ${{ steps.impact.outputs.packages_flags }}
         # One call compiles the lib and bin tests of every package the cohorts
         # below use. Selecting a different `-p` set per cohort unifies features
         # differently, so each of those calls recompiled dozens of workspace
@@ -743,6 +778,16 @@ jobs:
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi
+          if [ "${IMPACT_SCOPED:-false}" = "true" ] && [ -n "${IMPACT_PACKAGES_FLAGS:-}" ]; then
+            read -r -a packages <<< "$IMPACT_PACKAGES_FLAGS"
+          fi
+          extra_test_targets=()
+          for token in "${packages[@]}"; do
+            if [ "$token" = "horon-agent" ]; then
+              extra_test_targets+=(--test e2e)
+              break
+            fi
+          done
           # `tests` compiles every integration target of those packages, not
           # just `e2e`: sixteen session-store contracts, nine SDK contracts and
           # the app-core and base targets. Each was built and started by no
@@ -752,7 +797,7 @@ jobs:
           # allowlists.
           python3 .github/scripts/run_with_timeout.py 1800 \
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            "${packages[@]}" --lib --bins --tests --test e2e --no-run \
+            "${packages[@]}" --lib --bins --tests ${extra_test_targets[@]+"${extra_test_targets[@]}"} --no-run \
             --message-format=json-render-diagnostics \
             > "$TEST_ARTIFACTS"
 
@@ -815,7 +860,7 @@ jobs:
             --package horon-agent-token-estimate --min-passed 16 --timeout 600
 
       - name: Prepare a reflink filesystem for clone isolation (Linux)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && (steps.impact.outputs.scoped != 'true' || contains(format(',{0},', steps.impact.outputs.scoped_packages_csv), ',horon-agent-base,')) }}
         shell: bash
         # `git_clone_isolation` copies a repository with `cp -a --reflink=always`
         # and refuses when the filesystem cannot reflink. The hosted runner's
@@ -1218,14 +1263,14 @@ jobs:
             -- irc --nocapture
 
       - name: Cache MiniLM embedding model (Linux only)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && (steps.impact.outputs.scoped != 'true' || contains(format(',{0},', steps.impact.outputs.scoped_packages_csv), ',horon-agent-embedding,')) }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.horon/models/all-MiniLM-L6-v2
           key: minilm-l6-v2-${{ runner.os }}-v1
 
       - name: Run embedding numeric-stability cohort (Linux only)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && (steps.impact.outputs.scoped != 'true' || contains(format(',{0},', steps.impact.outputs.scoped_packages_csv), ',horon-agent-embedding,')) }}
         shell: bash
         # `minilm_embedding_is_numerically_stable_across_inference_engines` pins
         # the model's actual output, which is the only thing that can catch an
@@ -1324,14 +1369,14 @@ jobs:
             -- tool::bash::tests::test_stdin_forwarding --nocapture
 
       - name: Cache direnv binary (Linux only)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && (steps.impact.outputs.scoped != 'true' || contains(format(',{0},', steps.impact.outputs.scoped_packages_csv), ',horon-agent-app-core,')) }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/horon-direnv-v2.38.2
           key: direnv-linux-amd64-v2.38.2-148820a187930d36
 
       - name: Run approved direnv shell cohort
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && (steps.impact.outputs.scoped != 'true' || contains(format(',{0},', steps.impact.outputs.scoped_packages_csv), ',horon-agent-app-core,')) }}
         shell: bash
         run: |
           bin_dir="$HOME/.cache/horon-direnv-v2.38.2"
@@ -2388,6 +2433,7 @@ jobs:
             --min-passed 11 --timeout 900
 
       - name: Run the package example in both installed layouts
+        if: ${{ steps.impact.outputs.scoped != 'true' || steps.impact.outputs.run_package_example == 'true' }}
         shell: bash
         # The example package is the artifact an author ships: the test starts
         # the built binary under the standalone extension layout and under the
