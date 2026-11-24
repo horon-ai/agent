@@ -27,3 +27,5 @@ use anyhow::Result;
 pub async fn run() -> Result<()> {
     cli::startup::run().await
 }
+
+// dry-run: Wave 5 scoped horon-agent PR 20-cycle soak + structural-perf unified compile
