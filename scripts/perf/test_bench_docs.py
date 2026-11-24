@@ -788,5 +788,51 @@ class AllCompetitorGuardAndSummary(unittest.TestCase):
                 self.assertEqual(doc.read_text(encoding="utf-8"), original)
 
 
+class CommittedBenchmarkDocsTests(unittest.TestCase):
+    """Checked-in summary, versions and summary charts must cover all 3 OSes and 8 tools."""
+
+    REPO = SCRIPTS.parents[1]
+    TOOL_LABELS = ("horon", "jcode", "Claude Code", "Codex CLI", "OpenCode", "pi",
+                   "oh-my-pi (omp)", "oh-my-openagent (omo)")
+
+    @staticmethod
+    def _between(text: str, start: str, end: str) -> str:
+        return text.split(start, 1)[1].split(end, 1)[0]
+
+    def test_readme_summaries_cover_all_three_oses_and_eight_tools(self) -> None:
+        for name in ("README.md", "README.ko.md"):
+            with self.subTest(doc=name):
+                text = (self.REPO / name).read_text(encoding="utf-8")
+                block = self._between(text, bench_docs.SUMMARY_START, bench_docs.SUMMARY_END)
+                for os_heading in ("| Linux (`", "| macOS (`", "| Windows (`"):
+                    self.assertIn(os_heading, block)
+                for label in self.TOOL_LABELS:
+                    self.assertIn(label, block)
+                self.assertNotIn("horon-base", block)
+                self.assertNotIn("| — | — | — |", block)
+                self.assertIn("actions/runs/", block)
+
+    def test_results_versions_and_summary_charts_cover_all_eight_tools(self) -> None:
+        for name, missing_marker in (("docs/performance/RESULTS.md", "not recorded"),
+                                     ("docs/performance/RESULTS.ko.md", "기록 없음")):
+            with self.subTest(doc=name):
+                text = (self.REPO / name).read_text(encoding="utf-8")
+                versions = self._between(text, bench_docs.VERSIONS_START, bench_docs.VERSIONS_END)
+                for label in self.TOOL_LABELS:
+                    self.assertIn(f"| {label} |", versions)
+                self.assertNotIn("horon-base", versions)
+                for os_row in ("| Linux | `v", "| macOS | `v", "| Windows | `v"):
+                    self.assertIn(os_row, versions)
+                self.assertNotIn(missing_marker, versions)
+
+        charts_dir = self.REPO / "docs" / "performance" / "charts"
+        en_svg = (charts_dir / "00-summary.svg").read_text(encoding="utf-8")
+        ko_svg = (charts_dir / "00-summary.ko.svg").read_text(encoding="utf-8")
+        self.assertIn("horon against 7 tools", en_svg)
+        self.assertIn("horon 대 도구 7개", ko_svg)
+        self.assertNotIn("not measured", en_svg.replace("not measured", "", 2))
+        self.assertNotIn("측정 불가", ko_svg.replace("측정 불가", "", 2))
+
+
 if __name__ == "__main__":
     unittest.main()

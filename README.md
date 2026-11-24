@@ -240,28 +240,40 @@ Crate boundaries and platform adapters are in [docs/architecture/CRATES.md](docs
 
 `.github/workflows/benchmark-docs.yml` rewrites this summary from the run's own `compare.json`; the version label is the binary each runner installed, not a hand-written constant.
 
-Measured commit `6444aa1f06be3394ab97583a9555c9cecfaa989a`, 2026-11-24 19:30 UTC. Each OS runs on a different machine, so compare inside a row.
-jcode v1.1.2 (release `v1.1.2`, commit `4f874c9ea6b7c3e228045fa8269e4d84bec66a6b`).
+Measured commit `8aa9a859ea48859adc7f41bc740c7dbae57a2b60`, 2026-11-24 20:45 UTC. Each OS runs on a different machine, so compare inside a row.
+jcode v1.0.3 (release `v1.0.3`, commit `a0ae514c45451f12d5633ed4fa7c71614a9f4a42`).
 
-| Linux (`ubuntu-24.04`) | horon | jcode |
-| --- | --- | --- |
-| One-shot prompt time | 42.1 ms | 137.4 ms |
-| Skill invocation time | 40.1 ms | 43.0 ms |
-| MCP tool call time | 58.8 ms | 147.2 ms |
-| One-shot prompt memory | 45.0 MB | 54.3 MB |
-| Memory per additional session | 574.5 KB | 166.7 KB |
-| Install size | 131.0 MB | 154.3 MB |
-| First model request, body / tool catalog bytes | 3,746 / 2,358 | 2,935 / 1,100 |
+| Linux (`ubuntu-24.04`) | horon | jcode | Claude Code | Codex CLI | OpenCode | pi | oh-my-pi (omp) | oh-my-openagent (omo) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| One-shot prompt time | 44.7 ms | 148.1 ms | 469.1 ms | 503.6 ms | 3.13 s | 420.9 ms | 2.19 s | 6.11 s |
+| Skill invocation time | 38.4 ms | 55.4 ms | 463.8 ms | 613.9 ms | 3.47 s | 544.6 ms | 2.02 s | 6.89 s |
+| MCP tool call time | 64.6 ms | 158.9 ms | 562.2 ms | 532.4 ms | 3.15 s | 601.2 ms | 2.13 s | 6.89 s |
+| One-shot prompt memory | 45.1 MB | 49.9 MB | 217.0 MB | 199.7 MB | 604.6 MB | 119.9 MB | 417.6 MB | 716.5 MB |
+| Memory per additional session | 557.9 KB | 209.7 KB | 190.0 MB | 171.8 MB | 4.8 MB | 134.2 MB | 378.2 MB | 600.6 MB |
+| Install size | 130.9 MB | 154.2 MB | 662.9 MB | 456.2 MB | 643.2 MB | 114.3 MB | 434.2 MB | 545.5 MB |
+| First model request, body / tool catalog bytes | 3,699 / 2,358 | 2,888 / 1,100 | 45,782 / 29,653 | 39,432 / 17,271 | 2,659 / 0 | 5,502 / 2,841 | 29,860 / 18,533 | 27,452 / 2,424 |
 
-| macOS (`macos-latest`) | horon | jcode |
-| --- | --- | --- |
-| — | — | — |
+| macOS (`macos-latest`) | horon | jcode | Claude Code | Codex CLI | OpenCode | pi | oh-my-pi (omp) | oh-my-openagent (omo) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| One-shot prompt time | 89.1 ms | 386.9 ms | 500.9 ms | 877.5 ms | 3.32 s | 467.5 ms | 1.88 s | 9.31 s |
+| Skill invocation time | 72.3 ms | 326.6 ms | 607.0 ms | 703.6 ms | 4.88 s | 666.2 ms | 1.97 s | 9.84 s |
+| MCP tool call time | 95.7 ms | 379.6 ms | 591.6 ms | 737.7 ms | 3.66 s | 611.1 ms | 1.94 s | 9.79 s |
+| One-shot prompt memory | 33.7 MB | 37.7 MB | 208.1 MB | 136.0 MB | 759.4 MB | 128.7 MB | 441.4 MB | 922.6 MB |
+| Memory per additional session | 473.5 KB | 358.2 KB | 190.2 MB | 112.8 MB | 15.3 MB | 154.8 MB | 339.4 MB | 359.9 MB |
+| Install size | 110.1 MB | 162.5 MB | 625.8 MB | 363.4 MB | 361.4 MB | 114.3 MB | 287.8 MB | 526.2 MB |
+| First model request, body / tool catalog bytes | 3,587 / 2,358 | 2,776 / 1,100 | 45,798 / 29,653 | 39,453 / 17,271 | 2,659 / 0 | 5,513 / 2,841 | 29,853 / 18,533 | 27,493 / 2,424 |
 
-| Windows (`windows-latest`) | horon | jcode |
-| --- | --- | --- |
-| — | — | — |
+| Windows (`windows-latest`) | horon | jcode | Claude Code | Codex CLI | OpenCode | pi | oh-my-pi (omp) | oh-my-openagent (omo) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| One-shot prompt time | 185.3 ms | 179.8 ms | 1.52 s | 1.61 s | 5.74 s | 554.1 ms | 3.23 s | 19.71 s |
+| Skill invocation time | 183.9 ms | 208.4 ms | 1.21 s | 2.14 s | 8.76 s | 712.4 ms | 8.38 s | 20.92 s |
+| MCP tool call time | 226.9 ms | 321.3 ms | 1.26 s | 1.83 s | 8.27 s | 778.3 ms | 3.41 s | 22.92 s |
+| One-shot prompt memory | 36.5 MB | 33.8 MB | 290.0 MB | 372.7 MB | 951.7 MB | 126.2 MB | 445.1 MB | 574.2 MB |
+| Memory per additional session | 624.8 KB | 263.0 KB | 200.8 MB | 123.7 MB | 6.0 MB | 106.2 MB | 358.7 MB | 424.3 MB |
+| Install size | 112.3 MB | 154.3 MB | 676.6 MB | 502.7 MB | 634.7 MB | 114.3 MB | 306.9 MB | 539.4 MB |
+| First model request, body / tool catalog bytes | 3,654 / 2,358 | 2,878 / 1,111 | 50,067 / 33,795 | 41,028 / 18,342 | 2,659 / 0 | 5,522 / 2,841 | 29,889 / 18,533 | 28,693 / 2,424 |
 
-[Run](https://github.com/horon-ai/agent/actions/runs/45467871587)
+[Run](https://github.com/horon-ai/agent/actions/runs/45481956833)
 
 <!-- bench-summary:end -->
 
