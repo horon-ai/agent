@@ -42,6 +42,12 @@ impl Terminal {
     }
 }
 
+struct PendingPrompt {
+    command_id: Option<Value>,
+    text: String,
+    images: Vec<(String, String)>,
+}
+
 pub(super) struct Adapter {
     pub(super) daemon: Daemon,
     pub(super) foreground: tokio::sync::mpsc::UnboundedReceiver<ServerEvent>,
@@ -51,6 +57,8 @@ pub(super) struct Adapter {
     pub(super) a2ui_negotiated: bool,
     pub(super) a2ui_capabilities: Option<command::A2uiCapabilities>,
     pub(super) recorded_turn_messages: Vec<Value>,
+    pending_abort_prompt: Option<PendingPrompt>,
+    expecting_stale_interrupt_before_ack: bool,
     message_seq: u64,
     /// Commands read from stdin. A separate task owns stdin because a read
     /// cancelled by `select!` would lose the bytes it had already consumed.
@@ -80,6 +88,7 @@ pub(super) struct Start<'a> {
     pub(super) provider_profile: Option<&'a str>,
     pub(super) cwd: Option<&'a std::path::Path>,
     pub(super) resume: Option<&'a str>,
+    pub(super) plan_mode: bool,
     pub(super) connector: Option<link::Connector>,
     pub(super) out: Box<dyn AsyncWrite + Unpin + Send>,
     pub(super) input: Input,
@@ -95,7 +104,8 @@ pub(super) async fn run(start: Start<'_>) -> Result<()> {
         start.connector,
     )
     .await?;
-    let state = SessionState::from_history(&history, start.model);
+    let mut state = SessionState::from_history(&history, start.model);
+    state.plan_mode = start.plan_mode;
     let commands = spawn_reader(start.input);
     let mut adapter = Adapter {
         daemon,
@@ -106,6 +116,8 @@ pub(super) async fn run(start: Start<'_>) -> Result<()> {
         a2ui_negotiated: false,
         a2ui_capabilities: None,
         recorded_turn_messages: Vec::new(),
+        pending_abort_prompt: None,
+        expecting_stale_interrupt_before_ack: false,
         message_seq: 0,
         commands,
     };
@@ -367,33 +379,52 @@ impl Adapter {
     }
 
     async fn execute_turn(&mut self, command_id: Option<Value>, prompt_text: &str, request: Request) -> Result<()> {
-        let request_id = request.id();
-        let mut turn = Turn::new(
-            self.state.provider.clone(),
-            self.state.model.clone(),
-            self.message_seq,
-            self.a2ui_negotiated,
-        );
-        self.out.send_all(turn.begin(prompt_text)).await?;
-        self.prompt_in_flight = true;
+        let mut next = Some((command_id, prompt_text.to_string(), request));
+        while let Some((command_id, prompt_text, request)) = next.take() {
+            let request_id = request.id();
+            let mut turn = Turn::new(
+                self.state.provider.clone(),
+                self.state.model.clone(),
+                self.message_seq,
+                self.a2ui_negotiated,
+            );
+            self.out.send_all(turn.begin(&prompt_text)).await?;
+            self.prompt_in_flight = true;
+            let mut cancel_requested = false;
 
-        let terminal = match self.daemon.send(&request).await {
-            Ok(()) => self.drive_turn(&mut turn, request_id).await?,
-            Err(error) => {
-                crate::logging::warn(&format!("rpc: prompt write failed: {error}"));
-                Terminal::Failed
+            let terminal = match self.daemon.send(&request).await {
+                Ok(()) => self.drive_turn(&mut turn, request_id, &mut cancel_requested).await?,
+                Err(error) => {
+                    crate::logging::warn(&format!("rpc: prompt write failed: {error}"));
+                    self.pending_abort_prompt = None;
+                    Terminal::Failed
+                }
+            };
+            self.prompt_in_flight = false;
+            self.message_seq = turn.message_seq();
+            self.out.send_all(turn.finish()).await?;
+            if self.a2ui_negotiated {
+                self.recorded_turn_messages.extend(turn.messages().iter().cloned());
             }
-        };
-        self.prompt_in_flight = false;
-        self.message_seq = turn.message_seq();
-        self.out.send_all(turn.finish()).await?;
-        if self.a2ui_negotiated {
-            self.recorded_turn_messages.extend(turn.messages().iter().cloned());
+            self.out
+                .send(&frame::prompt_result(command_id.as_ref(), terminal.status(), true))
+                .await?;
+            self.out.send(&frame::session_settled()).await?;
+
+            self.expecting_stale_interrupt_before_ack = cancel_requested && terminal != Terminal::Aborted;
+            if let Some(pending) = self.pending_abort_prompt.take() {
+                let request = Request::Message {
+                    id: self.daemon.next_id(),
+                    content: pending.text.clone(),
+                    images: pending.images,
+                    system_reminder: None,
+                    active_skill: None,
+                    no_reply: false,
+                    expected_run_id: None,
+                };
+                next = Some((pending.command_id, pending.text, request));
+            }
         }
-        self.out
-            .send(&frame::prompt_result(command_id.as_ref(), terminal.status(), true))
-            .await?;
-        self.out.send(&frame::session_settled()).await?;
         Ok(())
     }
 
@@ -520,7 +551,12 @@ impl Adapter {
 
     /// Forward events until the turn's terminal arrives, handling the commands a
     /// host sends while a turn runs.
-    async fn drive_turn(&mut self, turn: &mut Turn, request_id: u64) -> Result<Terminal> {
+    async fn drive_turn(
+        &mut self,
+        turn: &mut Turn,
+        request_id: u64,
+        cancel_requested: &mut bool,
+    ) -> Result<Terminal> {
         loop {
             // The select borrows two fields for as long as its futures live, so
             // it yields a value and every use of `self` happens afterwards.
@@ -532,25 +568,45 @@ impl Adapter {
                 // The daemon connection ended mid-turn, so no terminal arrives.
                 Next::Event(boxed) => match *boxed {
                     Some(event) => {
+                        if self.expecting_stale_interrupt_before_ack {
+                            if matches!(&event, ServerEvent::Ack { id } if *id == request_id)
+                                || matches!(
+                                    &event,
+                                    ServerEvent::TextDelta { .. }
+                                        | ServerEvent::ReasoningDelta { .. }
+                                        | ServerEvent::ToolStart { .. }
+                                )
+                            {
+                                self.expecting_stale_interrupt_before_ack = false;
+                            } else if matches!(&event, ServerEvent::Interrupted) {
+                                self.expecting_stale_interrupt_before_ack = false;
+                                continue;
+                            }
+                        }
                         let terminal = self.classify(&event, request_id);
                         self.out.send_all(turn.event(event)).await?;
                         if let Some(terminal) = terminal {
                             return Ok(terminal);
                         }
                     }
-                    None => return Ok(Terminal::Failed),
+                    None => {
+                        self.pending_abort_prompt = None;
+                        return Ok(Terminal::Failed);
+                    }
                 },
                 Next::Inbound(Some(Inbound::Line(buffer))) => {
                     let text = String::from_utf8_lossy(&buffer);
                     let Some(command) = command::parse(&text) else {
                         continue;
                     };
-                    self.in_turn_command(turn, &command).await?;
+                    self.in_turn_command(turn, &command, cancel_requested).await?;
                 }
                 Next::Inbound(Some(Inbound::Failed(error))) => {
+                    self.pending_abort_prompt = None;
                     anyhow::bail!("stdin read failed: {error}");
                 }
                 Next::Inbound(Some(Inbound::Eof)) | Next::Inbound(None) => {
+                    self.pending_abort_prompt = None;
                     return Ok(Terminal::Aborted);
                 }
             }
@@ -559,9 +615,16 @@ impl Adapter {
 
     /// A command that arrived while the turn was running. The turn itself ends
     /// only on a daemon event, so nothing here returns a terminal.
-    async fn in_turn_command(&mut self, turn: &mut Turn, command: &Command) -> Result<()> {
+    async fn in_turn_command(
+        &mut self,
+        turn: &mut Turn,
+        command: &Command,
+        cancel_requested: &mut bool,
+    ) -> Result<()> {
         match &command.kind {
             Kind::Abort => {
+                self.pending_abort_prompt = None;
+                *cancel_requested = true;
                 self.ok(command, None).await?;
                 self.daemon
                     .send(&Request::Cancel {
@@ -570,19 +633,31 @@ impl Adapter {
                     .await?;
                 Ok(())
             }
-            Kind::Steer | Kind::FollowUp | Kind::AbortAndPrompt => {
+            Kind::AbortAndPrompt => {
                 let Some(text) = command.message() else {
                     self.fail(command, "message required", Some("invalid_request")).await?;
                     return Ok(());
                 };
                 self.ok(command, None).await?;
-                if matches!(command.kind, Kind::AbortAndPrompt) {
-                    self.daemon
-                        .send(&Request::Cancel {
-                            id: self.daemon.next_id(),
-                        })
-                        .await?;
-                }
+                self.pending_abort_prompt = Some(PendingPrompt {
+                    command_id: command.id.clone(),
+                    text: text.to_string(),
+                    images: command.images(),
+                });
+                *cancel_requested = true;
+                self.daemon
+                    .send(&Request::Cancel {
+                        id: self.daemon.next_id(),
+                    })
+                    .await?;
+                Ok(())
+            }
+            Kind::Steer | Kind::FollowUp => {
+                let Some(text) = command.message() else {
+                    self.fail(command, "message required", Some("invalid_request")).await?;
+                    return Ok(());
+                };
+                self.ok(command, None).await?;
                 let interrupt = Request::SoftInterrupt {
                     id: self.daemon.next_id(),
                     content: text.to_string(),

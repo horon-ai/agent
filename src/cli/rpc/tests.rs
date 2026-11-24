@@ -57,6 +57,10 @@ fn scripted_daemon() -> (link::Connector, mpsc::UnboundedReceiver<FakeDaemon>) {
 }
 
 fn start_host(connector: link::Connector) -> Host {
+    start_host_with_plan(connector, false)
+}
+
+fn start_host_with_plan(connector: link::Connector, plan_mode: bool) -> Host {
     let (output_writer, output_reader) = tokio::io::duplex(1 << 20);
     let (input_writer, input_reader) = tokio::io::duplex(1 << 20);
     let provider = ProviderChoice::Auto;
@@ -68,6 +72,7 @@ fn start_host(connector: link::Connector) -> Host {
             provider_profile: None,
             cwd: None,
             resume: None,
+            plan_mode,
             connector: Some(connector),
             out: Box::new(output_writer),
             input,
@@ -439,5 +444,336 @@ async fn available_models_projects_the_catalog() {
     assert_eq!(models[0]["provider"], "test-provider");
     assert_eq!(models[0]["api"], "openai-completions");
     assert_eq!(models[0]["contextWindow"], 200000);
+    host.close().await;
+}
+
+#[tokio::test]
+async fn startup_and_state_requests_skip_daemon_ack_before_settlement() {
+    let (connector, mut daemons) = scripted_daemon();
+    let mut host = start_host(connector);
+    let mut daemon = daemons.recv().await.expect("a daemon connection");
+
+    // Simulate real daemon ordering: Ack precedes History on get_history.
+    let subscribe = daemon.recv_type("subscribe").await;
+    daemon.send(json!({"type": "ack", "id": subscribe["id"]})).await;
+    let history = daemon.recv_type("get_history").await;
+    let history_id = history["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": history_id})).await;
+    daemon.send(history_frame(history_id)).await;
+    host.handshake().await;
+
+    // get_messages -> ack then history
+    host.send(json!({"id": "msg1", "type": "get_messages"})).await;
+    let req = daemon.recv_type("get_history").await;
+    let id = req["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": id})).await;
+    daemon.send(history_frame(id)).await;
+    let (_, resp) = host.response(json!("msg1")).await;
+    assert_eq!(resp["success"], true, "{resp}");
+    assert_eq!(resp["data"]["totalMessages"], 0);
+
+    // get_available_models -> ack then history
+    host.send(json!({"id": "mod1", "type": "get_available_models"})).await;
+    let req = daemon.recv_type("get_model_catalog").await;
+    let id = req["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": id})).await;
+    daemon.send(history_frame(id)).await;
+    let (_, resp) = host.response(json!("mod1")).await;
+    assert_eq!(resp["success"], true, "{resp}");
+
+    // set_model -> ack then model_changed
+    host.send(json!({"id": "sm1", "type": "set_model", "modelId": "other-model"}))
+        .await;
+    let req = daemon.recv_type("set_model").await;
+    let id = req["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": id})).await;
+    daemon
+        .send(json!({"type": "model_changed", "id": id, "model": "other-model"}))
+        .await;
+    let (_, resp) = host.response(json!("sm1")).await;
+    assert_eq!(resp["success"], true, "{resp}");
+    assert_eq!(resp["data"]["id"], "other-model");
+
+    // set_thinking_level -> ack then reasoning_effort_changed
+    host.send(json!({"id": "st1", "type": "set_thinking_level", "level": "high"}))
+        .await;
+    let req = daemon.recv_type("set_reasoning_effort").await;
+    let id = req["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": id})).await;
+    daemon
+        .send(json!({"type": "reasoning_effort_changed", "id": id, "effort": "high"}))
+        .await;
+    let (_, resp) = host.response(json!("st1")).await;
+    assert_eq!(resp["success"], true, "{resp}");
+
+    // set_session_name -> ack then done
+    host.send(json!({"id": "sn1", "type": "set_session_name", "name": "renamed"}))
+        .await;
+    let req = daemon.recv_type("rename_session").await;
+    let id = req["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": id})).await;
+    daemon.send(json!({"type": "done", "id": id})).await;
+    let (_, resp) = host.response(json!("sn1")).await;
+    assert_eq!(resp["success"], true, "{resp}");
+
+    // compact -> ack then compact_result
+    host.send(json!({"id": "c1", "type": "compact"})).await;
+    let req = daemon.recv_type("compact").await;
+    let id = req["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": id})).await;
+    daemon
+        .send(json!({"type": "compact_result", "id": id, "success": true, "message": "ok"}))
+        .await;
+    let (_, resp) = host.response(json!("c1")).await;
+    assert_eq!(resp["success"], true, "{resp}");
+    assert_eq!(resp["data"]["summary"], "ok");
+
+    host.close().await;
+}
+
+struct EnvRestore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+impl EnvRestore {
+    fn capture(keys: &[&'static str]) -> Self {
+        Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        for (k, v) in &self.0 {
+            match v {
+                Some(val) => crate::env::set_var(k, val),
+                None => crate::env::remove_var(k),
+            }
+        }
+        crate::config::invalidate_config_cache();
+    }
+}
+
+#[tokio::test]
+async fn bash_command_enforces_policy_gates() {
+    let _env_lock = crate::storage::lock_test_env();
+    let _restore = EnvRestore::capture(&[
+        "HORON_HOME",
+        "HORON_AGENT_TOOL_PROFILE",
+        "HORON_AGENT_DISABLED_TOOLS",
+        "HORON_AGENT_DISABLE_BASE_TOOLS",
+    ]);
+    let home = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    crate::env::set_var("HORON_HOME", home.path());
+    crate::env::remove_var("HORON_AGENT_TOOL_PROFILE");
+    crate::env::remove_var("HORON_AGENT_DISABLED_TOOLS");
+    crate::env::remove_var("HORON_AGENT_DISABLE_BASE_TOOLS");
+
+    let run_rpc_bash = |plan: bool, cmd: String| async move {
+        let (connector, mut daemons) = scripted_daemon();
+        let mut host = start_host_with_plan(connector, plan);
+        let mut daemon = daemons.recv().await.expect("a daemon connection");
+        daemon.handshake().await;
+        host.handshake().await;
+        host.send(json!({"id": "b1", "type": "bash", "command": cmd})).await;
+        let (_, resp) = host.response(json!("b1")).await;
+        host.close().await;
+        resp
+    };
+
+    // 1. tool_profile=none blocks bash without touching disk
+    let blocked_file = scratch.path().join("blocked_profile.txt");
+    crate::env::set_var("HORON_AGENT_TOOL_PROFILE", "none");
+    crate::config::invalidate_config_cache();
+    let resp = run_rpc_bash(false, format!("touch '{}'", blocked_file.display())).await;
+    assert_eq!(resp["success"], false, "{resp}");
+    assert_eq!(resp["code"], "bash_failed");
+    assert!(!blocked_file.exists());
+    crate::env::remove_var("HORON_AGENT_TOOL_PROFILE");
+
+    // 2. disabled_tools=bash blocks bash
+    crate::env::set_var("HORON_AGENT_DISABLED_TOOLS", "bash");
+    crate::config::invalidate_config_cache();
+    let resp = run_rpc_bash(false, format!("touch '{}'", blocked_file.display())).await;
+    assert_eq!(resp["success"], false, "{resp}");
+    assert!(!blocked_file.exists());
+    crate::env::remove_var("HORON_AGENT_DISABLED_TOOLS");
+
+    // 3. plan_mode blocks bash
+    crate::config::invalidate_config_cache();
+    let resp = run_rpc_bash(true, format!("touch '{}'", blocked_file.display())).await;
+    assert_eq!(resp["success"], false, "{resp}");
+    assert!(!blocked_file.exists());
+
+    // 4. approval_mode=write blocks non-interactive RPC bash
+    std::fs::write(home.path().join("config.toml"), "[tools]\napproval_mode = \"write\"\n").unwrap();
+    crate::config::invalidate_config_cache();
+    let resp = run_rpc_bash(false, "printf blocked".to_string()).await;
+    assert_eq!(resp["success"], false, "{resp}");
+    assert!(resp["error"].as_str().unwrap_or("").contains("needs approval"), "{resp}");
+
+    // 5. yolo allows safe bash, blocks destructive commands
+    std::fs::write(home.path().join("config.toml"), "[tools]\napproval_mode = \"yolo\"\n").unwrap();
+    crate::config::invalidate_config_cache();
+    let resp = run_rpc_bash(false, "rm -rf /etc".to_string()).await;
+    assert_eq!(resp["success"], false, "{resp}");
+
+    let resp = run_rpc_bash(false, "printf rpc-ok".to_string()).await;
+    assert_eq!(resp["success"], true, "{resp}");
+    assert_eq!(resp["data"]["output"], "rpc-ok");
+}
+
+#[tokio::test]
+async fn abort_and_prompt_cancels_first_settles_aborted_then_starts_fresh_turn() {
+    let (connector, mut daemons) = scripted_daemon();
+    let mut host = start_host(connector);
+    let mut daemon = daemons.recv().await.expect("a daemon connection");
+    daemon.handshake().await;
+    host.handshake().await;
+
+    host.send(json!({"id": "p1", "type": "prompt", "message": "first"}))
+        .await;
+    let first = daemon.recv_type("message").await;
+    assert_eq!(first["content"], "first");
+    let first_id = first["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": first_id})).await;
+    daemon.send(json!({"type": "text_delta", "text": "partial"})).await;
+
+    host.send(json!({"id": "ap1", "type": "abort_and_prompt", "message": "second"}))
+        .await;
+    let (_, ap_resp) = host.response(json!("ap1")).await;
+    assert_eq!(ap_resp["success"], true, "{ap_resp}");
+
+    // Must send ONLY cancel (never concurrent soft_interrupt) while first turn runs.
+    let cancel = daemon.recv().await;
+    assert_eq!(cancel["type"], "cancel", "unexpected daemon request: {cancel}");
+    daemon.send(json!({"type": "ack", "id": cancel["id"]})).await;
+    daemon.send(json!({"type": "interrupted"})).await;
+    daemon.send(json!({"type": "done", "id": first_id})).await;
+
+    // First turn must settle aborted before second prompt is dispatched.
+    let mut turn1_frames: Vec<Value> = Vec::new();
+    while turn1_frames.last().map(|f| f["type"].as_str()) != Some(Some("session_settled")) {
+        turn1_frames.push(host.recv().await);
+    }
+    let prompt_res_1 = turn1_frames
+        .iter()
+        .find(|f| f["type"] == "prompt_result")
+        .expect("turn 1 prompt_result");
+    assert_eq!(prompt_res_1["id"], "p1");
+    assert_eq!(prompt_res_1["status"], "aborted");
+
+    let second = daemon.recv_type("message").await;
+    assert_eq!(second["content"], "second");
+    let second_id = second["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": second_id})).await;
+    daemon.send(json!({"type": "text_delta", "text": "replacement"}))
+        .await;
+    daemon.send(json!({"type": "text_done"})).await;
+    daemon.send(json!({"type": "message_end"})).await;
+    daemon.send(json!({"type": "done", "id": second_id})).await;
+
+    let mut turn2_frames: Vec<Value> = Vec::new();
+    while turn2_frames.last().map(|f| f["type"].as_str()) != Some(Some("session_settled")) {
+        turn2_frames.push(host.recv().await);
+    }
+    let prompt_res_2 = turn2_frames
+        .iter()
+        .find(|f| f["type"] == "prompt_result")
+        .expect("turn 2 prompt_result");
+    assert_eq!(prompt_res_2["id"], "ap1");
+    assert_eq!(prompt_res_2["status"], "completed");
+
+    host.close().await;
+}
+
+#[tokio::test]
+async fn abort_after_abort_and_prompt_discards_replacement_and_completed_race_ignores_stale_interrupt() {
+    // 1. Explicit abort clears queued abort_and_prompt replacement
+    let (connector, mut daemons) = scripted_daemon();
+    let mut host = start_host(connector);
+    let mut daemon = daemons.recv().await.expect("a daemon connection");
+    daemon.handshake().await;
+    host.handshake().await;
+
+    host.send(json!({"id": "p1", "type": "prompt", "message": "first"}))
+        .await;
+    let first = daemon.recv_type("message").await;
+    let first_id = first["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": first_id})).await;
+
+    host.send(json!({"id": "ap1", "type": "abort_and_prompt", "message": "second"}))
+        .await;
+    let (_, _) = host.response(json!("ap1")).await;
+    let _ = daemon.recv_type("cancel").await;
+
+    host.send(json!({"id": "a1", "type": "abort"})).await;
+    let (_, a_resp) = host.response(json!("a1")).await;
+    assert_eq!(a_resp["success"], true);
+    let _ = daemon.recv_type("cancel").await;
+
+    daemon.send(json!({"type": "interrupted"})).await;
+    let mut frames: Vec<Value> = Vec::new();
+    while frames.last().map(|f| f["type"].as_str()) != Some(Some("session_settled")) {
+        frames.push(host.recv().await);
+    }
+    host.send(json!({"id": "g1", "type": "get_state"})).await;
+    let (_, g_resp) = host.response(json!("g1")).await;
+    assert_eq!(g_resp["data"]["isStreaming"], false);
+    host.close().await;
+
+    // 2. First turn completes just before cancel hits idle daemon -> stale interrupted ignored in turn 2
+    let (connector, mut daemons) = scripted_daemon();
+    let mut host = start_host(connector);
+    let mut daemon = daemons.recv().await.expect("a daemon connection");
+    daemon.handshake().await;
+    host.handshake().await;
+
+    host.send(json!({"id": "p1", "type": "prompt", "message": "first"}))
+        .await;
+    let first = daemon.recv_type("message").await;
+    let first_id = first["id"].as_u64().unwrap();
+    daemon.send(json!({"type": "ack", "id": first_id})).await;
+
+    host.send(json!({"id": "ap1", "type": "abort_and_prompt", "message": "second"}))
+        .await;
+    let (_, _) = host.response(json!("ap1")).await;
+    let cancel = daemon.recv_type("cancel").await;
+    // Turn 1 finished cleanly before cancel took effect
+    daemon.send(json!({"type": "done", "id": first_id})).await;
+
+    let mut turn1_frames: Vec<Value> = Vec::new();
+    while turn1_frames.last().map(|f| f["type"].as_str()) != Some(Some("session_settled")) {
+        turn1_frames.push(host.recv().await);
+    }
+    assert_eq!(
+        turn1_frames
+            .iter()
+            .find(|f| f["type"] == "prompt_result")
+            .unwrap()["status"],
+        "completed"
+    );
+
+    let second = daemon.recv_type("message").await;
+    let second_id = second["id"].as_u64().unwrap();
+    // Stale cancel reply + idle Interrupted emitted before second turn's Ack
+    daemon.send(json!({"type": "ack", "id": cancel["id"]})).await;
+    daemon.send(json!({"type": "interrupted"})).await;
+    daemon.send(json!({"type": "ack", "id": second_id})).await;
+    daemon.send(json!({"type": "text_delta", "text": "still-runs"}))
+        .await;
+    daemon.send(json!({"type": "text_done"})).await;
+    daemon.send(json!({"type": "message_end"})).await;
+    daemon.send(json!({"type": "done", "id": second_id})).await;
+
+    let mut turn2_frames: Vec<Value> = Vec::new();
+    while turn2_frames.last().map(|f| f["type"].as_str()) != Some(Some("session_settled")) {
+        turn2_frames.push(host.recv().await);
+    }
+    assert_eq!(
+        turn2_frames
+            .iter()
+            .find(|f| f["type"] == "prompt_result")
+            .unwrap()["status"],
+        "completed"
+    );
     host.close().await;
 }

@@ -21,6 +21,7 @@ pub(super) struct SessionState {
     pub(super) provider: String,
     pub(super) model: String,
     pub(super) thinking_level: Option<String>,
+    pub(super) plan_mode: bool,
     pub(super) todo_phases: Value,
     pub(super) context_window: u64,
     pub(super) message_count: usize,
@@ -63,6 +64,7 @@ impl SessionState {
                 .map(str::to_string)
                 .unwrap_or_else(|| provider_model.clone().unwrap_or_else(|| "unknown".to_string())),
             thinking_level: reasoning_effort.clone(),
+            plan_mode: false,
             todo_phases: json!([]),
             context_window: default_context_window(),
             message_count: messages.len(),
@@ -85,6 +87,7 @@ impl SessionState {
             provider: "horon".to_string(),
             model: model_override.unwrap_or("unknown").to_string(),
             thinking_level: None,
+            plan_mode: false,
             todo_phases: json!([]),
             context_window: default_context_window(),
             message_count: 0,
@@ -138,7 +141,7 @@ impl Adapter {
             id: self.daemon.next_id(),
             subscribe_usage_updates: false,
         };
-        let reply = match self.daemon.request(&request).await {
+        let reply = match self.daemon.request_settled(&request).await {
             Ok(reply) => reply,
             Err(error) => return Err(error),
         };
@@ -240,7 +243,7 @@ impl Adapter {
             id: self.daemon.next_id(),
             model: model.to_string(),
         };
-        match self.daemon.request(&request).await {
+        match self.daemon.request_settled(&request).await {
             Ok(ServerEvent::ModelChanged {
                 model: active, error, ..
             }) => {
@@ -262,7 +265,7 @@ impl Adapter {
             effort: level.to_string(),
             target_session_id: None,
         };
-        match self.daemon.request(&request).await {
+        match self.daemon.request_settled(&request).await {
             Ok(ServerEvent::ReasoningEffortChanged { effort, error, .. }) => {
                 if let Some(error) = error {
                     anyhow::bail!("{error}");
@@ -281,7 +284,7 @@ impl Adapter {
             id: self.daemon.next_id(),
             title: Some(name.to_string()),
         };
-        match self.daemon.request(&request).await {
+        match self.daemon.request_settled(&request).await {
             Ok(ServerEvent::Error { message, .. }) => Err(anyhow::anyhow!(message)),
             Ok(_) => Ok(()),
             Err(error) => Err(error),
@@ -316,7 +319,7 @@ impl Adapter {
             id: self.daemon.next_id(),
             method: None,
         };
-        match self.daemon.request(&request).await {
+        match self.daemon.request_settled(&request).await {
             Ok(ServerEvent::CompactResult { message, success, .. }) => {
                 if success {
                     Ok(json!({"summary": message}))
@@ -371,7 +374,7 @@ impl Adapter {
         let request = Request::GetHistory {
             id: self.daemon.next_id(),
         };
-        let reply = self.daemon.request(&request).await?;
+        let reply = self.daemon.request_settled(&request).await?;
         let ServerEvent::History { messages, .. } = reply else {
             anyhow::bail!("unexpected reply to get_history");
         };
@@ -493,6 +496,7 @@ impl Adapter {
     /// command outside a turn, so the adapter runs it itself.
     pub(super) async fn run_bash(&mut self, command: &str) -> Result<Value> {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        crate::tool::validate_direct_bash_policy(&self.state.session_id, command, &cwd, self.state.plan_mode).await?;
         let output = tokio::process::Command::new("sh")
             .arg("-c")
             .arg(command)

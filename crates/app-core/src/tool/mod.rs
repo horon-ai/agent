@@ -12,6 +12,7 @@ pub(crate) mod ask_bridge;
 mod ast_tools;
 mod aux_complete;
 mod bash;
+pub use bash::validate_direct_bash_policy;
 mod bash_interceptor;
 mod batch;
 mod bg;
