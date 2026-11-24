@@ -3,7 +3,7 @@
 //! `platform-linux` owns this file and compiles it directly; `platform-macos`
 //! pulls the same source in with `#[path = ...]`, so the two Unix adapters
 //! cannot drift apart. The file never refers to `crate::` items: it is a
-//! self-contained module compiled into whichever adapter includes it.
+//! self-contained module compiled into each Unix adapter that includes it.
 
 use horon_agent_platform_api::log::{PlatformLogLevel as Level, log as report};
 use std::io;
