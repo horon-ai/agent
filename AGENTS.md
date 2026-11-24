@@ -508,6 +508,21 @@ workflow (two-dot diff).
   (`scripts/release/check_ci.py`) accepts only a fully successful push run; a
   documentation-only `dev` run is not release evidence, and `Re-run all jobs` on
   that run produces a full run.
+- **Release pull request already verified on `dev`:** a pull request into
+  `main` whose head is the head of the last successful `dev` push run of the
+  same workflow, and whose base added only documentation since the merge base,
+  gets the documentation-only lanes (`docs_only=true`): that push run already
+  ran every gate on the same commit. A `ci:all-os`/`ci:full` label, another
+  head, a base-side code change or any lookup or diff failure classifies it as
+  an ordinary pull request. `package-compat.yml` and `package-windows.yml` do
+  not run on pull requests into `main` at all; their `dev` and `main` push runs
+  cover the same files.
+- **Rust caches are saved only on `main`.** `main` is the default branch, so
+  every branch and pull request restores its entries, while `main` cannot
+  restore `dev` entries and two copies overflow the 10 GB cache quota. CI,
+  structural-perf, package and soak caches save on a first-attempt `main` run;
+  benchmark, loading A/B and Windows smoke caches save only when the run's ref
+  is `main`. `tests/test_ci_workflow_guards.py` pins each `save-if`.
 - `CI Required` and `Structural performance required` always finish and fail
   only when a gate failed or was cancelled; use them as the required checks so
   a skipped gate never leaves a check pending.

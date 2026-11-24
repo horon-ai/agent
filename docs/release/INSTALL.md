@@ -183,6 +183,8 @@ The shell installer verifies the checksum and checks every member name before pr
 
 On pull requests, `.github/workflows/ci.yml` scopes crate compilation (`scripts/ci/workspace_impact.py`), TUI PTY smoke (`tui_smoke`), OS runners (running `ubuntu-latest` and the Windows cross-checks for portable Rust edits, adding `macos-latest` and `windows-build-test` when platform code, shared Linux-macOS `#[path]` sources, manifests, lockfiles or `ci:all-os` are present), and attach/detach soak length (`HORON_AGENT_SOAK_CYCLES=20`), while documentation-only pull requests run only `Documentation Checks` and the embedded `horon_agent_docs` corpus test, and `docs-site` or workflow-only pull requests skip Rust builds altogether while satisfying `CI Required` and `Structural performance required`. Pushes to `dev` and `main` always run the full 3-OS suite, the 200-cycle soak, and every mandatory release job verified by `scripts/release/check_ci.py`.
 
+A release pull request (base `main`) whose head is the head of the last successful `dev` push run of the same workflow, and whose base added only documentation since the two diverged, runs only the documentation gates: that push run already ran every gate on the same commit. The push to `main` after the merge still runs everything.
+
 ## Release numbers and automatic publishing
 
 `[package].version` in the root `Cargo.toml` is the single source of the version. It sets the release line (MAJOR.MINOR) and the lowest patch on that line, and tags number the later patches. No commit bumps the version.
