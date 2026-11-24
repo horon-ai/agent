@@ -521,7 +521,7 @@ def print_plan(sections: set[str] | None = None) -> int:
         env = measurement.get("env") or {}
         prefix = " ".join(f"{key}={value}" for key, value in env.items())
         target_label = f"{package}::{kind}" if target_name is None else f"{package}::test::{target_name}"
-        command = f"<{target_label}> {test_filter} --exact --nocapture --test-threads=1"
+        command = f"<{target_label}> {test_filter} --exact --nocapture --test-threads=1 --format terse"
         print(f"# section {measurement['section']} ({measurement['source']})")
         print(f"{prefix + ' ' if prefix else ''}{command}")
     return 0
@@ -539,7 +539,7 @@ def run_compiled_measurement(
     env.setdefault("CARGO", "cargo")
     env.update(measurement.get("env") or {})
     completed = subprocess.run(
-        [str(exe_path), test_filter, "--exact", "--nocapture", "--test-threads=1"],
+        [str(exe_path), test_filter, "--exact", "--nocapture", "--test-threads=1", "--format", "terse"],
         cwd=package_dir,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
