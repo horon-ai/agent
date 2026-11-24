@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 SMOKE_PATH = Path(__file__).resolve().with_name("tui_pty_smoke.py")
 SPEC = importlib.util.spec_from_file_location("tui_pty_smoke", SMOKE_PATH)
@@ -232,6 +233,68 @@ class ReadinessAndDiagnosticsTests(unittest.TestCase):
                 if proc.poll() is None:
                     proc.terminate()
                     proc.wait(timeout=5)
+
+    def test_posix_terminal_read_until_fails_immediately_on_early_exit(self) -> None:
+        if not SMOKE.POSIX:
+            self.skipTest("POSIX PTY only")
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "run").mkdir()
+            terminal = SMOKE.PosixTerminal(
+                [sys.executable, "-c", "import sys; print('boot-error', flush=True); sys.exit(5)"],
+                cwd=tmp,
+                env={"HORON_HOME": tmp, "HORON_AGENT_RUNTIME_DIR": str(Path(tmp, "run"))},
+            )
+            try:
+                started = time.monotonic()
+                with self.assertRaises(SMOKE.Failure) as ctx:
+                    terminal.read_until("never-arrives", timeout=30.0, what="first screen")
+                elapsed = time.monotonic() - started
+                self.assertLess(elapsed, 3.0)
+                msg = str(ctx.exception)
+                self.assertIn("[phase=first screen] (exited 5)", msg)
+                self.assertIn("boot-error", msg)
+            finally:
+                terminal.close()
+
+    def test_windows_terminal_read_until_fails_immediately_on_early_exit(self) -> None:
+        class FakePtyProcess:
+            def __init__(self) -> None:
+                self._chunks = ["early-conpty-death\r\n"]
+                self.exitstatus = 9
+                self.alive = True
+
+            def read(self, _size: int) -> str:
+                if self._chunks:
+                    return self._chunks.pop(0)
+                self.alive = False
+                return ""
+
+            def isalive(self) -> bool:
+                return self.alive
+
+            def terminate(self, force: bool = False) -> None:
+                self.alive = False
+
+        fake_pty = type("FakePtyType", (), {"spawn": staticmethod(lambda *a, **k: FakePtyProcess())})
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "run").mkdir()
+            with mock.patch.object(SMOKE, "PtyProcess", fake_pty):
+                terminal = SMOKE.WindowsTerminal(
+                    ["horon-tui.exe"],
+                    cwd=tmp,
+                    env={"HORON_HOME": tmp, "HORON_AGENT_RUNTIME_DIR": str(Path(tmp, "run"))},
+                )
+            try:
+                started = time.monotonic()
+                with self.assertRaises(SMOKE.Failure) as ctx:
+                    terminal.read_until("never-arrives", timeout=30.0, what="first screen")
+                elapsed = time.monotonic() - started
+                self.assertLess(elapsed, 3.0)
+                msg = str(ctx.exception)
+                self.assertIn("[phase=first screen] (client exited 9)", msg)
+                self.assertIn("early-conpty-death", msg)
+            finally:
+                terminal.close()
 
 
 if __name__ == "__main__":

@@ -909,6 +909,9 @@ class WindowsTerminal:
             with self._lock:
                 if matcher(needle, since=since):
                     return
+            if not self.process.isalive() or not self._reader.is_alive():
+                self._reader.join(timeout=0.5)
+                break
             time.sleep(0.05)
         with self._lock:
             if matcher(needle, since=since):
@@ -961,9 +964,21 @@ class WindowsTerminal:
             # The client left before it could be typed at: say what it printed
             # and how it ended, which is the whole diagnosis on a runner whose
             # console dies with it.
+            self._reader.join(timeout=0.5)
+            with self._lock:
+                rendered = self.screen.render()
+                text = self.transcript
             raise Failure(
-                f"the client was gone before it could be typed at ({closed}; "
-                f"exitstatus={self.process.exitstatus})\n--- transcript ---\n{self.transcript}"
+                f"the client was gone before it could be typed at ({closed})\n"
+                + format_failure_diagnostics(
+                    phase="send",
+                    state=f"exitstatus={self.process.exitstatus!r}",
+                    cwd=self.cwd,
+                    home=self.home,
+                    runtime_dir=self.runtime_dir,
+                    rendered=rendered,
+                    transcript=text,
+                )
             ) from closed
 
     def wait(self, timeout: float) -> int:
@@ -978,6 +993,7 @@ class WindowsTerminal:
             time.sleep(0.05)
         self.close()
         with self._lock:
+            rendered = self.screen.render()
             text = self.transcript
         raise Failure(
             f"process did not exit within {timeout}s\n"
@@ -987,6 +1003,7 @@ class WindowsTerminal:
                 cwd=self.cwd,
                 home=self.home,
                 runtime_dir=self.runtime_dir,
+                rendered=rendered,
                 transcript=text,
             )
         )
