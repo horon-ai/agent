@@ -64,7 +64,9 @@ jobs:
   # `dev` push run of this workflow (needs `actions: read`). A push to `main`, a
   # dispatch, a re-run of a `dev` push, a head already in `origin/main` and every
   # lookup or diff failure run everything: the release gate accepts only a fully
-  # successful push run (scripts/release/check_ci.py).
+  # successful push run (scripts/release/check_ci.py). A pull request into
+  # `main` whose head that `dev` push run already verified, with only
+  # documentation added on the base side, runs the documentation gates only.
   changes:
     name: Changed Paths
     runs-on: ubuntu-24.04
@@ -148,7 +150,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          # Only a first-attempt push to `main`, the default branch, saves.
+          # Every branch and pull request restores `main` entries, but `main`
+          # cannot restore `dev` entries, and one copy of each Rust cache per
+          # branch does not fit the 10 GB repository quota: `dev` and `main`
+          # saves evicted each other and left `main` runs cold.
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           cache-on-failure: "false"
           key: quality-${{ runner.os }}-1.99.1
           cache-all-crates: "true"
@@ -556,7 +563,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           cache-on-failure: "false"
           # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
@@ -2307,7 +2314,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           cache-on-failure: "false"
           key: windows-latest
           cache-all-crates: "true"
@@ -2842,7 +2849,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           cache-on-failure: "false"
           key: windows-arm64-release-check
           cache-all-crates: "true"
@@ -2902,7 +2909,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           cache-on-failure: "false"
           key: windows-cross-check
           cache-all-crates: "true"

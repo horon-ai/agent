@@ -18,6 +18,14 @@ costs runner minutes and never skips a gate.
   that carries non-docs changes (`code=true`) keeps `rust`, `release_scripts`,
   `platform_windows`, `platform_macos`, and `full_matrix` enabled so every
   mandatory push job required by `scripts/release/check_ci.py` executes.
+* A pull request into `main` whose head is the head of the last successful
+  push run of the same workflow on `dev`, and whose base added only
+  documentation since the two diverged, runs the documentation gates only: the
+  `dev` push run already ran every gate on that exact commit, and the merge
+  ref differs from it by documentation alone. This is the release pull
+  request; the push run on `main` after the merge still runs everything. A
+  `ci:all-os` or `ci:full` label and every lookup or diff failure fall back to
+  the ordinary pull request classification.
 * Every other push (`main`, a tagged commit), a manual dispatch, a re-run, an
   empty diff and every lookup or diff failure runs everything.
 * `docs` is true when a README, a Markdown file under `docs/` or an asset under
@@ -26,9 +34,9 @@ costs runner minutes and never skips a gate.
 Usage: classify_changes.py [--event NAME] [--ref REF] [--attempt N]
                            [--workflow FILE] [--repo OWNER/REPO]
                            [--base SHA] [--head SHA] [--files-from FILE]
-                           [--labels JSON_OR_CSV]
+                           [--labels JSON_OR_CSV] [--base-ref BRANCH]
 Defaults come from GITHUB_EVENT_NAME, GITHUB_REF, GITHUB_RUN_ATTEMPT,
-GITHUB_REPOSITORY, and PR_LABELS.
+GITHUB_REPOSITORY, PR_LABELS, and GITHUB_BASE_REF.
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ import sys
 
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 DEV_REF = "refs/heads/dev"
+RELEASE_BASE = "main"
 FORCE_ALL_OS_LABELS = frozenset({"ci:all-os", "ci:full"})
 
 # Paths whose change cannot alter a build, a test or a binary except through the
@@ -256,6 +265,28 @@ def parse_labels(raw: str | None) -> set[str]:
     return {item.strip() for item in stripped.split(",") if item.strip()}
 
 
+def docs_only_result(docs_site: bool) -> dict[str, bool]:
+    """The lanes of a change that reaches no build: documentation gates only."""
+    return {
+        "code": False,
+        "docs": True,
+        "docs_only": True,
+        "rust": False,
+        "docs_site": docs_site,
+        "ts_sdk": False,
+        "py_sdk": False,
+        "npm_pkg": False,
+        "install_scripts": False,
+        "release_scripts": False,
+        "workflows": False,
+        "tui_only": False,
+        "tui_smoke": False,
+        "platform_windows": False,
+        "platform_macos": False,
+        "full_matrix": False,
+    }
+
+
 def classify(
     event: str,
     files: list[str] | None,
@@ -280,24 +311,7 @@ def classify(
         return forced
 
     if not code:
-        return {
-            "code": False,
-            "docs": docs or not code,
-            "docs_only": True,
-            "rust": False,
-            "docs_site": docs_site,
-            "ts_sdk": False,
-            "py_sdk": False,
-            "npm_pkg": False,
-            "install_scripts": False,
-            "release_scripts": False,
-            "workflows": False,
-            "tui_only": False,
-            "tui_smoke": False,
-            "platform_windows": False,
-            "platform_macos": False,
-            "full_matrix": False,
-        }
+        return docs_only_result(docs_site)
 
     docs = docs or any(matches(path, DOCS_SCRIPT_PATTERNS) for path in files)
     ts_sdk = any(matches(path, TS_SDK_PATTERNS) for path in files)
@@ -463,6 +477,35 @@ def resolve(args: argparse.Namespace, attempt: int,
     return files, f"{where}: compared with {base} ({source}): {len(files)} changed file(s)"
 
 
+def verified_release_pull_request(
+    args: argparse.Namespace, labels: set[str], fetch=fetch_runs,
+    cwd: str | None = None,
+) -> tuple[dict[str, bool], str] | None:
+    """Lanes for a pull request into `main` that `dev` already verified, or None.
+
+    The head must be the head of the last successful push run of the same
+    workflow on `dev`, and every file the base changed since the merge base must
+    be documentation, so the merge ref holds exactly the code that run tested.
+    Anything else, a forcing label included, returns None and the pull request
+    is classified as usual.
+    """
+    if (args.event != "pull_request" or args.base_ref != RELEASE_BASE
+            or not (args.base and args.head) or labels & FORCE_ALL_OS_LABELS):
+        return None
+    green = last_green_sha(args.repo, args.workflow, fetch=fetch)
+    if green is None or green != args.head:
+        return None
+    base_side = changed_files(args.head, args.base, cwd=cwd)
+    if base_side is None or any(not matches(path, DOC_PATTERNS) for path in base_side):
+        return None
+    notice = (f"pull request into {RELEASE_BASE}: head {args.head} is the last "
+              f"successful push run of {args.workflow} on dev, and the base added "
+              f"{len(base_side)} documentation file(s) since the merge base; "
+              "running the documentation gates only")
+    docs_site = any(matches(path, DOCS_SITE_PATTERNS) for path in base_side)
+    return docs_only_result(docs_site), notice
+
+
 def parser() -> argparse.ArgumentParser:
     env = os.environ.get
     p = argparse.ArgumentParser()
@@ -475,6 +518,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--head", default="")
     p.add_argument("--files-from")
     p.add_argument("--labels", default=env("PR_LABELS", ""))
+    p.add_argument("--base-ref", default=env("GITHUB_BASE_REF", ""))
     return p
 
 
@@ -482,10 +526,14 @@ def main(argv: list[str] | None = None, fetch=fetch_runs) -> int:
     args = parser().parse_args(argv)
     attempt = parse_attempt(args.attempt)
     labels = parse_labels(args.labels)
-    files, notice = resolve(args, attempt, fetch=fetch)
-    result = classify(args.event, files, ref=args.ref, attempt=attempt, labels=labels)
-    if files is not None and not files:
-        notice += "; empty diff, running every gate"
+    verified = verified_release_pull_request(args, labels, fetch=fetch)
+    if verified is not None:
+        result, notice = verified
+    else:
+        files, notice = resolve(args, attempt, fetch=fetch)
+        result = classify(args.event, files, ref=args.ref, attempt=attempt, labels=labels)
+        if files is not None and not files:
+            notice += "; empty diff, running every gate"
     lines = [f"{key}={'true' if value else 'false'}" for key, value in result.items()]
     print("\n".join(lines))
     print(

@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import classify_changes  # noqa: E402
 from classify_changes import (  # noqa: E402
     changed_files, classify, fetch_runs, head_in_origin_main, last_green_sha,
-    main, parse_attempt, parser, resolve)
+    main, parse_attempt, parser, resolve, verified_release_pull_request)
 
 FULL = {
     "code": True,
@@ -325,6 +325,58 @@ class DevPushResolutionTests(unittest.TestCase):
             files = changed_files(self.green, head, three_dot=three_dot, cwd=self.tmp.name)
             self.assertIn("crates/a/src/more.rs", files)
             self.assertFalse(classify("pull_request", files)["docs_only"])
+
+
+class ReleasePullRequestTests(unittest.TestCase):
+    """A `dev` -> `main` pull request that the `dev` push run already verified."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = GitRepo(self.tmp.name)
+        self.repo.commit("crates/a/src/lib.rs")
+        # Not named `main`: CI sets init.defaultBranch=main for `git init`.
+        self.repo.git("checkout", "-q", "-b", "released")
+        self.main = self.repo.commit("docs/performance/RESULTS.md")
+        self.repo.git("checkout", "-q", "-")
+        self.head = self.repo.commit("crates/a/src/feature.rs")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def verify(self, *, base=None, head=None, base_ref="main", green=None, labels=()):
+        args = parser().parse_args([
+            "--event", "pull_request", "--base-ref", base_ref,
+            "--base", base or self.main, "--head", head or self.head,
+            "--workflow", "ci.yml", "--repo", "o/r"])
+        sha = green if green is not None else self.head
+        return verified_release_pull_request(
+            args, set(labels), fetch=lambda r, w: runs_json(sha), cwd=self.tmp.name)
+
+    def test_head_verified_on_dev_with_docs_only_base_runs_only_docs_gates(self):
+        lanes, notice = self.verify()
+        self.assertEqual(lanes, DOCS_ONLY)
+        self.assertIn("documentation gates only", notice)
+        # `main` already in the head: nothing on the base side, still docs gates.
+        self.repo.git("merge", "-q", "--no-edit", self.main)
+        merged = self.repo.git("rev-parse", "HEAD")
+        lanes, _ = self.verify(head=merged, green=merged)
+        self.assertEqual(lanes, dict(DOCS_ONLY, docs_site=False))
+
+    def test_anything_short_of_a_verified_head_is_classified_as_usual(self):
+        self.repo.git("checkout", "-q", "released")
+        main_code = self.repo.commit("crates/a/src/hotfix.rs")
+        self.repo.git("checkout", "-q", "-")
+        cases = {
+            "head is not the last green dev push": dict(green="f" * 40),
+            "dev push lookup failed": dict(green=""),
+            "base changed code": dict(base=main_code),
+            "pull request into dev": dict(base_ref="dev"),
+            "ci:full label": dict(labels=("ci:full",)),
+            "unknown base commit": dict(base="e" * 40),
+        }
+        for name, case in cases.items():
+            with self.subTest(name):
+                self.assertIsNone(self.verify(**case))
 
 
 class CommandLineTests(unittest.TestCase):

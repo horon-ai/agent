@@ -68,6 +68,8 @@ jobs:
         with:
           key: windows-smoke-x64
           cache-all-crates: "true"
+          # Only a run on `main` saves (see benchmark-os.yml).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build release binary
         shell: pwsh
@@ -190,6 +192,7 @@ jobs:
         with:
           key: windows-smoke-arm64
           cache-all-crates: "true"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build release binary
         shell: pwsh

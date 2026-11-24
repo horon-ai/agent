@@ -195,6 +195,11 @@ jobs:
           # Save the dependency build even when a later step fails, so a rerun
           # does not rebuild every crate from scratch.
           cache-on-failure: "true"
+          # Only runs on `main` (benchmark-docs.yml) save. A dispatch on a work
+          # branch restores the `main` entry, but an entry it saved could be
+          # restored by nothing outside that branch, and each one is about
+          # 0.5 GB that would evict the CI caches from the 10 GB quota.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Select suites
         id: sel
@@ -263,6 +268,8 @@ jobs:
           # would then leave the candidate's own cache entry incomplete.
           cache-all-crates: "true"
           cache-on-failure: "true"
+          # Same `main`-only rule as the candidate cache above.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build the baseline release binary
         # The same profile as the candidate step below, from its own checkout
@@ -719,6 +726,8 @@ jobs:
           # for `cargo check`, the build job the release profile.
           key: benchmark-compile-${{ runner.os }}
           cache-on-failure: "true"
+          # Same `main`-only rule as the build job's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Wait for free disk space deletion
         if: ${{ !cancelled() && runner.environment == 'github-hosted' && runner.os == 'Linux' }}
