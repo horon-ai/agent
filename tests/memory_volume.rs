@@ -448,3 +448,66 @@ fn encrypted_volume_export_and_import_round_trip_via_cli() {
     );
     assert!(listed.contains("mem_cli_enc"), "{listed}");
 }
+
+#[test]
+fn encrypted_volume_export_trims_key_id_and_refuses_dual_sources_and_revoked_volumes() {
+    let source = Fixture::new();
+    let home = source.home();
+    seed_page(&home, "mem_edge", "Edge", "edge-secret-body");
+    let key_file = source.root.path().join("edge.key");
+    std::fs::write(
+        &key_file,
+        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\n",
+    )
+    .expect("write key");
+    set_private(&key_file);
+
+    let archive = source.root.path().join("trimmed.tar");
+    let archive_arg = archive.to_string_lossy().into_owned();
+    let key_arg = key_file.to_string_lossy().into_owned();
+    let trimmed_export = source.run(&[
+        "volume",
+        "export",
+        &archive_arg,
+        "--key-id",
+        "  cli-trimmed-1  ",
+        "--key-file",
+        &key_arg,
+    ]);
+    assert_success("trimmed key-id export", &trimmed_export);
+
+    let target = Fixture::new();
+    let imported = target.run(&["volume", "import", &archive_arg, "--key-file", &key_arg]);
+    let import_out = assert_success("trimmed key-id import", &imported);
+    assert!(import_out.contains("Imported 1 page"), "{import_out}");
+
+    // Supplying both --key-env and --key-file must error rather than silently dropping --key-file.
+    let dual_archive = source.root.path().join("dual.tar");
+    let dual_arg = dual_archive.to_string_lossy().into_owned();
+    let dual = source.run(&[
+        "volume",
+        "export",
+        &dual_arg,
+        "--key-id",
+        "cli-trimmed-1",
+        "--key-env",
+        "HOME",
+        "--key-file",
+        &key_arg,
+    ]);
+    assert!(!dual.status.success(), "ambiguous key sources must fail");
+    let dual_err = String::from_utf8_lossy(&dual.stderr);
+    assert!(dual_err.contains("not both"), "{dual_err}");
+
+    // Revoking the volume key permanently closes exports even without --key-id.
+    assert_success("create key", &source.run(&["volume", "key", "create", "cli-trimmed-1"]));
+    assert_success("revoke key", &source.run(&["volume", "key", "revoke"]));
+    let revoked = source.run(&["volume", "export", &dual_arg, "--key-file", &key_arg]);
+    assert!(!revoked.status.success(), "revoked volume export must fail");
+    let revoked_err = String::from_utf8_lossy(&revoked.stderr);
+    assert!(revoked_err.contains("revoked"), "{revoked_err}");
+    assert!(
+        !revoked_err.contains("supply an active key with --key-id"),
+        "must not give false --key-id hint on revoked volume: {revoked_err}"
+    );
+}

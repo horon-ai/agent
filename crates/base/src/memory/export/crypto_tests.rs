@@ -250,3 +250,33 @@ fn encrypted_import_rejects_wrong_revoked_or_tampered_archives_without_writing()
         .expect_err("revoked key export refused");
     assert!(err.to_string().contains("revoked"), "{err}");
 }
+
+#[test]
+fn resolve_key_material_rejects_dual_sources_and_trims_key_id_consistently() {
+    let source = TempVolume::new("crypto-trim-dual");
+    let layout = source.layout();
+    seed(&layout, "mem_trim", "Trim", "trimmed-key-secret", 1_700_000_000);
+    let key_file = source.path.join("key.txt");
+    std::fs::write(
+        &key_file,
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    )
+    .expect("write key");
+
+    let dual = super::crypto::resolve_key_material("key-1", Some("PATH"), Some(&key_file))
+        .expect_err("providing both env and file sources must fail");
+    assert!(dual.to_string().contains("not both"), "{dual}");
+
+    let material =
+        super::crypto::resolve_key_material("  padded-key-id  ", None, Some(&key_file)).expect("resolve trimmed");
+    assert_eq!(material.key_id(), "padded-key-id");
+    let provider = material
+        .consume(|bytes| super::crypto::StaticKeyProvider::new("  padded-key-id  ", bytes.to_vec()))
+        .expect("provider");
+    let archive_path = source.path.join("padded.tar");
+    archive::export_with_key(&layout, &archive_path, &provider, " padded-key-id ").expect("export");
+
+    let dst = TempVolume::new("crypto-trim-dst");
+    let imported = archive::import_with_key(&dst.layout(), &archive_path, &provider).expect("import");
+    assert_eq!(imported.pages, 1);
+}
