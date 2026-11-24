@@ -235,7 +235,7 @@ fn build_copy_rows(transcript: &Transcript) -> Vec<Row> {
             break;
         };
         let name = answer_name(back);
-        for (index, block) in code_blocks(answer).into_iter().enumerate() {
+        for (index, block) in code_blocks(&answer).into_iter().enumerate() {
             if rows.len() >= MAX_ROWS {
                 break;
             }
@@ -254,7 +254,7 @@ fn build_copy_rows(transcript: &Transcript) -> Vec<Row> {
             );
         }
         if rows.len() < MAX_ROWS {
-            rows.push(row(name.as_ref(), &format!("answer:{back}"), answer));
+            rows.push(row(name.as_ref(), &format!("answer:{back}"), &answer));
         }
     }
     rows

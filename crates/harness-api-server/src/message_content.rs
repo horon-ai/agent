@@ -202,10 +202,10 @@ mod tests {
     fn a2ui_blocks_appear_in_flattened_history_and_answers_without_reasoning() {
         let a2ui_block = serde_json::to_value(ContentBlock::A2ui {
             envelopes: vec![json!({
-                "version": horon_agent_harness_api::a2ui::A2UI_VERSION_V1_0,
+                "version": horon_agent_harness_api::A2UI_VERSION_V1_0,
                 "createSurface": {
                     "surfaceId": "main",
-                    "catalogId": horon_agent_harness_api::a2ui::A2UI_BASIC_CATALOG_V1_0,
+                    "catalogId": horon_agent_harness_api::A2UI_BASIC_CATALOG_V1_0,
                 }
             })],
             fallback_text: Some("Deployment form".to_string()),
