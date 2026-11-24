@@ -172,7 +172,9 @@ def map_file_to_seeds(
     dir_to_pkg: dict[str, str],
 ) -> tuple[set[str] | None, str]:
     """Map a repository-relative path to seed workspace packages, or None for full fallback."""
-    norm = path.replace("\\", "/").lstrip("./")
+    norm = path.replace("\\", "/")
+    while norm.startswith("./") or norm.startswith("/"):
+        norm = norm[2:] if norm.startswith("./") else norm[1:]
     if matches(norm, FULL_FALLBACK_PATTERNS):
         return None, f"shared manifest/toolchain path {norm!r}"
 

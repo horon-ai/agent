@@ -31,7 +31,7 @@ class WorkspaceImpactTests(unittest.TestCase):
         )
 
     def test_tui_only_change_selects_only_horon_tui(self) -> None:
-        res = self.run_pr("crates/tui/src/lib.rs")
+        res = self.run_pr("./crates/tui/src/lib.rs", ".github/ISSUE_TEMPLATE/bug.md")
         self.assertTrue(res["scoped"])
         self.assertEqual(res["packages"], ["horon-tui"])
         self.assertFalse(res["run_package_example"])
@@ -95,6 +95,8 @@ class WorkspaceImpactTests(unittest.TestCase):
             self.assertFalse(res["scoped"], path)
             self.assertEqual(res["packages"], full_linux, path)
             self.assertTrue(res["run_package_example"], path)
+            if path == ".cargo/config.toml":
+                self.assertIn("shared manifest/toolchain path", res["reason"])
 
         for reason, res in (
             ("empty", self.run_pr()),
