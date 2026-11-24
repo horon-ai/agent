@@ -440,10 +440,15 @@ fn read_plugin_resources(root: &Path, record: &PackageRecord) -> Result<PackageR
         "plugin.toml of package {} no longer matches the recorded length",
         record.id
     );
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(text.as_bytes());
+    let mut hex_buf = [0u8; 64];
+    for (i, &byte) in digest.iter().enumerate() {
+        hex_buf[i * 2] = HEX[(byte >> 4) as usize];
+        hex_buf[i * 2 + 1] = HEX[(byte & 0x0f) as usize];
+    }
     ensure!(
-        hex::encode(hasher.finalize()) == stored.sha256,
+        hex_buf.as_slice() == stored.sha256.as_bytes(),
         "plugin.toml of package {} no longer matches the recorded SHA-256",
         record.id
     );

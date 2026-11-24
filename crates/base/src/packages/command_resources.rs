@@ -153,10 +153,14 @@ pub fn validate_command_files(root: &Path, declared: &[String]) -> Result<()> {
 /// sign cannot inject a placeholder. This is the rule a project command file
 /// follows, restated here because the terminal client owns that parser.
 pub fn expand(body: &str, arguments: &str) -> String {
+    let Some(first) = body.find('$') else {
+        return body.to_owned();
+    };
     let arguments = arguments.trim();
-    let words: Vec<&str> = arguments.split_whitespace().collect();
+    let mut words_cache: Option<([&str; 9], usize)> = None;
     let mut text = String::with_capacity(body.len() + arguments.len());
-    let mut rest = body;
+    text.push_str(&body[..first]);
+    let mut rest = &body[first..];
     while let Some(index) = rest.find('$') {
         text.push_str(&rest[..index]);
         let tail = &rest[index + 1..];
@@ -165,21 +169,26 @@ pub fn expand(body: &str, arguments: &str) -> String {
             rest = after;
             continue;
         }
-        let mut characters = tail.chars();
-        match characters.next() {
-            // A second digit means the line names position 10 or more, which a
-            // command has no way to receive; leave it as written.
-            Some(digit @ '1'..='9') if !matches!(characters.clone().next(), Some('0'..='9')) => {
-                let position = usize::from(digit as u8 - b'0');
-                if let Some(word) = words.get(position - 1) {
-                    text.push_str(word);
+        if let Some(&digit @ b'1'..=b'9') = tail.as_bytes().first()
+            && !matches!(tail.as_bytes().get(1), Some(b'0'..=b'9'))
+        {
+            let (words, count) = words_cache.get_or_insert_with(|| {
+                let mut buf = [""; 9];
+                let mut len = 0usize;
+                for word in arguments.split_whitespace().take(9) {
+                    buf[len] = word;
+                    len += 1;
                 }
-                rest = characters.as_str();
+                (buf, len)
+            });
+            let position = usize::from(digit - b'0');
+            if position <= *count {
+                text.push_str(words[position - 1]);
             }
-            _ => {
-                text.push('$');
-                rest = tail;
-            }
+            rest = &tail[1..];
+        } else {
+            text.push('$');
+            rest = tail;
         }
     }
     text.push_str(rest);
@@ -193,11 +202,15 @@ pub fn fallback_description(body: &str) -> String {
     let Some(line) = body.lines().map(str::trim).find(|line| !line.is_empty()) else {
         return String::new();
     };
-    let mut text: String = line.chars().take(60).collect();
-    if line.chars().count() > 60 {
-        text.push_str("...");
+    match line.char_indices().nth(60) {
+        Some((cutoff, _)) => {
+            let mut text = String::with_capacity(cutoff + 3);
+            text.push_str(&line[..cutoff]);
+            text.push_str("...");
+            text
+        }
+        None => line.to_owned(),
     }
-    text
 }
 
 /// Split one command file into frontmatter and body.
@@ -245,10 +258,23 @@ fn parse(text: &str) -> ParsedCommand {
             body: text.trim_end().to_string(),
         };
     }
+    let body_len: usize = lines
+        .clone()
+        .enumerate()
+        .map(|(idx, line)| line.len() + usize::from(idx > 0))
+        .sum();
+    let mut body = String::with_capacity(body_len);
+    for (idx, line) in lines.enumerate() {
+        if idx > 0 {
+            body.push('\n');
+        }
+        body.push_str(line);
+    }
+    body.truncate(body.trim_end().len());
     ParsedCommand {
         description,
         argument_hint,
-        body: lines.collect::<Vec<&str>>().join("\n").trim_end().to_string(),
+        body,
     }
 }
 

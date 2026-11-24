@@ -119,8 +119,7 @@ impl PackageStore {
                 .iter()
                 .find(|file| file.path.as_str() == path.as_str())
                 .with_context(|| format!("package {} does not record MCP definitions {path}", record.id))?;
-            verify_definition_file(&copy, recorded)?;
-            for (name, kind) in read_definitions(&copy, Path::new(path), &record.id)? {
+            for (name, kind) in read_verified_definitions(&copy, recorded, &record.id)? {
                 let public_name = public_name(&record.id, &name)?;
                 ensure!(
                     names.insert(public_name.clone()),
@@ -187,9 +186,9 @@ fn public_name(package_id: &str, name: &str) -> Result<String> {
 /// One definition file as its author writes it.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DefinitionFile {
-    #[serde(rename = "mcpServers", alias = "servers")]
-    servers: std::collections::BTreeMap<String, serde_json::Value>,
+struct DefinitionFile<'a> {
+    #[serde(borrow, rename = "mcpServers", alias = "servers")]
+    servers: std::collections::BTreeMap<std::borrow::Cow<'a, str>, &'a serde_json::value::RawValue>,
 }
 
 /// One entry of a definition file, before its type decides what is required.
@@ -221,23 +220,95 @@ enum Declared {
 }
 
 /// Read one declared definition file into `(local name, kind)` pairs.
-fn read_definitions(root: &Path, path: &Path, package_id: &str) -> Result<Vec<(String, Declared)>> {
-    let file =
-        open_package_file(root, path).with_context(|| format!("open the MCP definitions of package {package_id}"))?;
-    let text = read_capped(file, MAX_DEFINITION_BYTES, path)?;
-    let parsed: DefinitionFile = serde_json::from_str(&text)
+fn sha256_hex_buf(bytes: &[u8]) -> [u8; 64] {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut hex_buf = [0u8; 64];
+    for (i, &byte) in digest.iter().enumerate() {
+        hex_buf[i * 2] = HEX[(byte >> 4) as usize];
+        hex_buf[i * 2 + 1] = HEX[(byte & 0x0f) as usize];
+    }
+    hex_buf
+}
+
+fn parse_definitions(text: &str, path: &Path, package_id: &str) -> Result<Vec<(String, Declared)>> {
+    let parsed: DefinitionFile<'_> = serde_json::from_str(text)
         .with_context(|| format!("parse the MCP definitions {} of package {package_id}", path.display()))?;
     let mut definitions = Vec::with_capacity(parsed.servers.len());
-    for (name, value) in parsed.servers {
+    for (name, raw) in parsed.servers {
         ensure!(
             valid_name(&name, MAX_LOCAL_NAME),
             "package {package_id} declares an invalid MCP server name: {name}"
         );
-        let entry: DefinitionEntry = serde_json::from_value(value)
+        let entry: DefinitionEntry = serde_json::from_str(raw.get())
             .with_context(|| format!("parse MCP server '{name}' of package {package_id}"))?;
-        definitions.push((name, declared_kind(entry, package_id)?));
+        definitions.push((name.into_owned(), declared_kind(entry, package_id)?));
     }
     Ok(definitions)
+}
+
+fn read_definitions(root: &Path, path: &Path, package_id: &str) -> Result<Vec<(String, Declared)>> {
+    let file =
+        open_package_file(root, path).with_context(|| format!("open the MCP definitions of package {package_id}"))?;
+    let text = read_capped(file, MAX_DEFINITION_BYTES, path)?;
+    parse_definitions(&text, path, package_id)
+}
+
+fn read_verified_definitions(root: &Path, recorded: &StoredFile, package_id: &str) -> Result<Vec<(String, Declared)>> {
+    let path = Path::new(&recorded.path);
+    let mut file = open_package_file(root, path)
+        .with_context(|| format!("open the installed MCP definitions {}", recorded.path))?;
+    let max_read = recorded.len.max(MAX_DEFINITION_BYTES);
+    let initial_cap = usize::try_from(recorded.len.min(MAX_DEFINITION_BYTES))
+        .unwrap_or(0)
+        .saturating_add(1);
+    let mut bytes = Vec::with_capacity(initial_cap);
+    (&mut file)
+        .take(max_read.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read the installed MCP definitions {}", recorded.path))?;
+    if recorded.len <= MAX_DEFINITION_BYTES {
+        let len = u64::try_from(bytes.len()).context("the MCP definition chunk length overflowed")?;
+        let hex_buf = sha256_hex_buf(&bytes);
+        let sha256 = std::str::from_utf8(&hex_buf).unwrap_or("");
+        ensure!(
+            len == recorded.len && sha256 == recorded.sha256,
+            "the installed MCP definitions {} are {len} bytes with sha256 {sha256}, recorded {} bytes with {}",
+            recorded.path,
+            recorded.len,
+            recorded.sha256,
+        );
+    } else {
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let mut len = u64::try_from(bytes.len()).context("the MCP definition chunk length overflowed")?;
+        let mut buffer = [0u8; 8 * 1024];
+        loop {
+            let read = file
+                .read(&mut buffer)
+                .with_context(|| format!("read the installed MCP definitions {}", recorded.path))?;
+            if read == 0 {
+                break;
+            }
+            len += u64::try_from(read).context("the MCP definition chunk length overflowed")?;
+            hasher.update(&buffer[..read]);
+        }
+        let sha256 = hex::encode(hasher.finalize());
+        ensure!(
+            len == recorded.len && sha256 == recorded.sha256,
+            "the installed MCP definitions {} are {len} bytes with sha256 {sha256}, recorded {} bytes with {}",
+            recorded.path,
+            recorded.len,
+            recorded.sha256,
+        );
+        ensure!(
+            len <= MAX_DEFINITION_BYTES,
+            "{} exceeds {MAX_DEFINITION_BYTES} bytes",
+            recorded.path
+        );
+    }
+    let text = std::str::from_utf8(&bytes).with_context(|| format!("{} is not UTF-8", recorded.path))?;
+    parse_definitions(text, path, package_id)
 }
 
 /// Classify one entry and check what its type requires.
@@ -304,37 +375,13 @@ fn declared_files(root: &Path) -> Result<Vec<String>> {
     Ok(plugin.resources.mcp)
 }
 
-/// Whether the installed file still holds the bytes the catalog recorded.
-fn verify_definition_file(root: &Path, recorded: &StoredFile) -> Result<()> {
-    let mut file = open_package_file(root, Path::new(&recorded.path))
-        .with_context(|| format!("open the installed MCP definitions {}", recorded.path))?;
-    let mut hasher = Sha256::new();
-    let mut len = 0u64;
-    let mut buffer = vec![0u8; 8 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .with_context(|| format!("read the installed MCP definitions {}", recorded.path))?;
-        if read == 0 {
-            break;
-        }
-        len += u64::try_from(read).context("the MCP definition chunk length overflowed")?;
-        hasher.update(&buffer[..read]);
-    }
-    let sha256 = hex::encode(hasher.finalize());
-    ensure!(
-        len == recorded.len && sha256 == recorded.sha256,
-        "the installed MCP definitions {} are {len} bytes with sha256 {sha256}, recorded {} bytes with {}",
-        recorded.path,
-        recorded.len,
-        recorded.sha256,
-    );
-    Ok(())
-}
-
 /// Read `file` up to `limit` bytes as UTF-8 text.
 fn read_capped(file: std::fs::File, limit: u64, path: &Path) -> Result<String> {
-    let mut bytes = Vec::new();
+    let cap = match file.metadata() {
+        Ok(meta) => usize::try_from(meta.len().min(limit)).unwrap_or(0).saturating_add(1),
+        Err(_) => 0,
+    };
+    let mut bytes = Vec::with_capacity(cap);
     file.take(limit.saturating_add(1))
         .read_to_end(&mut bytes)
         .with_context(|| format!("read {}", path.display()))?;
