@@ -50,9 +50,12 @@ pub struct Manifest {
     pub exported_at: String,
     /// The store revision the export read.
     pub store_revision: u64,
-    /// `none` when the tar is plain markdown. Any other value names an
-    /// algorithm this build does not implement; see the module notes.
+    /// `none` when the tar is plain markdown, or `aes-256-gcm` when entries
+    /// are authenticated and encrypted via [`super::key::KeyProvider`].
     pub encryption: String,
+    /// Key identifier used when [`Self::encryption`] is `aes-256-gcm`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
     /// Page count.
     pub pages: usize,
     /// Per-file digests, one per page file.
@@ -122,6 +125,9 @@ pub struct PageMetadata {
 /// The encryption field of a plaintext tar.
 pub const ENCRYPTION_NONE: &str = "none";
 
+/// The encryption field of an AES-256-GCM authenticated-encrypted tar.
+pub const ENCRYPTION_AES_256_GCM: &str = "aes-256-gcm";
+
 /// The lowercase hex SHA-256 of `bytes`.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
@@ -138,11 +144,27 @@ impl Manifest {
                 self.version
             ));
         }
-        if self.encryption != ENCRYPTION_NONE {
-            return Err(anyhow!(
-                "this archive is encrypted with `{}`; this build implements no export encryption",
-                self.encryption
-            ));
+        match self.encryption.as_str() {
+            ENCRYPTION_NONE => {
+                if self.key_id.is_some() {
+                    return Err(anyhow!("a plaintext (`none`) archive must not declare a key_id"));
+                }
+            }
+            ENCRYPTION_AES_256_GCM => {
+                let has_key = self.key_id.as_deref().map(str::trim).is_some_and(|id| !id.is_empty());
+                if !has_key {
+                    return Err(anyhow!(
+                        "this archive is encrypted with `{}` without a key_id",
+                        self.encryption
+                    ));
+                }
+            }
+            _ => {
+                return Err(anyhow!(
+                    "this archive is encrypted with `{}`; supported algorithms: {ENCRYPTION_NONE}, {ENCRYPTION_AES_256_GCM}",
+                    self.encryption
+                ));
+            }
         }
         if self.files.len() != self.pages {
             return Err(anyhow!(

@@ -404,3 +404,47 @@ fn a_partially_deleted_page_is_absent_from_the_export() {
     assert!(!text.contains("mem_drop"), "the dropped page is not exported: {text}");
     assert!(text.contains("mem_keep"), "the kept page is exported: {text}");
 }
+
+#[test]
+fn encrypted_volume_export_and_import_round_trip_via_cli() {
+    let source = Fixture::new();
+    let home = source.home();
+    seed_page(&home, "mem_cli_enc", "Encrypted note", "encrypted-cli-secret-body");
+    let key_file = source.root.path().join("export.key");
+    std::fs::write(
+        &key_file,
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
+    )
+    .expect("write hex key file");
+    set_private(&key_file);
+
+    let archive = source.root.path().join("encrypted.tar");
+    let archive_arg = archive.to_string_lossy().into_owned();
+    let key_arg = key_file.to_string_lossy().into_owned();
+    let output = source.run(&[
+        "volume",
+        "export",
+        &archive_arg,
+        "--key-id",
+        "cli-key-1",
+        "--key-file",
+        &key_arg,
+    ]);
+    let stdout = assert_success("encrypted volume export", &output);
+    assert!(stdout.contains("Exported 1 page"), "{stdout}");
+
+    // Plain import without key file fails.
+    let target = Fixture::new();
+    let unkeyed = target.run(&["volume", "import", &archive_arg]);
+    assert!(!unkeyed.status.success(), "unkeyed CLI import must fail");
+
+    // Keyed import restores the page and search works.
+    let keyed = target.run(&["volume", "import", &archive_arg, "--key-file", &key_arg]);
+    let stdout = assert_success("encrypted volume import", &keyed);
+    assert!(stdout.contains("Imported 1 page"), "{stdout}");
+    let listed = assert_success(
+        "memory list after encrypted import",
+        &target.run(&["memory", "list", "--scope", "all"]),
+    );
+    assert!(listed.contains("mem_cli_enc"), "{listed}");
+}

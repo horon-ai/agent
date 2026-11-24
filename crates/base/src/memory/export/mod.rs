@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 pub mod archive;
 pub mod control_plane;
+pub mod crypto;
 pub mod delete;
 pub mod fence;
 pub mod key;

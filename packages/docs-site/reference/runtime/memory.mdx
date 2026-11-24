@@ -265,21 +265,21 @@ Fly API calls, and the agent produces and consumes the file.
 
 | Command | What it does |
 | --- | --- |
-| `horon volume export <path>` | Writes a tar of `wiki/`, `metadata.jsonl` and `manifest.json` to `<path>` under the store's writer lock, so the tar is one revision |
-| `horon volume import <path>` | Unpacks into a **new, empty** store, verifies every file against the manifest, and rebuilds `index.sqlite` from the markdown |
+| `horon volume export <path> [--key-id <id>] [--key-env <var> \| --key-file <file>]` | Writes a tar of `wiki/`, `metadata.jsonl` and `manifest.json` to `<path>` under the store's writer lock, optionally authenticated-encrypted with `aes-256-gcm` |
+| `horon volume import <path> [--key-env <var> \| --key-file <file>]` | Unpacks into a **new, empty** store, verifies every file (and decrypts `aes-256-gcm` archives via the key source), and rebuilds `index.sqlite` from the markdown |
 | `horon volume quiesce` | Checkpoints the index log, fsyncs the page files and the index, and fences further writes |
 | `horon volume resume` | Lifts the write fence |
 | `horon volume key create`/`show`/`revoke` | Creates, shows or revokes the user data key record, and wipes any staged key material on revoke |
 | `horon volume delete-user <user_id>` | Runs the deletion step machine: fence writes, revoke the key, wipe the store, delete every snapshot, destroy the Machine and volume, then mark the central row `deleted` |
 | `horon volume deletion-status` | Prints the persisted job and its steps |
 
-**The tar.** `wiki/` holds the page files byte for byte. `metadata.jsonl` holds
+**The tar.** `wiki/` holds the page files (`none`) or `HME1` `aes-256-gcm` ciphertext entries. `metadata.jsonl` holds
 one JSON object per page with identity, kind, category, project, tags, entities,
 dates, counts, trust and the body's size — never the body, because the body is
 already the page file and duplicating it would put memory text in an artefact a
 catalog or a support ticket can carry. `manifest.json` holds the format version,
-the store revision, the encryption field (`none` today) and a `\{path, bytes,
-sha256\}` row per file. There is no key, token or signed URL in it.
+the store revision, the encryption field (`none` or `aes-256-gcm`), optional `key_id`
+and a `{path, bytes, sha256}` row per file. There is no key, token or signed URL in it.
 
 **The import refuses what it cannot prove.** A page file that is missing from
 the manifest, whose size or SHA-256 differs, or that decodes to a different page
@@ -305,13 +305,15 @@ snapshots are deleted, the volume is destroyed, and `deleted` is written last. A
 failed step is recorded with its reason and stays retryable; `deleted` is
 reported only after every step finished.
 
-**The key contract, and the gap.** The volume carries a key record — `key_id`,
+**The key contract and archive encryption.** The volume carries a key record — `key_id`,
 algorithm id, `created_at`, `revoked_at` — and no key material: the control
 plane's key service owns that and the agent asks it through a provider interface.
-A revoked key makes the volume fail closed. Envelope encryption of the page files
-and the tar is not implemented, because the authenticated-encryption crate it
-needs is not in the lockfile; the manifest's `encryption: none` states that, and
-an importer refuses any other value instead of installing ciphertext.
+A revoked key makes the volume fail closed and blocks encrypted exports for that
+volume. Passing `--key-env` or `--key-file` (or calling `export_with_key` /
+`import_with_key`) seals `metadata.jsonl` and every `wiki/` file with `AES-256-GCM`
+using a fresh 96-bit nonce per entry and AAD binding format version, revision,
+`key_id` and entry path. Unkeyed `import` refuses encrypted archives instead of
+installing ciphertext, and live disk pages rely on Fly volume encryption at rest.
 
 **The central metadata carries no memory body.** The client posts only
 identifiers, states, timestamps, key ids, snapshot ids and object keys against

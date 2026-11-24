@@ -34,9 +34,12 @@
 //! data, so nothing from the archive's index is trusted — and the imported page
 //! count must equal the manifest's.
 
+use super::crypto;
+use super::key::{self, KeyMaterial, KeyProvider};
 use super::manifest::{
-    FORMAT_VERSION, FileDigest, MANIFEST_FILE, MAX_ENTRIES, MAX_PAGE_BYTES, MAX_TOTAL_BYTES, METADATA_FILE, Manifest,
-    PageMetadata, WIKI_PREFIX, is_page_path, parse_metadata, render_metadata, sha256_hex,
+    ENCRYPTION_AES_256_GCM, ENCRYPTION_NONE, FORMAT_VERSION, FileDigest, MANIFEST_FILE, MAX_ENTRIES, MAX_PAGE_BYTES,
+    MAX_TOTAL_BYTES, METADATA_FILE, Manifest, PageMetadata, WIKI_PREFIX, is_page_path, parse_metadata, render_metadata,
+    sha256_hex,
 };
 use super::{VolumeLayout, write_private_file};
 use crate::memory::store::{self, MemoryWiki};
@@ -75,8 +78,42 @@ pub struct ImportReport {
     pub store_revision: u64,
 }
 
-/// Export the memory wiki of `layout` to the tar at `destination`.
+/// Export the memory wiki of `layout` as a plaintext tar at `destination`.
 pub fn export(layout: &VolumeLayout, destination: &Path) -> Result<ExportReport> {
+    export_inner(layout, destination, None)
+}
+
+/// Export the memory wiki of `layout` as an AES-256-GCM encrypted tar using
+/// key material for `key_id` fetched from `provider`.
+pub fn export_with_key(
+    layout: &VolumeLayout,
+    destination: &Path,
+    provider: &dyn KeyProvider,
+    key_id: &str,
+) -> Result<ExportReport> {
+    let key_id = key_id.trim();
+    if key_id.is_empty() {
+        bail!("key_id cannot be empty");
+    }
+    if let Some(record) = key::read_key(layout)?
+        && record.is_revoked()
+    {
+        bail!(
+            "cannot export volume: user data key `{}` has been revoked",
+            record.key_id
+        );
+    }
+    let material = provider
+        .key_material(key_id)?
+        .ok_or_else(|| anyhow!("key provider returned no key material for `{key_id}`"))?;
+    export_inner(layout, destination, Some((key_id.to_string(), material)))
+}
+
+fn export_inner(
+    layout: &VolumeLayout,
+    destination: &Path,
+    encryption: Option<(String, KeyMaterial)>,
+) -> Result<ExportReport> {
     let store_root = layout.store_root();
     if !store_root.is_dir() {
         return Err(anyhow!(
@@ -112,13 +149,34 @@ pub fn export(layout: &VolumeLayout, destination: &Path) -> Result<ExportReport>
     lines.sort_by(|left, right| left.path.cmp(&right.path));
 
     let page_bytes: u64 = files.iter().map(|(_, bytes)| bytes.len() as u64).sum();
+    let metadata_plain = render_metadata(&lines)?;
+
+    let (encryption_mode, key_id, tar_files, metadata_bytes) = match encryption {
+        None => (ENCRYPTION_NONE.to_string(), None, files, metadata_plain),
+        Some((key_id, material)) => {
+            let mut to_seal = Vec::with_capacity(files.len() + 1);
+            to_seal.push((METADATA_FILE.to_string(), metadata_plain));
+            to_seal.extend(files);
+            let mut sealed = crypto::seal_entries(material, FORMAT_VERSION, revision, to_seal)?;
+            let metadata_sealed = sealed.remove(0).1;
+            (
+                ENCRYPTION_AES_256_GCM.to_string(),
+                Some(key_id),
+                sealed,
+                metadata_sealed,
+            )
+        }
+    };
+
+    let stored_bytes: u64 = tar_files.iter().map(|(_, bytes)| bytes.len() as u64).sum();
     let manifest = Manifest {
         version: FORMAT_VERSION,
         exported_at: super::now_rfc3339(),
         store_revision: revision,
-        encryption: super::manifest::ENCRYPTION_NONE.to_string(),
-        pages: files.len(),
-        files: files
+        encryption: encryption_mode,
+        key_id,
+        pages: tar_files.len(),
+        files: tar_files
             .iter()
             .map(|(path, bytes)| FileDigest {
                 path: path.clone(),
@@ -126,30 +184,39 @@ pub fn export(layout: &VolumeLayout, destination: &Path) -> Result<ExportReport>
                 sha256: sha256_hex(bytes),
             })
             .collect(),
-        total_bytes: page_bytes,
+        total_bytes: stored_bytes,
     };
     manifest.validate()?;
-    let metadata = render_metadata(&lines)?;
     let manifest_bytes = manifest.to_json()?;
 
-    let archive = build_tar(&files, &metadata, &manifest_bytes)?;
+    let archive = build_tar(&tar_files, &metadata_bytes, &manifest_bytes)?;
     let archive_bytes = archive.len() as u64;
     write_private_file(destination, &archive)?;
     crate::logging::info(&format!(
         "memory volume exported: {} page(s), {archive_bytes} bytes, revision {revision}",
-        files.len()
+        tar_files.len()
     ));
     Ok(ExportReport {
         path: destination.to_path_buf(),
-        pages: files.len(),
+        pages: tar_files.len(),
         page_bytes,
         archive_bytes,
         store_revision: revision,
     })
 }
 
-/// Import the tar at `source` into the new, empty store of `layout`.
+/// Import a plaintext tar at `source` into the new, empty store of `layout`.
 pub fn import(layout: &VolumeLayout, source: &Path) -> Result<ImportReport> {
+    import_inner(layout, source, None)
+}
+
+/// Import a plaintext or AES-256-GCM encrypted tar at `source` into the new,
+/// empty store of `layout`, fetching decryption keys via `provider`.
+pub fn import_with_key(layout: &VolumeLayout, source: &Path, provider: &dyn KeyProvider) -> Result<ImportReport> {
+    import_inner(layout, source, Some(provider))
+}
+
+fn import_inner(layout: &VolumeLayout, source: &Path, provider: Option<&dyn KeyProvider>) -> Result<ImportReport> {
     let store_root = layout.store_root();
     ensure_empty_target(&store_root)?;
     let file = std::fs::File::open(source).with_context(|| format!("cannot open the archive {}", source.display()))?;
@@ -214,27 +281,17 @@ pub fn import(layout: &VolumeLayout, source: &Path) -> Result<ImportReport> {
     let manifest_bytes = entries
         .remove(MANIFEST_FILE)
         .ok_or_else(|| anyhow!("the archive holds no {MANIFEST_FILE}; it is not a memory export"))?;
-    let metadata_bytes = entries
+    let metadata_raw = entries
         .remove(METADATA_FILE)
         .ok_or_else(|| anyhow!("the archive holds no {METADATA_FILE}; it is not a memory export"))?;
     let manifest = Manifest::from_json(&manifest_bytes)?;
-    let metadata = parse_metadata(&metadata_bytes)?;
-    if metadata.len() != manifest.pages {
-        bail!(
-            "the metadata file holds {} line(s) for {} page(s)",
-            metadata.len(),
-            manifest.pages
-        );
-    }
 
     let manifest_by_path: HashMap<&str, &FileDigest> =
         manifest.files.iter().map(|file| (file.path.as_str(), file)).collect();
-    let metadata_by_path: HashMap<&str, &PageMetadata> =
-        metadata.iter().map(|line| (line.path.as_str(), line)).collect();
 
-    // Every remaining entry must be a page file the manifest lists, with the
-    // digest and size it recorded.
-    let mut verified: Vec<(String, Vec<u8>, &str)> = Vec::with_capacity(entries.len());
+    // Every remaining archive entry must be listed in the manifest with matching
+    // byte count and SHA-256 digest before any decryption or disk write.
+    let mut verified_raw: Vec<(String, Vec<u8>)> = Vec::with_capacity(entries.len());
     for (path, bytes) in entries {
         let digest = manifest_by_path
             .get(path.as_str())
@@ -251,18 +308,61 @@ pub fn import(layout: &VolumeLayout, source: &Path) -> Result<ImportReport> {
         if actual != digest.sha256 {
             bail!("`{path}` does not match its manifest digest");
         }
+        verified_raw.push((path, bytes));
+    }
+    if verified_raw.len() != manifest.pages {
+        bail!(
+            "the manifest lists {} page(s) but the archive carries {}",
+            manifest.pages,
+            verified_raw.len()
+        );
+    }
+
+    let (metadata_bytes, plaintext_pages) = match manifest.encryption.as_str() {
+        ENCRYPTION_NONE => (metadata_raw, verified_raw),
+        ENCRYPTION_AES_256_GCM => {
+            let key_id = manifest
+                .key_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("this archive is encrypted with `{ENCRYPTION_AES_256_GCM}` without a key_id"))?;
+            let Some(provider) = provider else {
+                bail!(
+                    "this archive is encrypted with `{ENCRYPTION_AES_256_GCM}` (key `{key_id}`); supply a key provider to import it"
+                );
+            };
+            let material = provider
+                .key_material(key_id)?
+                .ok_or_else(|| anyhow!("key `{key_id}` is unavailable or revoked; cannot decrypt archive"))?;
+            crypto::open_entries(
+                material,
+                manifest.version,
+                manifest.store_revision,
+                METADATA_FILE,
+                &metadata_raw,
+                verified_raw,
+            )?
+        }
+        other => bail!("unsupported archive encryption `{other}`"),
+    };
+
+    let metadata = parse_metadata(&metadata_bytes)?;
+    if metadata.len() != manifest.pages {
+        bail!(
+            "the metadata file holds {} line(s) for {} page(s)",
+            metadata.len(),
+            manifest.pages
+        );
+    }
+    let metadata_by_path: HashMap<&str, &PageMetadata> =
+        metadata.iter().map(|line| (line.path.as_str(), line)).collect();
+
+    let mut verified: Vec<(String, Vec<u8>, &str)> = Vec::with_capacity(plaintext_pages.len());
+    for (path, bytes) in plaintext_pages {
         let line = metadata_by_path
             .get(path.as_str())
             .copied()
             .ok_or_else(|| anyhow!("the archive carries `{path}` with no metadata line"))?;
         verified.push((path, bytes, line.id.as_str()));
-    }
-    if verified.len() != manifest.pages {
-        bail!(
-            "the manifest lists {} page(s) but the archive carries {}",
-            manifest.pages,
-            verified.len()
-        );
     }
 
     // Write the page files, then rebuild the index from the markdown. Nothing

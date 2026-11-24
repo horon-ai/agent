@@ -209,7 +209,7 @@ daemons are separate, and the boundary test starts two daemons and asserts exact
 - Autoscaling and placement policy.
 - A central metadata service; the control plane owns the mapping and this repository does not implement it. The agent's client against that service and its request shapes are in the memory volume docs (`docs/runtime/MEMORY.md`); the service itself is `horon-ai/server#28`, whose contract is still a draft.
 - A Fly API client. The control plane calls the provider; the agent only exposes the volume commands it needs.
-- Envelope encryption of the page files and the export tar. The key contract (metadata, revocation, fail-closed open) is implemented; the cipher is not, because it needs a crate that is not in the lockfile.
+- Live-disk page-file encryption beyond Fly volume at-rest encryption (memory export/import archives support authenticated `aes-256-gcm` sealing via `KeyProvider` and `--key-env`/`--key-file`, and the key contract tracks creation and revocation).
 - A hosted idle-exit switch. Changing the shared-server idle deadline or adding a hosted idle-exit switch is outside this scope.
 - Authentication for non-local exposure beyond the authenticated TCP listener the harness API already implements.
 - Tenant ids inside application code paths, sessions or the wire protocol.
