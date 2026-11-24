@@ -135,6 +135,7 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon compact-text <FILE\|->` | Summarizes a UTF-8 text file (or stdin, up to 48 KiB, never modified) on stdout and lists what it left out on stderr. `--max-tokens` bounds the summary. |
 | `horon cloud doctor [--host <alias>]` | Checks that an SSH host is reachable and runs a horon-agent that supports `cloud move`, before you move a session. It prints one `ready`, `unreachable` or `incompatible` line with the next step, sends no session data and exits nonzero unless the host is ready. |
 | `horon changelog [VERSION] [--json]` | Prints the published release notes of VERSION (default: the running release) without updating or installing anything. If the notes cannot be read it prints the version and the release page instead. Control characters in the notes are removed. |
+| `horon package install\|list\|verify\|disable\|remove` | Installs, lists, hash-verifies, disables, or removes user-installed Rust extensions and plugins running in separate child processes ([docs](docs/runtime/PACKAGES.md)). |
 | `horon memory migrate [--dry-run]` | Imports the pre-wiki `memory/*.json` files into the per-user markdown wiki, reporting pages written and skipped. Idempotent; the JSON originals are never modified ([docs](docs/runtime/MEMORY.md#migration-from-json)). |
 | `horon volume export\|import\|quiesce\|resume\|key\|delete-user\|deletion-status` | Backs up, restores, freezes for a snapshot or deletes one user's volume. `export` writes a tar of the memory pages with a metadata and manifest file; `import` verifies it into a new, empty home and rebuilds the index; `quiesce` checkpoints and fences writes before a snapshot and `resume` lifts the fence; `delete-user` runs the durable deletion steps and reports `deleted` only after every one finished ([docs](docs/runtime/MEMORY.md#exporting-importing-and-deleting-a-volume)). |
 | `horon images --session <id> [--json] [--copy <number> <dest>]` | Lists the images a session generated, read from that session's stored `generate_image` results. Only regular files directly inside `generated-images/` are listed; a path outside it, a symbolic link or a missing file is shown as refused and cannot be copied. `--copy` writes one image to a new local file and never overwrites. Nothing is uploaded. |
@@ -149,6 +150,14 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 
 `horon run --role plan=<model>`, `--prewalk <model|role:<name>>` and `--no-prewalk` change model roles and the `[prewalk]` handoff for that one launch without touching `config.toml`. An unknown role, an empty model, or a model the active profile does not list fails before any request, and `--no-prewalk` wins over both `[prewalk]` and `--prewalk` ([docs](docs/provider/MODEL.md#launch-overrides)).
 
+`horon run --config overlay.toml "<message>"` layers a TOML file over `config.toml` for that run only. The flag is repeatable. Later files win per key, omitted keys inherit, and tables merge key by key. A file that does not parse names itself, and the merged result is validated before any provider work.
+
+`horon run --system-prompt <text|@file>` replaces the system prompt for that run and `--append-system-prompt <text|@file>` adds up to 16 KiB after the composed prompt. The tool definitions are sent either way, an append keeps the base prompt in place, and neither flag affects another session or a default run.
+
+`horon run --plan --approve-plan "<message>"` approves the plan the model submits instead of waiting for an answer, so the run continues to its configured execution model (`[prewalk]`) under the normal approval policy. It requires `--plan`.
+
+`horon run --approval write|all "<message>"` asks before file-changing calls (`write`) or before every call that is not read-only (`all`) for that run only. It can raise the approval mode but never lowers a stricter configured mode, and other sessions keep their own setting.
+
 `horon acp` answers `initialize` with the highest protocol version both sides support, so v1 clients and v2 clients both work.
 
 ### Terminal client
@@ -162,13 +171,6 @@ Run `horon --continue` to reopen the most recently active saved session in the c
 Use `horon --goal "Ship a fix" --goal-budget 1200` to attach an objective and token budget to a new session.
 
 Use `horon --plan` to open a new terminal session in read-only plan mode, or `horon run --plan "<message>"` for one planning run. It needs `[tools] plan_mode = true`, conflicts with `--resume` and `--continue`, and fails before any model request otherwise. `/plan approve` ends read-only mode.
-
-`horon run --config overlay.toml "<message>"` layers a TOML file over `config.toml` for that run only. The flag is repeatable. Later files win per key, omitted keys inherit, and tables merge key by key. A file that does not parse names itself, and the merged result is validated before any provider work.
-
-`horon run --system-prompt <text|@file>` replaces the system prompt for that run and `--append-system-prompt <text|@file>` adds up to 16 KiB after the composed prompt. The tool definitions are sent either way, an append keeps the base prompt in place, and neither flag affects another session or a default run.
-
-`horon run --plan --approve-plan "<message>"` approves the plan the model submits instead of waiting for an answer, so the run continues to its configured execution model (`[prewalk]`) under the normal approval policy. It requires `--plan`.
-`horon run --approval write|all "<message>"` asks before file-changing calls (`write`) or before every call that is not read-only (`all`) for that run only. It can raise the approval mode but never lowers a stricter configured mode, and other sessions keep their own setting.
 
 Use `horon --add-dir <path>` (repeatable) to open a session with extra workspace directories. Each path is resolved to an existing directory, a second spelling of the same directory collapses to one entry, and the list is part of the session context and stored with the session. In the client, `/dirs` lists it and `/dirs add <path>` or `/dirs remove <path>` changes it; removal never touches the directory. A listed root is workspace context, not an approval grant.
 
@@ -314,13 +316,15 @@ The docs are written in English (default) and Korean (`.ko.md` next to each file
 Read [`AGENTS.md`](AGENTS.md) first; it is the governing contract. Three requirements hold for every change: no terminal UI in the agent binary `horon-agent`, with TUI mode living in the TUI binary `horon-tui`; ACP v1 and v2 both served; and no measured performance regression against the recorded baseline.
 
 - Branch from `dev` and open the pull request against `dev`; `main` changes through release pull requests. Every pull request must link a real issue in this repository (`Closes #123`); the `Require Linked Issue` check enforces it.
-- Run the checks before pushing. `scripts/ci/check_all.sh` runs the Format and Quality Guardrails steps of CI, and the Rust checks are:
+- GitHub Actions owns full workspace verification, and every PR must finish with zero warnings (`python3 scripts/ci/run_warnings.py <run-id>`). Per the CI-first rules in `AGENTS.md`, agent sessions run only single-crate checks (`cargo check --locked -p <crate>`) or doc gates locally:
 
   ```sh
-  cargo fmt --all -- --check
-  cargo clippy --locked --all-targets --all-features -- -D warnings
-  cargo test --workspace
+  python3 scripts/ci/check_docs_links.py
+  python3 scripts/ci/check_docs_pairs.py
+  python3 scripts/ci/sync_docs_site.py --check
   ```
+
+- For full manual CI parity on a dedicated build host, `scripts/ci/check_all.sh` runs the Format and Quality Guardrails steps alongside `cargo fmt --all -- --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, and `cargo test --workspace`.
 
 - Performance claims come from the benchmark workflows on GitHub Actions, never from a developer machine.
 
