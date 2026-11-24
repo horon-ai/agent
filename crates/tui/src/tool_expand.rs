@@ -128,14 +128,13 @@ impl ExpandState {
         // The selection follows new results while the view follows the end,
         // and falls back to nothing when a held view's selection was dropped,
         // so the key never acts on a line the reader cannot see.
-        let kept = self.kept.last().map(|kept| kept.call_id.clone());
-        let stale = self
+        if self.follow {
+            self.selected = self.kept.last().map(|kept| kept.call_id.clone());
+        } else if self
             .selected
             .as_deref()
-            .is_none_or(|id| !self.kept.iter().any(|kept| kept.call_id == id));
-        if self.follow {
-            self.selected = kept;
-        } else if stale {
+            .is_none_or(|id| !self.kept.iter().any(|kept| kept.call_id == id))
+        {
             self.selected = None;
         }
         redraw
@@ -169,10 +168,20 @@ impl ExpandState {
     /// view shows, so this also stops a result that arrives later from taking
     /// the selection away from the line on screen.
     pub(crate) fn select(&mut self, call_id: &str) -> bool {
+        if self.selected.as_deref() == Some(call_id) {
+            self.follow = false;
+            return true;
+        }
         if !self.holds(call_id) {
             return false;
         }
-        self.selected = Some(call_id.to_string());
+        match &mut self.selected {
+            Some(selected) => {
+                selected.clear();
+                selected.push_str(call_id);
+            }
+            None => self.selected = Some(call_id.to_string()),
+        }
         self.follow = false;
         true
     }
@@ -257,9 +266,6 @@ impl ExpandState {
     /// the press would not touch is a promise the press does not keep. The
     /// marker is also what shows which call scrolling has selected.
     fn retained(&self, call_id: &str, key: Option<Key>) -> Retained<'_> {
-        if !self.holds(call_id) {
-            return Retained::default();
-        }
         let Some(kept) = self.kept.iter().find(|kept| kept.call_id == call_id) else {
             return Retained::default();
         };
@@ -290,17 +296,11 @@ fn bounded(output: &str) -> String {
     if output.len() <= MAX_KEPT_BYTES {
         return output.to_string();
     }
-    // Built a character at a time up to the budget: a character whose bytes
-    // would cross it starts nothing, so the copy stops on a boundary by
-    // construction and needs neither a byte index nor a fallback for a broken one.
-    let mut text = String::with_capacity(MAX_KEPT_BYTES + TRUNCATED.len() + 2);
-    for character in output.chars() {
-        if text.len() + character.len_utf8() > MAX_KEPT_BYTES {
-            break;
-        }
-        text.push(character);
-    }
-    if !text.ends_with('\n') {
+    let slice = &output[..output.floor_char_boundary(MAX_KEPT_BYTES)];
+    let needs_newline = !slice.ends_with('\n');
+    let mut text = String::with_capacity(slice.len() + usize::from(needs_newline) + TRUNCATED.len());
+    text.push_str(slice);
+    if needs_newline {
         text.push('\n');
     }
     text.push_str(TRUNCATED);

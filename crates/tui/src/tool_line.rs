@@ -201,15 +201,20 @@ pub fn cut_output(output: &str, lines: usize) -> Option<OutputHead> {
     if keep == 0 {
         return None;
     }
-    let total_rows = output.lines().count();
+    let mut rows = Vec::new();
+    let mut total_rows = 0usize;
+    for row in output.lines() {
+        total_rows += 1;
+        if rows.len() < keep {
+            if rows.is_empty() {
+                rows.reserve(keep);
+            }
+            rows.push(truncate_cells(row, MAX_PREVIEW_CELLS));
+        }
+    }
     if total_rows == 0 {
         return None;
     }
-    let rows = output
-        .lines()
-        .take(keep)
-        .map(|row| truncate_cells(row, MAX_PREVIEW_CELLS))
-        .collect();
     Some(OutputHead { rows, total_rows })
 }
 
@@ -220,6 +225,16 @@ pub fn cut_output(output: &str, lines: usize) -> Option<OutputHead> {
 /// display width.
 pub fn truncate_cells(text: &str, width: usize) -> String {
     let width = width.max(1);
+    if text.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+        if text.len() <= width {
+            return text.to_string();
+        }
+        let budget = width - 1;
+        let mut out = String::with_capacity(budget + '…'.len_utf8());
+        out.push_str(&text[..budget]);
+        out.push('…');
+        return out;
+    }
     if text.width() <= width {
         return text.to_string();
     }
@@ -261,12 +276,24 @@ fn display_error(message: &str) -> &str {
 
 /// How long a call took, in the shortest form that stays readable.
 pub fn format_elapsed(millis: u64) -> String {
-    if millis < 60_000 {
-        return format!("{:.1}s", millis as f64 / 1000.0);
+    let mut out = String::with_capacity(12);
+    push_elapsed(&mut out, millis);
+    out
+}
+
+/// Append [`format_elapsed`]'s representation directly into `out`.
+pub(crate) fn push_elapsed(out: &mut String, millis: u64) {
+    use std::fmt::Write as _;
+    let result = if millis < 60_000 {
+        write!(out, "{:.1}s", millis as f64 / 1000.0)
+    } else {
+        let minutes = millis / 60_000;
+        let seconds = (millis % 60_000) / 1000;
+        write!(out, "{minutes}m {seconds:02}s")
+    };
+    if result.is_err() {
+        // `fmt::Write` for `String` is infallible.
     }
-    let minutes = millis / 60_000;
-    let seconds = (millis % 60_000) / 1000;
-    format!("{minutes}m {seconds:02}s")
 }
 
 /// The rows one tool call occupies.

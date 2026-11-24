@@ -387,39 +387,72 @@ fn read_output(mut file: File) -> Result<String, ShellError> {
 ///
 /// The result ends with `… output truncated` when anything was cut.
 fn bounded(raw: &str) -> String {
-    let mut kept = String::new();
+    let mut kept = String::with_capacity(raw.len().min(MAX_OUTPUT_BYTES + 24));
     let mut cut = false;
-    for (lines, line) in raw.lines().enumerate() {
+    'lines: for (lines, line) in raw.lines().enumerate() {
         if lines == MAX_OUTPUT_LINES {
             cut = true;
             break;
         }
-        let mut piece: String = line
-            .chars()
-            .take(MAX_LINE_CHARS)
-            .filter(|character| *character == '\t' || !character.is_control())
-            .collect();
-        if line.chars().count() > MAX_LINE_CHARS {
-            piece.push('…');
-            cut = true;
-        }
         let separator = usize::from(lines > 0);
-        if kept.len() + separator + piece.len() > MAX_OUTPUT_BYTES {
-            let room = MAX_OUTPUT_BYTES.saturating_sub(kept.len() + separator);
-            if room > 0 {
-                if separator == 1 {
-                    kept.push('\n');
-                }
-                let cut_at = floor_char_boundary(&piece, room);
-                kept.push_str(&piece[..cut_at]);
-            }
+        if separator == 1 && kept.len() >= MAX_OUTPUT_BYTES {
             cut = true;
             break;
         }
+        if line.len() <= MAX_LINE_CHARS && line.bytes().all(|byte| byte == b'\t' || (byte >= 0x20 && byte != 0x7f)) {
+            if kept.len() + separator + line.len() > MAX_OUTPUT_BYTES {
+                let room = MAX_OUTPUT_BYTES.saturating_sub(kept.len() + separator);
+                if room > 0 {
+                    if separator == 1 {
+                        kept.push('\n');
+                    }
+                    let cut_at = floor_char_boundary(line, room);
+                    kept.push_str(&line[..cut_at]);
+                }
+                cut = true;
+                break;
+            }
+            if separator == 1 {
+                kept.push('\n');
+            }
+            kept.push_str(line);
+            continue;
+        }
+
+        let before = kept.len();
         if separator == 1 {
             kept.push('\n');
         }
-        kept.push_str(&piece);
+        let mut chars_seen = 0usize;
+        let mut line_over = false;
+        for character in line.chars() {
+            if chars_seen == MAX_LINE_CHARS {
+                line_over = true;
+                break;
+            }
+            chars_seen += 1;
+            if character != '\t' && character.is_control() {
+                continue;
+            }
+            if kept.len() + character.len_utf8() > MAX_OUTPUT_BYTES {
+                if kept.len() == before + separator && before + separator == MAX_OUTPUT_BYTES {
+                    kept.truncate(before);
+                }
+                cut = true;
+                break 'lines;
+            }
+            kept.push(character);
+        }
+        if line_over {
+            cut = true;
+            if kept.len() + '…'.len_utf8() > MAX_OUTPUT_BYTES {
+                if kept.len() == before + separator && before + separator == MAX_OUTPUT_BYTES {
+                    kept.truncate(before);
+                }
+                break;
+            }
+            kept.push('…');
+        }
     }
     if cut {
         if !kept.is_empty() {
