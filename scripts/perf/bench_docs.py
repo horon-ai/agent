@@ -66,6 +66,7 @@ import argparse
 import datetime as _dt
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -165,6 +166,8 @@ TEXT = {
         "summary_none": "No competitor comparison artifact was available for this run, so this summary is left empty rather than filled from an earlier measurement.",
         "summary_measured": "Measured commit `{commit}`, {when} UTC. Each OS runs on a different machine, so compare inside a row.",
         "summary_release": "jcode {version} (release `{tag}`, commit `{commit}`).",
+        "summary_release_multi": "jcode {details}.",
+        "summary_release_item": "{version} ({oses}: release `{tag}`, commit `{commit}`)",
         "summary_version_only": "jcode {version} (its release identity was not recorded for this run).",
         "summary_release_unknown": "jcode's release identity was not recorded for this run.",
         "request_bytes": "First model request, body / tool catalog bytes",
@@ -172,6 +175,11 @@ TEXT = {
         "versions_none": "No comparison artifact was available, so no measured version table is written.",
         "version_tool": "Tool",
         "version_value": "Version",
+        "npm_provenance_intro": "npm competitor provenance verified at installation from registry metadata and `package.json`.",
+        "npm_pkg": "Package",
+        "npm_source": "Source",
+        "npm_git_sha": "Git SHA",
+        "npm_hash": "Integrity / SHA",
         "release_intro": "jcode release identity per runner, from the `jcode-release.json` each job downloaded and verified.",
         "release_os": "OS",
         "release_tag": "Tag",
@@ -213,6 +221,8 @@ TEXT = {
         "summary_none": "이 실행에는 경쟁 도구 비교 산출물이 없어서, 이전 측정값으로 채우지 않고 요약을 비워 둡니다.",
         "summary_measured": "측정 커밋 `{commit}`, {when} UTC. OS마다 다른 기계이므로 같은 줄 안에서만 비교합니다.",
         "summary_release": "jcode {version}(릴리스 `{tag}`, 커밋 `{commit}`).",
+        "summary_release_multi": "jcode {details}.",
+        "summary_release_item": "{version}({oses}: 릴리스 `{tag}`, 커밋 `{commit}`)",
         "summary_version_only": "jcode {version}(이 실행에서는 릴리스 신원을 기록하지 못했습니다).",
         "summary_release_unknown": "이 실행에서 jcode 릴리스 신원을 기록하지 못했습니다.",
         "request_bytes": "첫 모델 요청 본문 / 도구 목록 바이트",
@@ -220,6 +230,11 @@ TEXT = {
         "versions_none": "비교 산출물이 없어 측정 버전 표를 쓰지 않습니다.",
         "version_tool": "도구",
         "version_value": "버전",
+        "npm_provenance_intro": "설치 시점의 npm 레지스트리 메타데이터와 `package.json`에서 검증한 경쟁 도구 출처입니다.",
+        "npm_pkg": "패키지",
+        "npm_source": "해석 경로",
+        "npm_git_sha": "Git SHA",
+        "npm_hash": "무결성 / SHA",
         "release_intro": "러너별 jcode 릴리스 신원입니다. 각 작업이 내려받아 검증한 `jcode-release.json`에서 읽습니다.",
         "release_os": "OS",
         "release_tag": "태그",
@@ -468,14 +483,44 @@ def _release_record(directory: Path | None) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _provenance_record(directory: Path | None, run: dict | None = None) -> dict[str, dict] | None:
+    """Read competitor-provenance.json from a job dir, or provenance.competitors in compare.json."""
+    if directory is not None:
+        content = _read(directory / "competitor-provenance.json")
+        if content is not None:
+            try:
+                data = json.loads(content)
+            except ValueError:
+                data = None
+            if isinstance(data, dict):
+                tools = data.get("tools") if isinstance(data.get("tools"), dict) else data
+                return {k: v for k, v in tools.items() if isinstance(v, dict)}
+    comp = ((run or {}).get("provenance") or {}).get("competitors")
+    if isinstance(comp, dict):
+        return {k: v for k, v in comp.items() if isinstance(v, dict)}
+    return None
+
+
 def _release_sentence(dirs: dict[str, Path], compare: dict[str, dict], lang: str) -> str:
     text = TEXT[lang]
-    for key, _ in PLATFORMS:
+    grouped: dict[tuple[str, str, str], list[str]] = {}
+    for key, title in PLATFORMS:
         version = _semver((_tool_result(compare.get(key), "jcode") or {}).get("version"))
         record = _release_record(dirs.get(key))
         if version and record and record.get("tag") == version:
-            return text["summary_release"].format(version=version, tag=record["tag"],
-                                                  commit=record.get("commit") or "—")
+            sig = (version, str(record["tag"]), str(record.get("commit") or "—"))
+            grouped.setdefault(sig, []).append(title)
+    if len(grouped) == 1:
+        (version, tag, commit), _ = next(iter(grouped.items()))
+        return text["summary_release"].format(version=version, tag=tag, commit=commit)
+    if len(grouped) > 1:
+        parts = [
+            text["summary_release_item"].format(
+                version=version, oses=", ".join(titles), tag=tag, commit=commit
+            )
+            for (version, tag, commit), titles in grouped.items()
+        ]
+        return text["summary_release_multi"].format(details=", ".join(parts))
     for run in compare.values():
         version_text = (_tool_result(run, "jcode") or {}).get("version")
         if _semver(version_text):
@@ -543,17 +588,23 @@ def summary_body(dirs: dict[str, Path], commit: str, lang: str = "en") -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _format_grouped_versions(by_ver: dict[str, list[str]]) -> str:
+    if len(by_ver) == 1:
+        version = next(iter(by_ver))
+        return f"`{_cell(version)}`"
+    return ", ".join(f"`{_cell(ver)}` ({', '.join(oses)})" for ver, oses in by_ver.items())
+
+
 def versions_body(dirs: dict[str, Path], commit: str, lang: str = "en") -> str:
-    """The measured version table, plus each runner's jcode release identity."""
+    """The measured version table, npm provenance, and each runner's jcode release identity."""
     text = TEXT[lang]
     compare = bench_charts.load_compare(dirs)
     if not compare:
         return text["versions_none"]
     lines = [text["versions_intro"].format(commit=commit, when=bench_charts._measured_at(compare)), "",
              f"| {text['version_tool']} | {text['version_value']} |", "| --- | --- |"]
-    seen: set[tuple[str, str]] = set()
-    rows: list[tuple[str, str, str]] = []
-    for key, _ in PLATFORMS:
+    by_tool: dict[tuple[str, str], dict[str, list[str]]] = {}
+    for key, title in PLATFORMS:
         for result in (compare.get(key) or {}).get("results", []):
             if not isinstance(result, dict):
                 continue
@@ -562,12 +613,61 @@ def versions_body(dirs: dict[str, Path], commit: str, lang: str = "en") -> str:
                 continue
             label = str(result.get("label") or name or "")
             version = str(result.get("version") or "—")
-            if label and (label, version) not in seen:
-                seen.add((label, version))
-                rows.append((name, label, version))
-    rows.sort(key=lambda item: item[0] != "horon")
-    for _, label, version in rows:
-        lines.append(f"| {_cell(label)} | `{_cell(version)}` |")
+            if label:
+                by_tool.setdefault((name, label), {}).setdefault(version, []).append(title)
+    ordered = sorted(by_tool, key=lambda item: item[0] != "horon")
+    for item in ordered:
+        _, label = item
+        lines.append(f"| {_cell(label)} | {_format_grouped_versions(by_tool[item])} |")
+
+    npm_entries: dict[str, dict[tuple[str, str, str, str, str, str], list[str]]] = {}
+    for key, title in PLATFORMS:
+        prov = _provenance_record(dirs.get(key), compare.get(key))
+        if not prov:
+            continue
+        for tool_key, entry in prov.items():
+            label = str(entry.get("label") or tool_key)
+            package = str(entry.get("package") or "—")
+            ver = str(entry.get("installed_version") or entry.get("version") or "—")
+            source = str(entry.get("selection") or "—")
+            git_head = str(entry.get("git_head") or "—")
+            digest = str(entry.get("integrity") or entry.get("shasum") or "—")
+            sig = (label, package, ver, source, git_head, digest)
+            npm_entries.setdefault(tool_key, {}).setdefault(sig, []).append(title)
+    if npm_entries:
+        lines += [
+            "",
+            text["npm_provenance_intro"],
+            "",
+            f"| {text['version_tool']} | {text['npm_pkg']} | {text['version_value']} | "
+            f"{text['npm_source']} | {text['npm_git_sha']} | {text['npm_hash']} |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for tool_key, sigs in npm_entries.items():
+            if len(sigs) == 1:
+                label, package, ver, source, git_head, digest = next(iter(sigs))
+                row_label = label
+            else:
+                for (label, package, ver, source, git_head, digest), oses in sigs.items():
+                    row_label = f"{label} ({', '.join(oses)})"
+                    lines.append("| " + " | ".join([
+                        _cell(row_label),
+                        f"`{_cell(package)}`",
+                        f"`{_cell(ver)}`",
+                        _cell(source),
+                        f"`{_cell(git_head)}`" if git_head != "—" else "—",
+                        f"`{_cell(digest)}`" if digest != "—" else "—",
+                    ]) + " |")
+                continue
+            lines.append("| " + " | ".join([
+                _cell(row_label),
+                f"`{_cell(package)}`",
+                f"`{_cell(ver)}`",
+                _cell(source),
+                f"`{_cell(git_head)}`" if git_head != "—" else "—",
+                f"`{_cell(digest)}`" if digest != "—" else "—",
+            ]) + " |")
+
     lines += ["", text["release_intro"], "",
               f"| {text['release_os']} | {text['release_tag']} | {text['release_commit']} | "
               f"{text['release_asset']} | {text['release_sha']} | {text['release_served']} |",
@@ -703,6 +803,53 @@ def render_body(
     ])
 
 
+def _find_git_root(*candidates: Path) -> Path | None:
+    for candidate in candidates:
+        path = candidate.resolve()
+        for root in (path, *path.parents):
+            if (root / ".git").exists():
+                return root
+    return None
+
+
+def verify_main_commit(commit: str, dirs: dict[str, Path], doc: Path, results: Path,
+                       main_ref: str = "origin/main", repo: Path | None = None) -> None:
+    """Ensure the measured commit lives on `main` and horon does not report fallback v0.1.0-dev."""
+    if not re.fullmatch(r"[0-9a-f]{7,40}", commit):
+        raise DocError(f"--require-main-commit needs a hex commit SHA, got {commit!r}")
+    repo_root = repo or _find_git_root(doc, results, Path.cwd(), Path(__file__))
+    if repo_root is None:
+        raise DocError("could not locate git repository to verify main commit ancestry")
+    probe = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, main_ref],
+        cwd=str(repo_root),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if probe.returncode != 0:
+        detail = probe.stderr.strip() or f"{commit} is not an ancestor of {main_ref}"
+        raise DocError(f"measured commit rejected by --require-main-commit ({main_ref}): {detail}")
+
+    compare = bench_charts.load_compare(dirs)
+    for key, title in PLATFORMS:
+        directory = dirs.get(key)
+        if directory is None:
+            continue
+        recorded = _read(directory / "commit.txt")
+        if recorded is not None:
+            rec_low = recorded.splitlines()[0].strip().lower()
+            if not (rec_low.startswith(commit) or commit.startswith(rec_low)):
+                raise DocError(f"{title} commit.txt records {rec_low!r}, expected {commit!r}")
+        horon_ver = _read(directory / "horon-version.txt")
+        if horon_ver and "v0.1.0-dev" in horon_ver:
+            raise DocError(f"{title} horon-version.txt fell back to {horon_ver!r}")
+        run_ver = str((_tool_result(compare.get(key), "horon") or {}).get("version") or "")
+        if "v0.1.0-dev" in run_ver:
+            raise DocError(f"{title} compare.json horon version fell back to {run_ver!r}")
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -719,6 +866,10 @@ def main(argv: list[str]) -> int:
                       help="refresh comparison summaries and versions while keeping the full record and charts")
     render.add_argument("--require-all-competitors", action="store_true",
                         help="refuse to update when any of the 7 expected competitors is missing")
+    render.add_argument("--require-main-commit", action="store_true",
+                        help="refuse commits outside main or horon builds reporting fallback v0.1.0-dev")
+    render.add_argument("--main-ref", default="origin/main",
+                        help="git ref used by --require-main-commit (default: origin/main)")
     last = sub.add_parser("last-commit", help="print the commit recorded in the block")
     last.add_argument("--doc", required=True, type=Path)
     args = parser.parse_args(argv)
@@ -731,6 +882,8 @@ def main(argv: list[str]) -> int:
         if not args.results.is_dir():
             raise DocError(f"results directory not found: {args.results}")
         dirs = find_platform_dirs(args.results)
+        if args.require_main_commit:
+            verify_main_commit(args.commit, dirs, args.doc, args.results, main_ref=args.main_ref)
         if args.require_all_competitors:
             missing_os = missing_comparison_platforms(dirs)
             if missing_os:

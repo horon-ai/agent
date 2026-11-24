@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -786,6 +788,129 @@ class AllCompetitorGuardAndSummary(unittest.TestCase):
                 ])
                 self.assertEqual(code, 1)
                 self.assertEqual(doc.read_text(encoding="utf-8"), original)
+
+
+class PerOsReleaseAndMainCommitGuardTests(unittest.TestCase):
+    """Per-OS jcode releases, npm provenance tables, and --require-main-commit guard."""
+
+    def test_per_os_jcode_and_npm_provenance_render_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            npm_prov = {
+                "tools": {
+                    "claude_code": {
+                        "label": "Claude Code",
+                        "package": "@anthropic-ai/claude-code",
+                        "installed_version": "2.1.331",
+                        "selection": "npm dist-tag latest",
+                        "git_head": None,
+                        "integrity": "sha512-claude331==",
+                    },
+                    "omo": {
+                        "label": "oh-my-openagent (omo)",
+                        "package": "omo-ai",
+                        "installed_version": "5.1.83",
+                        "selection": "npm dist-tag latest",
+                        "git_head": "69a1863a457da06fb64ae788e335bf272f1df406",
+                        "integrity": "sha512-omo5183==",
+                    },
+                }
+            }
+            linux_rows = [
+                summary_result("horon", "horon-agent v0.1.23-dev (4100da7)", 45.0, 41e6, 37.0, 64.0, 380e3, 117e6),
+                summary_result("jcode", "jcode v1.1.2 (3090ca4)", 140.0, 75e6, 52.0, 160.0, 170e3, 190e6),
+            ]
+            other_rows = [
+                summary_result("horon", "horon-agent v0.1.23-dev (4100da7)", 90.0, 38e6, 70.0, 95.0, 400e3, 105e6),
+                summary_result("jcode", "jcode v1.0.3 (a0ae514c4)", 180.0, 32e6, 80.0, 200.0, 250e3, 110e6),
+            ]
+            job_dir(results, "benchmark-linux-1", "linux", files={
+                "runner.txt": "ubuntu-24.04\n",
+                "compare.json": compare_json(*linux_rows),
+                "jcode-release.json": json.dumps({**RELEASE, "tag": "v1.1.2", "version": "1.1.2", "commit": "b" * 40}),
+                "competitor-provenance.json": json.dumps(npm_prov),
+            })
+            for key, runner, asset in (("macos", "macos-latest", "jcode-macos-aarch64.tar.gz"),
+                                       ("windows", "windows-latest", "jcode-windows-x86_64.exe")):
+                job_dir(results, f"benchmark-{key}-1", key, files={
+                    "runner.txt": f"{runner}\n",
+                    "compare.json": compare_json(*other_rows),
+                    "jcode-release.json": json.dumps({
+                        **RELEASE, "tag": "v1.0.3", "version": "1.0.3", "commit": "c" * 40, "asset": asset
+                    }),
+                    "competitor-provenance.json": json.dumps(npm_prov),
+                })
+            dirs = bench_docs.find_platform_dirs(results)
+            summary = bench_docs.summary_body(dirs, "4100da7", "en")
+            versions_en = bench_docs.versions_body(dirs, "4100da7", "en")
+            versions_ko = bench_docs.versions_body(dirs, "4100da7", "ko")
+
+        self.assertIn("v1.1.2 (Linux: release `v1.1.2`", summary)
+        self.assertIn("v1.0.3 (macOS, Windows: release `v1.0.3`", summary)
+        self.assertEqual(versions_en.count("| jcode |"), 1)
+        self.assertIn("`jcode v1.1.2 (3090ca4)` (Linux), `jcode v1.0.3 (a0ae514c4)` (macOS, Windows)", versions_en)
+        self.assertIn("| Claude Code | `@anthropic-ai/claude-code` | `2.1.331` | npm dist-tag latest |", versions_en)
+        self.assertIn("`sha512-omo5183==`", versions_ko)
+        self.assertIn("`69a1863a457da06fb64ae788e335bf272f1df406`", versions_ko)
+
+    def test_require_main_commit_rejects_dev_commit_and_v010_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "t@example.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "t@example.com",
+            }
+            def git(*args: str) -> str:
+                return subprocess.check_output(["git", *args], cwd=repo, env=env, text=True).strip()
+
+            git("init", "-b", "main")
+            doc = repo / "RESULTS.md"
+            doc.write_text(DOC, encoding="utf-8")
+            git("add", "RESULTS.md")
+            git("commit", "-m", "main commit")
+            main_sha = git("rev-parse", "HEAD")
+            git("checkout", "-q", "-b", "dev")
+            (repo / "extra.txt").write_text("dev\n", encoding="utf-8")
+            git("add", "extra.txt")
+            git("commit", "-m", "dev commit")
+            dev_sha = git("rev-parse", "HEAD")
+
+            results = repo / "results"
+            results.mkdir()
+            linux_dir = job_dir(results, "benchmark-linux-1", "linux", files={
+                "commit.txt": f"{dev_sha}\n",
+                "horon-version.txt": f"horon-agent v0.1.23-dev ({dev_sha[:7]})\n",
+                "startup.txt": "ok\n",
+            })
+
+            # Commit outside `main` must fail and leave DOC intact.
+            code_dev = bench_docs.main([
+                "render", "--doc", str(doc), "--results", str(results),
+                "--commit", dev_sha, "--require-main-commit", "--main-ref", "main",
+            ])
+            self.assertEqual(code_dev, 1)
+            self.assertEqual(doc.read_text(encoding="utf-8"), DOC)
+
+            # A `main` commit carrying fallback v0.1.0-dev must fail.
+            (linux_dir / "commit.txt").write_text(f"{main_sha}\n", encoding="utf-8")
+            (linux_dir / "horon-version.txt").write_text(f"horon-agent v0.1.0-dev ({main_sha[:7]})\n", encoding="utf-8")
+            code_v010 = bench_docs.main([
+                "render", "--doc", str(doc), "--results", str(results),
+                "--commit", main_sha, "--require-main-commit", "--main-ref", "main",
+            ])
+            self.assertEqual(code_v010, 1)
+
+            # A genuine `main` commit with real semver passes.
+            (linux_dir / "horon-version.txt").write_text(f"horon-agent v0.1.23-dev ({main_sha[:7]})\n", encoding="utf-8")
+            code_ok = bench_docs.main([
+                "render", "--doc", str(doc), "--results", str(results),
+                "--commit", main_sha, "--require-main-commit", "--main-ref", "main",
+            ])
+            self.assertEqual(code_ok, 0)
+            self.assertEqual(bench_docs.last_commit(doc.read_text(encoding="utf-8")), main_sha)
 
 
 class CommittedBenchmarkDocsTests(unittest.TestCase):

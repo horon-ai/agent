@@ -50,6 +50,11 @@ def child_env(root, tag):
     for key in ('JCODE_VERSION', 'JCODE_RELEASE_COMMIT', 'JCODE_RELEASE_SOURCE'):
         if key in os.environ:
             env[key] = os.environ[key]
+    comp_versions = (os.environ.get('COMPETITOR_VERSIONS_JSON') or '').strip()
+    if comp_versions:
+        if not comp_versions.startswith('{') and not Path(comp_versions).is_absolute():
+            comp_versions = str(ROOT / comp_versions)
+        env['COMPETITOR_VERSIONS_JSON'] = comp_versions
     env['JCODE_VERIFY_VERSION'] = '0'
     env['JCODE_METADATA'] = str(root / 'jcode-release.json')
     if WINDOWS:

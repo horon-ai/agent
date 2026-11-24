@@ -13,11 +13,13 @@ Scenario, evaluated per request:
    keeps which route was used (``via``) and whether the fixture sentinel came
    back in a later tool result.
 2. The prompt carries ``[bench:mcp]`` -> call the fixture MCP tool
-   ``bench_echo`` with a nonce, or read the ``xd://...bench_echo`` route an agent
-   prints instead of exposing a function. A later request counts as a round trip
-   only when it carries that nonce in a tool result.
-3. omp's skill routing-hint request -> one valid hint, so omp does not retry it
-   three times in the skill scenario.
+   ``bench_echo`` with a nonce, run an exposed ``## MCP Tool Commands`` bash
+   command (``mcp__bench_echo``), or read the ``xd://...bench_echo`` route / call
+   ``eval`` against an exposed MCP eval namespace (``help://eval/<server>``).
+   A later request counts as a round trip only when it carries that nonce in a
+   tool result.
+3. omp's skill and MCP routing-hint requests -> one valid hint, so omp does not
+   retry them three times in the skill or MCP scenario.
 4. The prompt carries ``[tui:jobs]`` -> start two background shell jobs, one per
    tool call, so the terminal client can list and cancel them.
 5. The prompt carries ``[tui:context-proof]`` -> answer with the marker's own
@@ -74,6 +76,8 @@ NONCE_PREFIX = "bench-nonce-"
 # routing hint before it will list the skill; a short plain answer is rejected
 # and retried, which would put three model calls in the skill scenario.
 ROUTING_HINT_PROMPT = "Compress into one routing hint"
+MCP_ROUTING_HINT_PROMPT = "Write one routing hint of at most 15 words"
+ROUTING_HINT_PROMPTS = (ROUTING_HINT_PROMPT, MCP_ROUTING_HINT_PROMPT)
 ROUTING_HINT_ANSWER = "Use when the bench-skill fixture skill is requested."
 # The section horon's prompt uses to tell the model how to open a skill; a read
 # tool that does not spell `skill://` itself is still reached that way.
@@ -92,8 +96,38 @@ PATH_PROPS = ("file_path", "path", "file", "filepath", "target_file", "uri", "ur
 FILE_PATH_PROPS = ("file_path", "path", "file", "filepath", "target_file")
 MCP_TEXT_PROPS = ("text", "input", "message", "content", "value", "query", "prompt")
 # A route an agent prints in its prompt for an MCP tool it reaches by reading a
-# URI instead of exposing a function (omp).
+# URI instead of exposing a function (omp 18.x).
 MCP_ROUTE_RE = re.compile(r"xd://[^\s\"'`)\]}]*" + MCP_TOOL_SUFFIX)
+# omp 19.x mounts MCP tools as embedded `bash` commands under `## MCP Tool Commands`.
+MCP_COMMAND_RE = re.compile(r"(?:→|->)\s*`([A-Za-z0-9_:-]*" + MCP_TOOL_SUFFIX + r")`")
+# omp 19.x exposes MCP servers as `eval` prelude namespaces (`help://eval/<name>`
+# or inlined `<name>\nGlobal `<name>``), separate from built-in eval topics.
+BUILTIN_EVAL_TOPICS = frozenset({
+    "agent",
+    "agents",
+    "archive",
+    "browser",
+    "budget",
+    "commit",
+    "completion",
+    "computer",
+    "dsm",
+    "env",
+    "helpers",
+    "judge",
+    "log",
+    "output",
+    "phase",
+    "ratchet",
+    "read",
+    "sh",
+    "tool",
+    "wait",
+    "workpool",
+    "write",
+})
+MCP_EVAL_HELP_RE = re.compile(r"help://eval/([A-Za-z_][A-Za-z0-9_]*)")
+MCP_EVAL_INLINE_RE = re.compile(r"<([A-Za-z_][A-Za-z0-9_]*)>(?:\\n|\s)+Global `?\1`?")
 # The fixed MCP surface a session keeps in its cache-stable tool list; a late
 # server's tool is reached through it instead of by its own name.
 DEFERRED_MCP_TOOL_NAMES = ("mcp_call", "mcp.call")
@@ -479,6 +513,33 @@ def find_mcp_route(body: dict) -> str | None:
     return match.group(0) if match else None
 
 
+def find_mcp_command(body: dict) -> str | None:
+    """An embedded MCP command (`## MCP Tool Commands`: `- "bench_echo" → `mcp__bench_echo``)."""
+    match = MCP_COMMAND_RE.search(json.dumps(body, ensure_ascii=False))
+    return match.group(1) if match else None
+
+
+def find_eval_tool(tools) -> dict | None:
+    """The `eval` code-execution tool (omp 19.x MCP eval namespaces)."""
+    for tool, _namespace in flatten_tools(tools):
+        if _tool_name(tool).strip().casefold() != "eval":
+            continue
+        if "code" in _tool_schema_props(tool):
+            return tool
+    return None
+
+
+def find_mcp_eval_namespace(body: dict) -> str | None:
+    """An external MCP namespace exposed through `eval` (`help://eval/<name>`)."""
+    blob = json.dumps(body, ensure_ascii=False)
+    for pattern in (MCP_EVAL_HELP_RE, MCP_EVAL_INLINE_RE):
+        for match in pattern.finditer(blob):
+            name = match.group(1)
+            if name not in BUILTIN_EVAL_TOPICS:
+                return name
+    return None
+
+
 def user_turn_text(kind: str, body: dict) -> str:
     """The text of the prompt that started the current turn."""
     if kind == "anthropic":
@@ -764,7 +825,7 @@ class Handler(BaseHTTPRequestHandler):
         tools = body.get("tools")
         prompt = user_turn_text(kind, body)
         plan_name = _plan_name(body, prompt)
-        if ROUTING_HINT_PROMPT in prompt:
+        if any(marker in prompt for marker in ROUTING_HINT_PROMPTS):
             plan_name = "hint"
         saw_result = has_tool_result(kind, body)
         results = tool_result_text(kind, body)
@@ -825,6 +886,10 @@ class Handler(BaseHTTPRequestHandler):
             server = deferred_server_name(body)
             tool_search = find_tool_search(tools)
             listed = deferred_listed_tool(body)
+            mcp_cmd = find_mcp_command(body)
+            shell = find_shell_tool(tools)
+            eval_tool = find_eval_tool(tools)
+            eval_ns = find_mcp_eval_namespace(body) if eval_tool is not None else None
             if NONCE_RE.search(results):
                 pass
             elif mcp is not None:
@@ -872,6 +937,28 @@ class Handler(BaseHTTPRequestHandler):
                 tool_name = _tool_name(read_tool)
                 via = "mcp-route"
                 arguments = {prop: route}
+            elif mcp_cmd and shell is not None:
+                # omp 19.x prints connected MCP servers under `## MCP Tool Commands`
+                # and dispatches `<command> --text <nonce>` through its `bash` tool.
+                tool_name = shell[0]
+                via = "mcp-command"
+                arguments = {shell[1]: f"{mcp_cmd} --text {nonce}"}
+            elif eval_tool is not None and eval_ns is not None:
+                # omp 19.x exposes connected MCP servers as async globals on `eval`
+                # (`help://eval/<namespace>` -> `await <namespace>.bench_echo(...)`).
+                props = _tool_schema_props(eval_tool)
+                tool_name = _tool_name(eval_tool)
+                via = "mcp-eval"
+                arguments = {
+                    "code": f'print(await {eval_ns}.{MCP_TOOL_SUFFIX}({{"text": {json.dumps(nonce)}}}))'
+                }
+                if "language" in props:
+                    lang_schema = props.get("language") or {}
+                    langs = lang_schema.get("enum") if isinstance(lang_schema, dict) else None
+                    if isinstance(langs, list) and langs:
+                        arguments["language"] = "js" if "js" in langs else str(langs[0])
+                    else:
+                        arguments["language"] = "js"
             elif tool_search is not None:
                 # Agents that attach stdio MCP servers in the background (omo /
                 # senpi `deadlineMs: 0`) can send request 1 with `tool_search`
@@ -969,6 +1056,8 @@ class Handler(BaseHTTPRequestHandler):
                 or (find_deferred_mcp_tool(tools) is not None and deferred_server_name(body))
                 or (find_mcp_action_tool(tools) is not None and deferred_server_name(body))
                 or (find_tool_search(tools) is not None and deferred_listed_tool(body))
+                or (find_shell_tool(tools) is not None and bool(find_mcp_command(body)))
+                or (find_eval_tool(tools) is not None and find_mcp_eval_namespace(body))
             ),
             "tool_count": len(tools or []),
             # Transport size of the whole request, and the part of it the tool

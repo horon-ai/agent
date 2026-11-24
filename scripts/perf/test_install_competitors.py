@@ -87,6 +87,15 @@ STUB_CURL = textwrap.dedent(
       https://api.github.com/repos/1jehuang/jcode/releases/assets/*)
         [ "$STUB_API" = ok ] || fail 504
         src="$STUB_ROOT/assets/${url##*/}" ;;
+      https://registry.npmjs.org/*)
+        [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] && echo "LEAKED_TOKEN:$url" >>"$STUB_ROOT/leaked.log"
+        npm_rel="${url#https://registry.npmjs.org/}"
+        npm_safe="${npm_rel//\\//__}"
+        src="$STUB_ROOT/npm/${npm_safe}.json"
+        if [ ! -f "$src" ]; then
+          [ "$STUB_NPM_FAIL" = 1 ] && fail 503
+          fail 404
+        fi ;;
       *) fail 404 ;;
     esac
     [ -f "$src" ] || fail 404
@@ -442,6 +451,148 @@ class JcodeReleaseInstallTests(unittest.TestCase):
         )
         self.assertNotEqual(res_pin.returncode, 0)
         self.assertIn("pinned release v1.1.2 has no asset(s)", res_pin.stderr)
+
+        # Per-platform resolution selects newest release per OS in one pass.
+        meta_per_os = self.tmp / "meta-per-os.json"
+        res_per_os = subprocess.run(
+            [
+                sys.executable,
+                str(HERE / "jcode_release.py"),
+                "resolve",
+                "--per-platform",
+                "--platforms",
+                "all",
+                "--metadata",
+                str(meta_per_os),
+            ],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+        self.assertEqual(res_per_os.returncode, 0, res_per_os.stderr)
+        per_os = json.loads(meta_per_os.read_text())["platforms"]
+        self.assertEqual(per_os["linux"]["tag"], "v1.1.2")
+        self.assertEqual(per_os["macos"]["tag"], "v1.0.3")
+        self.assertEqual(per_os["windows"]["tag"], "v1.0.3")
+
+    def test_npm_latest_skips_prereleases_strips_tokens_and_records_provenance(self) -> None:
+        npm_dir = self.stub / "npm"
+        npm_dir.mkdir(exist_ok=True)
+        (npm_dir / "@oh-my-pi__pi-coding-agent__latest.json").write_text(json.dumps({
+            "version": "19.2.0-beta.1",
+            "dist": {"shasum": "deadbeef", "integrity": "sha512-beta"},
+        }))
+        (npm_dir / "@oh-my-pi__pi-coding-agent.json").write_text(json.dumps({
+            "versions": {
+                "19.2.0-beta.1": {"version": "19.2.0-beta.1"},
+                "19.1.1": {
+                    "version": "19.1.1",
+                    "gitHead": "abc123def456",
+                    "dist": {
+                        "tarball": "https://registry.npmjs.org/@oh-my-pi/pi-coding-agent/-/pi-coding-agent-19.1.1.tgz",
+                        "shasum": "111122223333",
+                        "integrity": "sha512-stable1911==",
+                    },
+                },
+                "19.0.0": {"version": "19.0.0"},
+            },
+        }))
+        (npm_dir / "@oh-my-pi__pi-coding-agent__19.1.1.json").write_text(json.dumps({
+            "version": "19.1.1",
+            "gitHead": "abc123def456",
+            "dist": {
+                "tarball": "https://registry.npmjs.org/@oh-my-pi/pi-coding-agent/-/pi-coding-agent-19.1.1.tgz",
+                "shasum": "111122223333",
+                "integrity": "sha512-stable1911==",
+            },
+        }))
+        npm_stub = self.stub / "bin" / "npm"
+        npm_stub.write_text(textwrap.dedent("""\
+            #!/usr/bin/env bash
+            prefix="" spec=""
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --prefix) prefix="$2"; shift 2 ;;
+                -*) shift ;;
+                *) spec="$1"; shift ;;
+              esac
+            done
+            echo "$spec" >>"$STUB_ROOT/npm-specs.log"
+            ver="${spec##*@}"
+            mkdir -p "$prefix/node_modules/@oh-my-pi/pi-coding-agent" "$prefix/node_modules/.bin"
+            printf '{"name":"@oh-my-pi/pi-coding-agent","version":"%s"}\\n' "$ver" \
+              >"$prefix/node_modules/@oh-my-pi/pi-coding-agent/package.json"
+            printf '#!/bin/sh\\necho "omp/%s"\\n' "$ver" >"$prefix/node_modules/.bin/omp"
+            chmod +x "$prefix/node_modules/.bin/omp"
+            """))
+        npm_stub.chmod(0o755)
+        bun_stub = self.stub / "bin" / "bun"
+        bun_stub.write_text("#!/bin/sh\necho 1.4.5\n")
+        bun_stub.chmod(0o755)
+
+        result = self.run_installer(
+            tools="omp",
+            extra_env={"GH_TOKEN": "secret-token", "GITHUB_TOKEN": "other-secret", "OMP_VERSION": ""},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.stub / "leaked.log").exists())
+        specs = (self.stub / "npm-specs.log").read_text().splitlines()
+        self.assertEqual(specs, ["@oh-my-pi/pi-coding-agent@19.1.1"])
+        prov = json.loads((self.dest / "competitor-provenance.json").read_text())["tools"]["omp"]
+        self.assertEqual(prov["version"], "19.1.1")
+        self.assertEqual(prov["installed_version"], "19.1.1")
+        self.assertEqual(prov["selection"], "npm highest-stable")
+        self.assertEqual(prov["git_head"], "abc123def456")
+        self.assertEqual(prov["integrity"], "sha512-stable1911==")
+
+
+class HoronTargetResolutionTests(unittest.TestCase):
+    def test_resolve_horon_defaults_to_main_and_stamps_next_patch_semver(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "t@example.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "t@example.com",
+            }
+            def git(*args: str) -> str:
+                return subprocess.check_output(["git", *args], cwd=repo, env=env, text=True).strip()
+
+            git("init", "-b", "main")
+            (repo / "Cargo.toml").write_text('[package]\nname = "horon-agent"\nversion = "0.1.0"\n')
+            git("add", "Cargo.toml")
+            git("commit", "-m", "base")
+            git("tag", "v0.1.22")
+            (repo / "Cargo.toml").write_text('[package]\nname = "horon-agent"\nversion = "0.1.0"\n# m\n')
+            git("add", "Cargo.toml")
+            git("commit", "-m", "main tip")
+            main_sha = git("rev-parse", "HEAD")
+            git("branch", "dev")
+            git("checkout", "-q", "dev")
+            (repo / "Cargo.toml").write_text('[package]\nname = "horon-agent"\nversion = "0.1.0"\n# d\n')
+            git("add", "Cargo.toml")
+            git("commit", "-m", "dev tip")
+            dev_sha = git("rev-parse", "HEAD")
+
+            res_main = subprocess.run(
+                [sys.executable, str(HERE / "competitor_versions.py"), "resolve-horon",
+                 "--repo", str(repo), "--main-ref", "main", "--release-tag", "v0.1.22"],
+                capture_output=True, text=True, check=True,
+            )
+            info = json.loads(res_main.stdout)
+            self.assertEqual(info["sha"], main_sha)
+            self.assertEqual(info["semver"], "0.1.23")
+            self.assertFalse(info["release_build"])
+            self.assertTrue(info["on_main"])
+
+            res_dev = subprocess.run(
+                [sys.executable, str(HERE / "competitor_versions.py"), "resolve-horon",
+                 "--repo", str(repo), "--ref", dev_sha, "--main-ref", "main",
+                 "--release-tag", "v0.1.22", "--require-main"],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(res_dev.returncode, 0)
+            self.assertIn("not an ancestor of main", res_dev.stderr)
 
 
 class ReleaseHelpers(unittest.TestCase):

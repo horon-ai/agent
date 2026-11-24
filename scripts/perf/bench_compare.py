@@ -2255,8 +2255,9 @@ class OmpRunner(ToolRunner):
 
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
         env = omp_env(root, mock.base_url or "")
-        # omp prints the MCP tool as an `xd://` route in the prompt instead of
-        # exposing a function; the mock model reaches it with the write tool.
+        # omp 19.x exposes connected MCP tools under `## MCP Tool Commands`
+        # (dispatched via `bash`, or `eval` when evalNamespaces is enabled, or
+        # `xd://` routes in older builds).
         write_mcp_servers(
             os.path.join(env["PI_CODING_AGENT_DIR"], "mcp.json"), mcp_servers(), wrapper="mcpServers"
         )
@@ -2405,6 +2406,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--jcode-release", metavar="PATH",
                         help="jcode-release.json from install_competitors.sh; its tag, commit, asset and "
                              "SHA-256 are copied into the report as measured release provenance")
+    parser.add_argument("--competitor-provenance", metavar="PATH",
+                        help="competitor-provenance.json from install_competitors.sh; verified npm package "
+                             "versions, gitHead and integrity hashes are copied into report provenance")
     return parser.parse_args(argv)
 
 
@@ -2453,6 +2457,21 @@ def read_install_failures(path: str | None) -> dict[str, str]:
             if sep and name and reason:
                 reasons.setdefault(name, []).append(reason)
     return {name: "; ".join(items) for name, items in reasons.items()}
+
+
+def competitor_provenance(path: str) -> dict | None:
+    """Verified npm competitor provenance recorded by install_competitors.sh."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        reason = f"competitor provenance unavailable: {exc}"
+        bc.eprint(f"[bench_compare] {reason}")
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print(f"::warning title=compare: competitor provenance::{reason}", flush=True)
+        return {"error": reason}
+    if isinstance(data, dict) and isinstance(data.get("tools"), dict):
+        return data["tools"]
+    return data if isinstance(data, dict) else None
 
 
 def release_provenance(path: str) -> dict:
@@ -3329,8 +3348,15 @@ def main(argv: list[str] | None = None) -> int:
     results = [by_name[runner.name] for runner in runners if runner.name in by_name]
 
     report = bc.build_report(SUITE, results, skipped, started_at)
+    provenance: dict = {}
     if args.jcode_release:
-        report["provenance"] = release_provenance(args.jcode_release)
+        provenance.update(release_provenance(args.jcode_release))
+    if args.competitor_provenance:
+        comp_prov = competitor_provenance(args.competitor_provenance)
+        if comp_prov is not None:
+            provenance["competitors"] = comp_prov
+    if provenance:
+        report["provenance"] = provenance
     report["parameters"] = {
         "sessions": args.sessions,
         "turns": args.turns,
