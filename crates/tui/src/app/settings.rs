@@ -104,6 +104,7 @@ impl App {
         // Read here and acted on where the title is written, which is also the
         // only place that knows whether the terminal keeps a title at all.
         self.title_state = settings.boolean("title.state").unwrap_or(false);
+        self.suggestions_enabled = settings.boolean("editor.suggestions").unwrap_or(false);
         // The summary is off unless the setting asks for it; turning it on or
         // off here keeps the next event on the cheap path either way.
         self.work_notes

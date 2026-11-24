@@ -126,27 +126,47 @@ pub(super) fn render_markdown_outline(text: &str, display: &str, total_lines: us
         let end = headings.get(index + 1).map_or(total_lines, |&(line, _, _)| line - 1);
         let hashes = &"######"[..level];
         let title = crate::util::truncate_str(title, 240);
-        if std::fmt::write(&mut body, format_args!("{start}-{end}\t{hashes} {title}\n")).is_err() {
-            return None;
-        }
+        push_decimal(&mut body, start);
+        body.push('-');
+        push_decimal(&mut body, end);
+        body.push('\t');
+        body.push_str(hashes);
+        body.push(' ');
+        body.push_str(title);
+        body.push('\n');
     }
     if headings.len() > MAX_HEADINGS {
         body.push_str("[More headings omitted]\n");
     }
-    if std::fmt::write(
-        &mut body,
-        format_args!("\nRead source with path:A-B, e.g. {display}:{first}-{first}."),
-    )
-    .is_err()
-    {
-        return None;
-    }
+    body.push_str("\nRead source with path:A-B, e.g. ");
+    body.push_str(display);
+    body.push(':');
+    push_decimal(&mut body, first);
+    body.push('-');
+    push_decimal(&mut body, first);
+    body.push('.');
     Some(Rendered {
         body,
         total_lines,
         last_line: total_lines,
         ..Rendered::default()
     })
+}
+
+fn push_decimal(out: &mut String, mut value: usize) {
+    let mut buf = [0u8; 20];
+    let mut pos = buf.len();
+    loop {
+        pos -= 1;
+        buf[pos] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    for &byte in &buf[pos..] {
+        out.push(byte as char);
+    }
 }
 
 /// Splits a read path into the path itself and its selector.

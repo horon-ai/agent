@@ -646,3 +646,29 @@ print('shell returned')
         }
     });
 }
+
+#[test]
+fn eval_frame_deserialize_validation_and_field_order() {
+    use super::host::Frame;
+
+    let reordered: Frame = serde_json::from_str(r#"{"text":"hi","id":7,"type":"stdout"}"#).expect("reordered");
+    assert!(matches!(reordered, Frame::Stdout { id: 7, ref text } if text == "hi"));
+
+    let no_id_err: Frame = serde_json::from_str(r#"{"type":"error","text":"boom"}"#).expect("error without id");
+    assert!(matches!(no_id_err, Frame::Error { id: None, ref text } if text == "boom"));
+
+    let null_id_err: Frame = serde_json::from_str(r#"{"type":"error","id":null,"text":"boom"}"#).expect("null id");
+    assert!(matches!(null_id_err, Frame::Error { id: None, ref text } if text == "boom"));
+
+    for bad in [
+        r#"{"type":"stdout","id":1,"text":"hi","extra":1}"#,
+        r#"{"type":"stdout","id":1,"text":"hi","ok":true}"#,
+        r#"{"type":"stdout","id":1,"id":2,"text":"hi"}"#,
+        r#"{"type":"stdout","id":null,"text":"hi"}"#,
+        r#"{"type":"done","id":1}"#,
+        r#"{"id":1,"text":"hi"}"#,
+        r#"{"type":"unknown","id":1}"#,
+    ] {
+        assert!(serde_json::from_str::<Frame>(bad).is_err(), "expected error for {bad}");
+    }
+}

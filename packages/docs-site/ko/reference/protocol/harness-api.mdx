@@ -744,7 +744,7 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 연결에서 아웃바운드 `a2ui_envelope` 이벤트를 받으려면 `hello.event_capabilities`에 `a2ui_v1`을 넣습니다. 선택적으로 `hello`, `create_session`, `attach_session`에 `a2ui` 렌더러 기능(`A2uiSessionCapabilities`: `version`, `supported_catalog_ids`, `accepts_inline_catalogs`)을 선언합니다. 생략하면 데몬은 그 세션에 `a2ui` 도구를 등록하지 않으므로 프롬프트 캐시 접두사가 변하지 않습니다.
 
 ```json
-{ "v": 1, "id": 1, "req": "hello", "version": 1, "client": "my-ui", "event_capabilities": ["a2ui_v1"], "a2ui": { "version": "1.0", "supported_catalog_ids": ["https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"], "accepts_inline_catalogs": false } }
+{ "v": 1, "id": 1, "req": "hello", "min_version": 1, "max_version": 1, "client": "my-ui", "event_capabilities": ["a2ui_v1"], "a2ui": { "version": "1.0", "supported_catalog_ids": ["https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"], "accepts_inline_catalogs": false } }
 ```
 
 | 기능 / 프레임 | 방향 | 필수 / 게이트 | 뜻 |
@@ -752,14 +752,14 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 | `hello.event_capabilities` (`a2ui_v1`) | 클라이언트 -> 브리지 | 선택 참여 | 연결에서 `a2ui_envelope` 이벤트 전달 허용 |
 | `hello.a2ui`, `create_session.a2ui`, `attach_session.a2ui` | 클라이언트 -> 브리지 | `a2ui_v1` | 선언한 카탈로그로 기능 게이트된 `a2ui` 도구를 활성화 |
 | `configure_a2ui` | 클라이언트 -> 브리지 | `a2ui_v1` | 연결된 세션의 A2UI 렌더러 기능을 갱신하거나 끔(`capabilities: null`) |
-| `a2ui_event` | 클라이언트 -> 브리지 | `a2ui_v1` | 검증된 클라이언트-에이전트 `action`, `callAgentFunction`, `error` 봉투를 전달 |
+| `a2ui_event` | 클라이언트 -> 브리지 | `a2ui_v1` | 검증된 클라이언트-에이전트 `action`, `callAgentFunction`, `rendererFunctionResponse`, `error` 봉투를 전달 |
 | `a2ui_envelope` | 브리지 -> 클라이언트 | `a2ui_v1` | 검증된 `agent_to_renderer` 봉투 한 건(`session_id`, `tool_call_id`, `sequence`, `envelope`, `fallback_text`) 스트리밍 |
 
 ### `configure_a2ui`와 `a2ui_event`
 
 ```json
 { "v": 1, "id": 31, "req": "configure_a2ui", "session_id": "session_...", "capabilities": { "version": "1.0", "supported_catalog_ids": ["https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"], "accepts_inline_catalogs": false } }
-{ "v": 1, "id": 32, "req": "a2ui_event", "session_id": "session_...", "envelope": { "version": "1.0", "action": { "name": "confirm", "surfaceId": "main" } }, "data_model": { "step": 1 } }
+{ "v": 1, "id": 32, "req": "a2ui_event", "session_id": "session_...", "envelope": { "version": "1.0", "action": { "name": "confirm", "surfaceId": "main", "sourceComponentId": "confirm_btn" } }, "data_model": { "step": 1 } }
 ```
 
 - 두 요청 모두 `a2ui_v1`과 `session_id` 연결이 필요하며 수락되면 `{ "ev": "ok" }`를 응답합니다.

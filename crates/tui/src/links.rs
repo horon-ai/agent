@@ -30,25 +30,32 @@ const MAX_URL: usize = 2048;
 /// the string the opener receives are the same one.
 pub(crate) fn extract(text: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
+    let bytes = text.as_bytes();
     let mut index = 0;
-    while index < text.len() {
-        let Some(character) = text[index..].chars().next() else {
+    while index < bytes.len() {
+        let Some(offset) = bytes[index..]
+            .iter()
+            .position(|&byte| matches!(byte, b'[' | b'h' | b'H'))
+        else {
             break;
         };
-        if character == '['
-            && let Some((target, next)) = markdown_target(text, index)
-        {
-            if let Some(url) = normalized(target)
-                && !found.contains(&url)
-            {
-                found.push(url);
+        index += offset;
+        if bytes[index] == b'[' {
+            if let Some((target, next)) = markdown_target(text, index) {
+                if let Some(url) = normalized(target)
+                    && !found.contains(&url)
+                {
+                    found.push(url);
+                }
+                index = next;
+                continue;
             }
-            index = next;
+            index += 1;
             continue;
         }
         if scheme_at(text, index) {
             let (candidate, next) = bare(text, index);
-            if let Some(url) = normalized(trimmed(&candidate))
+            if let Some(url) = normalized(trimmed(candidate))
                 && !found.contains(&url)
             {
                 found.push(url);
@@ -56,7 +63,7 @@ pub(crate) fn extract(text: &str) -> Vec<String> {
             index = next;
             continue;
         }
-        index += character.len_utf8();
+        index += 1;
     }
     found
 }
@@ -74,16 +81,23 @@ pub(crate) fn normalized(url: &str) -> Option<String> {
     if url.is_empty() || url.len() > MAX_URL {
         return None;
     }
-    if url
-        .chars()
-        .any(|character| character.is_whitespace() || character.is_control())
-    {
-        return None;
-    }
-    // The parser reads `\` as `/` for http(s), which would move a host the
-    // reader did not see; refuse the string instead of rewriting it.
-    if url.contains('\\') {
-        return None;
+    if url.is_ascii() {
+        // Reject ASCII whitespace, controls, and `\` in one byte pass.
+        if url.bytes().any(|byte| byte <= b' ' || byte == 0x7f || byte == b'\\') {
+            return None;
+        }
+    } else {
+        if url
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+        {
+            return None;
+        }
+        // The parser reads `\` as `/` for http(s), which would move a host the
+        // reader did not see; refuse the string instead of rewriting it.
+        if url.contains('\\') {
+            return None;
+        }
     }
     let (scheme, rest) = url.split_once("://")?;
     if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
@@ -208,18 +222,36 @@ fn scheme_at(text: &str, start: usize) -> bool {
 }
 
 /// The run of URL characters from `start`, and where it stopped.
-fn bare(text: &str, start: usize) -> (String, usize) {
-    let mut end = start;
-    for (offset, character) in text[start..].char_indices() {
-        if character.is_whitespace()
-            || character.is_control()
-            || matches!(character, '\\' | '"' | '\'' | '`' | '<' | '>' | '{' | '}' | '|' | '^')
-        {
-            break;
+fn bare(text: &str, start: usize) -> (&str, usize) {
+    let bytes = text.as_bytes();
+    let mut index = start;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte < 0x80 {
+            if byte <= b' '
+                || byte == 0x7f
+                || matches!(
+                    byte,
+                    b'\\' | b'"' | b'\'' | b'`' | b'<' | b'>' | b'{' | b'}' | b'|' | b'^'
+                )
+            {
+                return (&text[start..index], index);
+            }
+            index += 1;
+            continue;
         }
-        end = start + offset + character.len_utf8();
+        for (offset, character) in text[index..].char_indices() {
+            if character.is_whitespace()
+                || character.is_control()
+                || matches!(character, '\\' | '"' | '\'' | '`' | '<' | '>' | '{' | '}' | '|' | '^')
+            {
+                let end = index + offset;
+                return (&text[start..end], end);
+            }
+        }
+        return (&text[start..], text.len());
     }
-    (text[start..end].to_string(), end)
+    (&text[start..index], index)
 }
 
 /// A scanned run with the punctuation a sentence put after it removed.

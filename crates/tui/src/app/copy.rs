@@ -107,21 +107,18 @@ impl App {
     /// The last block is the one the model just wrote, which is what a reader
     /// reaching for this key wants; the list copies any other block.
     pub(crate) fn copy_newest_code(&mut self) {
-        let Some(answer) = self.answer_at(0) else {
-            self.warn("copy: there is no answer to copy from yet");
-            return;
-        };
-        let mut last = None;
-        scan_code_blocks(answer, |span| {
-            last = Some((span.body_start, span.body_end, span.raw_bytes));
-            true
+        let outcome = self.answer_at(0).map(|answer| {
+            let mut last = None;
+            scan_code_blocks(&answer, |span| {
+                last = Some((span.body_start, span.body_end, span.raw_bytes));
+                true
+            });
+            last.map(|(start, end, cap)| materialize_block(&answer, start, end, cap))
         });
-        match last {
-            Some((start, end, cap)) => {
-                let text = materialize_block(answer, start, end, cap);
-                self.request_copy("the newest code block", text);
-            }
-            None => self.warn(format!("copy: {} has no code block", answer_name(0))),
+        match outcome {
+            None => self.warn("copy: there is no answer to copy from yet"),
+            Some(Some(text)) => self.request_copy("the newest code block", text),
+            Some(None) => self.warn(format!("copy: {} has no code block", answer_name(0))),
         }
     }
 
@@ -188,56 +185,60 @@ impl App {
 
     /// Copy one answer back, or one of its code blocks.
     fn copy_answer(&mut self, back: usize, block: Option<usize>) {
-        let Some(answer) = self.answer_at(back) else {
-            self.warn("copy: there is no answer to copy yet");
-            return;
-        };
         let name = answer_name(back);
         match block {
-            None => {
-                let owned = answer.to_string();
-                self.request_copy(name, owned);
-            }
+            None => match self.answer_at(back).map(Cow::into_owned) {
+                Some(owned) => self.request_copy(name, owned),
+                None => self.warn("copy: there is no answer to copy yet"),
+            },
             Some(index) => {
-                let mut seen = 0;
-                let mut target = None;
-                scan_code_blocks(answer, |span| {
-                    if seen == index {
-                        target = Some((span.body_start, span.body_end, span.raw_bytes));
-                        return false;
-                    }
-                    seen += 1;
-                    true
+                let outcome = self.answer_at(back).map(|answer| {
+                    let mut seen = 0;
+                    let mut target = None;
+                    scan_code_blocks(&answer, |span| {
+                        if seen == index {
+                            target = Some((span.body_start, span.body_end, span.raw_bytes));
+                            return false;
+                        }
+                        seen += 1;
+                        true
+                    });
+                    target.map(|(start, end, cap)| materialize_block(&answer, start, end, cap))
                 });
-                match target {
-                    Some((start, end, cap)) => {
-                        let text = materialize_block(answer, start, end, cap);
+                match outcome {
+                    None => self.warn("copy: there is no answer to copy yet"),
+                    Some(Some(text)) => {
                         self.request_copy(format!("code block {} of {name}", index + 1), text);
                     }
-                    None => self.warn(format!("copy: {name} has no code block {}", index + 1)),
+                    Some(None) => self.warn(format!("copy: {name} has no code block {}", index + 1)),
                 }
             }
         }
     }
 
     /// The `back`-th newest answer, counting a streamed one as the newest.
-    fn answer_at(&self, back: usize) -> Option<&str> {
+    fn answer_at(&self, back: usize) -> Option<std::borrow::Cow<'_, str>> {
         answer_in_transcript(&self.transcript, back)
     }
 }
 
-fn answer_in_transcript(transcript: &Transcript, back: usize) -> Option<&str> {
+fn answer_in_transcript(transcript: &Transcript, back: usize) -> Option<std::borrow::Cow<'_, str>> {
     let mut seen = 0;
     if let Some(text) = transcript.open_text() {
         if back == 0 {
-            return Some(text);
+            return Some(std::borrow::Cow::Borrowed(text));
         }
         seen = 1;
     }
     for item in transcript.items().iter().rev() {
-        if let Item::Assistant(text) = item {
+        let answer = match item {
+            Item::Assistant(text) => Some(std::borrow::Cow::Borrowed(text.as_str())),
+            Item::A2ui(card) if !card.lines.is_empty() => Some(std::borrow::Cow::Owned(card.lines.join("\n"))),
+            _ => None,
+        };
+        if let Some(answer) = answer {
             if seen == back {
-                return Some(text.as_str());
+                return Some(answer);
             }
             seen += 1;
         }
@@ -256,7 +257,7 @@ fn build_copy_rows(transcript: &Transcript) -> Vec<Row> {
         };
         let name = answer_name(back);
         let mut index = 0;
-        scan_code_blocks(answer, |span| {
+        scan_code_blocks(&answer, |span| {
             if rows.len() >= MAX_ROWS {
                 return false;
             }
@@ -277,7 +278,7 @@ fn build_copy_rows(transcript: &Transcript) -> Vec<Row> {
             rows.len() < MAX_ROWS
         });
         if rows.len() < MAX_ROWS {
-            rows.push(row(name.as_ref(), &format!("answer:{back}"), answer));
+            rows.push(row(name.as_ref(), &format!("answer:{back}"), &answer));
         }
     }
     rows

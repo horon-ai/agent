@@ -60,46 +60,72 @@ pub(crate) struct Ink {
 /// wider than the pane would wrap into a row that no longer reads as a flow, so
 /// the source is drawn instead.
 pub(crate) fn flow(body: &[&str], width: u16, ink: Ink) -> Option<Vec<Indented>> {
-    if body.iter().map(|line| line.len() + 1).sum::<usize>() > MAX_SOURCE_BYTES {
-        return None;
+    let mut source_bytes = 0usize;
+    let mut rows = 0usize;
+    let mut flow_line: Option<&str> = None;
+    for raw in body {
+        source_bytes += raw.len() + 1;
+        if source_bytes > MAX_SOURCE_BYTES {
+            return None;
+        }
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            rows += 1;
+            if rows > MAX_ROWS {
+                return None;
+            }
+            if flow_line.is_none() {
+                flow_line = Some(trimmed);
+            }
+        }
     }
-    let rows = body
-        .iter()
-        .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
-        .count();
     if rows != MAX_ROWS {
         return None;
     }
-    let line = body.iter().map(|line| line.trim()).find(|line| !line.is_empty())?;
-    let label_count = line.split("->").count();
-    if !(2..=MAX_LABELS).contains(&label_count) {
-        return None;
-    }
-    let mut nodes: Vec<String> = Vec::with_capacity(label_count);
+    let line = flow_line?;
+
+    let mut labels = [""; MAX_LABELS];
+    let mut count = 0usize;
+    let mut total_width = 0usize;
     for label in line.split("->").map(str::trim) {
-        if label.is_empty()
-            || label.chars().count() > MAX_LABEL_CHARS
-            || UnicodeWidthStr::width(label) > MAX_LABEL_COLUMNS
-            || label.chars().any(char::is_control)
-        {
+        if count >= MAX_LABELS || label.is_empty() {
             return None;
         }
-        nodes.push(format!("[ {label} ]"));
+        let label_cols = if label.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+            if label.len() > MAX_LABEL_CHARS || label.len() > MAX_LABEL_COLUMNS {
+                return None;
+            }
+            label.len()
+        } else {
+            if label.chars().count() > MAX_LABEL_CHARS || label.chars().any(char::is_control) {
+                return None;
+            }
+            let cols = UnicodeWidthStr::width(label);
+            if cols > MAX_LABEL_COLUMNS {
+                return None;
+            }
+            cols
+        };
+        labels[count] = label;
+        count += 1;
+        total_width += label_cols + 4;
     }
-    let total: usize = nodes
-        .iter()
-        .map(|node| UnicodeWidthStr::width(node.as_str()))
-        .sum::<usize>()
-        + (nodes.len() - 1) * ARROW_COLUMNS;
-    if total > usize::from(width) {
+    if count < 2 {
         return None;
     }
-    let mut spans: Vec<Span<'static>> = Vec::with_capacity(nodes.len() * 2);
-    for (index, node) in nodes.into_iter().enumerate() {
+    total_width += (count - 1) * ARROW_COLUMNS;
+    if total_width > usize::from(width) {
+        return None;
+    }
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(count * 2 - 1);
+    for (index, label) in labels[..count].iter().enumerate() {
         if index > 0 {
             spans.push(Span::styled(" -> ", ink.arrow));
         }
+        let mut node = String::with_capacity(label.len() + 4);
+        node.push_str("[ ");
+        node.push_str(label);
+        node.push_str(" ]");
         spans.push(Span::styled(node, ink.node));
     }
     Some(vec![Indented::plain(Line::from(spans))])

@@ -57,20 +57,16 @@ impl Transcript {
     /// id names the most recent call of that name, which is the line the result
     /// that carried no id was just written onto.
     pub fn tool_state(&self, call_id: &str, name: &str) -> Option<ToolState> {
-        let mut found = None;
-        for item in &self.items {
+        self.items.iter().rev().find_map(|item| {
             let Item::Tool(call) = item else {
-                continue;
+                return None;
             };
             let named = if call_id.is_empty() {
                 call.name == name
             } else {
                 call.is_call(call_id)
             };
-            if named {
-                found = Some(call.state.clone());
-            }
-        }
-        found
+            named.then(|| call.state.clone())
+        })
     }
 }

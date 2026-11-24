@@ -141,20 +141,21 @@ fn hidden(call: &crate::transcript::ToolCall, expand: Option<&tool_expand::Frame
 /// between two parts: a turn whose calls reported no usage shows its time
 /// alone, and a zero never stands in for a missing count.
 fn turn_usage(metrics: &TurnMetrics, look: &Look<'_>) -> Vec<Indented> {
-    let mut parts = vec![tool_line::format_elapsed(metrics.elapsed_ms)];
+    let mut text = String::with_capacity(if metrics.tokens.is_some() { 36 } else { 12 });
+    tool_line::push_elapsed(&mut text, metrics.elapsed_ms);
     if let Some((input, output)) = metrics.tokens {
-        parts.push(format!(
-            "↑{} ↓{}",
-            crate::statusline::compact(input),
-            crate::statusline::compact(output)
-        ));
+        let separator = if look.symbols.separator.is_empty() {
+            "·"
+        } else {
+            look.symbols.separator
+        };
+        text.push(' ');
+        text.push_str(separator);
+        text.push_str(" ↑");
+        crate::statusline::push_compact(&mut text, input);
+        text.push_str(" ↓");
+        crate::statusline::push_compact(&mut text, output);
     }
-    let separator = if look.symbols.separator.is_empty() {
-        "·"
-    } else {
-        look.symbols.separator
-    };
-    let text = parts.join(&format!(" {separator} "));
     let style = Style::default().fg(look.theme.transcript.notice);
     vec![Indented::plain(Line::from(Span::styled(text, style)))]
 }
@@ -169,11 +170,36 @@ fn turn_usage(metrics: &TurnMetrics, look: &Look<'_>) -> Vec<Indented> {
 /// prompt: the daemon never sends one.
 fn cache_miss(miss: &crate::transcript::CacheMiss, look: &Look<'_>) -> Vec<Indented> {
     let style = Style::default().fg(look.theme.transcript.notice);
-    prefixed(
-        Span::styled(format!("{} cache miss: ", look.symbols.bullet), style),
-        &miss.summary(),
-        style,
-    )
+    let mut text = String::with_capacity(look.symbols.bullet.len() + 64);
+    text.push_str(look.symbols.bullet);
+    text.push_str(" cache miss: ");
+    push_cache_miss_summary(miss, &mut text);
+    vec![Indented::new(Line::from(Span::styled(text, style)), INDENT)]
+}
+
+/// Format [`crate::transcript::CacheMiss::summary`] as a single owned string.
+pub(crate) fn cache_miss_summary(miss: &crate::transcript::CacheMiss) -> String {
+    let mut out = String::with_capacity(48);
+    push_cache_miss_summary(miss, &mut out);
+    out
+}
+
+/// Append a cache-miss summary directly into `out`.
+fn push_cache_miss_summary(miss: &crate::transcript::CacheMiss, out: &mut String) {
+    out.push_str(miss.cause.label());
+    out.push_str(", ~");
+    if miss.missed_tokens >= 1_000_000 {
+        use std::fmt::Write as _;
+        if write!(out, "{:.1}M", miss.missed_tokens as f64 / 1_000_000.0).is_err() {
+            // `fmt::Write` for `String` is infallible.
+        }
+    } else if miss.missed_tokens >= 1_000 {
+        tool_line::push_u64(out, miss.missed_tokens / 1_000);
+        out.push('K');
+    } else {
+        tool_line::push_u64(out, miss.missed_tokens);
+    }
+    out.push_str(" tokens resent");
 }
 
 /// The lines of one item, keeping a call's whole output as the text it came
@@ -281,16 +307,30 @@ fn plain_lines(text: &str, style: Style, indent: usize) -> Vec<Indented> {
         .collect()
 }
 
+const INDENT_PAD: &str = const {
+    assert!(INDENT == 2);
+    "  "
+};
+
 /// One line per logical line, the first under `prefix` and the rest under it.
 fn prefixed(prefix: Span<'static>, text: &str, style: Style) -> Vec<Indented> {
-    let pad = " ".repeat(INDENT);
+    if text.is_empty() {
+        return Vec::new();
+    }
+    if !text.contains('\n') {
+        let line = text.strip_suffix('\r').unwrap_or(text);
+        return vec![Indented::new(
+            Line::from(vec![prefix, Span::styled(line.to_string(), style)]),
+            INDENT,
+        )];
+    }
     text.lines()
         .enumerate()
         .map(|(index, line)| {
             let built = if index == 0 {
                 Line::from(vec![prefix.clone(), Span::styled(line.to_string(), style)])
             } else {
-                Line::from(vec![Span::raw(pad.clone()), Span::styled(line.to_string(), style)])
+                Line::from(vec![Span::raw(INDENT_PAD), Span::styled(line.to_string(), style)])
             };
             Indented::new(built, INDENT)
         })
@@ -311,7 +351,6 @@ fn notice(text: &str, look: &Look<'_>) -> Vec<Indented> {
     let style = Style::default().fg(look.theme.transcript.notice);
     let prefix = Span::styled(format!("{} ", look.symbols.bullet), style);
     let prefix_width = UnicodeWidthStr::width(look.symbols.bullet) + 1;
-    let pad = " ".repeat(INDENT);
     let width = usize::from(look.width);
     text.lines()
         .enumerate()
@@ -323,7 +362,7 @@ fn notice(text: &str, look: &Look<'_>) -> Vec<Indented> {
                 )
             } else {
                 (
-                    Line::from(vec![Span::raw(pad.clone()), Span::styled(line.to_string(), style)]),
+                    Line::from(vec![Span::raw(INDENT_PAD), Span::styled(line.to_string(), style)]),
                     INDENT,
                 )
             };
