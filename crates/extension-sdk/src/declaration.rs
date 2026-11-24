@@ -8,7 +8,8 @@
 //! report the same digest.
 
 use std::fmt;
-use std::fs;
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use horon_agent_extension_types::wire::{
@@ -83,34 +84,15 @@ impl Declaration {
     }
 
     fn read(path: &Path, kind: PackageKind) -> Result<Self, LoadError> {
-        let metadata = fs::metadata(path).map_err(|source| LoadError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        if metadata.len() > MAX_DECLARATION_BYTES {
-            return Err(LoadError::TooLarge {
-                limit: MAX_DECLARATION_BYTES,
-            });
-        }
-        let bytes = fs::read(path).map_err(|source| LoadError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        let bytes = read_bytes(path)?;
         let manifest: ExtensionManifest = parse(&bytes, path)?;
         if manifest.schema_version != MANIFEST_VERSION {
             return Err(LoadError::Schema {
                 declared: manifest.schema_version,
             });
         }
-        let declared = ProtocolVersion::parse(&manifest.protocol).ok_or_else(|| LoadError::Protocol {
-            declared: manifest.protocol.clone(),
-        })?;
-        if !PROTOCOL_RANGE.contains(declared) {
-            return Err(LoadError::Protocol {
-                declared: manifest.protocol.clone(),
-            });
-        }
         if manifest.protocol != EXTENSION_PROTOCOL {
+            let _ = ProtocolVersion::parse(&manifest.protocol);
             return Err(LoadError::Protocol {
                 declared: manifest.protocol.clone(),
             });
@@ -227,20 +209,32 @@ impl std::error::Error for LoadError {
     }
 }
 
-fn read_manifest<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T, LoadError> {
-    let metadata = fs::metadata(path).map_err(|source| LoadError::Io {
+fn read_bytes(path: &Path) -> Result<Vec<u8>, LoadError> {
+    let io = |source| LoadError::Io {
         path: path.to_path_buf(),
         source,
-    })?;
-    if metadata.len() > MAX_DECLARATION_BYTES {
+    };
+    let file = File::open(path).map_err(io)?;
+    let len = file.metadata().map_err(io)?.len();
+    if len > MAX_DECLARATION_BYTES {
         return Err(LoadError::TooLarge {
             limit: MAX_DECLARATION_BYTES,
         });
     }
-    let bytes = fs::read(path).map_err(|source| LoadError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let mut bytes = Vec::with_capacity(len as usize);
+    file.take(MAX_DECLARATION_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io)?;
+    if bytes.len() as u64 > MAX_DECLARATION_BYTES {
+        return Err(LoadError::TooLarge {
+            limit: MAX_DECLARATION_BYTES,
+        });
+    }
+    Ok(bytes)
+}
+
+fn read_manifest<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T, LoadError> {
+    let bytes = read_bytes(path)?;
     parse(&bytes, path)
 }
 
