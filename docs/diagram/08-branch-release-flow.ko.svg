@@ -47,8 +47,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="266" y="228" font-size="10.5" class="m">Documentation Checks</text>
 <text x="266" y="242" font-size="10.5" class="m">링크, UTF-8, 영한 짝, 설치 문구,</text>
 <text x="266" y="256" font-size="10.5" class="m">벤치 블록</text>
-<text x="266" y="274" font-size="10.5" class="m">Documentation Corpus Test</text>
-<text x="266" y="288" font-size="10.5" class="m">포함된 문서가 여전히 빌드되는지</text>
+<text x="266" y="272" font-size="10.5" class="m">Documentation Corpus Test</text>
+<text x="266" y="286" font-size="10.5" class="m">포함된 문서가 여전히 빌드되는지</text>
 <rect x="494" y="192" width="228" height="104" rx="7" fill="var(--bg)" stroke="var(--line)"/>
 <text x="508" y="210" font-size="11.5" font-weight="600">범위별 · 코드 변경</text>
 <text x="508" y="228" font-size="10.5" class="m">문서 사이트·워크플로·SDK는</text>
@@ -63,68 +63,68 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="46" y="202" font-size="10.5" class="mono">CI Required</text>
 <text x="46" y="218" font-size="10.5" class="mono">Structural performance</text>
 <text x="46" y="232" font-size="10.5" class="mono">required</text>
-<text x="46" y="254" font-size="10.5" class="m">둘 다 항상 끝까지 돌고 게이트가</text>
-<text x="46" y="268" font-size="10.5" class="m">실패하거나 취소됐을 때만 실패한다.</text>
-<text x="46" y="282" font-size="10.5" class="m">건너뛴 게이트가 검사를 계속</text>
-<text x="46" y="296" font-size="10.5" class="m">대기시키는 일이 없다</text>
+<text x="46" y="252" font-size="10.5" class="m">둘 다 항상 끝까지 돌고 게이트가</text>
+<text x="46" y="266" font-size="10.5" class="m">실패하거나 취소됐을 때만 실패한다.</text>
+<text x="46" y="280" font-size="10.5" class="m">건너뛴 게이트가 검사를 계속</text>
+<text x="46" y="294" font-size="10.5" class="m">대기시키는 일이 없다</text>
 
-<rect x="30" y="340" width="900" height="48" rx="10" fill="var(--panel)" stroke="var(--line)"/>
-<text x="46" y="362" font-size="12.5" font-weight="600">dev 푸시</text>
-<text x="46" y="379" font-size="10.5" class="m">푸시 실행은 같은 워크플로의 마지막 성공 dev 푸시 실행 head와 비교해 분류한다. head가 이미 origin/main에 있거나, 수동 실행·재실행이거나, 조회에 실패하면 전부 돈다</text>
+<rect x="30" y="340" width="900" height="62" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="360" font-size="12.5" font-weight="600">dev 푸시</text>
+<text x="46" y="377" font-size="10.5" class="m">푸시 실행은 같은 워크플로의 마지막 성공 dev 푸시 실행 head와 비교해 분류한다.</text>
+<text x="46" y="391" font-size="10.5" class="m">head가 이미 origin/main에 있거나, 수동 실행·재실행이거나, 조회에 실패하면 전부 돈다</text>
 <line x1="480" y1="314" x2="480" y2="336" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
 
-<text x="30" y="428" font-size="12.5" class="m">main — 출하되는 곳</text>
-<line x1="30" y1="438" x2="930" y2="438" stroke="var(--line)" stroke-width="1.4"/>
+<text x="30" y="434" font-size="12.5" class="m">main — 출하되는 곳</text>
+<line x1="30" y1="444" x2="930" y2="444" stroke="var(--line)" stroke-width="1.4"/>
 
-<rect x="30" y="454" width="230" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
-<text x="46" y="476" font-size="12.5" font-weight="600">릴리스 풀 리퀘스트</text>
-<text x="46" y="494" font-size="10.5" class="m">base가 main, head가 dev,</text>
-<text x="46" y="508" font-size="10.5" class="mono">Release: dev into main</text>
-<text x="46" y="526" font-size="10.5" class="m">merge 커밋으로 병합하고</text>
-<text x="46" y="540" font-size="10.5" class="m">squash하지 않는다</text>
+<rect x="30" y="460" width="200" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="482" font-size="12.5" font-weight="600">릴리스 풀 리퀘스트</text>
+<text x="46" y="500" font-size="10.5" class="m">base가 main, head가 dev,</text>
+<text x="46" y="514" font-size="10.5" class="mono">Release: dev into main</text>
+<text x="46" y="532" font-size="10.5" class="m">merge 커밋으로 병합하고</text>
+<text x="46" y="546" font-size="10.5" class="m">squash하지 않는다</text>
 
-<rect x="288" y="454" width="230" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
-<text x="304" y="476" font-size="12.5" font-weight="600">main 푸시 CI</text>
-<text x="304" y="494" font-size="10.5" class="m">경로와 무관하게 모든 게이트를</text>
-<text x="304" y="508" font-size="10.5" class="m">돈다. 문서만 바꾼 실행은 릴리스</text>
-<text x="304" y="522" font-size="10.5" class="m">증거가 되지 못한다</text>
-<text x="304" y="540" font-size="10.5" class="mono">check_ci.py</text>
+<rect x="256" y="460" width="208" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="272" y="482" font-size="12.5" font-weight="600">main 푸시 CI</text>
+<text x="272" y="500" font-size="10.5" class="m">경로와 무관하게 모든 게이트를</text>
+<text x="272" y="514" font-size="10.5" class="m">돈다. 문서만 바꾼 실행은 릴리스</text>
+<text x="272" y="528" font-size="10.5" class="m">증거가 되지 못한다</text>
+<text x="272" y="546" font-size="10.5" class="mono">check_ci.py</text>
 
-<rect x="546" y="454" width="200" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
-<text x="562" y="476" font-size="12.5" font-weight="600">release-tag.yml</text>
-<text x="562" y="494" font-size="10.5" class="m">next_version.py가 다음 패치 태그를</text>
-<text x="562" y="508" font-size="10.5" class="m">고르고 태그를 한 번만 만들어</text>
-<text x="562" y="522" font-size="10.5" class="m">옮기지 않는다. 이어서</text>
-<text x="562" y="536" font-size="10.5" class="m">release.yml을 부른다</text>
+<rect x="490" y="460" width="200" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="506" y="482" font-size="12.5" font-weight="600">release-tag.yml</text>
+<text x="506" y="500" font-size="10.5" class="m">next_version.py가 다음 패치 태그를</text>
+<text x="506" y="514" font-size="10.5" class="m">고르고 태그를 한 번만 만들어</text>
+<text x="506" y="528" font-size="10.5" class="m">옮기지 않는다. 이어서</text>
+<text x="506" y="542" font-size="10.5" class="m">release.yml을 부른다</text>
 
-<rect x="774" y="454" width="156" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
-<text x="790" y="476" font-size="12.5" font-weight="600">출하</text>
-<text x="790" y="494" font-size="10.5" class="m">release.yml이 네 OS 바이너리와</text>
-<text x="790" y="508" font-size="10.5" class="m">TUI 아카이브를 만들고, 이어서</text>
-<text x="790" y="522" font-size="10.5" class="m">컨테이너 작업이 이미지를 민다</text>
-<text x="790" y="534" font-size="10.5" class="mono">ghcr.io/</text>
-<text x="790" y="548" font-size="10.5" class="mono">horon-ai/agent</text>
+<rect x="716" y="460" width="214" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="732" y="482" font-size="12.5" font-weight="600">출하</text>
+<text x="732" y="500" font-size="10.5" class="m">release.yml이 네 OS 바이너리와</text>
+<text x="732" y="514" font-size="10.5" class="m">TUI 아카이브를 만들고, 이어서</text>
+<text x="732" y="528" font-size="10.5" class="m">컨테이너 작업이 이미지를 민다</text>
+<text x="732" y="546" font-size="10.5" class="mono">ghcr.io/horon-ai/agent</text>
 
-<line x1="260" y1="507" x2="284" y2="507" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
-<line x1="518" y1="507" x2="542" y2="507" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
-<line x1="746" y1="507" x2="770" y2="507" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
-<line x1="145" y1="388" x2="145" y2="450" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="230" y1="519" x2="252" y2="519" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="464" y1="519" x2="486" y2="519" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="690" y1="519" x2="712" y2="519" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="190" y1="402" x2="190" y2="456" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
 
-<rect x="30" y="588" width="440" height="90" rx="10" fill="var(--panel)" stroke="var(--line)"/>
-<text x="46" y="610" font-size="12.5" font-weight="600">동기화 풀 리퀘스트: main에서 dev로</text>
-<text x="46" y="628" font-size="10.5" class="m">base가 dev, head가 main이고 merge 커밋으로 병합하므로</text>
-<text x="46" y="642" font-size="10.5" class="m">dev가 main의 모든 커밋을 가진다. 다른 풀 리퀘스트처럼</text>
-<text x="46" y="656" font-size="10.5" class="m">이슈 연결이 필요하다. 끝나면 양쪽에 빠진 커밋이 0이다.</text>
-<path d="M852 572 L852 580 L470 580 L470 586" fill="none" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="30" y="594" width="440" height="90" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="616" font-size="12.5" font-weight="600">동기화 풀 리퀘스트: main에서 dev로</text>
+<text x="46" y="634" font-size="10.5" class="m">base가 dev, head가 main이고 merge 커밋으로 병합하므로</text>
+<text x="46" y="648" font-size="10.5" class="m">dev가 main의 모든 커밋을 가진다. 다른 풀 리퀘스트처럼</text>
+<text x="46" y="662" font-size="10.5" class="m">이슈 연결이 필요하다. 끝나면 양쪽에 빠진 커밋이 0이다.</text>
+<path d="M823 578 L823 585 L456 585 L456 591" fill="none" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
 
-<rect x="490" y="588" width="440" height="90" rx="10" fill="var(--panel)" stroke="var(--line)"/>
-<text x="506" y="610" font-size="12.5" font-weight="600">[skip ci] main 푸시</text>
-<text x="506" y="628" font-size="10.5" class="m">#327, #328 같은 문서 전용 릴리스 갱신이나</text>
-<text x="506" y="642" font-size="10.5" class="m">benchmark-docs.yml이 만든 docs(perf) 커밋은 [skip ci]를 단다.</text>
-<text x="506" y="656" font-size="10.5" class="m">CI도 태그도 릴리스도 없다. 다음 릴리스와 동기화가 맞춘다.</text>
+<rect x="490" y="594" width="440" height="90" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="506" y="616" font-size="12.5" font-weight="600">[skip ci] main 푸시</text>
+<text x="506" y="634" font-size="10.5" class="m">#327, #328 같은 문서 전용 릴리스 갱신이나</text>
+<text x="506" y="648" font-size="10.5" class="m">benchmark-docs.yml이 만든 docs(perf) 커밋은 [skip ci]를 단다.</text>
+<text x="506" y="662" font-size="10.5" class="m">CI도 태그도 릴리스도 없다. 다음 릴리스와 동기화가 맞춘다.</text>
 
-<text x="30" y="706" font-size="11.5" class="m">benchmark-docs.yml은 CI가 통과하고 에이전트 코드가 바뀐 main 푸시를 측정해 수치를 결과 블록에 [skip ci]로 커밋한다.</text>
-<text x="30" y="724" font-size="11.5" class="m">release.yml과 release-tag.yml은 풀 리퀘스트 게이트가 아니다. 출하 경로는 릴리스 하나뿐이다.</text>
-<text x="30" y="742" font-size="11.5" class="m">main 밖의 모든 ref에서는 새 실행이 이전 실행을 취소한다. main의 푸시 실행은 릴리스 증거이므로 돌고 있는 실행을 취소하지 않는다.</text>
-<text x="30" y="768" font-size="11" class="m">동기화 뒤 양쪽에 빠진 커밋이 0이라는 서술은 AGENTS.md 확인 절차이며 이 그림에서 따로 재지 않았다.</text>
+<text x="30" y="712" font-size="11.5" class="m">benchmark-docs.yml은 CI가 통과하고 에이전트 코드가 바뀐 main 푸시를 측정해 수치를 결과 블록에 [skip ci]로 커밋한다.</text>
+<text x="30" y="730" font-size="11.5" class="m">release.yml과 release-tag.yml은 풀 리퀘스트 게이트가 아니다. 출하 경로는 릴리스 하나뿐이다.</text>
+<text x="30" y="748" font-size="11.5" class="m">main 밖의 모든 ref에서는 새 실행이 이전 실행을 취소한다. main의 푸시 실행은 릴리스 증거이므로 돌고 있는 실행을 취소하지 않는다.</text>
+<text x="30" y="774" font-size="11" class="m">동기화 뒤 양쪽에 빠진 커밋이 0이라는 서술은 AGENTS.md 확인 절차이며 이 그림에서 따로 재지 않았다.</text>
 </svg>
