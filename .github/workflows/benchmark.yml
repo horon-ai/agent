@@ -43,7 +43,12 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: "Commit to check out and measure (default: the triggering commit)"
+        description: "Horon commit, branch, or tag to build and measure (default: main)"
+        type: string
+        required: false
+        default: "main"
+      harness_ref:
+        description: "Commit carrying the scripts/perf harness for plan/resolve/measure/merge (empty uses the workflow ref)"
         type: string
         required: false
         default: ""
@@ -63,6 +68,7 @@ on:
         required: false
         default: jcode,claude_code,codex,opencode,pi,omp,omo
       sessions:
+        description: "Concurrent session counts (space-separated)"
         type: string
         required: false
         default: "1 5 10"
@@ -85,16 +91,16 @@ on:
         required: false
         default: ""
       jcode_version:
-        description: "Optional published jcode tag (vX.Y.Z) to pin; empty resolves the newest stable release once for every OS and suite"
+        description: "Optional published jcode tag (vX.Y.Z) to pin; empty resolves the newest stable release per OS once for this round"
         type: string
         required: false
         default: ""
   workflow_dispatch:
     inputs:
-      install_ref:
-        description: "Installer branch or commit for the install suite (defaults to the dispatch commit)"
+      ref:
+        description: "Horon branch, tag, or commit to build and measure (default: main; also used by the install suite)"
         required: false
-        default: ""
+        default: "main"
       os:
         description: "Comma-separated OSes, each measured in its own job: linux, macos, windows, or all. The opt-in install suite also accepts freebsd and expands each OS to its architectures"
         required: false
@@ -128,7 +134,7 @@ on:
         required: false
         default: ""
       jcode_version:
-        description: "Optional published jcode tag (vX.Y.Z) to pin; empty resolves the newest stable release once for every OS and suite"
+        description: "Optional published jcode tag (vX.Y.Z) to pin; empty resolves the newest stable release per OS once for this round"
         required: false
         default: ""
 
@@ -161,14 +167,22 @@ jobs:
       install: ${{ steps.plan.outputs.install }}
       run: ${{ steps.plan.outputs.run }}
       jcode: ${{ steps.plan.outputs.jcode }}
+      npm: ${{ steps.plan.outputs.npm }}
+      resolve_competitors: ${{ steps.plan.outputs.resolve_competitors }}
       jcode_platforms: ${{ steps.plan.outputs.jcode_platforms }}
+      horon_sha: ${{ steps.plan.outputs.horon_sha }}
+      horon_semver: ${{ steps.plan.outputs.horon_semver }}
+      horon_release_build: ${{ steps.plan.outputs.horon_release_build }}
+      horon_on_main: ${{ steps.plan.outputs.horon_on_main }}
+      horon_release_tag: ${{ steps.plan.outputs.horon_release_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.harness_ref }}
+          fetch-depth: 0
           sparse-checkout: scripts/perf
 
-      - name: Split the suites input and map the host OSes
+      - name: Split the suites input, resolve horon commit/semver, and map host OSes
         # `install` is opt-in and stays out of `all`. The regular suites run only
         # on linux, macos and windows; `freebsd` belongs to the install suite.
         # Every remaining name goes to bench_select.py, so an unknown suite or OS
@@ -176,12 +190,22 @@ jobs:
         id: plan
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
+          HORON_TARGET_REF: ${{ inputs.ref || 'main' }}
           SUITES_INPUT: ${{ inputs.suites }}
           OS_INPUT: ${{ inputs.os }}
           COMPETITORS: ${{ inputs.competitors }}
         run: |
           set -euo pipefail
           strip() { sed -E 's/^,//; s/,$//; s/,,+/,/g; s/^,//; s/,$//'; }
+          git fetch --no-tags --quiet origin main:refs/remotes/origin/main || true
+          git fetch --tags --force --quiet origin
+          if [[ ! "$HORON_TARGET_REF" =~ ^([0-9a-f]{40,64}|main|origin/main)$ ]]; then
+            git fetch --no-tags --quiet origin "$HORON_TARGET_REF" 2>/dev/null || true
+          fi
+          python3 scripts/perf/competitor_versions.py resolve-horon \
+            --ref "$HORON_TARGET_REF" --main-ref origin/main --github-output "$GITHUB_OUTPUT"
+
           raw="${SUITES_INPUT//[[:space:]]/}"
           [ -n "$raw" ] || raw=all
           install=false
@@ -190,41 +214,62 @@ jobs:
           suites="$(printf '%s' "$suites" | sed -E 's/,install,/,/' | strip)"
           all_os="$(printf '%s' ",${OS_INPUT:-all}," | tr -d '[:space:]' | strip)"
           hosts="$(printf '%s' ",$all_os," | sed -E 's/,freebsd,/,/' | strip)"
-          echo "install=$install" >> "$GITHUB_OUTPUT"
-          echo "suites=$suites" >> "$GITHUB_OUTPUT"
           if [ "$install" = true ]; then
             jcode_platforms="${all_os:-all}"
           else
             jcode_platforms="$hosts"
           fi
-          echo "jcode_platforms=$jcode_platforms" >> "$GITHUB_OUTPUT"
           competitors=",${COMPETITORS//[[:space:]]/},"
           compare=false
           if [[ -n "${hosts//,/}" && ( ",$suites," == *,all,* || ",$suites," == *,compare,* ) ]]; then
             compare=true
           fi
+          jcode=false
           if [[ "$competitors" == *,jcode,* && ( "$install" == true || "$compare" == true ) ]]; then
-            echo "jcode=true" >> "$GITHUB_OUTPUT"
+            jcode=true
           fi
+          npm=false
+          if [[ "$install" == true || "$compare" == true ]]; then
+            for tool in claude_code claude codex opencode pi omp omo; do
+              if [[ "$competitors" == *",$tool,"* ]]; then
+                npm=true
+                break
+              fi
+            done
+          fi
+          resolve_competitors=false
+          if [[ "$jcode" == true || "$npm" == true ]]; then
+            resolve_competitors=true
+          fi
+          {
+            echo "install=$install"
+            echo "suites=$suites"
+            echo "jcode_platforms=$jcode_platforms"
+            echo "jcode=$jcode"
+            echo "npm=$npm"
+            echo "resolve_competitors=$resolve_competitors"
+          } >> "$GITHUB_OUTPUT"
           # A matrix cannot be expanded from an empty include, so a skipped
           # selection hands over one placeholder that the job's `if` skips.
           placeholder='matrix={"include":[{"os":"none","runner":"ubuntu-24.04"}]}'
           if [ -z "$suites" ] || [ -z "${hosts//,/}" ]; then
             echo "::notice::the regular suites are skipped; only the install suite runs"
-            echo "$placeholder" >> "$GITHUB_OUTPUT"
-            echo "run=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "$placeholder"
+              echo "run=false"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           python3 scripts/perf/bench_select.py --platforms "$hosts" | tee -a "$GITHUB_OUTPUT"
           echo "run=true" >> "$GITHUB_OUTPUT"
 
   resolve:
-    name: Resolve jcode release
+    name: Resolve competitor versions
     # One resolution per benchmark round, shared by the regular suites and the
-    # install matrix: picking the release inside each OS job would let runners
-    # race a publish and measure two different releases in one round.
+    # install matrix: picking versions inside each OS job would let runners
+    # race an upstream release and measure two versions in one round.
     needs: plan
-    if: ${{ needs.plan.outputs.jcode == 'true' }}
+    if: ${{ needs.plan.outputs.resolve_competitors == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -232,14 +277,17 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       commit: ${{ steps.resolve.outputs.commit }}
       selection: ${{ steps.resolve.outputs.selection }}
+      jcode_platforms_json: ${{ steps.resolve.outputs.per_platform_json }}
+      npm_versions_json: ${{ steps.npm.outputs.npm_versions_json }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.harness_ref }}
           sparse-checkout: scripts/perf
 
-      - name: Resolve the newest stable release (or the pin)
+      - name: Resolve the newest stable jcode release per OS (or the pin)
         id: resolve
+        if: ${{ needs.plan.outputs.jcode == 'true' }}
         shell: bash
         env:
           # The API call is rate-limited per IP; the job token raises the limit
@@ -253,23 +301,57 @@ jobs:
           args=(resolve --metadata jcode-release.json --github-output "$GITHUB_OUTPUT")
           [ -z "${JCODE_PLATFORMS:-}" ] || args+=(--platforms "$JCODE_PLATFORMS")
           [ "${JCODE_INSTALL_SUITE:-false}" != "true" ] || args+=(--install-suite)
+          [ -n "${JCODE_VERSION:-}" ] || args+=(--per-platform)
           python3 scripts/perf/jcode_release.py "${args[@]}"
           # The resolver writes only validated values; re-check before they are
           # handed to other jobs as shell-visible inputs.
           python3 - jcode-release.json <<'PY'
           import json, re, sys
           record = json.load(open(sys.argv[1], encoding="utf-8"))
-          if not re.fullmatch(r"v\d+\.\d+\.\d+", record.get("tag", "")):
-              raise SystemExit(f"invalid resolved tag: {record.get('tag')!r}")
-          if not re.fullmatch(r"[0-9a-f]{40,64}", record.get("commit", "")):
-              raise SystemExit(f"invalid resolved commit: {record.get('commit')!r}")
+          targets = list((record.get("platforms") or {}).values()) or [record]
+          for item in targets:
+              if not re.fullmatch(r"v\d+\.\d+\.\d+", item.get("tag", "")):
+                  raise SystemExit(f"invalid resolved tag: {item.get('tag')!r}")
+              if not re.fullmatch(r"[0-9a-f]{40,64}", item.get("commit", "")):
+                  raise SystemExit(f"invalid resolved commit: {item.get('commit')!r}")
           PY
           cat jcode-release.json
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ needs.plan.outputs.jcode == 'true' }}
         with:
           name: jcode-release-${{ github.run_id }}
           path: jcode-release.json
+          retention-days: 30
+
+      - name: Resolve live npm dist-tags.latest competitor versions
+        id: npm
+        if: ${{ needs.plan.outputs.npm == 'true' }}
+        shell: bash
+        env:
+          COMPETITORS: ${{ inputs.competitors }}
+        run: |
+          set -euo pipefail
+          python3 scripts/perf/competitor_versions.py resolve-npm \
+            --tools "$COMPETITORS" --metadata npm-competitors.json --github-output "$GITHUB_OUTPUT"
+          python3 - npm-competitors.json <<'PY'
+          import json, re, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          tools = data.get("tools") or {}
+          if not tools:
+              raise SystemExit("resolve-npm produced no tools")
+          for key, entry in tools.items():
+              ver = entry.get("version") or ""
+              if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,127}", ver) or ver == "latest":
+                  raise SystemExit(f"invalid npm version for {key}: {ver!r}")
+          PY
+          cat npm-competitors.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ needs.plan.outputs.npm == 'true' }}
+        with:
+          name: npm-competitors-${{ github.run_id }}
+          path: npm-competitors.json
           retention-days: 30
 
   benchmark:
@@ -277,8 +359,8 @@ jobs:
     needs: [plan, resolve]
     # A failed resolution must not be papered over: the resolve job is red and
     # these jobs wait for a re-run instead of measuring another release.
-    # `!cancelled()` is explicit because a skipped `resolve` (jcode not in the
-    # competitor list) would otherwise suppress this job through GitHub's
+    # `!cancelled()` is explicit because a skipped `resolve` (no external
+    # competitors requested) would otherwise suppress this job through GitHub's
     # implicit success() check.
     if: ${{ !cancelled() && needs.plan.outputs.run == 'true' && (needs.resolve.result == 'success' || needs.resolve.result == 'skipped') }}
     strategy:
@@ -286,7 +368,10 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     uses: ./.github/workflows/benchmark-os.yml
     with:
-      ref: ${{ inputs.ref }}
+      ref: ${{ needs.plan.outputs.horon_sha }}
+      harness_ref: ${{ inputs.harness_ref }}
+      horon_semver: ${{ needs.plan.outputs.horon_semver }}
+      horon_release_build: ${{ needs.plan.outputs.horon_release_build }}
       os: ${{ matrix.os }}
       runner: ${{ matrix.runner }}
       # `install` is removed here so bench_select.py never sees a name it does
@@ -301,6 +386,8 @@ jobs:
       jcode_version: ${{ needs.resolve.outputs.tag }}
       jcode_release_commit: ${{ needs.resolve.outputs.commit }}
       jcode_release_source: ${{ needs.resolve.outputs.selection }}
+      jcode_platforms_json: ${{ needs.resolve.outputs.jcode_platforms_json }}
+      npm_versions_json: ${{ needs.resolve.outputs.npm_versions_json }}
 
   install:
     name: Install benchmark
@@ -311,7 +398,9 @@ jobs:
     if: ${{ !cancelled() && needs.plan.outputs.install == 'true' && (needs.resolve.result == 'success' || needs.resolve.result == 'skipped') }}
     uses: ./.github/workflows/benchmark-install.yml
     with:
-      ref: ${{ inputs.install_ref || inputs.ref }}
+      ref: ${{ needs.plan.outputs.horon_sha }}
+      harness_ref: ${{ inputs.harness_ref }}
+      horon_release_tag: ${{ needs.plan.outputs.horon_release_tag }}
       os: ${{ inputs.os }}
       competitors: ${{ inputs.competitors }}
       # The install suite takes its sample count from oneshot_runs: five cold
@@ -321,3 +410,5 @@ jobs:
       jcode_version: ${{ needs.resolve.outputs.tag }}
       jcode_release_commit: ${{ needs.resolve.outputs.commit }}
       jcode_release_source: ${{ needs.resolve.outputs.selection }}
+      jcode_platforms_json: ${{ needs.resolve.outputs.jcode_platforms_json }}
+      npm_versions_json: ${{ needs.resolve.outputs.npm_versions_json }}
