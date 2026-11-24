@@ -477,6 +477,16 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertEqual(compile_count, 1, 'windows-build-test must compile test targets in a single locked cargo call')
         self.assertIn('--message-format=json-render-diagnostics', win_block)
         self.assertIn('if ($passed -lt $MinPassed)', win_block)
+        self.assertNotIn('@listArgs', win_block)
+        self.assertIn('& $entry.Executable --list', win_block)
+
+        e2e_names = re.findall(r"'((?:provider_behavior|windows_lifecycle)::[A-Za-z0-9_]+)'", win_block)
+        self.assertGreaterEqual(len(e2e_names), 4, e2e_names)
+        for full_name in e2e_names:
+            mod_name, fn_name = full_name.split('::', 1)
+            source = (ROOT / f'tests/e2e/{mod_name}.rs').read_text()
+            with self.subTest(e2e_test=full_name):
+                self.assertIn(f'fn {fn_name}(', source)
 
 
 if __name__ == '__main__':
