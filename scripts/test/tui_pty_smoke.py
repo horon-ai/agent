@@ -134,6 +134,7 @@ class Failure(RuntimeError):
 # break and whitespace runs collapse; the raw transcript is kept for reports.
 ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
 WHITESPACE = re.compile(r"\s+")
+RESUMED_SESSION = re.compile(r"resumed (session_[A-Za-z0-9_-]+)")
 
 
 def screen_text(raw: str) -> str:
@@ -1226,6 +1227,24 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def read_until_branch_attached(terminal: Terminal, parent: str, since: int) -> None:
+    """Wait for the fork's own attach, never a redraw of the parent's notice.
+
+    The `forking before ...` notice scrolls the parent's transcript, which
+    redraws its `resumed <parent>` row after `since`; a plain `resumed session_`
+    match then passes while the fork is still in flight, and the next `/fork`
+    opens a list that the attach closes before it is filled. The attach clears
+    the transcript and names the branch, so the wait is over only when the live
+    screen names a resumed session and that session is not the parent.
+    """
+
+    def attached(_needle: str, *, since: int = 0) -> bool:
+        named = RESUMED_SESSION.findall(WHITESPACE.sub(" ", terminal.screen.render()))
+        return bool(named) and parent not in named
+
+    terminal._read_until(attached, "resumed session_", STEP_TIMEOUT, "the fork was saved and attached", since=since)
+
+
 def side_question_smoke(terminal: Terminal, home: str, parent_session: str) -> None:
     from pathlib import Path
 
@@ -1762,7 +1781,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until("the branch keeps", STEP_TIMEOUT, "saved boundary selected", since=filter_start)
             fork_start = len(terminal.transcript)
             terminal.send("\r")
-            terminal.read_until("resumed session_", STEP_TIMEOUT, "the fork was saved and attached", since=fork_start)
+            read_until_branch_attached(terminal, parent_session, fork_start)
             return_picker = len(terminal.transcript)
             terminal.send("/fork")
             terminal.read_until("/fork", STEP_TIMEOUT, "return command reached the composer", since=return_picker)
