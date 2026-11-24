@@ -2648,7 +2648,7 @@ jobs:
               $lines | ForEach-Object { Write-Host $_ }
               $passed = 0
               foreach ($m in ($lines | Select-String -Pattern 'test result: ok\. (\d+) passed')) {
-                $passed += [int]$_.Matches[0].Groups[1].Value
+                $passed += [int]$m.Matches[0].Groups[1].Value
               }
               if ($passed -lt $MinPassed) {
                 throw "$StepName`: expected at least $MinPassed passed tests, reported $passed"

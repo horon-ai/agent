@@ -477,6 +477,8 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertEqual(compile_count, 1, 'windows-build-test must compile test targets in a single locked cargo call')
         self.assertIn('--message-format=json-render-diagnostics', win_block)
         self.assertIn('if ($passed -lt $MinPassed)', win_block)
+        self.assertIn('$m.Matches[0].Groups[1].Value', win_block)
+        self.assertNotIn('$_.Matches', win_block)
         self.assertNotIn('@listArgs', win_block)
         self.assertIn('& $entry.Executable --list', win_block)
 
