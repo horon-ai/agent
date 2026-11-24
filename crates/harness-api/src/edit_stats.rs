@@ -702,8 +702,7 @@ mod tests {
             assert_eq!(bits, 0o700, "edit-stats dir must be 0o700");
         }
         for name in ["s_priv.lock", "s_priv.json"] {
-            if let Some(bits) =
-                horon_agent_platform::fs::mode_bits(&std::fs::metadata(counter_dir.join(name)).unwrap())
+            if let Some(bits) = horon_agent_platform::fs::mode_bits(&std::fs::metadata(counter_dir.join(name)).unwrap())
             {
                 assert_eq!(bits, 0o600, "{name} must be 0o600");
             }

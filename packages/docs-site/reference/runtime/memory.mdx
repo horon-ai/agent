@@ -312,7 +312,8 @@ A revoked key makes the volume fail closed and blocks encrypted exports for that
 volume. Passing `--key-env` or `--key-file` (or calling `export_with_key` /
 `import_with_key`) seals `metadata.jsonl` and every `wiki/` file with `AES-256-GCM`
 using a fresh 96-bit nonce per entry and AAD binding format version, revision,
-`key_id` and entry path. Unkeyed `import` refuses encrypted archives instead of
+`key_id` and entry path. `--key-file` must point to an owner-only regular file
+(`0600` or `0400`, never a symlink or group/world-readable file). Unkeyed `import` refuses encrypted archives instead of
 installing ciphertext, and live disk pages rely on Fly volume encryption at rest.
 
 **The central metadata carries no memory body.** The client posts only

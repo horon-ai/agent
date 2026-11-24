@@ -608,7 +608,10 @@ async fn bash_command_enforces_policy_gates() {
     crate::config::invalidate_config_cache();
     let resp = run_rpc_bash(false, "printf blocked".to_string()).await;
     assert_eq!(resp["success"], false, "{resp}");
-    assert!(resp["error"].as_str().unwrap_or("").contains("needs approval"), "{resp}");
+    assert!(
+        resp["error"].as_str().unwrap_or("").contains("needs approval"),
+        "{resp}"
+    );
 
     // 5. yolo allows safe bash, blocks destructive commands
     std::fs::write(home.path().join("config.toml"), "[tools]\napproval_mode = \"yolo\"\n").unwrap();
@@ -665,8 +668,7 @@ async fn abort_and_prompt_cancels_first_settles_aborted_then_starts_fresh_turn()
     assert_eq!(second["content"], "second");
     let second_id = second["id"].as_u64().unwrap();
     daemon.send(json!({"type": "ack", "id": second_id})).await;
-    daemon.send(json!({"type": "text_delta", "text": "replacement"}))
-        .await;
+    daemon.send(json!({"type": "text_delta", "text": "replacement"})).await;
     daemon.send(json!({"type": "text_done"})).await;
     daemon.send(json!({"type": "message_end"})).await;
     daemon.send(json!({"type": "done", "id": second_id})).await;
@@ -745,10 +747,7 @@ async fn abort_after_abort_and_prompt_discards_replacement_and_completed_race_ig
         turn1_frames.push(host.recv().await);
     }
     assert_eq!(
-        turn1_frames
-            .iter()
-            .find(|f| f["type"] == "prompt_result")
-            .unwrap()["status"],
+        turn1_frames.iter().find(|f| f["type"] == "prompt_result").unwrap()["status"],
         "completed"
     );
 
@@ -758,8 +757,7 @@ async fn abort_after_abort_and_prompt_discards_replacement_and_completed_race_ig
     daemon.send(json!({"type": "ack", "id": cancel["id"]})).await;
     daemon.send(json!({"type": "interrupted"})).await;
     daemon.send(json!({"type": "ack", "id": second_id})).await;
-    daemon.send(json!({"type": "text_delta", "text": "still-runs"}))
-        .await;
+    daemon.send(json!({"type": "text_delta", "text": "still-runs"})).await;
     daemon.send(json!({"type": "text_done"})).await;
     daemon.send(json!({"type": "message_end"})).await;
     daemon.send(json!({"type": "done", "id": second_id})).await;
@@ -769,10 +767,7 @@ async fn abort_after_abort_and_prompt_discards_replacement_and_completed_race_ig
         turn2_frames.push(host.recv().await);
     }
     assert_eq!(
-        turn2_frames
-            .iter()
-            .find(|f| f["type"] == "prompt_result")
-            .unwrap()["status"],
+        turn2_frames.iter().find(|f| f["type"] == "prompt_result").unwrap()["status"],
         "completed"
     );
     host.close().await;

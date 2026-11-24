@@ -52,7 +52,7 @@ Stdin is read by a dedicated task. A read cancelled by `select!` loses the bytes
 | `steer` | `src/cli/rpc/adapter.rs:435` sends a soft interrupt with `urgent: false` | "Sending work while a turn is active" | yes |
 | `follow_up` | Same arm, `urgent: true` | Same section | partial — steering and follow-up modes are fixed at `all`; `set_steering_mode` and `set_follow_up_mode` do not exist |
 | `abort` | `src/cli/rpc/adapter.rs:237` while idle, `src/cli/rpc/adapter.rs:426` mid-turn | "Cancel safely" | yes — the turn ends on the daemon's interrupt, not on this response |
-| `abort_and_prompt` | `src/cli/rpc/adapter.rs:435` | "Cancel safely" | partial — no replacement prompt is scheduled; the new text becomes a steer |
+| `abort_and_prompt` | `src/cli/rpc/adapter.rs:395` | "Cancel safely" | yes — cancels the active turn, awaits settlement, then sends the replacement prompt |
 | `get_state` | `src/cli/rpc/state.rs:108` | Commands table, `get_state` | yes |
 | `set_model` | `src/cli/rpc/state.rs:238` | Commands table, `set_model` | yes — the response is the selected model; `provider` and `modelId` are read from one `modelId` field |
 | `get_available_models` | `src/cli/rpc/state.rs:135` | Commands table, `get_available_models` | yes — unavailable routes are dropped so a host cannot select one that fails |
@@ -63,7 +63,7 @@ Stdin is read by a dedicated task. A read cancelled by `select!` loses the bytes
 | `get_session_stats` | `src/cli/rpc/state.rs:333` | Commands table, `get_session_stats` | yes |
 | `get_messages` | `src/cli/rpc/state.rs:364` | Commands table, `get_messages` | yes |
 | `set_session_name` | `src/cli/rpc/state.rs:279` | Commands table, `set_session_name` | yes |
-| `bash` | `src/cli/rpc/state.rs:494` runs the command locally with `sh -c` | Commands table, `bash` | partial — runs to completion before its response, so it is serialized like every other command |
+| `bash` | `src/cli/rpc/state.rs:539` enforces tool allow-list/disabled-list, plan mode, approval, interceptor, git guard, and destructive-command gates before running `sh -c` | Commands table, `bash` | partial — runs to completion before its response, so it is serialized like every other command |
 | `abort_bash` | `src/cli/rpc/adapter.rs:323` | Commands table, `abort_bash` | partial — answered as unsupported because `bash` cannot be concurrent here |
 | `new_session` | `src/cli/rpc/adapter.rs:241` | Commands table, `new_session` | no — one session per process; start another process |
 | `switch_session`, `branch`, `get_branch_messages`, `handoff` | Not in `src/cli/rpc/command.rs:93` | Commands table, session rows | no |

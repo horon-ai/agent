@@ -551,12 +551,7 @@ impl Adapter {
 
     /// Forward events until the turn's terminal arrives, handling the commands a
     /// host sends while a turn runs.
-    async fn drive_turn(
-        &mut self,
-        turn: &mut Turn,
-        request_id: u64,
-        cancel_requested: &mut bool,
-    ) -> Result<Terminal> {
+    async fn drive_turn(&mut self, turn: &mut Turn, request_id: u64, cancel_requested: &mut bool) -> Result<Terminal> {
         loop {
             // The select borrows two fields for as long as its futures live, so
             // it yields a value and every use of `self` happens afterwards.
@@ -615,12 +610,7 @@ impl Adapter {
 
     /// A command that arrived while the turn was running. The turn itself ends
     /// only on a daemon event, so nothing here returns a terminal.
-    async fn in_turn_command(
-        &mut self,
-        turn: &mut Turn,
-        command: &Command,
-        cancel_requested: &mut bool,
-    ) -> Result<()> {
+    async fn in_turn_command(&mut self, turn: &mut Turn, command: &Command, cancel_requested: &mut bool) -> Result<()> {
         match &command.kind {
             Kind::Abort => {
                 self.pending_abort_prompt = None;

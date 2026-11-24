@@ -62,3 +62,12 @@ pub(crate) fn register(
     }
     registration
 }
+
+pub(crate) fn register_runtime_options(session: &Session, tiers: &crate::config::ToolLoadTiers) {
+    crate::tool::register_session_runtime_options(
+        &session.id,
+        tiers.clone(),
+        session.is_memory_only(),
+        &session.additional_dirs(),
+    );
+}

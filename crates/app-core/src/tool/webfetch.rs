@@ -39,7 +39,7 @@ fn is_disallowed_ipv4(ip: Ipv4Addr) -> bool {
         || (o[0] == 172 && (16..=31).contains(&o[1])) // 172.16.0.0/12 (RFC 1918)
         || (o[0] == 192 && o[1] == 0 && o[2] == 0) // 192.0.0.0/24 (IETF protocol assignments)
         || (o[0] == 192 && o[1] == 0 && o[2] == 2) // 192.0.2.0/24 (TEST-NET-1)
-        || (o[0] == 192 && o[1] == 88 && o[2] == 99) // 192.88.99.0/24 (deprecated 6to4)
+        || (o[0] == 192 && o[1] == 88 && o[2] == 99) // 192.88.99.0/24 (retired 6to4)
         || (o[0] == 192 && o[1] == 168) // 192.168.0.0/16 (RFC 1918)
         || (o[0] == 198 && (18..=19).contains(&o[1])) // 198.18.0.0/15 (benchmarking)
         || (o[0] == 198 && o[1] == 51 && o[2] == 100) // 198.51.100.0/24 (TEST-NET-2)
@@ -52,7 +52,7 @@ fn is_disallowed_ipv6(ip: Ipv6Addr) -> bool {
         return is_disallowed_ipv4(mapped);
     }
     let s = ip.segments();
-    // IPv4-compatible deprecated ::/96 (also covers :: and ::1).
+    // IPv4-compatible retired ::/96 (also covers :: and ::1).
     if s[..6] == [0; 6] {
         return true;
     }
@@ -75,7 +75,7 @@ fn is_disallowed_ipv6(ip: Ipv6Addr) -> bool {
         || ip.is_multicast()
         || ip.is_unique_local() // fc00::/7
         || ip.is_unicast_link_local() // fe80::/10
-        || (s[0] & 0xffc0) == 0xfec0 // fec0::/10 deprecated site-local
+        || (s[0] & 0xffc0) == 0xfec0 // fec0::/10 retired site-local
         || (s[0] == 0x2001 && s[1] == 0x0db8) // 2001:db8::/32 documentation
         || (s[0] == 0x0100 && s[1] == 0 && s[2] == 0 && s[3] == 0) // 100::/64 discard
 }
@@ -130,9 +130,7 @@ async fn validate_public_target(url: &reqwest::Url) -> Result<()> {
         }
         Some(url::Host::Domain(domain)) => {
             if is_blocked_hostname(domain) {
-                return Err(anyhow::anyhow!(
-                    "Blocked local or internal hostname `{domain}`"
-                ));
+                return Err(anyhow::anyhow!("Blocked local or internal hostname `{domain}`"));
             }
             if let Ok(ip) = domain.parse::<IpAddr>() {
                 if is_disallowed_ip(ip) {
@@ -191,8 +189,10 @@ impl reqwest::dns::Resolve for PublicOnlyDnsResolver {
     }
 }
 
+struct WebFetchClientInitError(String);
+
 fn webfetch_http_client() -> Result<&'static reqwest::Client> {
-    static CLIENT: OnceLock<std::result::Result<reqwest::Client, String>> = OnceLock::new();
+    static CLIENT: OnceLock<std::result::Result<reqwest::Client, WebFetchClientInitError>> = OnceLock::new();
     match CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
@@ -200,10 +200,10 @@ fn webfetch_http_client() -> Result<&'static reqwest::Client> {
             .dns_resolver(Arc::new(PublicOnlyDnsResolver))
             .connect_timeout(Duration::from_secs(15))
             .build()
-            .map_err(|err| format!("Failed to initialize webfetch HTTP client: {err}"))
+            .map_err(|err| WebFetchClientInitError(format!("Failed to initialize webfetch HTTP client: {err}")))
     }) {
         Ok(client) => Ok(client),
-        Err(message) => Err(anyhow::anyhow!(message.clone())),
+        Err(err) => Err(anyhow::anyhow!(err.0.clone())),
     }
 }
 
@@ -314,12 +314,11 @@ impl Tool for WebFetchTool {
         let format = params.format.as_deref().unwrap_or("markdown");
 
         let client = webfetch_http_client()?;
-        let (final_url, response) = send_validated_get(client, initial_url, timeout, |url| {
+        let (_final_url, response) = send_validated_get(client, initial_url, timeout, |url| {
             let url = url.clone();
             Box::pin(async move { validate_public_target(&url).await })
         })
         .await?;
-        let _ = final_url;
 
         let status = response.status();
         if !status.is_success() {
@@ -760,7 +759,11 @@ mod tests {
                 "unexpected error for {target}: {msg}"
             );
         }
-        assert_eq!(hits.load(Ordering::SeqCst), 0, "local listener received unexpected SSRF traffic");
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "local listener received unexpected SSRF traffic"
+        );
         accept_task.abort();
     }
 
@@ -789,7 +792,9 @@ mod tests {
         let secret_task = tokio::spawn(async move {
             while let Ok((mut sock, _)) = secret.accept().await {
                 secret_hits_bg.fetch_add(1, Ordering::SeqCst);
-                let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nSECRET").await;
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nSECRET")
+                    .await;
             }
         });
 

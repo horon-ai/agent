@@ -42,7 +42,12 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     if args.goal.is_some() && !matches!(args.command, None | Some(Command::Run { .. })) {
         anyhow::bail!("--goal only applies when opening the terminal client or running one message");
     }
-    if args.plan && !matches!(args.command, None | Some(Command::Run { .. }) | Some(Command::Rpc { .. })) {
+    if args.plan
+        && !matches!(
+            args.command,
+            None | Some(Command::Run { .. }) | Some(Command::Rpc { .. })
+        )
+    {
         anyhow::bail!("--plan only applies when opening the terminal client, running one message, or running rpc");
     }
     super::add_dir::canonical_add_dirs(&mut args)?;

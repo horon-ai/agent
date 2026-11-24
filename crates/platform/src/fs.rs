@@ -286,7 +286,10 @@ pub fn open_verified_owner_only_secret_file(path: &Path) -> io::Result<File> {
     if is_path_link(&meta) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("refusing secret file {}: symbolic links are not allowed", path.display()),
+            format!(
+                "refusing secret file {}: symbolic links are not allowed",
+                path.display()
+            ),
         ));
     }
     let file = no_follow_open_options().read(true).open(path)?;
@@ -307,17 +310,29 @@ pub fn open_verified_owner_only_secret_file(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-/// Set Unix mode `0o644` for permission-rejection tests regardless of process umask.
-#[doc(hidden)]
-pub fn set_permissive_file_mode_for_test(path: &Path) -> io::Result<()> {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
     #[cfg(unix)]
-    {
+    #[test]
+    fn open_verified_owner_only_secret_file_rejects_0644_and_symlink() {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Ok(())
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let secret = dir.path().join("key.txt");
+        std::fs::write(&secret, b"secret").expect("write");
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o644)).expect("chmod 0644");
+
+        let err = open_verified_owner_only_secret_file(&secret).expect_err("0644 must be rejected");
+        assert!(err.to_string().contains("0644"), "{err}");
+
+        set_file_permissions_owner_only(&secret).expect("chmod 0600");
+        assert!(open_verified_owner_only_secret_file(&secret).is_ok());
+
+        let link = dir.path().join("key-link.txt");
+        symlink_file(&secret, &link).expect("symlink");
+        let err = open_verified_owner_only_secret_file(&link).expect_err("symlink must be rejected");
+        assert!(err.to_string().contains("symbolic link"), "{err}");
     }
 }

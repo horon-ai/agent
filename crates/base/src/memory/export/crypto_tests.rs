@@ -290,13 +290,13 @@ fn resolve_key_material_refuses_permissive_and_symlink_key_files() {
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     )
     .expect("write key");
-    horon_agent_platform::fs::set_permissive_file_mode_for_test(&key_file).expect("set permissive mode");
 
-    if horon_agent_platform::fs::mode_bits(&std::fs::metadata(&key_file).unwrap()).is_some() {
+    if horon_agent_platform::fs::mode_bits(&std::fs::metadata(&key_file).unwrap()).is_some_and(|bits| bits & 0o077 != 0)
+    {
         let err = super::crypto::resolve_key_material("k1", None, Some(&key_file))
-            .expect_err("0o644 key file must be refused");
+            .expect_err("group/world-readable key file must be refused");
         let msg = format!("{err:#}");
-        assert!(msg.contains("0644") || msg.contains("permissive"), "{msg}");
+        assert!(msg.contains("permissive mode"), "{msg}");
     }
 
     horon_agent_platform::fs::set_file_permissions_owner_only(&key_file).expect("chmod 0600");

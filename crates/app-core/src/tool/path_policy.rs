@@ -196,7 +196,11 @@ fn resolve_target_realpath(path: &Path) -> std::io::Result<PathBuf> {
                 queue = next;
             }
             Ok(_) => {}
-            Err(err) if matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => {}
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => {}
             Err(err) => return Err(err),
         }
     }
@@ -210,7 +214,12 @@ fn resolve_target_realpath(path: &Path) -> std::io::Result<PathBuf> {
                 }
                 return Ok(canon);
             }
-            Err(err) if matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => {
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
                 let Some(parent) = existing.parent() else {
                     return Ok(resolved);
                 };
