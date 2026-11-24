@@ -28,41 +28,48 @@ pub(super) async fn run(filter: &ModelListFilter, json: bool) -> Result<()> {
         {
             continue;
         }
-        let mut report = ProfileReport {
-            profile: name,
-            source: "configuration",
-            status: "local",
-            reason: None,
-            models: profile
+        let search_lower = search.as_deref();
+        let configured_models = || -> BTreeSet<String> {
+            profile
                 .models
                 .iter()
                 .map(|model| model.id.trim())
                 .chain(profile.default_model.iter().map(|model| model.trim()))
-                .filter(|model| !model.is_empty())
+                .filter(|model| {
+                    !model.is_empty() && search_lower.is_none_or(|needle| contains_case_insensitive(model, needle))
+                })
                 .map(str::to_owned)
-                .collect(),
+                .collect()
         };
-        if filter.refresh {
+        let (source, status, reason, models) = if filter.refresh {
             match fetch_named_openai_models(name, profile).await {
-                Ok(Some(models)) => {
-                    report.source = "endpoint";
-                    report.status = "refreshed";
-                    report.models = models.into_iter().collect();
-                }
-                Ok(None) => {
-                    report.status = "unsupported";
-                    report.reason = Some("profile does not use OpenAI model discovery".to_owned());
-                }
-                Err(error) => {
-                    report.status = "failed";
-                    report.reason = Some(error.to_string());
-                }
+                Ok(Some(models)) => (
+                    "endpoint",
+                    "refreshed",
+                    None,
+                    models
+                        .into_iter()
+                        .filter(|model| search_lower.is_none_or(|needle| contains_case_insensitive(model, needle)))
+                        .collect(),
+                ),
+                Ok(None) => (
+                    "configuration",
+                    "unsupported",
+                    Some("profile does not use OpenAI model discovery".to_owned()),
+                    configured_models(),
+                ),
+                Err(error) => ("configuration", "failed", Some(error.to_string()), configured_models()),
             }
-        }
-        if let Some(search) = search.as_deref() {
-            report.models.retain(|model| contains_case_insensitive(model, search));
-        }
-        reports.push(report);
+        } else {
+            ("configuration", "local", None, configured_models())
+        };
+        reports.push(ProfileReport {
+            profile: name,
+            source,
+            status,
+            reason,
+            models,
+        });
     }
     if let Some(profile) = filter.profile.as_deref().filter(|_| reports.is_empty()) {
         anyhow::bail!("no configured profile matches {profile:?}");
@@ -99,4 +106,18 @@ fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
             .any(|window| window.eq_ignore_ascii_case(needle_lower.as_bytes()));
     }
     haystack.to_lowercase().contains(needle_lower)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contains_case_insensitive;
+
+    #[test]
+    fn contains_case_insensitive_handles_ascii_unicode_and_length_edges() {
+        assert!(contains_case_insensitive("GPT-4o-Mini", ""));
+        assert!(contains_case_insensitive("GPT-4o-Mini", "4o-mi"));
+        assert!(!contains_case_insensitive("gpt-4", "gpt-4-turbo"));
+        assert!(!contains_case_insensitive("gpt-4o", "claude"));
+        assert!(contains_case_insensitive("ÄÖÜ-model", "äöü"));
+    }
 }
