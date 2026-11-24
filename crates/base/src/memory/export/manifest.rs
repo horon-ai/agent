@@ -211,10 +211,9 @@ impl Manifest {
 
 /// Render the metadata lines, one JSON object per page and a trailing newline.
 pub fn render_metadata(lines: &[PageMetadata]) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(lines.len() * 256);
     for line in lines {
-        let encoded = serde_json::to_vec(line).context("cannot encode a metadata line")?;
-        out.extend_from_slice(&encoded);
+        serde_json::to_writer(&mut out, line).context("cannot encode a metadata line")?;
         out.push(b'\n');
     }
     Ok(out)

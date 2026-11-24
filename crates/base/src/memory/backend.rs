@@ -19,14 +19,16 @@
 //!   A write through any handle therefore makes the next read recompute instead
 //!   of serving the graph from before that write.
 
-use super::cache::{CacheScope, cache_graph, cached_graph};
-use super::graph_pages::{GraphSnapshot, snapshot_from_pages};
+use super::cache::{CacheScopeRef, cache_graph, cached_graph};
+use super::graph_pages::snapshot_from_pages;
 use super::migrate::{self, JsonSource};
 use super::project_key::{pre_wiki_namespace, stable_project_key};
 use super::store::MemoryWiki;
-use crate::memory_graph::MemoryGraph;
+use crate::memory_graph::{Edge, MemoryGraph};
 use crate::storage;
 use anyhow::{Context, Result, anyhow, bail};
+use horon_agent_memory_types::MemoryEntry;
+use horon_agent_memory_types::page::PageLinkKind;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
@@ -181,8 +183,13 @@ impl Store {
     /// as empty rather than as an error, which is what every reader has always
     /// done: `remember` is the call that refuses, not a read.
     pub(crate) fn read(&self, scope: StoreScope) -> Result<MemoryGraph> {
+        self.read_arc(scope).map(|graph| (*graph).clone())
+    }
+
+    /// Read one scope as a shared cached graph handle without cloning entries.
+    pub(crate) fn read_arc(&self, scope: StoreScope) -> Result<Arc<MemoryGraph>> {
         if scope == StoreScope::Project && self.project.is_none() {
-            return Ok(MemoryGraph::new());
+            return Ok(Arc::new(MemoryGraph::new()));
         }
         let project = self.project_of(scope)?;
         if reconciled(self, scope) {
@@ -214,14 +221,20 @@ impl Store {
         let snapshot = self.snapshot(&wiki, scope, project)?;
         let mut graph = snapshot.graph;
         let outcome = change(&mut graph)?;
-        self.write_graph(&mut wiki, project, &graph, snapshot.pages)?;
+        self.write_graph(
+            &mut wiki,
+            project,
+            &graph,
+            snapshot.prev_graph.as_deref(),
+            snapshot.pages,
+        )?;
         let revision = wiki.revision()?;
-        cache_graph(&self.root, cache_scope(scope, project), revision, &graph);
+        cache_graph(&self.root, cache_scope(scope, project), revision, Arc::new(graph));
         Ok(outcome)
     }
 
     /// Read the current graph, assuming this scope was already reconciled.
-    fn read_current(&self, project: Option<&str>) -> Result<MemoryGraph> {
+    fn read_current(&self, project: Option<&str>) -> Result<Arc<MemoryGraph>> {
         let handle = wiki_handle(&self.root)?;
         let wiki = lock_handle(&handle);
         let revision = wiki.revision()?;
@@ -230,24 +243,32 @@ impl Store {
         } else {
             StoreScope::Global
         };
-        if let Some(graph) = cached_graph(&self.root, &cache_scope(scope, project), revision) {
+        if let Some(graph) = cached_graph(&self.root, cache_scope(scope, project), revision) {
             return Ok(graph);
         }
         let snapshot = snapshot_from_pages(wiki.scope_pages(project)?);
-        cache_graph(&self.root, cache_scope(scope, project), revision, &snapshot.graph);
-        Ok(snapshot.graph)
+        let graph = Arc::new(snapshot.graph);
+        cache_graph(&self.root, cache_scope(scope, project), revision, Arc::clone(&graph));
+        Ok(graph)
     }
 
-    /// The cached or freshly built graph of one scope, with its pages.
-    fn snapshot(&self, wiki: &MemoryWiki, scope: StoreScope, project: Option<&str>) -> Result<GraphSnapshot> {
+    /// The cached or freshly built graph of one scope, with its baseline.
+    fn snapshot(&self, wiki: &MemoryWiki, scope: StoreScope, project: Option<&str>) -> Result<SnapshotState> {
         let revision = wiki.revision()?;
-        if let Some(graph) = cached_graph(&self.root, &cache_scope(scope, project), revision) {
-            return Ok(GraphSnapshot {
+        if let Some(prev) = cached_graph(&self.root, cache_scope(scope, project), revision) {
+            let graph = (*prev).clone();
+            return Ok(SnapshotState {
                 graph,
+                prev_graph: Some(prev),
                 pages: HashMap::new(),
             });
         }
-        Ok(snapshot_from_pages(wiki.scope_pages(project)?))
+        let snapshot = snapshot_from_pages(wiki.scope_pages(project)?);
+        Ok(SnapshotState {
+            graph: snapshot.graph,
+            prev_graph: None,
+            pages: snapshot.pages,
+        })
     }
 
     /// A counter that changes on every write to this store.
@@ -258,21 +279,42 @@ impl Store {
     }
 
     /// Write `graph` as the complete content of one scope: changed pages are
-    /// rewritten and pages that left the graph are deleted. `known` is the
-    /// snapshot the graph was loaded from, when it was loaded under the same
-    /// lock, so an unchanged page is not rewritten.
+    /// rewritten and pages that left the graph are deleted.
     fn write_graph(
         &self,
         wiki: &mut MemoryWiki,
         project: Option<&str>,
         graph: &MemoryGraph,
+        prev_graph: Option<&MemoryGraph>,
         mut known: HashMap<String, horon_agent_memory_types::MemoryPage>,
     ) -> Result<()> {
-        if known.is_empty() {
-            for page in wiki.scope_pages(project)? {
-                known.insert(page.id.as_str().to_string(), page);
+        if let Some(prev) = prev_graph {
+            for (id, entry) in &graph.memories {
+                let unchanged = prev.memories.get(id).is_some_and(|old| {
+                    entry_page_inputs_equal(old, entry) && page_links_equal(prev.get_edges(id), graph.get_edges(id))
+                });
+                if unchanged {
+                    continue;
+                }
+                let page = super::graph_pages::page_for_entry(entry, project, graph)
+                    .with_context(|| format!("cannot store memory {}", entry.id))?;
+                wiki.write_page(&page)?;
             }
+            let mut removed: Vec<&str> = prev
+                .memories
+                .keys()
+                .filter(|id| !graph.memories.contains_key(id.as_str()))
+                .map(String::as_str)
+                .collect();
+            removed.sort_unstable();
+            for id in removed {
+                if let Ok(page_id) = horon_agent_memory_types::page::PageId::parse(id) {
+                    wiki.delete_page(&page_id)?;
+                }
+            }
+            return Ok(());
         }
+
         for entry in graph.memories.values() {
             let page = super::graph_pages::page_for_entry(entry, project, graph)
                 .with_context(|| format!("cannot store memory {}", entry.id))?;
@@ -410,43 +452,80 @@ impl Store {
     }
 }
 
-fn cache_scope(scope: StoreScope, project: Option<&str>) -> CacheScope {
+struct SnapshotState {
+    graph: MemoryGraph,
+    prev_graph: Option<Arc<MemoryGraph>>,
+    pages: HashMap<String, horon_agent_memory_types::MemoryPage>,
+}
+
+fn entry_page_inputs_equal(left: &MemoryEntry, right: &MemoryEntry) -> bool {
+    left.id == right.id
+        && left.category == right.category
+        && left.content == right.content
+        && left.tags == right.tags
+        && left.created_at == right.created_at
+        && left.updated_at == right.updated_at
+        && left.access_count == right.access_count
+        && left.source == right.source
+        && left.trust == right.trust
+        && left.strength == right.strength
+        && left.active == right.active
+        && left.superseded_by == right.superseded_by
+        && left.reinforcements == right.reinforcements
+        && left.confidence.to_bits() == right.confidence.to_bits()
+}
+
+fn page_links_equal(left: &[Edge], right: &[Edge]) -> bool {
+    let mut left_iter = left.iter().filter_map(|edge| {
+        PageLinkKind::from_edge_kind(&edge.kind)
+            .map(|(kind, weight)| (kind, edge.target.as_str(), weight.map(f32::to_bits)))
+    });
+    let mut right_iter = right.iter().filter_map(|edge| {
+        PageLinkKind::from_edge_kind(&edge.kind)
+            .map(|(kind, weight)| (kind, edge.target.as_str(), weight.map(f32::to_bits)))
+    });
+    loop {
+        match (left_iter.next(), right_iter.next()) {
+            (Some(a), Some(b)) if a == b => continue,
+            (None, None) => return true,
+            _ => return false,
+        }
+    }
+}
+
+fn cache_scope<'a>(scope: StoreScope, project: Option<&'a str>) -> CacheScopeRef<'a> {
     match scope {
-        StoreScope::Global => CacheScope::Global,
-        StoreScope::Project => CacheScope::Project(match project {
-            Some(project) => project.to_string(),
-            None => String::new(),
-        }),
+        StoreScope::Global => CacheScopeRef::Global,
+        StoreScope::Project => CacheScopeRef::Project(project.unwrap_or("")),
     }
 }
 
 /// Process-wide memory of which scopes were already reconciled.
-fn reconciled_key(store: &Store, scope: StoreScope) -> String {
-    format!(
-        "{}|{}|{}",
-        store.root.display(),
-        scope.as_str(),
-        store.pre_wiki_hash.as_deref().unwrap_or("")
-    )
-}
-
 fn reconciled(store: &Store, scope: StoreScope) -> bool {
+    let pre_wiki = store.pre_wiki_hash.as_deref();
     reconciled_keys()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .contains(&reconciled_key(store, scope))
+        .iter()
+        .any(|(root, entry_scope, entry_hash)| {
+            *entry_scope == scope && root == &store.root && entry_hash.as_deref() == pre_wiki
+        })
 }
 
 fn mark_reconciled(store: &Store, scope: StoreScope) {
-    reconciled_keys()
+    let pre_wiki = store.pre_wiki_hash.as_deref();
+    let mut keys = reconciled_keys()
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(reconciled_key(store, scope));
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !keys.iter().any(|(root, entry_scope, entry_hash)| {
+        *entry_scope == scope && root == &store.root && entry_hash.as_deref() == pre_wiki
+    }) {
+        keys.push((store.root.clone(), scope, store.pre_wiki_hash.clone()));
+    }
 }
 
-fn reconciled_keys() -> &'static Mutex<std::collections::HashSet<String>> {
-    static KEYS: LazyLock<Mutex<std::collections::HashSet<String>>> =
-        LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+fn reconciled_keys() -> &'static Mutex<Vec<(PathBuf, StoreScope, Option<String>)>> {
+    static KEYS: LazyLock<Mutex<Vec<(PathBuf, StoreScope, Option<String>)>>> = LazyLock::new(|| Mutex::new(Vec::new()));
     &KEYS
 }
 

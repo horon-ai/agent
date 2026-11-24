@@ -26,10 +26,11 @@ pub struct GrantView {
 }
 
 fn identity(grant: &Grant) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut hasher = Sha256::new();
     for part in [
         grant.workspace.to_string_lossy().as_ref(),
-        &grant.path.to_string_lossy(),
+        grant.path.to_string_lossy().as_ref(),
         match grant.scope {
             GrantScope::Path => "path",
             GrantScope::Folder => "folder",
@@ -39,27 +40,31 @@ fn identity(grant: &Grant) -> String {
         hasher.update(part.as_bytes());
         hasher.update([0]);
     }
-    hasher
-        .finalize()
-        .iter()
-        .take(6)
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(12);
+    for &byte in &digest[..6] {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 /// Path text with control characters escaped, so a crafted name cannot move the
 /// cursor or recolor the terminal.
 pub(super) fn printable(path: &Path) -> String {
-    path.to_string_lossy()
-        .chars()
-        .flat_map(|ch| -> Vec<char> {
-            if ch.is_control() {
-                ch.escape_default().collect()
-            } else {
-                vec![ch]
-            }
-        })
-        .collect()
+    let lossy = path.to_string_lossy();
+    if !lossy.chars().any(char::is_control) {
+        return lossy.into_owned();
+    }
+    let mut out = String::with_capacity(lossy.len() + 8);
+    for ch in lossy.chars() {
+        if ch.is_control() {
+            out.extend(ch.escape_default());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 fn view(grant: &Grant, now: Timestamp) -> GrantView {

@@ -13,9 +13,10 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use std::borrow::Cow;
 
 use crate::theme::{Symbols, Theme};
 use crate::wrap::wrap_indented;
@@ -53,6 +54,41 @@ pub enum Outcome {
     Open(String),
 }
 
+struct QuestionWrapCache {
+    width: u16,
+    accent: Color,
+    text: Color,
+    lines: Vec<Line<'static>>,
+}
+
+struct AnswerWrapCache {
+    width: u16,
+    text_color: Color,
+    muted_color: Color,
+    placeholder_kind: u8,
+    rendered_rev: u64,
+    committed_bytes: usize,
+    committed_rows: usize,
+    has_placeholder: bool,
+    rows: Vec<Line<'static>>,
+}
+
+impl Default for AnswerWrapCache {
+    fn default() -> Self {
+        Self {
+            width: 0,
+            text_color: Color::Reset,
+            muted_color: Color::Reset,
+            placeholder_kind: u8::MAX,
+            rendered_rev: u64::MAX,
+            committed_bytes: 0,
+            committed_rows: 0,
+            has_placeholder: false,
+            rows: Vec::new(),
+        }
+    }
+}
+
 /// One side question, as the screen shows it.
 pub struct SideOverlay {
     /// The client's own id for this question.
@@ -67,6 +103,7 @@ pub struct SideOverlay {
     state: State,
     /// The answer, streamed and then replaced by the stored one.
     answer: String,
+    answer_rev: u64,
     /// What the child is doing now, on one line.
     progress: Option<String>,
     /// Refusals and stops worth keeping in view.
@@ -77,6 +114,8 @@ pub struct SideOverlay {
     rows: usize,
     /// Height the answer had in the last frame.
     height: usize,
+    question_cache: Option<QuestionWrapCache>,
+    answer_cache: AnswerWrapCache,
 }
 
 impl SideOverlay {
@@ -89,11 +128,14 @@ impl SideOverlay {
             session_id: None,
             state: State::Starting,
             answer: String::new(),
+            answer_rev: 0,
             progress: None,
             notices: Vec::new(),
             held: None,
             rows: 0,
             height: 0,
+            question_cache: None,
+            answer_cache: AnswerWrapCache::default(),
         }
     }
 
@@ -106,7 +148,16 @@ impl SideOverlay {
     /// The answer as the child's stream has built it so far.
     pub fn stream(&mut self, answer: String) {
         if matches!(&self.state, State::Starting | State::Answering) {
+            if self.answer == answer {
+                return;
+            }
+            if !answer.starts_with(&self.answer) {
+                self.answer_cache.committed_bytes = 0;
+                self.answer_cache.committed_rows = 0;
+                self.answer_cache.rows.clear();
+            }
             self.answer = answer;
+            self.answer_rev = self.answer_rev.wrapping_add(1);
         }
     }
 
@@ -124,8 +175,14 @@ impl SideOverlay {
 
     /// The turn ended; the stored answer is authoritative over the stream.
     pub fn done(&mut self, answer: String) {
-        if !answer.trim().is_empty() {
+        if !answer.trim().is_empty() && self.answer != answer {
+            if !answer.starts_with(&self.answer) {
+                self.answer_cache.committed_bytes = 0;
+                self.answer_cache.committed_rows = 0;
+                self.answer_cache.rows.clear();
+            }
             self.answer = answer;
+            self.answer_rev = self.answer_rev.wrapping_add(1);
         }
         self.state = State::Done;
         self.progress = None;
@@ -181,15 +238,16 @@ impl SideOverlay {
     }
 
     /// The line printed under the question.
-    fn status_line(&self) -> String {
+    fn status_line(&self) -> Cow<'_, str> {
         match &self.state {
-            State::Starting => "starting a read-only side session".to_string(),
+            State::Starting => Cow::Borrowed("starting a read-only side session"),
             State::Answering => self
                 .progress
-                .clone()
-                .unwrap_or_else(|| "the side session is answering".to_string()),
-            State::Done => "done; the answer is stored in this side session".to_string(),
-            State::Failed(message) => message.clone(),
+                .as_deref()
+                .map(Cow::Borrowed)
+                .unwrap_or(Cow::Borrowed("the side session is answering")),
+            State::Done => Cow::Borrowed("done; the answer is stored in this side session"),
+            State::Failed(message) => Cow::Borrowed(message.as_str()),
         }
     }
 
@@ -293,9 +351,11 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, overlay: &mut SideOverlay, theme:
         return;
     }
 
+    let question_len = ensure_question_lines(overlay, inner.width, theme).len();
+    let q_rows = u16::try_from(question_len.clamp(1, 4)).unwrap_or(1);
     let notices = overlay.notices.len().min(NOTICE_ROWS);
     let layout = Layout::vertical([
-        Constraint::Length(question_rows(overlay, inner.width)),
+        Constraint::Length(q_rows),
         Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(u16::try_from(notices).unwrap_or(0)),
@@ -303,34 +363,38 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, overlay: &mut SideOverlay, theme:
     ]);
     let [question_area, status_area, body_area, notice_area, footer_area] = layout.areas(inner);
 
-    let question_line = Line::from(vec![
-        Span::styled("Q: ", Style::default().fg(theme.core.accent)),
-        Span::styled(overlay.question.clone(), Style::default().fg(theme.core.text)),
-    ]);
-    let question = wrap_indented(&question_line, usize::from(inner.width), QUESTION_INDENT);
+    let question = ensure_question_lines(overlay, inner.width, theme).to_vec();
     frame.render_widget(Paragraph::new(question), question_area);
 
     let (status, style) = match &overlay.state {
-        State::Failed(_) => (overlay.status_line(), Style::default().fg(theme.core.error)),
+        State::Failed(_) => (
+            overlay.status_line().into_owned(),
+            Style::default().fg(theme.core.error),
+        ),
         State::Done => (
-            overlay.status_line(),
+            overlay.status_line().into_owned(),
             Style::default().fg(theme.core.muted).add_modifier(Modifier::ITALIC),
         ),
         _ => (
-            overlay.status_line(),
+            overlay.status_line().into_owned(),
             Style::default().fg(theme.core.warning).add_modifier(Modifier::ITALIC),
         ),
     };
     frame.render_widget(Paragraph::new(Line::from(Span::styled(status, style))), status_area);
 
-    let rows = answer_rows(overlay, body_area.width.max(1), theme);
-    overlay.rows = rows.len();
+    ensure_answer_rows(overlay, body_area.width.max(1), theme);
+    let total_rows = overlay.answer_cache.rows.len();
+    overlay.rows = total_rows;
     overlay.height = usize::from(body_area.height);
     let top = overlay.top();
-    frame.render_widget(
-        Paragraph::new(rows).scroll((u16::try_from(top).unwrap_or(u16::MAX), 0)),
-        body_area,
-    );
+    let slice_top = top.min(usize::from(u16::MAX));
+    let visible_end = slice_top.saturating_add(overlay.height).min(total_rows);
+    let visible = if slice_top < visible_end {
+        overlay.answer_cache.rows[slice_top..visible_end].to_vec()
+    } else {
+        Vec::new()
+    };
+    frame.render_widget(Paragraph::new(visible), body_area);
 
     if notices > 0 {
         // The newest notices are the ones that explain the current state, so
@@ -367,40 +431,106 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, overlay: &mut SideOverlay, theme:
 
 /// Rows the question occupies, capped so a pasted paragraph cannot take the
 /// whole panel away from the answer.
-fn question_rows(overlay: &SideOverlay, width: u16) -> u16 {
-    let rows = wrap_indented(
-        &Line::from(format!("Q: {}", overlay.question)),
-        usize::from(width),
-        QUESTION_INDENT,
-    )
-    .len();
-    u16::try_from(rows.clamp(1, 4)).unwrap_or(1)
+fn ensure_question_lines<'a>(overlay: &'a mut SideOverlay, width: u16, theme: &Theme) -> &'a [Line<'static>] {
+    let accent = theme.core.accent;
+    let text = theme.core.text;
+    let stale = overlay
+        .question_cache
+        .as_ref()
+        .is_none_or(|c| c.width != width || c.accent != accent || c.text != text);
+    if stale {
+        let question_line = Line::from(vec![
+            Span::styled("Q: ", Style::default().fg(accent)),
+            Span::styled(overlay.question.clone(), Style::default().fg(text)),
+        ]);
+        let lines = wrap_indented(&question_line, usize::from(width), QUESTION_INDENT);
+        overlay.question_cache = Some(QuestionWrapCache {
+            width,
+            accent,
+            text,
+            lines,
+        });
+    }
+    overlay.question_cache.as_ref().map_or(&[], |c| c.lines.as_slice())
 }
 
 /// The answer as wrapped rows, with a line saying what there is to read.
-fn answer_rows(overlay: &SideOverlay, width: u16, theme: &Theme) -> Vec<Line<'static>> {
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    for line in overlay.answer.lines() {
-        let styled = Line::from(Span::styled(line.to_string(), Style::default().fg(theme.core.text)));
-        let wrapped = wrap_indented(&styled, usize::from(width), 0);
-        if wrapped.is_empty() {
-            rows.push(Line::default());
+fn ensure_answer_rows(overlay: &mut SideOverlay, width: u16, theme: &Theme) {
+    let placeholder_kind = match &overlay.state {
+        State::Failed(_) => 0,
+        State::Done => 1,
+        _ => 2,
+    };
+    let text_color = theme.core.text;
+    let muted_color = theme.core.muted;
+    let c = &mut overlay.answer_cache;
+    if c.rendered_rev == overlay.answer_rev
+        && c.width == width
+        && c.text_color == text_color
+        && c.muted_color == muted_color
+        && c.placeholder_kind == placeholder_kind
+    {
+        return;
+    }
+    let can_incremental = c.width == width
+        && c.text_color == text_color
+        && c.muted_color == muted_color
+        && !c.has_placeholder
+        && c.committed_bytes <= overlay.answer.len()
+        && (c.committed_bytes == 0 || overlay.answer.as_bytes().get(c.committed_bytes - 1) == Some(&b'\n'));
+    if can_incremental {
+        c.rows.truncate(c.committed_rows);
+    } else {
+        c.rows.clear();
+        c.committed_bytes = 0;
+        c.committed_rows = 0;
+    }
+    c.has_placeholder = false;
+    let tail = &overlay.answer[c.committed_bytes..];
+    if !tail.is_empty() {
+        let style = Style::default().fg(text_color);
+        let wrap_width = usize::from(width);
+        let push_wrapped = |rows: &mut Vec<Line<'static>>, slice: &str| {
+            for line in slice.lines() {
+                let styled = Line::from(Span::styled(line.to_string(), style));
+                let wrapped = wrap_indented(&styled, wrap_width, 0);
+                if wrapped.is_empty() {
+                    rows.push(Line::default());
+                } else {
+                    rows.extend(wrapped);
+                }
+            }
+        };
+        if let Some(last_nl) = tail.rfind('\n') {
+            let settled_rel = last_nl + 1;
+            push_wrapped(&mut c.rows, &tail[..settled_rel]);
+            c.committed_bytes += settled_rel;
+            c.committed_rows = c.rows.len();
+            let rem = &tail[settled_rel..];
+            if !rem.is_empty() {
+                push_wrapped(&mut c.rows, rem);
+            }
         } else {
-            rows.extend(wrapped);
+            push_wrapped(&mut c.rows, tail);
         }
     }
-    if rows.is_empty() {
+    if c.rows.is_empty() {
         let placeholder = match &overlay.state {
             State::Failed(_) => "",
             State::Done => "(the side session ended without an answer)",
             _ => "(waiting for the answer)",
         };
         if !placeholder.is_empty() {
-            rows.push(Line::from(Span::styled(
+            c.rows.push(Line::from(Span::styled(
                 placeholder,
-                Style::default().fg(theme.core.muted).add_modifier(Modifier::ITALIC),
+                Style::default().fg(muted_color).add_modifier(Modifier::ITALIC),
             )));
+            c.has_placeholder = true;
         }
     }
-    rows
+    c.width = width;
+    c.text_color = text_color;
+    c.muted_color = muted_color;
+    c.placeholder_kind = placeholder_kind;
+    c.rendered_rev = overlay.answer_rev;
 }

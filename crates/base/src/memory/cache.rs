@@ -13,33 +13,56 @@
 //! that is pushed out is dropped; reopening it costs one scan.
 
 use crate::memory_graph::MemoryGraph;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Most graphs kept at once; the least recently used one is dropped first.
 const MAX_GRAPHS: usize = 32;
 
-/// Which store a cached graph belongs to.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) enum CacheScope {
+/// Borrowed scope selector for zero-allocation cache lookups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CacheScopeRef<'a> {
     /// The user-level store.
     Global,
     /// One project store, by stable project key.
+    Project(&'a str),
+}
+
+enum CacheScope {
+    Global,
     Project(String),
 }
 
+impl CacheScope {
+    fn matches(&self, other: CacheScopeRef<'_>) -> bool {
+        match (self, other) {
+            (Self::Global, CacheScopeRef::Global) => true,
+            (Self::Project(left), CacheScopeRef::Project(right)) => left == right,
+            _ => false,
+        }
+    }
+
+    fn from_ref(scope: CacheScopeRef<'_>) -> Self {
+        match scope {
+            CacheScopeRef::Global => Self::Global,
+            CacheScopeRef::Project(project) => Self::Project(project.to_string()),
+        }
+    }
+}
+
 struct GraphEntry {
+    root: PathBuf,
+    scope: CacheScope,
     revision: u64,
-    graph: MemoryGraph,
+    graph: Arc<MemoryGraph>,
     used: u64,
 }
 
-static GRAPH_CACHE: OnceLock<Mutex<HashMap<(PathBuf, CacheScope), GraphEntry>>> = OnceLock::new();
+static GRAPH_CACHE: OnceLock<Mutex<Vec<GraphEntry>>> = OnceLock::new();
 static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-fn graph_cache() -> &'static Mutex<HashMap<(PathBuf, CacheScope), GraphEntry>> {
-    GRAPH_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn graph_cache() -> &'static Mutex<Vec<GraphEntry>> {
+    GRAPH_CACHE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 fn next_tick() -> u64 {
@@ -48,37 +71,42 @@ fn next_tick() -> u64 {
 
 /// The graph `revision` produced for this store and scope, if it is still
 /// cached. A different revision is a miss: the store moved.
-pub(super) fn cached_graph(root: &Path, scope: &CacheScope, revision: u64) -> Option<MemoryGraph> {
+pub(super) fn cached_graph(root: &Path, scope: CacheScopeRef<'_>, revision: u64) -> Option<Arc<MemoryGraph>> {
     let mut cache = graph_cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let key = (root.to_path_buf(), scope.clone());
-    let entry = cache.get_mut(&key)?;
+    let entry = cache
+        .iter_mut()
+        .find(|entry| entry.root == root && entry.scope.matches(scope))?;
     if entry.revision != revision {
         return None;
     }
     entry.used = next_tick();
-    Some(entry.graph.clone())
+    Some(Arc::clone(&entry.graph))
 }
 
 /// Remember `graph` as the content of this store and scope at `revision`.
-pub(super) fn cache_graph(root: &Path, scope: CacheScope, revision: u64, graph: &MemoryGraph) {
+pub(super) fn cache_graph(root: &Path, scope: CacheScopeRef<'_>, revision: u64, graph: Arc<MemoryGraph>) {
     let mut cache = graph_cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    cache.insert(
-        (root.to_path_buf(), scope),
-        GraphEntry {
-            revision,
-            graph: graph.clone(),
-            used: next_tick(),
-        },
-    );
+    if let Some(entry) = cache
+        .iter_mut()
+        .find(|entry| entry.root == root && entry.scope.matches(scope))
+    {
+        entry.revision = revision;
+        entry.graph = graph;
+        entry.used = next_tick();
+        return;
+    }
+    cache.push(GraphEntry {
+        root: root.to_path_buf(),
+        scope: CacheScope::from_ref(scope),
+        revision,
+        graph,
+        used: next_tick(),
+    });
     while cache.len() > MAX_GRAPHS {
-        let Some(oldest) = cache
-            .iter()
-            .min_by_key(|(_, entry)| entry.used)
-            .map(|(key, _)| key.clone())
-        else {
+        let Some((oldest_idx, _)) = cache.iter().enumerate().min_by_key(|(_, entry)| entry.used) else {
             break;
         };
-        cache.remove(&oldest);
+        cache.swap_remove(oldest_idx);
     }
 }
 

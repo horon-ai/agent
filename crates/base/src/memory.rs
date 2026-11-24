@@ -310,6 +310,7 @@ impl MemoryManager {
         id
     }
 
+    #[cfg(test)]
     fn collect_memories_scoped(&self, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
         retrieval::collect_memories_scoped(self, scope)
     }
@@ -425,15 +426,17 @@ impl MemoryManager {
     }
 
     pub fn get_prompt_memories_scoped(&self, limit: usize, scope: MemoryScope) -> Option<String> {
-        let all_entries: Vec<_> = top_k_by_ord(
-            self.collect_memories_scoped(scope).ok()?.into_iter().map(|entry| {
-                let updated_at = entry.updated_at.timestamp_millis();
-                (entry, updated_at)
-            }),
+        let (project, global) = self.scoped_graphs(scope).ok()?;
+        let all_entries: Vec<MemoryEntry> = top_k_by_ord(
+            project
+                .iter()
+                .flat_map(|graph| graph.all_memories())
+                .chain(global.iter().flat_map(|graph| graph.all_memories()))
+                .map(|entry| (entry, entry.updated_at.timestamp_millis())),
             limit,
         )
         .into_iter()
-        .map(|(entry, _)| entry)
+        .map(|(entry, _)| entry.clone())
         .collect();
 
         if all_entries.is_empty() {
@@ -483,11 +486,13 @@ impl MemoryManager {
             return Ok(Vec::new());
         }
 
+        let (project, global) = self.scoped_graphs(scope)?;
         let mut results = Vec::new();
-
-        for memory in self.collect_memories_scoped(scope)? {
-            if memory_matches_search(&memory, &query_lower) {
-                results.push(memory);
+        for graph in project.iter().chain(global.iter()) {
+            for memory in graph.all_memories() {
+                if memory_matches_search(memory, &query_lower) {
+                    results.push(memory.clone());
+                }
             }
         }
 
@@ -500,14 +505,19 @@ impl MemoryManager {
 
     /// Every memory of `scope`, newest first with the id as the final tie-break.
     pub fn list_all_scoped(&self, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
-        let mut all = self.collect_memories_scoped(scope)?;
-        all.sort_by(|left, right| {
+        let (project, global) = self.scoped_graphs(scope)?;
+        let total = project.as_ref().map_or(0, |g| g.memories.len()) + global.as_ref().map_or(0, |g| g.memories.len());
+        let mut refs: Vec<&MemoryEntry> = Vec::with_capacity(total);
+        for graph in project.iter().chain(global.iter()) {
+            refs.extend(graph.all_memories());
+        }
+        refs.sort_by(|left, right| {
             right
                 .updated_at
                 .cmp(&left.updated_at)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        Ok(all)
+        Ok(refs.into_iter().cloned().collect())
     }
 
     /// Forget one memory, project scope first.
@@ -520,7 +530,7 @@ impl MemoryManager {
     pub fn forget(&self, id: &str) -> Result<bool> {
         let store = self.store()?;
         let in_project = store
-            .read(StoreScope::Project)
+            .read_arc(StoreScope::Project)
             .is_ok_and(|graph| graph.memories.contains_key(id));
         if in_project {
             return store.update(StoreScope::Project, |graph| Ok(graph.remove_memory(id).is_some()));
@@ -586,24 +596,50 @@ impl MemoryManager {
             return Ok(Vec::new());
         }
 
-        let matches: Vec<_> = top_k_by_ord(
-            self.collect_memories_scoped(MemoryScope::All)?
-                .into_iter()
+        let (project, global) = self.scoped_graphs(MemoryScope::All)?;
+        let matches: Vec<MemoryEntry> = top_k_by_ord(
+            project
+                .iter()
+                .flat_map(|graph| graph.all_memories())
+                .chain(global.iter().flat_map(|graph| graph.all_memories()))
                 .filter(|entry| {
                     let content_lower = normalize_search_text(&entry.content);
                     normalized_keywords.iter().any(|kw| content_lower.contains(kw))
                 })
-                .map(|entry| {
-                    let updated_at = entry.updated_at.timestamp_millis();
-                    (entry, updated_at)
-                }),
+                .map(|entry| (entry, entry.updated_at.timestamp_millis())),
             limit,
         )
         .into_iter()
-        .map(|(entry, _)| entry)
+        .map(|(entry, _)| entry.clone())
         .collect();
 
         Ok(matches)
+    }
+
+    pub(crate) fn load_project_graph_arc(&self) -> Result<std::sync::Arc<MemoryGraph>> {
+        self.store()?.read_arc(StoreScope::Project)
+    }
+
+    pub(crate) fn load_global_graph_arc(&self) -> Result<std::sync::Arc<MemoryGraph>> {
+        self.store()?.read_arc(StoreScope::Global)
+    }
+
+    fn scoped_graphs(
+        &self,
+        scope: MemoryScope,
+    ) -> Result<(Option<std::sync::Arc<MemoryGraph>>, Option<std::sync::Arc<MemoryGraph>>)> {
+        let store = self.store()?;
+        let project = if scope.includes_project() {
+            store.read_arc(StoreScope::Project).ok()
+        } else {
+            None
+        };
+        let global = if scope.includes_global() {
+            store.read_arc(StoreScope::Global).ok()
+        } else {
+            None
+        };
+        Ok((project, global))
     }
 
     /// Load the project graph.
@@ -818,8 +854,8 @@ impl MemoryManager {
 
     /// Get graph statistics for display
     pub fn graph_stats(&self) -> Result<(usize, usize, usize, usize)> {
-        let project = self.load_project_graph()?;
-        let global = self.load_global_graph()?;
+        let project = self.load_project_graph_arc()?;
+        let global = self.load_global_graph_arc()?;
 
         let memories = project.memories.len() + global.memories.len();
         let tags = project.tags.len() + global.tags.len();

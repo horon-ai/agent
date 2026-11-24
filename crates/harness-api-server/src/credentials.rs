@@ -103,10 +103,10 @@ impl CredentialStore {
 
     /// Every record, oldest first. Never includes a token.
     pub fn records(&self) -> Result<Vec<CredentialRecord>, CredentialError> {
-        let Some(text) = read_credential_text(&self.path)? else {
+        let Some(bytes) = read_credential_bytes(&self.path)? else {
             return Ok(Vec::new());
         };
-        let file: CredentialFile = serde_json::from_str(&text).map_err(|error| CredentialError::Store {
+        let file: CredentialFile = serde_json::from_slice(&bytes).map_err(|error| CredentialError::Store {
             path: self.path.clone(),
             reason: format!("it is not valid credential JSON: {error}"),
         })?;
@@ -282,13 +282,11 @@ fn token_digest(token: &str) -> Option<[u8; 32]> {
 
 fn stored_digest(token_hash: &str) -> Option<[u8; 32]> {
     let hex_digest = token_hash.strip_prefix("sha256:")?;
-    let decoded = match hex::decode(hex_digest) {
-        Ok(decoded) => decoded,
-        Err(_) => return None,
-    };
-    let Ok(bytes) = <[u8; 32]>::try_from(decoded) else {
+    if hex_digest.len() != 64 {
         return None;
-    };
+    }
+    let mut bytes = [0u8; 32];
+    hex::decode_to_slice(hex_digest, &mut bytes).ok()?;
     Some(bytes)
 }
 
@@ -386,7 +384,7 @@ fn validate_owner_file_if_exists(path: &Path) -> Result<(), CredentialError> {
     verify_owner_only(&metadata, path)
 }
 
-fn read_credential_text(path: &Path) -> Result<Option<String>, CredentialError> {
+fn read_credential_bytes(path: &Path) -> Result<Option<Vec<u8>>, CredentialError> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -405,7 +403,7 @@ fn read_credential_text(path: &Path) -> Result<Option<String>, CredentialError> 
     if let Some(directory) = path.parent() {
         verify_private_directory(directory)?;
     }
-    std::fs::read_to_string(path)
+    std::fs::read(path)
         .map(Some)
         .map_err(|error| store_error(path, "read", error))
 }

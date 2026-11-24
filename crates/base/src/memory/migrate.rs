@@ -140,6 +140,11 @@ pub(crate) fn record_import(root: &Path, record: MigrationRecord) -> Result<()> 
 
 /// Parse one pre-wiki graph file, refusing anything that is not a version-2 graph.
 pub(crate) fn parse_graph(path: &Path, bytes: &[u8]) -> Result<MemoryGraph> {
+    if let Ok(graph) = serde_json::from_slice::<MemoryGraph>(bytes)
+        && graph.graph_version == crate::memory_graph::GRAPH_VERSION
+    {
+        return Ok(graph);
+    }
     let value: serde_json::Value =
         serde_json::from_slice(bytes).with_context(|| format!("memory file {} is not valid JSON", path.display()))?;
     let claimed = value.get("graph_version").and_then(serde_json::Value::as_u64);

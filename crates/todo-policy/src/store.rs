@@ -46,7 +46,14 @@ pub fn is_safe_session_id(session_id: &str) -> bool {
 }
 
 pub fn todo_file_path(home: &Path, session_id: &str, file: TodoFile) -> PathBuf {
-    home.join("todos").join(format!("{session_id}{}.json", file.suffix()))
+    let suffix = file.suffix();
+    let mut name = String::with_capacity(session_id.len() + suffix.len() + 5);
+    name.push_str(session_id);
+    name.push_str(suffix);
+    name.push_str(".json");
+    let mut path = home.join("todos");
+    path.push(name);
+    path
 }
 
 /// Persisted long-session review clock.
@@ -64,9 +71,9 @@ impl TodoReviewState {
 }
 
 fn read_or_default<T: DeserializeOwned + Default>(path: &Path) -> T {
-    std::fs::read_to_string(path)
+    std::fs::read(path)
         .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
 }
 
@@ -113,9 +120,9 @@ pub fn load_todos_with_revision(home: &Path, session_id: &str) -> (Vec<TodoItem>
 /// not change what an operator is looking at when editing an item's status.
 pub fn load_snapshot_with_revision(home: &Path, session_id: &str) -> (TodoSnapshot, Option<String>) {
     let path = |file| todo_file_path(home, session_id, file);
-    let review: Option<TodoReviewState> = std::fs::read_to_string(path(TodoFile::ReviewState))
+    let review: Option<TodoReviewState> = std::fs::read(path(TodoFile::ReviewState))
         .ok()
-        .and_then(|text| serde_json::from_str(&text).ok());
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
     let (todos, revision) = load_todos_with_revision(home, session_id);
     (
         TodoSnapshot {
@@ -135,7 +142,14 @@ pub fn load_snapshot_with_revision(home: &Path, session_id: &str) -> (TodoSnapsh
 /// the file atomically, and a digest of the bytes it wrote is the one value
 /// that changes exactly when the list an operator read would change.
 fn revision_of(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 /// What one revision-checked edit did to the stored list.
@@ -189,9 +203,10 @@ pub fn apply_todo_status_edit(
     status: &str,
 ) -> io::Result<TodoEditOutcome> {
     let path = todo_file_path(home, session_id, TodoFile::Todos);
-    apply_todo_status_edit_with(home, session_id, expected_revision, id, status, |todos| {
+    apply_todo_status_edit_inner(home, session_id, expected_revision, id, status, |todos| {
         let written = serde_json::to_vec(todos).map_err(io::Error::other)?;
-        write_atomic(&path, &written)
+        write_atomic(&path, &written)?;
+        Ok(Some(revision_of(&written)))
     })
 }
 
@@ -208,6 +223,20 @@ pub fn apply_todo_status_edit_with(
     id: &str,
     status: &str,
     save: impl FnOnce(&[TodoItem]) -> io::Result<()>,
+) -> io::Result<TodoEditOutcome> {
+    apply_todo_status_edit_inner(home, session_id, expected_revision, id, status, |todos| {
+        save(todos)?;
+        Ok(None)
+    })
+}
+
+fn apply_todo_status_edit_inner(
+    home: &Path,
+    session_id: &str,
+    expected_revision: &str,
+    id: &str,
+    status: &str,
+    save: impl FnOnce(&[TodoItem]) -> io::Result<Option<String>>,
 ) -> io::Result<TodoEditOutcome> {
     let path = todo_file_path(home, session_id, TodoFile::Todos);
     let _lock = lock_todos(home, session_id)?;
@@ -270,13 +299,19 @@ pub fn apply_todo_status_edit_with(
     };
     todos[index].status = canonical.to_string();
     todos[index].blocker = blocked_note;
-    save(&todos)?;
-    let written = serde_json::to_vec(&todos).map_err(io::Error::other)?;
+    let precomputed = save(&todos)?;
+    let revision = match precomputed {
+        Some(revision) => revision,
+        None => {
+            let written = serde_json::to_vec(&todos).map_err(io::Error::other)?;
+            revision_of(&written)
+        }
+    };
     Ok(TodoEditOutcome {
         applied: true,
         refusal: None,
         todos,
-        revision: revision_of(&written),
+        revision,
     })
 }
 

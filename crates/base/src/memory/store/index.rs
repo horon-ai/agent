@@ -204,6 +204,38 @@ impl Index {
         Ok(statement.query_row([id], page_row_from).optional()?)
     }
 
+    /// Relative path of one indexed page by id.
+    pub(super) fn page_path(&self, id: &str) -> Result<Option<String>> {
+        let mut statement = self.conn().prepare_cached("SELECT path FROM pages WHERE id = ?1")?;
+        Ok(statement.query_row([id], |row| row.get(0)).optional()?)
+    }
+
+    /// `(id, path)` pairs for all pages in `project` (`None` for global scope).
+    pub(super) fn scope_paths(&self, project: Option<&str>) -> Result<Vec<(String, String)>> {
+        let mut out = Vec::new();
+        match project {
+            Some(project) => {
+                let mut statement = self.conn().prepare_cached(
+                    "SELECT id, path FROM pages WHERE project = ?1 ORDER BY updated_ms DESC, created_ms DESC, id ASC",
+                )?;
+                let rows = statement.query_map([project], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+            None => {
+                let mut statement = self.conn().prepare_cached(
+                    "SELECT id, path FROM pages WHERE project IS NULL ORDER BY updated_ms DESC, created_ms DESC, id ASC",
+                )?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Filtered and sorted page rows pushed down into SQLite.
     pub(super) fn list_rows(
         &self,

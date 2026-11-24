@@ -41,7 +41,9 @@ use super::manifest::{
 use super::{VolumeLayout, write_private_file};
 use crate::memory::store::{self, MemoryWiki};
 use anyhow::{Context, Result, anyhow, bail};
+use horon_agent_memory_types::TrustLevel;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -92,27 +94,16 @@ pub fn export(layout: &VolumeLayout, destination: &Path) -> Result<ExportReport>
         include_inactive: true,
         ..store::ListFilter::default()
     })?;
+    let wiki_root = wiki.wiki_root();
     let mut files: Vec<(String, Vec<u8>)> = Vec::with_capacity(rows.len());
     let mut lines: Vec<PageMetadata> = Vec::with_capacity(rows.len());
     for row in &rows {
         let id = horon_agent_memory_types::page::PageId::parse(&row.id)
             .with_context(|| format!("the index holds the unstorable page id `{}`", row.id))?;
-        let Some(page) = wiki.page(&id)? else {
+        let Some((page, bytes)) = store::read_page_and_bytes(&wiki_root, id.file_stem().as_str(), &row.path)? else {
             continue;
         };
-        let Some(absolute) = wiki.page_path(&id)? else {
-            continue;
-        };
-        let bytes =
-            std::fs::read(&absolute).with_context(|| format!("cannot read the page file {}", absolute.display()))?;
-        // The page path is relative to the wiki root (`<store>/wiki`), which is
-        // the `wiki/` prefix the tar carries; joining it onto the store root
-        // would double that prefix.
-        let wiki_root = wiki.wiki_root();
-        let Some(relative) = store::relative_page_path(&wiki_root, &absolute) else {
-            bail!("the page file {} is not inside the wiki root", absolute.display());
-        };
-        let path = format!("{WIKI_PREFIX}{relative}");
+        let path = format!("{WIKI_PREFIX}{}", row.path);
         lines.push(metadata_for(&page, &path));
         files.push((path, bytes));
     }
@@ -163,7 +154,7 @@ pub fn import(layout: &VolumeLayout, source: &Path) -> Result<ImportReport> {
     ensure_empty_target(&store_root)?;
     let file = std::fs::File::open(source).with_context(|| format!("cannot open the archive {}", source.display()))?;
     let mut archive = tar::Archive::new(std::io::BufReader::new(file));
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut entries: HashMap<String, Vec<u8>> = HashMap::new();
     let mut total_bytes = 0u64;
     let mut count = 0usize;
     for entry in archive.entries().context("cannot read the archive's entries")? {
@@ -214,14 +205,18 @@ pub fn import(layout: &VolumeLayout, source: &Path) -> Result<ImportReport> {
                 bytes.len()
             );
         }
-        if entries.iter().any(|(existing, _)| existing == &path) {
+        if entries.contains_key(&path) {
             bail!("the archive holds the entry `{path}` twice");
         }
-        entries.push((path, bytes));
+        entries.insert(path, bytes);
     }
 
-    let manifest_bytes = take_single(&mut entries, MANIFEST_FILE)?;
-    let metadata_bytes = take_single(&mut entries, METADATA_FILE)?;
+    let manifest_bytes = entries
+        .remove(MANIFEST_FILE)
+        .ok_or_else(|| anyhow!("the archive holds no {MANIFEST_FILE}; it is not a memory export"))?;
+    let metadata_bytes = entries
+        .remove(METADATA_FILE)
+        .ok_or_else(|| anyhow!("the archive holds no {METADATA_FILE}; it is not a memory export"))?;
     let manifest = Manifest::from_json(&manifest_bytes)?;
     let metadata = parse_metadata(&metadata_bytes)?;
     if metadata.len() != manifest.pages {
@@ -232,12 +227,18 @@ pub fn import(layout: &VolumeLayout, source: &Path) -> Result<ImportReport> {
         );
     }
 
+    let manifest_by_path: HashMap<&str, &FileDigest> =
+        manifest.files.iter().map(|file| (file.path.as_str(), file)).collect();
+    let metadata_by_path: HashMap<&str, &PageMetadata> =
+        metadata.iter().map(|line| (line.path.as_str(), line)).collect();
+
     // Every remaining entry must be a page file the manifest lists, with the
     // digest and size it recorded.
-    let mut verified: Vec<(String, Vec<u8>)> = Vec::with_capacity(entries.len());
+    let mut verified: Vec<(String, Vec<u8>, &str)> = Vec::with_capacity(entries.len());
     for (path, bytes) in entries {
-        let digest = manifest
-            .digest_for(&path)
+        let digest = manifest_by_path
+            .get(path.as_str())
+            .copied()
             .ok_or_else(|| anyhow!("the archive carries `{path}`, which the manifest does not list"))?;
         if bytes.len() as u64 != digest.bytes {
             bail!(
@@ -250,10 +251,11 @@ pub fn import(layout: &VolumeLayout, source: &Path) -> Result<ImportReport> {
         if actual != digest.sha256 {
             bail!("`{path}` does not match its manifest digest");
         }
-        if !metadata.iter().any(|line| line.path == path) {
-            bail!("the archive carries `{path}` with no metadata line");
-        }
-        verified.push((path, bytes));
+        let line = metadata_by_path
+            .get(path.as_str())
+            .copied()
+            .ok_or_else(|| anyhow!("the archive carries `{path}` with no metadata line"))?;
+        verified.push((path, bytes, line.id.as_str()));
     }
     if verified.len() != manifest.pages {
         bail!(
@@ -267,8 +269,9 @@ pub fn import(layout: &VolumeLayout, source: &Path) -> Result<ImportReport> {
     // from the archive's derived data is imported.
     verified.sort_by(|left, right| left.0.cmp(&right.0));
     let wiki_root = store_root.join("wiki");
+    let mut created_dirs: HashSet<PathBuf> = HashSet::new();
     let mut installed_bytes = 0u64;
-    for (path, bytes) in &verified {
+    for (path, bytes, expected_id) in &verified {
         let Some(relative) = path.strip_prefix(WIKI_PREFIX) else {
             bail!("`{path}` is not below `{WIKI_PREFIX}`");
         };
@@ -278,19 +281,16 @@ pub fn import(layout: &VolumeLayout, source: &Path) -> Result<ImportReport> {
             .and_then(|stem| stem.to_str())
             .ok_or_else(|| anyhow!("`{path}` has no UTF-8 file stem"))?;
         let page = store::decode_page(text, stem)?;
-        let line = metadata
-            .iter()
-            .find(|line| line.path == *path)
-            .ok_or_else(|| anyhow!("the archive carries `{path}` with no metadata line"))?;
-        if line.id != page.id.as_str() {
+        if *expected_id != page.id.as_str() {
             bail!(
-                "`{path}` decodes as page `{}` but its metadata line names `{}`",
-                page.id,
-                line.id
+                "`{path}` decodes as page `{}` but its metadata line names `{expected_id}`",
+                page.id
             );
         }
         let target = store::safe_join(&wiki_root, relative)?;
-        if let Some(parent) = target.parent() {
+        if let Some(parent) = target.parent()
+            && created_dirs.insert(parent.to_path_buf())
+        {
             create_private_dir(parent)?;
         }
         write_private_file(&target, bytes)?;
@@ -299,8 +299,10 @@ pub fn import(layout: &VolumeLayout, source: &Path) -> Result<ImportReport> {
 
     let mut wiki = MemoryWiki::open(&store_root)
         .with_context(|| format!("cannot build the index for {}", store_root.display()))?;
-    wiki.reindex()
-        .context("cannot rebuild the index from the imported pages")?;
+    if wiki.last_report().indexed != verified.len() || !wiki.last_report().skipped.is_empty() {
+        wiki.reindex()
+            .context("cannot rebuild the index from the imported pages")?;
+    }
     let counts = wiki.stats()?;
     let expected = i64::try_from(verified.len()).unwrap_or(i64::MAX);
     if counts.pages != expected {
@@ -342,21 +344,6 @@ fn ensure_empty_target(store_root: &Path) -> Result<()> {
     }
 }
 
-/// Remove and return the single entry named `name`.
-fn take_single(entries: &mut Vec<(String, Vec<u8>)>, name: &str) -> Result<Vec<u8>> {
-    let positions: Vec<usize> = entries
-        .iter()
-        .enumerate()
-        .filter(|(_, (path, _))| path == name)
-        .map(|(index, _)| index)
-        .collect();
-    match positions.as_slice() {
-        [] => Err(anyhow!("the archive holds no {name}; it is not a memory export")),
-        [index] => Ok(entries.remove(*index).1),
-        _ => Err(anyhow!("the archive holds {name} more than once")),
-    }
-}
-
 /// Whether an archive entry path is one this importer accepts.
 fn is_accepted_path(path: &str) -> bool {
     path == MANIFEST_FILE || path == METADATA_FILE || is_page_path(path)
@@ -364,7 +351,16 @@ fn is_accepted_path(path: &str) -> bool {
 
 /// Build the tar in memory.
 fn build_tar(files: &[(String, Vec<u8>)], metadata: &[u8], manifest: &[u8]) -> Result<Vec<u8>> {
-    let mut builder = tar::Builder::new(Vec::new());
+    let estimated_bytes = files
+        .iter()
+        .map(|(_, bytes)| 512 + ((bytes.len() + 511) & !511))
+        .sum::<usize>()
+        + 512
+        + ((metadata.len() + 511) & !511)
+        + 512
+        + ((manifest.len() + 511) & !511)
+        + 1024;
+    let mut builder = tar::Builder::new(Vec::with_capacity(estimated_bytes));
     builder.mode(tar::HeaderMode::Deterministic);
     for (path, bytes) in files {
         append_bytes(&mut builder, path, bytes)?;
@@ -411,7 +407,12 @@ fn metadata_for(page: &horon_agent_memory_types::MemoryPage, path: &str) -> Page
         created_at: page.created_at.to_rfc3339(),
         updated_at: page.updated_at.to_rfc3339(),
         access_count: page.access_count,
-        trust: format!("{:?}", page.trust).to_lowercase(),
+        trust: match page.trust {
+            TrustLevel::High => "high",
+            TrustLevel::Medium => "medium",
+            TrustLevel::Low => "low",
+        }
+        .to_string(),
         strength: page.strength,
         active: page.active,
         superseded_by: page.superseded_by.clone(),
