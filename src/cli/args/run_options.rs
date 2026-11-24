@@ -32,4 +32,12 @@ pub(crate) struct RunModelOverrides {
     /// With `--plan`, approve the plan the model submits instead of waiting for an answer
     #[arg(long, requires = "plan")]
     pub(crate) approve_plan: bool,
+
+    /// Enable A2UI v1.0 declarative UI output for this run
+    #[arg(long)]
+    pub(crate) a2ui: bool,
+
+    /// Supported A2UI catalog URI for this run (repeatable; implies `--a2ui`)
+    #[arg(long = "a2ui-catalog", value_name = "URI")]
+    pub(crate) a2ui_catalog: Vec<String>,
 }

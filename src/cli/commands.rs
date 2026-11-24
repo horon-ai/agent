@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{gateway, memory, storage};
 
+pub(super) mod a2ui_run;
 pub(super) mod config_cli;
 mod early_commands;
 mod failover_preview;
@@ -423,17 +424,6 @@ struct ModelListRouteReport {
     model: String,
     method: String,
     available: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct RunCommandReport {
-    session_id: String,
-    provider: String,
-    model: String,
-    text: String,
-    usage: crate::agent::TokenUsage,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    background_jobs: Option<Vec<run_jobs::JobReport>>,
 }
 
 #[derive(Debug, Default)]
@@ -1693,12 +1683,18 @@ fn emit_ndjson_event(
                 "retry_after_secs": retry_after_secs,
             }),
         ),
+        ServerEvent::A2uiEnvelope {
+            sequence,
+            envelope,
+            fallback_text,
+            ..
+        } => a2ui_run::emit_ndjson_a2ui(stdout, sequence, &envelope, fallback_text.as_deref()),
         ServerEvent::Ack { .. } | ServerEvent::Done { .. } | ServerEvent::Pong { .. } => Ok(()),
         _ => Ok(()),
     }
 }
 
-fn write_json_line(stdout: &mut impl Write, value: &impl Serialize) -> Result<()> {
+pub(super) fn write_json_line(stdout: &mut impl Write, value: &impl Serialize) -> Result<()> {
     serde_json::to_writer(&mut *stdout, value)?;
     stdout.write_all(b"\n")?;
     stdout.flush()?;

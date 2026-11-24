@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::{
-    RunCommandReport, RunDeadlineExceeded, run_deadline, run_jobs, run_report_provider_name,
+    RunDeadlineExceeded, run_deadline, run_jobs, run_report_provider_name,
     run_single_message_command_capture_with_auto_poke, run_single_message_command_ndjson,
     run_single_message_command_plain_with_auto_poke,
 };
@@ -82,11 +82,25 @@ pub(super) fn print_statuses(jobs: &[JobReport]) {
         eprintln!("background job {}: {:?}", job.task_id, job.status);
     }
 }
+#[derive(Debug, Serialize)]
+pub(super) struct RunCommandReport {
+    pub(super) session_id: String,
+    pub(super) provider: String,
+    pub(super) model: String,
+    pub(super) text: String,
+    pub(super) usage: crate::agent::TokenUsage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) background_jobs: Option<Vec<run_jobs::JobReport>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) a2ui: Vec<serde_json::Value>,
+}
+
 #[derive(Default)]
 pub(in crate::cli) struct RunLimits {
     pub max_time: Option<Duration>,
     pub wait_async: bool,
     pub print_thoughts: bool,
+    pub a2ui: bool,
 }
 
 pub(in crate::cli) async fn run_single_message_with_agent(
@@ -104,10 +118,12 @@ pub(in crate::cli) async fn run_single_message_with_agent(
     let mut jobs = limits.wait_async.then(run_jobs::OwnedJobs::new);
     let run = async {
         if emit_json {
+            let msg_start = agent.messages().len();
             let text = run_single_message_command_capture_with_auto_poke(agent, message).await?;
             if elapsed.load(Ordering::Relaxed) {
                 return Ok(());
             }
+            let a2ui = super::a2ui_run::collect_a2ui_json_blocks(&agent.messages()[msg_start..]);
             let report = RunCommandReport {
                 session_id: agent.session_id().to_string(),
                 provider: run_report_provider_name(provider.as_ref(), agent.session_provider_key().as_deref()),
@@ -119,6 +135,7 @@ pub(in crate::cli) async fn run_single_message_with_agent(
                 } else {
                     None
                 },
+                a2ui,
             };
             if elapsed.load(Ordering::Relaxed) {
                 return Ok(());
@@ -127,7 +144,11 @@ pub(in crate::cli) async fn run_single_message_with_agent(
         } else if emit_ndjson {
             run_single_message_command_ndjson(agent, provider, message, &elapsed, jobs.as_mut()).await?;
         } else {
+            let msg_start = agent.messages().len();
             run_single_message_command_plain_with_auto_poke(agent, message, limits.print_thoughts).await?;
+            if !elapsed.load(Ordering::Relaxed) && limits.a2ui {
+                super::a2ui_run::print_a2ui_text_cards(&agent.messages()[msg_start..])?;
+            }
             if let Some(jobs) = jobs.as_mut() {
                 let statuses = jobs.settle(agent.session_id()).await;
                 if !elapsed.load(Ordering::Relaxed) {

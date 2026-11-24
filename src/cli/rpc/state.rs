@@ -9,6 +9,7 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 
+use crate::message::{ContentBlock, Role};
 use crate::protocol::{Request, ServerEvent};
 
 use super::adapter::Adapter;
@@ -374,52 +375,118 @@ impl Adapter {
         let ServerEvent::History { messages, .. } = reply else {
             anyhow::bail!("unexpected reply to get_history");
         };
-        Ok(messages
+        if self.a2ui_negotiated && messages.is_empty() && !self.recorded_turn_messages.is_empty() {
+            return Ok(self.recorded_turn_messages.clone());
+        }
+
+        let mut projected: Vec<Value> = messages
             .into_iter()
-            .map(|message| {
-                let timestamp = frame::now_ms();
-                match message.role.as_str() {
-                    "user" => json!({
-                        "role": "user",
-                        "content": [frame::text_block(&message.content)],
-                        "attribution": "user",
-                        "timestamp": timestamp,
-                    }),
-                    "assistant" => json!({
-                        "role": "assistant",
-                        "content": [frame::text_block(&message.content)],
-                        "api": frame::API_METHOD,
-                        "provider": self.state.provider,
-                        "model": self.state.model,
-                        "usage": frame::usage(0, 0, 0, 0),
-                        "stopReason": "stop",
-                        "timestamp": timestamp,
-                    }),
-                    "tool" => {
-                        // A tool row whose call data is gone still renders the
-                        // output it produced, just without an id or a name.
-                        let call = message.tool_data.clone().unwrap_or_else(|| {
-                            crate::logging::warn("rpc: a tool message has no call data");
-                            Default::default()
-                        });
-                        json!({
-                            "role": "toolResult",
-                            "toolCallId": call.id,
-                            "toolName": call.name,
-                            "content": [frame::text_block(&message.content)],
-                            "details": {},
-                            "timestamp": timestamp,
-                        })
+            .map(|message| self.project_history_message(message))
+            .collect();
+
+        if self.a2ui_negotiated {
+            let disk_a2ui = self.load_session_assistant_a2ui_blocks();
+            let a2ui_by_assistant = if disk_a2ui.iter().any(|blocks| !blocks.is_empty()) {
+                disk_a2ui
+            } else {
+                collect_recorded_assistant_a2ui_blocks(&self.recorded_turn_messages)
+            };
+            attach_assistant_a2ui_blocks(&mut projected, &a2ui_by_assistant);
+        }
+
+        Ok(projected)
+    }
+
+    fn project_history_message(&self, message: crate::protocol::HistoryMessage) -> Value {
+        let timestamp = frame::now_ms();
+        match message.role.as_str() {
+            "user" => json!({
+                "role": "user",
+                "content": [frame::text_block(&message.content)],
+                "attribution": "user",
+                "timestamp": timestamp,
+            }),
+            "assistant" => json!({
+                "role": "assistant",
+                "content": [frame::text_block(&message.content)],
+                "api": frame::API_METHOD,
+                "provider": self.state.provider,
+                "model": self.state.model,
+                "usage": frame::usage(0, 0, 0, 0),
+                "stopReason": "stop",
+                "timestamp": timestamp,
+            }),
+            "tool" => {
+                // A tool row whose call data is gone still renders the
+                // output it produced, just without an id or a name.
+                let call = message.tool_data.clone().unwrap_or_else(|| {
+                    crate::logging::warn("rpc: a tool message has no call data");
+                    Default::default()
+                });
+                json!({
+                    "role": "toolResult",
+                    "toolCallId": call.id,
+                    "toolName": call.name,
+                    "content": [frame::text_block(&message.content)],
+                    "details": {},
+                    "timestamp": timestamp,
+                })
+            }
+            _ => json!({
+                "role": "user",
+                "content": [frame::text_block(&message.content)],
+                "attribution": "user",
+                "timestamp": timestamp,
+            }),
+        }
+    }
+
+    fn load_session_assistant_a2ui_blocks(&self) -> Vec<Vec<Value>> {
+        if self.state.session_id.is_empty() {
+            return Vec::new();
+        }
+        let session = match crate::session::Session::load(&self.state.session_id) {
+            Ok(session) => session,
+            Err(_) => return Vec::new(),
+        };
+        let mut per_assistant = Vec::new();
+        for msg in session.visible_conversation_messages() {
+            if msg.role != Role::Assistant {
+                continue;
+            }
+            let mut has_rendered_assistant = false;
+            let mut a2ui_blocks = Vec::new();
+            for block in &msg.content {
+                match block {
+                    ContentBlock::Text { text, .. }
+                    | ContentBlock::Reasoning { text }
+                    | ContentBlock::ReasoningTrace { text }
+                    | ContentBlock::AnthropicThinking { thinking: text, .. }
+                        if !text.is_empty() =>
+                    {
+                        has_rendered_assistant = true;
                     }
-                    _ => json!({
-                        "role": "user",
-                        "content": [frame::text_block(&message.content)],
-                        "attribution": "user",
-                        "timestamp": timestamp,
-                    }),
+                    ContentBlock::OpenAIReasoning { summary, .. } if !summary.is_empty() => {
+                        has_rendered_assistant = true;
+                    }
+                    ContentBlock::ToolUse { .. } => {
+                        has_rendered_assistant = true;
+                    }
+                    ContentBlock::A2ui {
+                        envelopes,
+                        fallback_text,
+                    } => {
+                        has_rendered_assistant = true;
+                        a2ui_blocks.push(frame::a2ui_block(envelopes, fallback_text.as_deref()));
+                    }
+                    _ => {}
                 }
-            })
-            .collect())
+            }
+            if has_rendered_assistant {
+                per_assistant.push(a2ui_blocks);
+            }
+        }
+        per_assistant
     }
 
     /// Run one shell command for the host. Horon has no request that runs a
@@ -456,6 +523,45 @@ fn context_percent(tokens: u64, window: u64) -> f64 {
         return 0.0;
     }
     (tokens as f64 / window as f64) * 100.0
+}
+
+fn collect_recorded_assistant_a2ui_blocks(messages: &[Value]) -> Vec<Vec<Value>> {
+    messages
+        .iter()
+        .filter(|message| message.get("role").and_then(Value::as_str) == Some("assistant"))
+        .map(|message| {
+            message
+                .get("content")
+                .and_then(Value::as_array)
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter(|block| block.get("type").and_then(Value::as_str) == Some("a2ui"))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_else(Vec::new)
+        })
+        .collect()
+}
+
+fn attach_assistant_a2ui_blocks(projected: &mut [Value], a2ui_by_assistant: &[Vec<Value>]) {
+    if a2ui_by_assistant.is_empty() {
+        return;
+    }
+    let mut assistant_idx = 0usize;
+    for message in projected.iter_mut() {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+        if let Some(a2ui_blocks) = a2ui_by_assistant.get(assistant_idx)
+            && !a2ui_blocks.is_empty()
+            && let Some(content) = message.get_mut("content").and_then(Value::as_array_mut)
+        {
+            content.extend(a2ui_blocks.iter().cloned());
+        }
+        assistant_idx += 1;
+    }
 }
 
 /// Flatten the host's phases into the session's todo rows, one group per phase.

@@ -227,7 +227,7 @@ fn find_envelopes_array_open(buf: &str) -> Option<usize> {
 impl Agent {
     /// Enable, update, or disable A2UI response capability for this session.
     /// No-op when unchanged so unnegotiated sessions never touch their locked tool cache.
-    pub(crate) async fn set_a2ui_capabilities(&mut self, capabilities: Option<A2uiSessionCapabilities>) {
+    pub async fn set_a2ui_capabilities(&mut self, capabilities: Option<A2uiSessionCapabilities>) {
         if self.a2ui_capabilities == capabilities {
             return;
         }

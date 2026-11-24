@@ -48,6 +48,9 @@ pub(super) struct Adapter {
     pub(super) out: Emitter<Box<dyn AsyncWrite + Unpin + Send>>,
     pub(super) state: SessionState,
     pub(super) prompt_in_flight: bool,
+    pub(super) a2ui_negotiated: bool,
+    pub(super) a2ui_capabilities: Option<command::A2uiCapabilities>,
+    pub(super) recorded_turn_messages: Vec<Value>,
     message_seq: u64,
     /// Commands read from stdin. A separate task owns stdin because a read
     /// cancelled by `select!` would lose the bytes it had already consumed.
@@ -100,6 +103,9 @@ pub(super) async fn run(start: Start<'_>) -> Result<()> {
         out: Emitter::new(start.out),
         state,
         prompt_in_flight: false,
+        a2ui_negotiated: false,
+        a2ui_capabilities: None,
+        recorded_turn_messages: Vec::new(),
         message_seq: 0,
         commands,
     };
@@ -229,10 +235,8 @@ impl Adapter {
                 let text = text.to_string();
                 self.run_prompt(command, &text).await
             }
-            Kind::NegotiateProtocol => {
-                self.ok(command, Some(json!({"protocolVersion": frame::PROTOCOL_VERSION})))
-                    .await
-            }
+            Kind::NegotiateProtocol => self.handle_negotiate_protocol(command).await,
+            Kind::A2uiEvent => self.handle_a2ui_event_idle(command).await,
             // Nothing is running, so there is nothing to abort.
             Kind::Abort => self.ok(command, None).await,
             Kind::Steer | Kind::FollowUp | Kind::AbortAndPrompt => {
@@ -359,9 +363,18 @@ impl Adapter {
             no_reply: false,
             expected_run_id: None,
         };
+        self.execute_turn(id, text, request).await
+    }
+
+    async fn execute_turn(&mut self, command_id: Option<Value>, prompt_text: &str, request: Request) -> Result<()> {
         let request_id = request.id();
-        let mut turn = Turn::new(self.state.provider.clone(), self.state.model.clone(), self.message_seq);
-        self.out.send_all(turn.begin(text)).await?;
+        let mut turn = Turn::new(
+            self.state.provider.clone(),
+            self.state.model.clone(),
+            self.message_seq,
+            self.a2ui_negotiated,
+        );
+        self.out.send_all(turn.begin(prompt_text)).await?;
         self.prompt_in_flight = true;
 
         let terminal = match self.daemon.send(&request).await {
@@ -374,11 +387,135 @@ impl Adapter {
         self.prompt_in_flight = false;
         self.message_seq = turn.message_seq();
         self.out.send_all(turn.finish()).await?;
+        if self.a2ui_negotiated {
+            self.recorded_turn_messages.extend(turn.messages().iter().cloned());
+        }
         self.out
-            .send(&frame::prompt_result(id.as_ref(), terminal.status(), true))
+            .send(&frame::prompt_result(command_id.as_ref(), terminal.status(), true))
             .await?;
         self.out.send(&frame::session_settled()).await?;
         Ok(())
+    }
+
+    async fn handle_negotiate_protocol(&mut self, command: &Command) -> Result<()> {
+        let requested = match command.a2ui_negotiation() {
+            Ok(requested) => requested,
+            Err(error) => {
+                return self.fail(command, &error.to_string(), Some("invalid_request")).await;
+            }
+        };
+        match requested {
+            Some(caps) => {
+                let request = link::build_configure_a2ui_request(self.daemon.next_id(), Some(&caps))?;
+                match self.daemon.request_settled(&request).await {
+                    Ok(ServerEvent::Done { .. } | ServerEvent::Ack { .. }) => {}
+                    Ok(ServerEvent::Error { message, .. }) => {
+                        return self.fail(command, &message, Some("a2ui_configure_failed")).await;
+                    }
+                    Ok(other) => {
+                        return self
+                            .fail(
+                                command,
+                                &format!("unexpected daemon reply to configure_a2ui: {other:?}"),
+                                Some("a2ui_configure_failed"),
+                            )
+                            .await;
+                    }
+                    Err(error) => {
+                        return self
+                            .fail(command, &error.to_string(), Some("a2ui_configure_failed"))
+                            .await;
+                    }
+                }
+                self.a2ui_negotiated = true;
+                self.a2ui_capabilities = Some(caps);
+                self.ok(
+                    command,
+                    Some(json!({
+                        "protocolVersion": frame::PROTOCOL_VERSION,
+                        "capabilities": [command::A2UI_CAPABILITY_V1],
+                    })),
+                )
+                .await
+            }
+            None => {
+                if self.a2ui_negotiated {
+                    let request = link::build_configure_a2ui_request(self.daemon.next_id(), None)?;
+                    match self.daemon.request_settled(&request).await {
+                        Ok(ServerEvent::Done { .. } | ServerEvent::Ack { .. }) => {}
+                        Ok(ServerEvent::Error { message, .. }) => {
+                            return self.fail(command, &message, Some("a2ui_configure_failed")).await;
+                        }
+                        Ok(other) => {
+                            return self
+                                .fail(
+                                    command,
+                                    &format!("unexpected daemon reply to configure_a2ui: {other:?}"),
+                                    Some("a2ui_configure_failed"),
+                                )
+                                .await;
+                        }
+                        Err(error) => {
+                            return self
+                                .fail(command, &error.to_string(), Some("a2ui_configure_failed"))
+                                .await;
+                        }
+                    }
+                    self.a2ui_negotiated = false;
+                    self.a2ui_capabilities = None;
+                }
+                self.ok(command, Some(json!({"protocolVersion": frame::PROTOCOL_VERSION})))
+                    .await
+            }
+        }
+    }
+
+    async fn handle_a2ui_event_idle(&mut self, command: &Command) -> Result<()> {
+        if !self.a2ui_negotiated {
+            return self
+                .fail(
+                    command,
+                    "a2ui_event requires negotiating the a2ui_v1 capability",
+                    Some("invalid_request"),
+                )
+                .await;
+        }
+        let (envelope, data_model) = match command.a2ui_event_payload() {
+            Ok(payload) => payload,
+            Err(error) => {
+                return self.fail(command, &error.to_string(), Some("invalid_request")).await;
+            }
+        };
+        if a2ui_event_starts_turn(&envelope) {
+            let id = command.id.clone();
+            self.ok(command, None).await?;
+            let summary = a2ui_event_summary(&envelope);
+            let request = Request::A2uiEvent {
+                id: self.daemon.next_id(),
+                envelope,
+                data_model,
+            };
+            return self.execute_turn(id, &summary, request).await;
+        }
+
+        let request = Request::A2uiEvent {
+            id: self.daemon.next_id(),
+            envelope,
+            data_model,
+        };
+        match self.daemon.request_settled(&request).await {
+            Ok(ServerEvent::ContextMessageAdded { .. } | ServerEvent::Done { .. }) => self.ok(command, None).await,
+            Ok(ServerEvent::Error { message, .. }) => self.fail(command, &message, Some("invalid_request")).await,
+            Ok(other) => {
+                self.fail(
+                    command,
+                    &format!("unexpected daemon reply to a2ui_event: {other:?}"),
+                    Some("a2ui_event_failed"),
+                )
+                .await
+            }
+            Err(error) => self.fail(command, &error.to_string(), Some("a2ui_event_failed")).await,
+        }
     }
 
     /// Forward events until the turn's terminal arrives, handling the commands a
@@ -408,7 +545,7 @@ impl Adapter {
                     let Some(command) = command::parse(&text) else {
                         continue;
                     };
-                    self.in_turn_command(&command).await?;
+                    self.in_turn_command(turn, &command).await?;
                 }
                 Next::Inbound(Some(Inbound::Failed(error))) => {
                     anyhow::bail!("stdin read failed: {error}");
@@ -422,7 +559,7 @@ impl Adapter {
 
     /// A command that arrived while the turn was running. The turn itself ends
     /// only on a daemon event, so nothing here returns a terminal.
-    async fn in_turn_command(&mut self, command: &Command) -> Result<()> {
+    async fn in_turn_command(&mut self, turn: &mut Turn, command: &Command) -> Result<()> {
         match &command.kind {
             Kind::Abort => {
                 self.ok(command, None).await?;
@@ -464,7 +601,33 @@ impl Adapter {
                 Ok(())
             }
             Kind::NegotiateProtocol => {
-                self.ok(command, Some(json!({"protocolVersion": frame::PROTOCOL_VERSION})))
+                self.handle_negotiate_protocol(command).await?;
+                turn.set_a2ui_enabled(self.a2ui_negotiated);
+                Ok(())
+            }
+            Kind::A2uiEvent => {
+                if !self.a2ui_negotiated {
+                    return self
+                        .fail(
+                            command,
+                            "a2ui_event requires negotiating the a2ui_v1 capability",
+                            Some("invalid_request"),
+                        )
+                        .await;
+                }
+                let (envelope, data_model) = match command.a2ui_event_payload() {
+                    Ok(payload) => payload,
+                    Err(error) => {
+                        return self.fail(command, &error.to_string(), Some("invalid_request")).await;
+                    }
+                };
+                self.ok(command, None).await?;
+                self.daemon
+                    .send(&Request::A2uiEvent {
+                        id: self.daemon.next_id(),
+                        envelope,
+                        data_model,
+                    })
                     .await?;
                 Ok(())
             }
@@ -481,7 +644,9 @@ impl Adapter {
     /// Whether this event ends the turn, and how.
     fn classify(&self, event: &ServerEvent, request_id: u64) -> Option<Terminal> {
         match event {
-            ServerEvent::Done { id } if *id == request_id => Some(Terminal::Completed),
+            ServerEvent::Done { id } | ServerEvent::ContextMessageAdded { id } if *id == request_id => {
+                Some(Terminal::Completed)
+            }
             ServerEvent::Error { id, .. } if *id == request_id => Some(Terminal::Failed),
             // A cancelled turn ends with the cancel's `Interrupted` and the
             // turn's own `Done`; the interrupt is the earlier and unambiguous
@@ -490,4 +655,42 @@ impl Adapter {
             _ => None,
         }
     }
+}
+
+fn a2ui_event_starts_turn(envelope: &Value) -> bool {
+    let Some(obj) = envelope.as_object() else {
+        return false;
+    };
+    let Some(version) = obj.get("version").and_then(Value::as_str) else {
+        return false;
+    };
+    if version != command::A2UI_VERSION_V1_0 && version != "v0.9" {
+        return false;
+    }
+    obj.contains_key("action") || obj.contains_key("callAgentFunction")
+}
+
+fn a2ui_event_summary(envelope: &Value) -> String {
+    if let Some(action) = envelope.get("action").and_then(Value::as_object) {
+        if let Some(msg) = action
+            .get("userMessage")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return msg.to_string();
+        }
+        if let Some(name) = action.get("name").and_then(Value::as_str) {
+            return format!("[A2UI action: {name}]");
+        }
+    }
+    if let Some(call) = envelope.get("callAgentFunction").and_then(Value::as_object)
+        && let Some(name) = call
+            .get("callFunction")
+            .and_then(|c| c.get("@call"))
+            .and_then(Value::as_str)
+    {
+        return format!("[A2UI callAgentFunction: {name}]");
+    }
+    "[A2UI event]".to_string()
 }

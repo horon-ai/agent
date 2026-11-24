@@ -23,10 +23,12 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         anyhow::bail!("Expected a run command");
     };
     let (emit_json, emit_ndjson) = (*emit_json, *emit_ndjson);
+    let a2ui_caps = commands::a2ui_run::build_a2ui_capabilities(overrides.a2ui, &overrides.a2ui_catalog)?;
     let limits = commands::RunLimits {
         max_time: *max_time,
         wait_async: *wait_async,
         print_thoughts: *print_thoughts,
+        a2ui: a2ui_caps.is_some(),
     };
     if system_template.is_some() && overrides.system_prompt.is_some() {
         anyhow::bail!("--system-prompt and --system-template cannot be combined: both replace the system prompt");
@@ -93,6 +95,9 @@ pub(super) async fn run(args: &Args) -> Result<()> {
     if let Err(error) = setup {
         agent.mark_closed();
         return Err(error);
+    }
+    if let Some(caps) = a2ui_caps {
+        agent.set_a2ui_capabilities(Some(caps)).await;
     }
     // User-authored `run` message; later helper turns are synthetic.
     agent.arm_effort_keywords(message);
