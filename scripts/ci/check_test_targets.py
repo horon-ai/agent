@@ -54,7 +54,7 @@ TARGET_NAME_ARG = re.compile(r"--target-name\s+(\S+)")
 CARGO_TEST_TARGET = re.compile(r"--test\s+([A-Za-z0-9_]+)")
 # `packages=(-p a -p b)` and `packages+=(-p c)` in the compile step.
 PACKAGE_ARRAY = re.compile(r"packages\+?=\(([^)]*)\)")
-PACKAGE_FLAG = re.compile(r"-p\s+([A-Za-z0-9_.-]+)")
+PACKAGE_FLAG = re.compile(r"(?:-p|--package)\s+([A-Za-z0-9_.-]+)")
 
 
 def joined_workflow(path: Path) -> str:
@@ -89,8 +89,23 @@ def compiled_packages(text: str) -> set[str]:
     return packages
 
 
-def named_test_targets(text: str) -> set[str]:
-    return set(CARGO_TEST_TARGET.findall(text))
+def named_test_targets(text: str) -> set[tuple[str, str]]:
+    """Return `(package, target)` pairs explicitly executed via `cargo test ... --test`."""
+    named: set[tuple[str, str]] = set()
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#") or not re.search(r"\bcargo\b.*\btest\b", stripped):
+            continue
+        if "--no-run" in stripped:
+            continue
+        targets = CARGO_TEST_TARGET.findall(stripped)
+        if not targets:
+            continue
+        packages = PACKAGE_FLAG.findall(stripped) or ["horon-agent"]
+        for pkg in packages:
+            for target_name in targets:
+                named.add((pkg, target_name))
+    return named
 
 
 def runs_manifest(text: str) -> bool:
@@ -217,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     unrun = [
         target
         for target in targets
-        if target["target"] not in named
+        if (target["package"], target["target"]) not in named
         and (target["package"], target["target"]) not in excused
         and (target["package"], target["target"]) not in listed
     ]

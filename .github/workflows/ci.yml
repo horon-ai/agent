@@ -997,14 +997,6 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- cli::startup::agent_catalog::tests:: --nocapture
 
-      - name: Run skill source policy tests
-        shell: bash
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- skill_install::tests::only_plain_remotes --nocapture
-
       - name: Run CLI launch profile cohort
         shell: bash
         run: |
@@ -1207,44 +1199,12 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- server::session_forget::tests --nocapture
 
-      - name: Run secrets cohort
-        if: runner.os != 'Windows'
-        shell: bash
-        # The credential-masking tests live in `crates/base/src/secrets.rs`
-        # `mod tests` (11 tests): placeholder shapes, restore, owner-only key
-        # files, vault persistence across restarts, and the block/off modes.
-        # Nothing else in this workflow runs them on Linux or macOS: the build
-        # step compiles `horon-agent-base` lib tests but every other filtered
-        # step only selects its own prefix, so a real credential reaching the
-        # model or session history had no CI check. The step previously ran a
-        # filter inherited from upstream CI that matched nothing in this tree,
-        # the looks-green-but-never-ran shape the warning budget and the stdin
-        # detector had, so it now requires the measured count (`--min-passed`),
-        # which fails the step when a filter selects no test instead of
-        # reporting a green `0 passed`. `secrets::restore_tests` (7) pins the
-        # in-place restore of a tool input: the same text as replacing every
-        # placeholder longest first, keys untouched, and an input that holds no
-        # placeholder coming back equal. `crash::ring_tests` (7) pins the operation
-        # ring a crash bundle reads: redaction before the cut, the stored
-        # detail when a record's strings are reused, and nothing recorded while
-        # bundles are off. The Windows groups stay out of scope: this step
-        # keeps `runner.os != 'Windows'`.
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 18 \
-            -- secrets:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 7 \
-            -- crash::ring_tests:: --nocapture
-
       - name: Run IRC cohorts
         shell: bash
         # Nothing else in this workflow runs `horon-agent-irc-core` tests: the
-        # build step has no `--workspace`, and the `horon-agent-base` /
-        # `horon-agent-app-core` IRC tests sit behind a filter no other step
-        # uses. A filter that matches nothing makes libtest report "0 passed"
+        # build step has no `--workspace`, and `horon-agent-app-core` IRC tests
+        # sit behind a filter no other step uses (`horon-agent-base` runs whole-crate
+        # above). A filter that matches nothing makes libtest report "0 passed"
         # and exit 0, the looks-green-but-never-ran shape the warning budget and
         # the stdin detector both had, so each cohort must report at least one
         # pass (`--min-passed 1`).
@@ -1253,10 +1213,6 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-irc-core \
             --timeout 600 --min-passed 1 \
             -- --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- irc --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
@@ -1316,36 +1272,15 @@ jobs:
       - name: Run Linux process-ownership cohort
         if: runner.os == 'Linux'
         shell: bash
-        # Both modules are `#[cfg(all(test, target_os = "linux"))]`, so they only
-        # exist in this job, and no cohort named them. They drive a real
-        # subprocess each: the notification lifecycle tests read
-        # `/proc/<pid>/stat` to prove a hung `notify-send` is reaped without
-        # blocking the caller, and `claude_live` verifies a process start token
-        # before signalling, so a recycled pid is never signalled.
+        # Notification lifecycle tests are `#[cfg(all(test, target_os = "linux"))]`,
+        # driving a real subprocess and reading `/proc/<pid>/stat` to prove a
+        # hung `notify-send` is reaped without blocking (`claude_live` runs in
+        # the whole-crate `horon-agent-base` Linux step above).
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 2 \
             -- notifications::notification_process_tests:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 5 \
-            -- claude_live::tests:: --nocapture
-
-      - name: Run takeover guard cohort (all platforms)
-        shell: bash
-        # `import::takeover_tests` holds the two directions of the platform
-        # guard: off Linux the takeover is refused before any session is
-        # staged, and the reason names this platform; on Linux the guard lets
-        # the call through. Both compile everywhere, so this runs on every OS
-        # and `--min-passed 1` keeps a filter that silently matches nothing
-        # from passing. The refusal cases are what the `windows-latest` step
-        # below repeats by name.
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- import::takeover_tests:: --nocapture
 
       - name: Run stdin-forwarding cohort (all platforms)
         shell: bash
@@ -1436,21 +1371,6 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- skill_delete --nocapture
 
-      - name: Run context_import cohort
-        shell: bash
-        # `horon-agent-base` lib tests are compiled by the step above but only
-        # executed by filtered cohorts, so the `@path` import expansion would
-        # compile without a single test running. The 14 `context_import_*`
-        # tests are platform-neutral (relative, absolute, `~/`, fenced-code and
-        # hop-limit cases over temp directories), so the floor is the full
-        # count rather than one: a filter that matches nothing would otherwise
-        # report a green `0 passed`.
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 14 \
-            -- context_import --nocapture
-
       - name: Run todo blocked and write shebang cohort (todo blocked)
         shell: bash
         # Same gap as `skill_manage`: the `horon-agent-app-core` lib suite only
@@ -1490,27 +1410,6 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-todo-policy \
             --timeout 600 --min-passed 1 \
             -- todo_blocked --nocapture
-
-      - name: Run hooks cohort
-        shell: bash
-        # The `horon-agent-base` and `horon-agent-app-core` lib suites only run
-        # through filtered cohorts here, so a lifecycle hook that compiles is
-        # not a hook that was tested. `hooks::pre_request::tests` covers the
-        # request rewrite (replacement, empty stdout, fail-open, system-prompt
-        # refusal, chained commands, stdin payload, recursion guard) and
-        # `hooks::post_tool_feedback::tests` covers the feedback envelope and
-        # the text it appends. The hook cases write small /bin/sh scripts, so
-        # each filter carries `--min-passed 1` while still reporting a pass on
-        # Windows, where only the platform-neutral cases run.
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- hooks::pre_request::tests --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- hooks::post_tool_feedback::tests --nocapture
 
       - name: Run hooks cohort (Unix)
         if: runner.os != 'Windows'
@@ -1790,16 +1689,6 @@ jobs:
             -- startup_profile --nocapture
           failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- prompt::prompt_tests --nocapture
-          failed=$((failed | $?))
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- prompt::session_context_tests --nocapture
-          failed=$((failed | $?))
-          python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- agent::tests::prompt_prefix_stability --nocapture
@@ -1843,34 +1732,16 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 900 --min-passed 22 \
             -- tool::memory:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- memory_update --nocapture
 
       - name: Run memory recall cohorts
         shell: bash
         # Recall used to run in the background through a pending queue that the
         # turn picked up; it is now only the agent's explicit `memory` tool call,
-        # and the consolidation summary is the one automatic piece. Those tests
-        # live in `horon-agent-base` and `horon-agent-app-core` lib suites, which
-        # this workflow runs only through filtered cohorts, so without a step
-        # naming them they would compile and never execute. `--min-passed` pins
-        # the measured count: `memory::consolidation::tests::` covers the pass,
-        # the merge rules and the digest rebuild after a forget;
-        # `memory_agent::tests::` covers what a context update does and does not
-        # schedule; `request_snapshot_reuse` and `memory_guidance` cover the
-        # injection slot on the turn path. `run_lib_tests.py` forwards a single
-        # filter to libtest, so each package gets its own call.
+        # and the consolidation summary is the one automatic piece. These
+        # `horon-agent-app-core` tests run through filtered cohorts
+        # (`horon-agent-base` consolidation/agent tests run in the whole-crate
+        # `horon-agent-base` step above).
         run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 900 --min-passed 12 \
-            -- memory::consolidation::tests:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 900 --min-passed 3 \
-            -- memory_agent::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 900 --min-passed 2 \
@@ -1895,38 +1766,10 @@ jobs:
 
       - name: Run session durability cohort
         shell: bash
-        # The fsync reductions change which originals a session flushes, and
-        # none of the session or runtime-journal tests ran in this workflow
-        # before. `durable_runtime::` covers the runtime journal, including the
-        # entry flush of every directory level an open creates (the record of
-        # a confirmed journal must survive a power loss with its directory);
-        # `session::session_tests::` covers the event store and its local head
-        # files (no explicit-head flag for a session that never selected one);
-        # `session_replication` covers what a replica reads from those files.
-        # `session::tests::durability::` covers the close at the end of a run
-        # publishing only the runtime binding, with nothing appended to the log.
-        # `session::tests::retired_swarm_actions::` covers replay of a session
-        # written before the swarm channel and shared-context removal: the
-        # stored calls must survive projection and render.
-        # The other `session` modules are left out: two of their tests fail on
-        # `dev` itself and are outside this change.
+        # `session_replication` in `horon-agent-app-core` checks what a replica
+        # reads from session files (`horon-agent-base` durability and journal
+        # tests run in the whole-crate `horon-agent-base` step above).
         run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- durable_runtime:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- session::session_tests:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- session::tests::durability:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- session::tests::retired_swarm_actions:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
@@ -2228,49 +2071,15 @@ jobs:
 
       - name: Run session id prefix cohort
         shell: bash
-        # Both suites only run through filters, so a prefix resolver that
-        # compiles would ship untested: `horon-agent-base` and
-        # `horon-agent-app-core` lib tests are never run whole here. The base
-        # half covers the matcher itself (exact id wins, duplicates do not
-        # ambiguate, ten-candidate cap, a five-character match refused);
-        # the app-core half covers the Subscribe path that resolves a stored
-        # or live session, and the refusals an operator sees.
+        # `subscribe_prefix` in `horon-agent-app-core` covers the Subscribe path
+        # that resolves a stored or live session (`horon-agent-base` prefix
+        # matcher tests run in the whole-crate `horon-agent-base` step above).
         run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- session_prefix:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- subscribe_prefix --nocapture
 
-      - name: Run MCP server request cohort
-        shell: bash
-        # An MCP server may call back into the client (`ping`, `roots/list`, or a
-        # method this version does not implement). Dropping those requests
-        # leaves the server waiting on a reply that never comes, so the three
-        # modules below cover the answer end to end and none of them has another
-        # cohort: they would compile and never execute
-        # (scripts/ci/check_lib_test_coverage.py). The stdio half proves a
-        # request is answered while a notification is not, and that roots are
-        # served only under the `[mcp] expose_roots` opt-in; the remote half
-        # proves the same two answers over the dedicated POST that bypasses the
-        # request registry; the config half proves the opt-in defaults off and
-        # parses when set.
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 2 \
-            -- mcp::client::server_requests_tests --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 2 \
-            -- mcp::remote::remote_server_requests_tests --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- config::mcp::tests --nocapture
       - name: Run cancellable work cohort
         shell: bash
         # Cancelling a run, cancelling one tool call and listing background work
@@ -2306,12 +2115,10 @@ jobs:
 
       - name: Run checkpoint tool cohort
         shell: bash
-        # `horon-agent-app-core` and `horon-agent-base` lib tests only run
-        # through filters, so the checkpoint and rewind tools would compile and
-        # ship unexecuted. The first filter covers the two tools and their
-        # registration switch, the second the settle path that commits the
-        # marker, folds a branch into the report and undoes it, the third the
-        # `[tools] checkpoint` config switch.
+        # `horon-agent-app-core` lib tests only run through filters, so the
+        # checkpoint and rewind tools would compile and ship unexecuted
+        # (`horon-agent-base` config switch tests run in the whole-crate step
+        # above).
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
@@ -2321,41 +2128,18 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 14 \
             -- agent::rewind_summary:: --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 3 \
-            -- config::checkpoint_switch_tests:: --nocapture
 
       - name: Run compaction and handoff cohorts
         shell: bash
-        # Compaction is the path that decides what a resumed session can still
-        # see, and no other step in this workflow runs it: every `horon-agent-base`
-        # and `horon-agent-app-core` run above is filtered to another prefix, so
-        # a change to the handoff generator, the strategy dispatch or the
-        # overnight trigger would compile and never execute. All three live in
-        # the lib suites, which is why `--min-passed 1` matters: a filter that
-        # matched nothing reports `0 passed` and exits 0, the looks-green shape
-        # this workflow has already fixed twice.
-        #
-        # `overnight_handoff` is the subset of the overnight trigger that crosses
-        # into compaction; it is not selected by `compaction` alone because the
-        # module is named for the run, not the mechanism.
-        #
-        # `HORON_HOME` points at a throwaway directory with mode 700. The
-        # compaction tests in `agent::tests` save and reload a session, and the
-        # store refuses a home whose path components are not owner-private; on a
-        # hosted runner `$HOME` is world-readable, so those tests pass on a
-        # developer machine and fail here. One directory serves the whole step:
-        # the three calls run in sequence and share the session store they build.
+        # Compaction in `horon-agent-app-core` is only run through filtered
+        # cohorts (`horon-agent-base` runs in the whole-crate step above).
+        # `HORON_HOME` points at a throwaway directory with mode 700 because the
+        # `agent::tests` compaction tests refuse a world-readable `$HOME`.
         run: |
           HORON_HOME="$(mktemp -d)"
           export HORON_HOME
           chmod 700 "$HORON_HOME"
           trap 'rm -rf "$HORON_HOME"' EXIT
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
-            -- compaction --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
@@ -2374,7 +2158,7 @@ jobs:
         # so the guard that checks this coverage reads the same file.
         run: |
           python3 scripts/ci/run_integration_targets.py \
-            --artifacts "$TEST_ARTIFACTS" --timeout 900
+            --artifacts "$TEST_ARTIFACTS" --jobs 4 --timeout 900
 
       - name: Run extension wire contracts with an isolated home
         shell: bash

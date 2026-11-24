@@ -197,6 +197,11 @@
       "min_passed": 1
     },
     {
+      "package": "horon-agent-app-core",
+      "target": "tool_verdict",
+      "min_passed": 3
+    },
+    {
       "package": "horon-agent-base",
       "target": "cache_identity_contract",
       "min_passed": 4

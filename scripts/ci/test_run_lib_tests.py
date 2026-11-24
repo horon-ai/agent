@@ -10,6 +10,7 @@ cargo build is needed.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -57,12 +58,16 @@ class RunLibTestsTests(unittest.TestCase):
         return path
 
     def run_helper(self, artifacts: Path, *extra: str,
-                   package: str = "horon-agent-base") -> subprocess.CompletedProcess:
+                   package: str = "horon-agent-base",
+                   env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
         command = [sys.executable, str(HELPER),
                    "--artifacts", str(artifacts),
                    "--package", package,
                    "--timeout", "30", *extra]
-        return subprocess.run(command, capture_output=True, text=True)
+        run_env = dict(os.environ)
+        if env is not None:
+            run_env.update(env)
+        return subprocess.run(command, capture_output=True, text=True, env=run_env)
 
     def test_finds_the_executable_and_runs_it(self):
         executable = self.stub(
@@ -188,6 +193,26 @@ class RunLibTestsTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("test result: ok. 1 passed", log.read_text())
+
+    def test_skips_unselected_package_when_scoped_env_excludes_it(self):
+        artifacts = self.write_artifacts([])
+        result = self.run_helper(
+            artifacts,
+            package="horon-agent-base",
+            env={"HORON_CI_SCOPED_PACKAGES": "horon-tui"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Skipping horon-agent-base", result.stdout)
+
+    def test_fails_when_scoped_env_includes_missing_package(self):
+        artifacts = self.write_artifacts([])
+        result = self.run_helper(
+            artifacts,
+            package="horon-tui",
+            env={"HORON_CI_SCOPED_PACKAGES": "horon-tui"},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no lib test executable", result.stderr)
 
     def test_test_target_is_selected_by_name(self):
         lib = self.stub("echo 'test result: ok. 1 passed; 0 failed'\n", name="lib")
