@@ -5,7 +5,7 @@ description: "Every horon subcommand: serve, run, repl, api-bridge, acp, rpc, se
 
 Bare `horon` on a terminal starts the server and then replaces itself with the
 `horon-tui` client beside it. A pipe, `HORON_NO_TUI=1`, or a missing sibling
-prints the condition and the install hint instead, then exits non-zero.
+prints the condition and its remedy (or the install hint when the sibling is missing), then exits non-zero.
 
 ## Core commands
 
@@ -13,27 +13,32 @@ prints the condition and the install hint instead, then exits non-zero.
 | --- | --- |
 | `horon run "<message>"` | Send one message, run tools until the turn ends, exit. `--json` prints a machine-readable result, `--ndjson` streams events. |
 | `horon repl` | One line at a time in the terminal, without the full-screen client. |
-| `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
-| `horon api-bridge` | Harness API on a Unix socket for SDK clients (`HORON_AGENT_API_SOCKET`, Unix only). |
+| `horon serve` | Background agent daemon on a Unix socket (or named pipe on Windows; `HORON_AGENT_SOCKET`). |
+| `horon api-bridge` | Harness API for SDK clients on a Unix socket or Windows named pipe (`HORON_AGENT_API_SOCKET`), with optional bearer-authenticated `--api-bind <IP:PORT>` TCP listener (`alias: api`). |
 | `horon acp` | ACP v1/v2 adapter on stdio for editors. |
 | `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out. `--mode rpc` selects the same adapter. |
 | `horon server start\|reload\|stop\|promote` | Manage the daemon. Prefer `reload` after an upgrade: it hands live sessions to a freshly exec'd server instead of dropping them. `stop` requires `--force`. |
 
 `api-bridge` listens as `horon-agent-api.sock` in the runtime directory, which is
 `HORON_AGENT_RUNTIME_DIR` when set, else `XDG_RUNTIME_DIR`, else the platform's
-per-user runtime directory (on macOS, `$TMPDIR`); `--api-socket <path>` moves it,
-and `--stdio` serves one connection on
-stdin/stdout for SSH clients. The global `--socket` selects the *internal daemon*
-socket, which is a different socket.
+per-user runtime directory (on macOS, `$TMPDIR`), or a derived named pipe on
+Windows; `--api-socket <path>` moves it, `--api-bind <IP:PORT>` adds an
+authenticated TCP listener (`--api-insecure-behind-proxy` for non-loopback behind
+TLS), and `--stdio` (Unix only) serves one connection on stdin/stdout for SSH
+clients. The global `--socket` selects the *internal daemon* socket, which is a
+different socket.
 
 ## Providers and models
 
 | Command | What it does |
 | --- | --- |
 | `horon provider list` | Provider ids you can pass to `-p/--provider`. |
-| `horon provider current` | The currently requested and resolved provider selection. `--json` reports `"ready"`. |
+| `horon provider status [--json]` | Local credential source and status per configured profile without calling providers. |
+| `horon provider current [--json]` | The currently requested and resolved provider selection. `--json` reports `"ready"`. |
+| `horon provider failover [--json]` | Read-only preview of retry and failover order produced by configuration. |
+| `horon provider diagnose [--check] [--json]` | Check configured profiles (`--check` queries model lists for supported wires). |
 | `horon provider add <name> --type <type> --base-url <url> --model <id>` | Add a profile. `--type` takes `openai-compatible` (default), `openai-responses`, `anthropic-compatible`, or `gemini-compatible`, and without `--auth` the command writes no `auth` line so the type default applies. `--api-key-stdin` keeps the key out of shell history, `--auth none` suits a local endpoint, and `--set-default` also writes `[provider] default_provider`. |
-| `horon model list` | Model names you can pass to `-m/--model`. |
+| `horon model list [--refresh] [--profile <name>]` | Model names you can pass to `-m/--model`. |
 
 ## Sessions
 
@@ -77,10 +82,24 @@ and a session a running daemon has open is refused.
 | `horon install-release --assets <dir> --agent-version <version>` | Verify and install a downloaded release. `--source-binary <path>` installs a local build through the same path. |
 | `horon update` | Update horon-agent to the latest version. |
 | `horon version [--json]` | Build and version information. |
+| `horon changelog [VERSION] [--json]` | Show release notes for a version without updating (read-only). |
 | `horon usage [--json]` | Usage limits for connected providers. |
+| `horon stats [--from YYYY-MM-DD] [--through YYYY-MM-DD] [--json]` | Report stored local token usage by UTC date, provider and model. |
+| `horon tokens [TEXT \| --file PATH]` | Estimate tokens in UTF-8 text locally without calling a provider (`alias: toks`). |
+| `horon api-credentials issue\|rotate\|revoke\|list` | Manage bearer tokens accepted by `api-bridge --api-bind`. |
+| `horon package install\|list\|verify\|disable\|remove` | Install and manage user-installed Rust extension and plugin packages. |
+| `horon skills ...` | List skills with their provenance, or install one from an approved source. |
 | `horon mcp list` | Configured MCP servers and their local authentication state, without connecting. `test <server>`, `login <server>` and `logout <server>` manage one remote server's OAuth credentials; the bare `horon mcp` prints its usage because it needs a subcommand. |
 | `horon memory list\|search\|export\|import\|stats` | Stored memories: list them by scope and tag, search, export or import a JSON file, or print statistics. |
-| `horon cloud move\|return\|where\|attach` | Move a live session to a cloud host, bring its work back, and manage the transferred sessions. Hidden commands (`receive`, `activate`, `export`) are the remote ends of those moves and are not shown by `--help`. |
+| `horon preview <read\|agentgrep\|websearch> <json>` | Run one read-only built-in locally without a model or session. |
+| `horon diagnostics <files...>` | List language-server diagnostics before edits, or delegate selected ones (`--select` with `--delegate`). |
+| `horon config ...` | Inspect effective configuration (read-only). |
+| `horon images ...` | List generated images of a session or copy one (read-only). |
+| `horon volume ...` | Back up, restore, and delete this user's data volume. |
+| `horon agents` | Inspect named agent definitions without starting a session. |
+| `horon stream-rules [TEXT]` | Validate stream rules and optionally preview a sample. |
+| `horon compact-text <FILE>` | Summarize text from a file or stdin (`-`) without modifying it. |
+| `horon cloud move\|return\|where\|attach\|doctor` | Move a live session to a cloud host, check compatibility (`doctor`), bring its work back, and manage transferred sessions. Hidden commands (`receive`, `activate`, `export`) are the remote ends of those moves and are not shown by `--help`. |
 | `horon pair [--list] [--revoke <name>]` | Pairing codes for the iOS and web clients. |
 | `horon permissions` | Review and answer pending ambient permission requests. |
 | `horon ambient status\|log\|trigger\|stop` | Show ambient mode, read its activity log, trigger one cycle by hand, or stop it. |

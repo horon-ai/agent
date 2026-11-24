@@ -16,14 +16,14 @@ available and must not appear in package metadata or documentation.
 The six runtime packages follow the same pattern and are named after the
 `libc`/`os`/`cpu` triple they hold:
 
-```
+```text
 @horon-ai/agent-linux-x64    @horon-ai/agent-darwin-x64    @horon-ai/agent-win32-x64
 @horon-ai/agent-linux-arm64  @horon-ai/agent-darwin-arm64  @horon-ai/agent-win32-arm64
 ```
 
 If the package name changes in the future, update `name` in
 `packages/sdk/typescript/package.json`, the install examples in this README and the SDK
-README, the repository references, and the website's `/sdk` page together.
+README, the repository references, and the website's `/sdk-typescript` page together.
 
 ## The one workflow
 

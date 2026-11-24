@@ -10,7 +10,7 @@ its own version in `packages/sdk/python/pyproject.toml`. Sources live under
 
 ## Layout
 
-```
+```text
 packages/
   sdk/
     typescript/     @horon-ai/agent-sdk + six @horon-ai/agent-<os>-<arch> runtime packages
@@ -58,7 +58,8 @@ prints one `horon:` line and exits 1.
 ## TypeScript SDK
 
 `@horon-ai/agent-sdk` plus one `@horon-ai/agent-<os>-<arch>` package per supported
-platform, published at the same tag version behind the `NPM_PUBLISH` gate. It has
+platform, published at the same tag version behind the `SDK_NPM_PUBLISH` gate
+(separate from the CLI's `NPM_PUBLISH`). It has
 its own workflow file because npm trusts a top-level workflow file name for the
 Trusted Publisher registration.
 
