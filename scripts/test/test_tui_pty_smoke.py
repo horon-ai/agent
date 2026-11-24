@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
 import unittest
+from unittest import mock
 
 SMOKE_PATH = Path(__file__).resolve().with_name("tui_pty_smoke.py")
 SPEC = importlib.util.spec_from_file_location("tui_pty_smoke", SMOKE_PATH)
@@ -149,6 +154,147 @@ class TerminalScreenTests(unittest.TestCase):
         # Differential redraw replaces only the trailing session suffix on row 38.
         screen.feed("\x1b[38;19Hparent_2")
         self.assertTrue(screen.contains("resumed session_parent_2", since=attach_start))
+
+
+class ReadinessAndDiagnosticsTests(unittest.TestCase):
+    def test_format_failure_diagnostics_includes_phase_state_and_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "prime-server-stderr.log").write_text("bind failed: address in use\n", encoding="utf-8")
+            Path(tmp, "run").mkdir()
+            Path(tmp, "run", "horon-agent.sock").write_text("", encoding="utf-8")
+            home = Path(tmp, "home")
+            home.mkdir()
+            formatted = SMOKE.format_failure_diagnostics(
+                phase="first screen",
+                state="exited 1",
+                cwd=tmp,
+                home=str(home),
+                rendered="screen contents",
+                transcript="raw bytes",
+            )
+        self.assertIn("[phase=first screen] (exited 1)", formatted)
+        self.assertIn("screen contents", formatted)
+        self.assertIn("raw bytes", formatted)
+        self.assertIn("bind failed: address in use", formatted)
+        self.assertIn("horon-agent.sock", formatted)
+
+    def test_wait_for_server_ready_polls_without_wasting_fixed_sleep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr_path = str(Path(tmp, "prime-server-stderr.log"))
+            Path(tmp, "run").mkdir()
+            proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+            try:
+                calls = {"n": 0}
+
+                def probe() -> bool:
+                    calls["n"] += 1
+                    return calls["n"] >= 2
+
+                started = time.monotonic()
+                SMOKE.wait_for_server_ready(proc, probe, stderr_path, tmp, tmp, str(Path(tmp, "run")), timeout=5.0)
+                elapsed = time.monotonic() - started
+                self.assertEqual(calls["n"], 2)
+                self.assertLess(elapsed, 2.0)
+            finally:
+                proc.terminate()
+                proc.wait(timeout=5)
+
+    def test_wait_for_server_ready_reports_early_exit_with_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr_path = str(Path(tmp, "prime-server-stderr.log"))
+            Path(tmp, "run").mkdir()
+            with open(stderr_path, "w", encoding="utf-8") as handle:
+                proc = subprocess.Popen(
+                    [sys.executable, "-c", "import sys; sys.stderr.write('boom on bind\\n'); sys.exit(7)"],
+                    stderr=handle,
+                )
+                proc.wait(timeout=5)
+            with self.assertRaises(SMOKE.Failure) as ctx:
+                SMOKE.wait_for_server_ready(proc, lambda: False, stderr_path, tmp, tmp, str(Path(tmp, "run")), timeout=5.0)
+            msg = str(ctx.exception)
+            self.assertIn("[phase=prime_server]", msg)
+            self.assertIn("status 7", msg)
+            self.assertIn("boom on bind", msg)
+
+    def test_wait_for_server_ready_times_out_with_phase_and_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr_path = str(Path(tmp, "prime-server-stderr.log"))
+            Path(tmp, "run").mkdir()
+            Path(stderr_path).write_text("still initializing\n", encoding="utf-8")
+            proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+            try:
+                with self.assertRaises(SMOKE.Failure) as ctx:
+                    SMOKE.wait_for_server_ready(proc, lambda: False, stderr_path, tmp, tmp, str(Path(tmp, "run")), timeout=0.15)
+                msg = str(ctx.exception)
+                self.assertIn("[phase=prime_server]", msg)
+                self.assertIn("did not become ready", msg)
+                self.assertIn("still initializing", msg)
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+
+    def test_posix_terminal_read_until_fails_immediately_on_early_exit(self) -> None:
+        if not SMOKE.POSIX:
+            self.skipTest("POSIX PTY only")
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "run").mkdir()
+            terminal = SMOKE.PosixTerminal(
+                [sys.executable, "-c", "import sys; print('boot-error', flush=True); sys.exit(5)"],
+                cwd=tmp,
+                env={"HORON_HOME": tmp, "HORON_AGENT_RUNTIME_DIR": str(Path(tmp, "run"))},
+            )
+            try:
+                started = time.monotonic()
+                with self.assertRaises(SMOKE.Failure) as ctx:
+                    terminal.read_until("never-arrives", timeout=30.0, what="first screen")
+                elapsed = time.monotonic() - started
+                self.assertLess(elapsed, 3.0)
+                msg = str(ctx.exception)
+                self.assertIn("[phase=first screen] (exited 5)", msg)
+                self.assertIn("boot-error", msg)
+            finally:
+                terminal.close()
+
+    def test_windows_terminal_read_until_fails_immediately_on_early_exit(self) -> None:
+        class FakePtyProcess:
+            def __init__(self) -> None:
+                self._chunks = ["early-conpty-death\r\n"]
+                self.exitstatus = 9
+                self.alive = True
+
+            def read(self, _size: int) -> str:
+                if self._chunks:
+                    return self._chunks.pop(0)
+                self.alive = False
+                return ""
+
+            def isalive(self) -> bool:
+                return self.alive
+
+            def terminate(self, force: bool = False) -> None:
+                self.alive = False
+
+        fake_pty = type("FakePtyType", (), {"spawn": staticmethod(lambda *a, **k: FakePtyProcess())})
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "run").mkdir()
+            with mock.patch.object(SMOKE, "PtyProcess", fake_pty):
+                terminal = SMOKE.WindowsTerminal(
+                    ["horon-tui.exe"],
+                    cwd=tmp,
+                    env={"HORON_HOME": tmp, "HORON_AGENT_RUNTIME_DIR": str(Path(tmp, "run"))},
+                )
+            try:
+                started = time.monotonic()
+                with self.assertRaises(SMOKE.Failure) as ctx:
+                    terminal.read_until("never-arrives", timeout=30.0, what="first screen")
+                elapsed = time.monotonic() - started
+                self.assertLess(elapsed, 3.0)
+                msg = str(ctx.exception)
+                self.assertIn("[phase=first screen] (client exited 9)", msg)
+                self.assertIn("early-conpty-death", msg)
+            finally:
+                terminal.close()
 
 
 if __name__ == "__main__":

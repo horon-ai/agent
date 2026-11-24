@@ -85,6 +85,7 @@ jobs:
       release_scripts: ${{ steps.classify.outputs.release_scripts }}
       workflows: ${{ steps.classify.outputs.workflows }}
       tui_only: ${{ steps.classify.outputs.tui_only }}
+      tui_smoke: ${{ steps.classify.outputs.tui_smoke }}
       platform_windows: ${{ steps.classify.outputs.platform_windows }}
       platform_macos: ${{ steps.classify.outputs.platform_macos }}
       full_matrix: ${{ steps.classify.outputs.full_matrix }}
@@ -511,15 +512,7 @@ jobs:
       RUSTUP_TOOLCHAIN: stable
     strategy:
       fail-fast: false
-      matrix:
-        # Release verification requires the os labels in the job names.
-        include:
-          - os: ubuntu-latest
-            runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            runner: macos-latest
-            target: aarch64-apple-darwin
+      matrix: ${{ fromJSON((github.event_name != 'pull_request' || needs.changes.outputs.platform_macos == 'true' || needs.changes.outputs.full_matrix == 'true') && '{"include":[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]}' || '{"include":[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"}]}') }}
 
     steps:
       # The Linux cleanup runs after checkout because it is the shared script in
@@ -631,7 +624,7 @@ jobs:
         # retried tool call, `/quit`, the three headless fallbacks, and a relaunch
         # over the socket file a killed bridge left behind. The client is built
         # without `--release` above, next to the release daemon.
-        if: runner.os != 'Windows'
+        if: ${{ runner.os != 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.tui_smoke == 'true' || needs.changes.outputs.full_matrix == 'true') }}
         shell: bash
         env:
           TUI_SMOKE_REPEATS: ${{ github.event_name == 'workflow_dispatch' && runner.os == 'Linux' && inputs.tui_smoke_repeats || '1' }}
@@ -665,7 +658,7 @@ jobs:
         # packages the binaries built above under the release asset names for
         # this platform, installs them into a throwaway HORON_HOME, and drives
         # the launcher symlink the terminal client starts from.
-        if: runner.os != 'Windows'
+        if: ${{ runner.os != 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.tui_smoke == 'true' || needs.changes.outputs.full_matrix == 'true') }}
         shell: bash
         run: |
           bash scripts/test/install_release_layout_smoke.sh \
@@ -2444,7 +2437,7 @@ jobs:
     name: Build & Test (windows-latest)
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.rust == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' && (github.event_name != 'pull_request' || needs.changes.outputs.platform_windows == 'true' || needs.changes.outputs.full_matrix == 'true') }}
     timeout-minutes: 75
     env:
       RUSTUP_TOOLCHAIN: stable
@@ -2499,12 +2492,14 @@ jobs:
           }
 
       - name: Cache pywinpty wheel on Windows
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.tui_smoke == 'true' || needs.changes.outputs.full_matrix == 'true' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/pip-cache
           key: windows-pip-pywinpty-v1
 
       - name: ConPTY smoke (TUI client on Windows)
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.tui_smoke == 'true' || needs.changes.outputs.full_matrix == 'true' }}
         shell: bash
         # The client's Windows behaviour used to be covered only by its library
         # tests: nothing drew a screen, read a keystroke or left through a real
@@ -2535,92 +2530,170 @@ jobs:
             target/x86_64-pc-windows-msvc/release/horon-agent.exe \
             target/x86_64-pc-windows-msvc/debug/horon-tui.exe
 
-      - name: Compile library and binary tests
+      - name: Compile Windows test executables
         shell: pwsh
+        # Compile every library, binary, and integration test target Windows runs
+        # in one cargo invocation so feature unification runs once, then invoke
+        # the pre-built executables directly in subsequent steps without cargo
+        # re-unifying per crate.
         run: |
-          & cargo test --locked --target x86_64-pc-windows-msvc --lib --bins --no-run
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Windows library/binary test compilation failed'
-          }
-
-      - name: Run horon-tui tests
-        shell: pwsh
-        # No filter: the whole crate runs. The Linux and macOS jobs additionally
-        # go through `run_lib_tests.py --min-passed 1`, which is what catches a
-        # libtest run that matched nothing; here the count is read back from the
-        # run so a silently empty executable still fails.
-        run: |
-          # The compile runs under the timeout wrapper: it is the expensive part
-          # of this step, and an unwrapped hang would sit here until the job
-          # limit. Afterwards the executable exists, so the `--list` call below
-          # only starts it and is safe to run outside the wrapper.
+          $artifacts = Join-Path $env:RUNNER_TEMP 'windows-test-artifacts.jsonl'
+          "WINDOWS_TEST_ARTIFACTS=$artifacts" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'compile horon-tui tests' `
-            -TimeoutSeconds 600 `
-            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-tui', '--lib', '--no-run')
-          # The timeout helper launches cargo as a child process, so its output
-          # never reaches a captured variable. The count therefore comes from a
-          # separate `--list` invocation of the same already-compiled test
-          # binary, and the run itself is only checked for its exit code.
-          $list = & cargo test --locked --target x86_64-pc-windows-msvc -p horon-tui --lib -- --list 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            throw 'could not list horon-tui tests'
-          }
-          $compiled = ($list | Select-String -Pattern ': test$').Count
-          if ($compiled -lt 1) {
-            throw 'horon-tui compiled no tests'
-          }
-          Write-Host "horon-tui tests compiled: $compiled"
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'horon-tui tests' `
-            -TimeoutSeconds 600 `
-            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-tui', '--lib')
-
-      - name: Prepare targeted Windows validation tests
-        shell: pwsh
-        # One cargo invocation builds all four group executables. Asking cargo
-        # per group re-unified features over that group's package alone, so
-        # every group recompiled the workspace crates and the step spent
-        # minutes building for seconds of tests (#413; the Unix jobs took the
-        # same path in #19). The second cargo call only reports where those
-        # executables landed: the build above is up to date, so it compiles
-        # nothing, and the human diagnostics stay in the first call where a
-        # failure is read.
-        run: |
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'compile targeted Windows validation tests' `
+            -Name 'Compile Windows test executables' `
             -TimeoutSeconds 1800 `
-            -CargoArgs @(
-              'test', '--locked', '--target', 'x86_64-pc-windows-msvc',
-              '-p', 'horon-agent-platform-windows', '-p', 'horon-agent-base',
-              '-p', 'horon-agent-app-core', '-p', 'horon-agent-irc-core',
-              '--lib', '--no-run'
-            )
-          $artifacts = Join-Path $env:RUNNER_TEMP 'targeted-validation-artifacts.jsonl'
-          "TARGETED_VALIDATION_ARTIFACTS=$artifacts" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'locate targeted Windows validation executables' `
-            -TimeoutSeconds 300 `
             -StandardOutput $artifacts `
             -CargoArgs @(
               'test', '--locked', '--target', 'x86_64-pc-windows-msvc',
-              '-p', 'horon-agent-platform-windows', '-p', 'horon-agent-base',
-              '-p', 'horon-agent-app-core', '-p', 'horon-agent-irc-core',
-              '--lib', '--no-run', '--message-format=json-render-diagnostics'
+              '-p', 'horon-agent',
+              '-p', 'horon-tui',
+              '-p', 'horon-agent-platform-windows',
+              '-p', 'horon-agent-base',
+              '-p', 'horon-agent-app-core',
+              '-p', 'horon-agent-irc-core',
+              '--lib', '--bins',
+              '--test', 'package_manifest',
+              '--test', 'package_catalog',
+              '--test', 'package_cli',
+              '--test', 'e2e',
+              '--no-run', '--message-format=json-render-diagnostics'
             )
 
-      - name: Run targeted Windows validation tests
+      - name: Run Windows compiled test suites
         shell: pwsh
+        env:
+          HORON_AGENT_E2E_ARTIFACT_DIR: ${{ runner.temp }}/horon-agent-windows-e2e-logs
         run: |
-          # Each test lives in a specific crate, so every group names its
-          # package. A filter that matches nothing makes libtest report
-          # "0 passed" and exit 0, so each name is checked against the
-          # executable's own test list before the run and a missing name fails
-          # the step. The executables are the ones the prepare step built;
-          # starting them directly is what skips cargo's per-package feature
-          # re-unification (#413).
-          $groups = [ordered]@{
-            'horon-agent-platform-windows' = @(
+          New-Item -ItemType Directory -Force -Path $env:HORON_AGENT_E2E_ARTIFACT_DIR | Out-Null
+
+          $executables = @{}
+          Get-Content -LiteralPath $env:WINDOWS_TEST_ARTIFACTS | ForEach-Object {
+            if ([string]::IsNullOrWhiteSpace($_)) { return }
+            $message = $_ | ConvertFrom-Json
+            if ($message.reason -ne 'compiler-artifact') { return }
+            if (-not $message.profile.test) { return }
+            if (-not $message.executable) { return }
+            $kinds = @($message.target.kind)
+            $kind = if ($kinds -contains 'lib') { 'lib' } elseif ($kinds -contains 'test') { 'test' } else { return }
+
+            $packageId = [string]$message.package_id
+            if ($packageId.Contains('#')) {
+              $fragment = $packageId.Substring($packageId.LastIndexOf('#') + 1)
+              $at = $fragment.IndexOf('@')
+              if ($at -ge 0) {
+                $package = $fragment.Substring(0, $at)
+                $version = $fragment.Substring($at + 1)
+              } else {
+                $pathPart = $packageId.Substring(0, $packageId.LastIndexOf('#')).TrimEnd('/')
+                if ($fragment -match '^\d+\.') {
+                  $package = ($pathPart -split '/')[-1]
+                  $version = $fragment
+                } else {
+                  $package = $fragment
+                  $version = '0.0.0'
+                }
+              }
+            } else {
+              $fields = $packageId.Split(' ')
+              $package = $fields[0]
+              $version = if ($fields.Count -ge 2) { $fields[1] } else { '0.0.0' }
+            }
+
+            $key = "${package}::${kind}::$($message.target.name)"
+            if ($executables.ContainsKey($key)) {
+              throw "cargo reported duplicate test executable for $key"
+            }
+            $executables[$key] = [pscustomobject]@{
+              Package    = $package
+              Version    = $version
+              Executable = [string]$message.executable
+              Directory  = Split-Path -Parent ([string]$message.manifest_path)
+            }
+          }
+
+          $cargoPath = (Get-Command cargo -ErrorAction Stop).Source
+
+          function Invoke-CompiledTest {
+            param(
+              [Parameter(Mandatory=$true)][string]$StepName,
+              [Parameter(Mandatory=$true)][string]$Key,
+              [Parameter(Mandatory=$true)][string[]]$TestArgs,
+              [string]$ListFilter = '',
+              [string[]]$RequiredNames = @(),
+              [int]$MinListed = 1,
+              [int]$MinPassed = 1,
+              [int]$TimeoutSeconds = 900,
+              [switch]$FreshHome
+            )
+            if (-not $executables.ContainsKey($Key)) {
+              throw "compiled Windows test artifacts missing $Key"
+            }
+            $entry = $executables[$Key]
+            if ($ListFilter) {
+              $listed = @(& $entry.Executable --list $ListFilter 2>&1 | ForEach-Object { "$_" })
+            } else {
+              $listed = @(& $entry.Executable --list 2>&1 | ForEach-Object { "$_" })
+            }
+            if ($LASTEXITCODE -ne 0) {
+              $listed | ForEach-Object { Write-Host $_ }
+              throw "$StepName`: --list failed for $Key with exit code $LASTEXITCODE"
+            }
+            $testLines = @($listed | Where-Object { $_ -match ': test$' })
+            if ($testLines.Count -lt $MinListed) {
+              throw "$StepName`: expected at least $MinListed listed tests for $Key, found $($testLines.Count)"
+            }
+            foreach ($req in $RequiredNames) {
+              if (-not ($listed | Where-Object { $_ -match "(^|::)$([regex]::Escape($req)): test$" })) {
+                throw "$StepName`: test '$req' missing from $Key"
+              }
+            }
+
+            $safeName = ($StepName -replace '[^A-Za-z0-9_-]', '_')
+            $logPath = Join-Path $env:RUNNER_TEMP "win-test-$safeName.log"
+            $prevHome = $env:HORON_HOME
+            if ($FreshHome) {
+              $env:HORON_HOME = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+              New-Item -ItemType Directory -Path $env:HORON_HOME -ErrorAction Stop | Out-Null
+            }
+            try {
+              $env:CARGO_MANIFEST_DIR = $entry.Directory
+              $env:CARGO_PKG_NAME = $entry.Package
+              $env:CARGO_PKG_VERSION = $entry.Version
+              $env:CARGO = $cargoPath
+              & ./scripts/ci/run_with_timeout.ps1 `
+                -Name $StepName `
+                -TimeoutSeconds $TimeoutSeconds `
+                -FilePath $entry.Executable `
+                -WorkingDirectory $entry.Directory `
+                -StandardOutput $logPath `
+                -Arguments $TestArgs
+              $lines = @(Get-Content -LiteralPath $logPath)
+              $lines | ForEach-Object { Write-Host $_ }
+              $passed = 0
+              foreach ($m in ($lines | Select-String -Pattern 'test result: ok\. (\d+) passed')) {
+                $passed += [int]$m.Matches[0].Groups[1].Value
+              }
+              if ($passed -lt $MinPassed) {
+                throw "$StepName`: expected at least $MinPassed passed tests, reported $passed"
+              }
+            } finally {
+              if ($FreshHome) {
+                if (Test-Path -LiteralPath $env:HORON_HOME) {
+                  Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
+                }
+                if ($null -eq $prevHome) {
+                  Remove-Item Env:\HORON_HOME -ErrorAction SilentlyContinue
+                } else {
+                  $env:HORON_HOME = $prevHome
+                }
+              }
+            }
+          }
+
+          Invoke-CompiledTest -StepName 'horon-tui tests' -Key 'horon-tui::lib::horon_tui' -TestArgs @('--nocapture') -MinListed 1 -MinPassed 1 -TimeoutSeconds 600
+
+          $targetedGroups = [ordered]@{
+            'horon-agent-platform-windows::lib::horon_agent_platform_windows' = @(
               'is_process_running_reports_exited_children_as_stopped',
               'spawn_replacement_process_returns_without_waiting_for_child_exit',
               'pipe_name_is_stable_and_normalizes_case_and_separators',
@@ -2635,11 +2708,11 @@ jobs:
               'resources::tests::disk_fact_reads_the_system_volume',
               'resources::tests::disk_fact_is_skipped_when_no_path_is_asked_for'
             )
-            'horon-agent-base' = @(
+            'horon-agent-base::lib::horon_agent_base' = @(
               'import::takeover_tests::takeover_is_refused_before_a_session_is_staged_on_an_unsupported_platform',
               'import::takeover_tests::unsupported_reason_is_none_exactly_where_takeover_works'
             )
-            'horon-agent-app-core' = @(
+            'horon-agent-app-core::lib::horon_agent_app_core' = @(
               'sibling_socket_path_roundtrip',
               'cleanup_socket_pair_removes_main_and_debug_files',
               'build_shell_command_uses_cmd_and_executes_command',
@@ -2659,231 +2732,37 @@ jobs:
               'eval_bridge_limits_calls_and_keeps_the_next_cell_usable',
               'eval_bridge_timeout_stops_running_shell'
             )
-            'horon-agent-irc-core' = @(
+            'horon-agent-irc-core::lib::horon_agent_irc_core' = @(
               'send_orders_same_millisecond_messages_by_seq',
               'mailbox_drops_oldest_beyond_cap',
               'mutual_wait_returns_unanswerable'
             )
           }
-
-          # Read the prepare step's artifact report. Each selected package
-          # contributes exactly one test-profile lib executable; two would mean
-          # the report is ambiguous and the run could start the wrong binary.
-          $executables = @{}
-          Get-Content -LiteralPath $env:TARGETED_VALIDATION_ARTIFACTS | ForEach-Object {
-            if ([string]::IsNullOrWhiteSpace($_)) { return }
-            $message = $_ | ConvertFrom-Json
-            if ($message.reason -ne 'compiler-artifact') { return }
-            if (-not ($message.target.kind -contains 'lib')) { return }
-            if (-not $message.profile.test) { return }
-            if (-not $message.executable) { return }
-
-            $packageId = [string]$message.package_id
-            if ($packageId.Contains('#')) {
-              $fragment = $packageId.Substring($packageId.LastIndexOf('#') + 1)
-              $at = $fragment.IndexOf('@')
-              if ($at -ge 0) {
-                $package = $fragment.Substring(0, $at)
-                $version = $fragment.Substring($at + 1)
-              } else {
-                $package = $fragment
-                $version = '0.0.0'
-              }
-            } else {
-              $fields = $packageId.Split(' ')
-              $package = $fields[0]
-              $version = if ($fields.Count -ge 2) { $fields[1] } else { '0.0.0' }
-            }
-
-            if ($executables.ContainsKey($package)) {
-              throw "cargo reported two lib test executables for $package"
-            }
-            $executables[$package] = [pscustomobject]@{
-              Executable = [string]$message.executable
-              Directory  = Split-Path -Parent ([string]$message.manifest_path)
-              Version    = $version
-            }
+          foreach ($key in $targetedGroups.Keys) {
+            $names = $targetedGroups[$key]
+            Invoke-CompiledTest -StepName "targeted $key" -Key $key -RequiredNames $names -TestArgs (@($names) + @('--nocapture')) -MinListed $names.Count -MinPassed $names.Count -TimeoutSeconds 600
           }
 
-          $cargoPath = (Get-Command cargo -ErrorAction Stop).Source
+          Invoke-CompiledTest -StepName 'Windows power tests' -Key 'horon-agent-platform-windows::lib::horon_agent_platform_windows' -ListFilter 'power::tests::' -TestArgs @('power::tests::', '--nocapture') -MinListed 1 -MinPassed 1
+          Invoke-CompiledTest -StepName 'Windows package manifest contracts' -Key 'horon-agent-base::test::package_manifest' -TestArgs @('--nocapture') -MinListed 1 -MinPassed 1 -FreshHome
+          Invoke-CompiledTest -StepName 'Windows package catalog contracts' -Key 'horon-agent-base::test::package_catalog' -TestArgs @('--nocapture') -MinListed 1 -MinPassed 1 -FreshHome
+          Invoke-CompiledTest -StepName 'Windows extension wire contracts' -Key 'horon-agent-app-core::lib::horon_agent_app_core' -ListFilter 'extensions::wire::tests' -TestArgs @('extensions::wire::tests', '--nocapture') -MinListed 34 -MinPassed 34 -FreshHome
+          Invoke-CompiledTest -StepName 'Windows package CLI contracts' -Key 'horon-agent::test::package_cli' -TestArgs @('--nocapture') -MinListed 1 -MinPassed 1 -FreshHome
 
-          foreach ($package in $groups.Keys) {
-            $names = $groups[$package]
-            if (-not $executables.ContainsKey($package)) {
-              throw "the prepared artifacts hold no lib test executable for $package"
-            }
-            $entry = $executables[$package]
-
-            $listed = & $entry.Executable --list 2>&1 | ForEach-Object { "$_" }
-            if ($LASTEXITCODE -ne 0) {
-              $listed | ForEach-Object { Write-Host $_ }
-              throw "listing tests of $package failed with exit code $LASTEXITCODE"
-            }
-            foreach ($testName in $names) {
-              if (-not ($listed | Where-Object { $_ -match "(^|::)$([regex]::Escape($testName)): test$" })) {
-                throw "Windows targeted test $testName is not in the $package lib tests"
-              }
-            }
-
-            # Cargo runs a lib test executable with the package root as the
-            # working directory and these variables set; starting the
-            # executable directly has to reproduce both.
-            $env:CARGO_MANIFEST_DIR = $entry.Directory
-            $env:CARGO_PKG_NAME = $package
-            $env:CARGO_PKG_VERSION = $entry.Version
-            $env:CARGO = $cargoPath
-            & ./scripts/ci/run_with_timeout.ps1 `
-              -Name "Windows targeted tests: $package" `
-              -TimeoutSeconds 600 `
-              -FilePath $entry.Executable `
-              -WorkingDirectory $entry.Directory `
-              -Arguments (@($names) + @('--nocapture'))
-          }
-
-      - name: Run Windows power tests
-        shell: pwsh
-        run: |
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'Windows power-inhibit tests' `
-            -TimeoutSeconds 900 `
-            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-platform-windows', '--lib', 'power::tests::', '--', '--nocapture')
-
-      - name: Run Windows package manifest contracts
-        shell: pwsh
-        run: |
-          $env:HORON_HOME = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
-          New-Item -ItemType Directory -Path $env:HORON_HOME -ErrorAction Stop | Out-Null
-          try {
-            & ./scripts/ci/cargo_with_timeout.ps1 `
-              -Name 'Windows package manifest contracts' `
-              -TimeoutSeconds 900 `
-              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-base', '--test', 'package_manifest')
-          } finally {
-            Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
-          }
-
-      - name: Run Windows package catalog contracts
-        shell: pwsh
-        run: |
-          $env:HORON_HOME = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
-          New-Item -ItemType Directory -Path $env:HORON_HOME -ErrorAction Stop | Out-Null
-          try {
-            & ./scripts/ci/cargo_with_timeout.ps1 `
-              -Name 'Windows package catalog contracts' `
-              -TimeoutSeconds 900 `
-              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-base', '--test', 'package_catalog')
-          } finally {
-            Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
-          }
-
-      - name: Run Windows extension wire contracts
-        shell: pwsh
-        # The same lib module the Linux/macOS job runs, on the one OS whose pipes
-        # and process model differ. The targeted-validation prepare step above
-        # already compiled and located this crate's lib test executable, so this
-        # step starts that binary directly instead of asking cargo again (#413).
-        # The filter is checked against the executable's own `--list` first,
-        # because a filter that selects nothing reports `0 passed` and exits 0.
-        # `HORON_HOME` selects a fresh per-run directory for Horon state.
-        run: |
-          $env:HORON_HOME = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
-          New-Item -ItemType Directory -Path $env:HORON_HOME -ErrorAction Stop | Out-Null
-          try {
-            $executables = @{}
-            Get-Content -LiteralPath $env:TARGETED_VALIDATION_ARTIFACTS | ForEach-Object {
-              if ([string]::IsNullOrWhiteSpace($_)) { return }
-              $message = $_ | ConvertFrom-Json
-              if ($message.reason -ne 'compiler-artifact') { return }
-              if (-not ($message.target.kind -contains 'lib')) { return }
-              if (-not $message.profile.test) { return }
-              if (-not $message.executable) { return }
-              $packageId = [string]$message.package_id
-              if ($packageId.Contains('#')) {
-                $fragment = $packageId.Substring($packageId.LastIndexOf('#') + 1)
-                $at = $fragment.IndexOf('@')
-                $package = if ($at -ge 0) { $fragment.Substring(0, $at) } else { $fragment }
-              } else {
-                $package = $packageId.Split(' ')[0]
-              }
-              if ($executables.ContainsKey($package)) {
-                throw "cargo reported two lib test executables for $package"
-              }
-              $executables[$package] = [pscustomobject]@{
-                Executable = [string]$message.executable
-                Directory  = Split-Path -Parent ([string]$message.manifest_path)
-              }
-            }
-            if (-not $executables.ContainsKey('horon-agent-app-core')) {
-              throw 'the prepared artifacts hold no lib test executable for horon-agent-app-core'
-            }
-            $entry = $executables['horon-agent-app-core']
-            $listed = & $entry.Executable --list 'extensions::wire::tests' 2>&1 | ForEach-Object { "$_" }
-            if ($LASTEXITCODE -ne 0) {
-              $listed | ForEach-Object { Write-Host $_ }
-              throw 'could not list the extension wire contracts'
-            }
-            $selected = ($listed | Select-String -Pattern ': test$').Count
-            if ($selected -lt 34) {
-              throw "the extension wire filter selected $selected tests, expected at least 34"
-            }
-            Write-Host "extension wire contracts selected: $selected"
-            $env:CARGO_MANIFEST_DIR = $entry.Directory
-            $env:CARGO_PKG_NAME = 'horon-agent-app-core'
-            $env:CARGO = (Get-Command cargo -ErrorAction Stop).Source
-            & ./scripts/ci/run_with_timeout.ps1 `
-              -Name 'Windows extension wire contracts' `
-              -TimeoutSeconds 900 `
-              -FilePath $entry.Executable `
-              -WorkingDirectory $entry.Directory `
-              -Arguments (@('extensions::wire::tests', '--nocapture'))
-          } finally {
-            Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
-          }
-
-      - name: Run Windows package CLI contracts
-        shell: pwsh
-        run: |
-          $env:HORON_HOME = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
-          New-Item -ItemType Directory -Path $env:HORON_HOME -ErrorAction Stop | Out-Null
-          try {
-            & ./scripts/ci/cargo_with_timeout.ps1 `
-              -Name 'Windows package CLI contracts' `
-              -TimeoutSeconds 900 `
-              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '--test', 'package_cli')
-          } finally {
-            Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
-          }
-
-      - name: Run Windows e2e smoke tests
-        shell: pwsh
-        run: |
-          $tests = @(
-            'provider_behavior::test_socket_model_cycle_supported_models',
-            'provider_behavior::test_model_switch_resets_provider_session'
+          $e2eSmoke = @(
+            'provider_behavior::test_multi_turn_conversation',
+            'provider_behavior::test_resume_restores_model_and_tool_history'
           )
-
-          foreach ($testName in $tests) {
-            & ./scripts/ci/cargo_with_timeout.ps1 `
-              -Name "Windows e2e smoke test: $testName" `
-              -TimeoutSeconds 420 `
-              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '--test', 'e2e', $testName, '--', '--exact', '--nocapture')
+          foreach ($testName in $e2eSmoke) {
+            Invoke-CompiledTest -StepName "Windows e2e $testName" -Key 'horon-agent::test::e2e' -RequiredNames @($testName) -TestArgs @($testName, '--exact', '--nocapture') -MinListed 1 -MinPassed 1 -TimeoutSeconds 420
           }
 
-      - name: Run Windows lifecycle e2e tests
-        shell: pwsh
-        env:
-          HORON_AGENT_E2E_ARTIFACT_DIR: ${{ runner.temp }}/horon-agent-windows-e2e-logs
-        run: |
-          New-Item -ItemType Directory -Force -Path $env:HORON_AGENT_E2E_ARTIFACT_DIR | Out-Null
-          $tests = @(
+          $e2eLifecycle = @(
             'windows_lifecycle::windows_binary_server_accepts_clients_and_debug_cli',
             'windows_lifecycle::windows_binary_server_rebinds_named_pipe_after_exit'
           )
-          foreach ($testName in $tests) {
-            & ./scripts/ci/cargo_with_timeout.ps1 `
-              -Name "Windows lifecycle e2e test: $testName" `
-              -TimeoutSeconds 420 `
-              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '--test', 'e2e', $testName, '--', '--exact', '--nocapture')
+          foreach ($testName in $e2eLifecycle) {
+            Invoke-CompiledTest -StepName "Windows lifecycle $testName" -Key 'horon-agent::test::e2e' -RequiredNames @($testName) -TestArgs @($testName, '--exact', '--nocapture') -MinListed 1 -MinPassed 1 -TimeoutSeconds 420
           }
 
       - name: Upload Windows e2e diagnostics
