@@ -26,22 +26,6 @@ const RULES_HEADER: &str = "# Package Rules\n\n\
 ///
 /// The order is the loader's: packages by ID, rules by their package-relative
 /// path, so the same resources render the same bytes on every request.
-fn push_usize(out: &mut String, mut value: usize) {
-    let mut digits = [0u8; 20];
-    let mut pos = digits.len();
-    loop {
-        pos -= 1;
-        digits[pos] = b'0' + (value % 10) as u8;
-        value /= 10;
-        if value == 0 {
-            break;
-        }
-    }
-    if let Ok(text) = std::str::from_utf8(&digits[pos..]) {
-        out.push_str(text);
-    }
-}
-
 pub fn render_rules(resources: &PackageTextResources) -> Option<String> {
     resources.rules().next()?;
     let mut total_len = RULES_HEADER.len();
@@ -80,12 +64,16 @@ pub fn render_rules(resources: &PackageTextResources) -> Option<String> {
         section.push_str(")\n\n");
         section.push_str(body);
     }
-    if omitted > 0 {
-        section.push_str("\n\n(");
-        push_usize(&mut section, omitted);
-        section.push_str(" package rule file(s) omitted to keep this block within ");
-        push_usize(&mut section, MAX_RULES_SECTION_BYTES);
-        section.push_str(" bytes.)");
+    if omitted > 0
+        && std::fmt::Write::write_fmt(
+            &mut section,
+            format_args!(
+                "\n\n({omitted} package rule file(s) omitted to keep this block within {MAX_RULES_SECTION_BYTES} bytes.)"
+            ),
+        )
+        .is_err()
+    {
+        return Some(section);
     }
     Some(section)
 }

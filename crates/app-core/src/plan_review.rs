@@ -106,7 +106,12 @@ pub fn review(plan: &SubmittedPlan) -> PlanReview {
 }
 
 pub fn render(review: &PlanReview) -> String {
-    let mut text = format!("Review of plan revision {}.\n", review.revision);
+    use std::fmt::Write as _;
+
+    let mut text = String::with_capacity(160 + review.findings.len() * 80);
+    if writeln!(text, "Review of plan revision {}.", review.revision).is_err() {
+        return text;
+    }
     if review.findings.is_empty() {
         text.push_str("No findings.\n");
     }
@@ -115,12 +120,7 @@ pub fn render(review: &PlanReview) -> String {
             Severity::Concern => "concern ",
             Severity::Advisory => "advisory",
         };
-        if std::fmt::Write::write_fmt(
-            &mut text,
-            format_args!("- [{label}] {}: {}\n", finding.code, finding.detail),
-        )
-        .is_err()
-        {
+        if writeln!(text, "- [{label}] {}: {}", finding.code, finding.detail).is_err() {
             return text;
         }
     }

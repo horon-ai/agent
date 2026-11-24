@@ -22,14 +22,13 @@
 //! ever come from inside the installed package root.
 
 use std::collections::BTreeSet;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
-use sha2::{Digest, Sha256};
 
 use super::PackageRecord;
 use super::manifest::{open_package_file, relative_path};
+use super::text_resources::{read_capped_prefix, read_verified, resource_stem};
 use crate::skill::FileStamp;
 
 /// Upper bound on one command resource.
@@ -81,16 +80,16 @@ pub(super) fn read_commands(
     let mut names = BTreeSet::new();
     let mut total = 0usize;
     for path in declared {
-        let (relative, absolute, bytes) = read_verified(root, record, path)?;
-        ensure!(!bytes.trim().is_empty(), "package command is empty: {path}");
-        total += bytes.len();
+        let file = read_verified(root, record, path, MAX_COMMAND_BYTES)?;
+        ensure!(!file.text.trim().is_empty(), "package command is empty: {path}");
+        total += file.text.len();
         ensure!(
             total <= MAX_PACKAGE_COMMAND_BYTES,
             "package commands exceed {MAX_PACKAGE_COMMAND_BYTES} bytes"
         );
-        let stem = command_stem(path)?;
-        ensure!(names.insert(stem.to_owned()), "duplicate package command name: {stem}");
-        let parsed = parse(&bytes);
+        let stem = resource_stem(path, "command")?;
+        ensure!(names.insert(stem), "duplicate package command name: {stem}");
+        let parsed = parse(&file.text);
         ensure!(!parsed.body.trim().is_empty(), "package command has no body: {path}");
         commands.push(PackageCommand {
             package_id: record.id.clone(),
@@ -102,10 +101,10 @@ pub(super) fn read_commands(
             },
             argument_hint: parsed.argument_hint,
             body: parsed.body,
-            relative_path: relative,
+            relative_path: file.relative,
         });
-        let stamp = FileStamp::capture(&absolute).with_context(|| format!("inspect the package command {path}"))?;
-        files.push((absolute, stamp));
+        let stamp = FileStamp::capture(&file.path).with_context(|| format!("inspect the package command {path}"))?;
+        files.push((file.path, stamp));
     }
     commands.sort_by(|left, right| left.name.cmp(&right.name));
     files.sort_by(|left, right| left.0.cmp(&right.0));
@@ -122,23 +121,21 @@ pub fn validate_command_files(root: &Path, declared: &[String]) -> Result<()> {
     let mut total = 0usize;
     for path in declared {
         let relative = relative_path(path)?;
-        let file = open_package_file(root, &relative)?;
-        let mut bytes = String::new();
-        file.take(MAX_COMMAND_BYTES + 1)
-            .read_to_string(&mut bytes)
-            .with_context(|| format!("read the package command {path}"))?;
+        let mut file = open_package_file(root, &relative)?;
+        let raw = read_capped_prefix(&mut file, MAX_COMMAND_BYTES, &format!("the package command {path}"))?;
         ensure!(
-            bytes.len() as u64 <= MAX_COMMAND_BYTES,
+            raw.len() as u64 <= MAX_COMMAND_BYTES,
             "package command {path} exceeds {MAX_COMMAND_BYTES} bytes"
         );
+        let bytes = String::from_utf8(raw).with_context(|| format!("read the package command {path}"))?;
         total += bytes.len();
         ensure!(
             total <= MAX_PACKAGE_COMMAND_BYTES,
             "package commands exceed {MAX_PACKAGE_COMMAND_BYTES} bytes"
         );
         ensure!(!bytes.trim().is_empty(), "package command is empty: {path}");
-        let stem = command_stem(path)?;
-        ensure!(names.insert(stem.to_owned()), "duplicate package command name: {stem}");
+        let stem = resource_stem(path, "command")?;
+        ensure!(names.insert(stem), "duplicate package command name: {stem}");
         let parsed = parse(&bytes);
         ensure!(!parsed.body.trim().is_empty(), "package command has no body: {path}");
     }
@@ -245,10 +242,11 @@ fn parse(text: &str) -> ParsedCommand {
         if value.is_empty() {
             continue;
         }
-        match key.trim().to_ascii_lowercase().as_str() {
-            "description" => description = Some(value),
-            "argument-hint" => argument_hint = Some(value),
-            _ => {}
+        let key = key.trim();
+        if key.eq_ignore_ascii_case("description") {
+            description = Some(value.to_owned());
+        } else if key.eq_ignore_ascii_case("argument-hint") {
+            argument_hint = Some(value.to_owned());
         }
     }
     if !closed {
@@ -279,60 +277,13 @@ fn parse(text: &str) -> ParsedCommand {
 }
 
 /// Strip one matching pair of quotes around a frontmatter value.
-fn unquote(value: &str) -> String {
+fn unquote(value: &str) -> &str {
     for quote in ['"', '\''] {
         if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
-            return value[1..value.len() - 1].to_string();
+            return &value[1..value.len() - 1];
         }
     }
-    value.to_string()
-}
-
-/// The file stem of one declared command, as a name a user can type.
-fn command_stem(declared: &str) -> Result<&str> {
-    let stem = Path::new(declared)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .with_context(|| format!("command resource needs a name: {declared}"))?;
-    ensure!(
-        !stem.is_empty()
-            && stem
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'),
-        "invalid package command name: {declared}"
-    );
-    Ok(stem)
-}
-
-/// Read one declared file and prove its bytes are the recorded ones.
-fn read_verified(root: &Path, record: &PackageRecord, declared: &str) -> Result<(String, PathBuf, String)> {
-    let stored = record
-        .files
-        .iter()
-        .find(|file| file.path == declared)
-        .with_context(|| format!("{declared} is not a recorded file of package {}", record.id))?;
-    let relative = relative_path(declared)?;
-    let file = open_package_file(root, &relative)?;
-    let mut bytes = Vec::new();
-    file.take(MAX_COMMAND_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("read {declared}"))?;
-    ensure!(
-        bytes.len() as u64 <= MAX_COMMAND_BYTES,
-        "{declared} exceeds {MAX_COMMAND_BYTES} bytes"
-    );
-    ensure!(
-        bytes.len() as u64 == stored.len,
-        "package file {declared} no longer matches the recorded length"
-    );
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    ensure!(
-        hex::encode(hasher.finalize()) == stored.sha256,
-        "package file {declared} no longer matches the recorded SHA-256"
-    );
-    let text = String::from_utf8(bytes).with_context(|| format!("package file {declared} is not UTF-8"))?;
-    Ok((declared.to_owned(), root.join(&relative), text))
+    value
 }
 
 #[cfg(test)]
@@ -381,8 +332,11 @@ mod tests {
 
     #[test]
     fn a_command_name_follows_the_typed_grammar() {
-        assert_eq!(command_stem("commands/review.md").expect("a valid name"), "review");
-        assert!(command_stem("commands/Review.md").is_err());
-        assert!(command_stem("commands/has space.md").is_err());
+        assert_eq!(
+            resource_stem("commands/review.md", "command").expect("a valid name"),
+            "review"
+        );
+        assert!(resource_stem("commands/Review.md", "command").is_err());
+        assert!(resource_stem("commands/has space.md", "command").is_err());
     }
 }

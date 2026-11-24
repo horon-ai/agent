@@ -60,36 +60,14 @@ pub fn group(found: Vec<(String, Vec<Diagnostic>)>) -> Vec<FileReport> {
         .collect()
 }
 
-fn push_usize(out: &mut String, mut value: usize) {
-    let mut digits = [0u8; 20];
-    let mut pos = digits.len();
-    loop {
-        pos -= 1;
-        digits[pos] = b'0' + (value % 10) as u8;
-        value /= 10;
-        if value == 0 {
-            break;
-        }
-    }
-    if let Ok(text) = std::str::from_utf8(&digits[pos..]) {
-        out.push_str(text);
-    }
-}
-
 fn one_line(text: &str) -> String {
-    let mut words = text.split_whitespace();
-    let Some(first) = words.next() else {
-        return String::new();
-    };
-    let Some(second) = words.next() else {
-        return first.to_owned();
-    };
-    let mut out = String::with_capacity(text.len());
-    out.push_str(first);
-    out.push(' ');
-    out.push_str(second);
-    for word in words {
-        out.push(' ');
+    let mut out = String::new();
+    for word in text.split_whitespace() {
+        if out.is_empty() {
+            out.reserve(text.len());
+        } else {
+            out.push(' ');
+        }
         out.push_str(word);
     }
     out
@@ -108,24 +86,21 @@ pub fn render(reports: &[FileReport]) -> String {
         .sum();
     let mut out = String::with_capacity(total_bytes);
     for report in reports {
-        out.push_str(&report.path);
-        match &report.note {
-            Some(note) => {
-                out.push_str(": ");
-                out.push_str(note);
-                out.push('\n');
-            }
-            None => {
-                out.push_str(" (");
-                push_usize(&mut out, report.diagnostics.len());
-                out.push_str(")\n");
-            }
+        let wrote = match &report.note {
+            Some(note) => writeln!(out, "{}: {note}", report.path),
+            None => writeln!(out, "{} ({})", report.path, report.diagnostics.len()),
+        };
+        if wrote.is_err() {
+            return out;
         }
         for item in &report.diagnostics {
-            out.push_str("  [");
-            push_usize(&mut out, item.index);
-            out.push_str("] ");
-            if writeln!(out, "{} {}:{} {}", item.severity, item.line, item.column, item.message).is_err() {
+            if writeln!(
+                out,
+                "  [{}] {} {}:{} {}",
+                item.index, item.severity, item.line, item.column, item.message
+            )
+            .is_err()
+            {
                 return out;
             }
         }
@@ -140,7 +115,8 @@ pub fn render(reports: &[FileReport]) -> String {
 pub fn handoff(reports: &[FileReport], selected: &[usize]) -> anyhow::Result<(Vec<String>, String)> {
     anyhow::ensure!(!selected.is_empty(), "select at least one diagnostic");
     let mut paths: Vec<String> = Vec::new();
-    let mut brief = String::from("Fix these language-server diagnostics. Change only what each one needs.\n");
+    let mut brief = String::with_capacity(64 + selected.len() * 64);
+    brief.push_str("Fix these language-server diagnostics. Change only what each one needs.\n");
     for &wanted in selected {
         let (report, item) = reports
             .iter()

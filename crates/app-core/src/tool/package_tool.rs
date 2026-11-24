@@ -108,6 +108,14 @@ impl Tool for PackageTool {
     }
 }
 
+/// One declared package tool queued for registry installation.
+struct PendingTool {
+    name: String,
+    digest: Option<String>,
+    deferred: bool,
+    tool: Arc<dyn Tool>,
+}
+
 /// Names this host registered, per session, so a later turn can withdraw them.
 ///
 /// The stored value is the tool this module installed: a name that now maps to
@@ -152,15 +160,22 @@ pub(crate) async fn sync_session_tools(registry: &Registry, session_id: &str, se
 
     let mut exposed = Vec::new();
     let mut desired_indices = Vec::new();
-    for (pkg_idx, (record, declarations)) in loaded.iter().enumerate() {
-        for (tool_idx, declared) in declarations.manifest.tools.iter().enumerate() {
-            let name = public_tool_name(&record.id, &declared.name);
-            let stage = stage_for(session_id, &name);
-            if stage == Stage::Hidden {
-                continue;
+    if loaded
+        .iter()
+        .any(|(_, declarations)| !declarations.manifest.tools.is_empty())
+    {
+        let sdk_config = sdk::config(session_id);
+        let policy = super::session_tool_policy_shared(session_id);
+        for (pkg_idx, (record, declarations)) in loaded.iter().enumerate() {
+            for (tool_idx, declared) in declarations.manifest.tools.iter().enumerate() {
+                let name = public_tool_name(&record.id, &declared.name);
+                let stage = stage_for_policy(sdk_config.as_ref(), policy.as_deref(), &name);
+                if stage == Stage::Hidden {
+                    continue;
+                }
+                exposed.push(name);
+                desired_indices.push((pkg_idx, tool_idx, stage == Stage::Deferred));
             }
-            exposed.push(name);
-            desired_indices.push((pkg_idx, tool_idx, stage == Stage::Deferred));
         }
     }
 
@@ -168,16 +183,16 @@ pub(crate) async fn sync_session_tools(registry: &Registry, session_id: &str, se
         return Vec::new();
     }
 
-    let present_flags: Vec<bool> = {
+    let existing_tools: Vec<Option<Arc<dyn Tool>>> = {
         let tools = registry.tools.read().await;
-        exposed.iter().map(|name| tools.contains_key(name)).collect()
+        exposed.iter().map(|name| tools.get(name).cloned()).collect()
     };
 
-    let mut to_register: Vec<(String, Option<String>, bool, Arc<dyn Tool>)> = Vec::new();
+    let mut to_register: Vec<PendingTool> = Vec::new();
     {
         let registered = lock_registered();
         let session_reg = registered.get(session_id);
-        let all_already_synced = present_flags.iter().all(|&present| present)
+        let all_already_synced = existing_tools.iter().all(Option::is_some)
             && session_reg.is_some_and(|reg| {
                 reg.len() == exposed.len()
                     && desired_indices
@@ -193,13 +208,19 @@ pub(crate) async fn sync_session_tools(registry: &Registry, session_id: &str, se
         if all_already_synced {
             return exposed;
         }
-        for (&(pkg_idx, tool_idx, deferred), (name, &is_present)) in
-            desired_indices.iter().zip(exposed.iter().zip(present_flags.iter()))
+        for (&(pkg_idx, tool_idx, deferred), (name, current)) in
+            desired_indices.iter().zip(exposed.iter().zip(existing_tools.iter()))
         {
-            if is_present {
-                continue;
-            }
             let (record, declarations) = &loaded[pkg_idx];
+            if let Some(current) = current {
+                let needs_refresh = session_reg.and_then(|reg| reg.get(name)).is_some_and(|entry| {
+                    Arc::ptr_eq(current, &entry.tool)
+                        && (entry.deferred != deferred || entry.digest.as_deref() != record.digest.as_deref())
+                });
+                if !needs_refresh {
+                    continue;
+                }
+            }
             let declared = &declarations.manifest.tools[tool_idx];
             let tool: Arc<dyn Tool> = Arc::new(PackageTool {
                 name: name.clone(),
@@ -210,27 +231,40 @@ pub(crate) async fn sync_session_tools(registry: &Registry, session_id: &str, se
                 definition_schema: ensure_intent_in_schema(declared.input_schema.clone()),
                 deferred,
             });
-            to_register.push((name.clone(), record.digest.clone(), deferred, tool));
+            to_register.push(PendingTool {
+                name: name.clone(),
+                digest: record.digest.clone(),
+                deferred,
+                tool,
+            });
         }
     }
 
-    for (name, digest, deferred, tool) in to_register {
-        registry.register(name.clone(), Arc::clone(&tool)).await;
-        lock_registered()
-            .entry(session_id.to_owned())
-            .or_default()
-            .insert(name, RegisteredTool { digest, deferred, tool });
+    for pending in to_register {
+        registry.register(pending.name.clone(), Arc::clone(&pending.tool)).await;
+        lock_registered().entry(session_id.to_owned()).or_default().insert(
+            pending.name,
+            RegisteredTool {
+                digest: pending.digest,
+                deferred: pending.deferred,
+                tool: pending.tool,
+            },
+        );
     }
 
     let stale: Vec<(String, Arc<dyn Tool>)> = {
-        let wanted: HashSet<&str> = exposed.iter().map(String::as_str).collect();
-        lock_registered()
-            .get(session_id)
-            .into_iter()
-            .flat_map(|registered| registered.iter())
-            .filter(|(name, _)| !wanted.contains(name.as_str()))
-            .map(|(name, entry)| (name.clone(), Arc::clone(&entry.tool)))
-            .collect()
+        let registered = lock_registered();
+        match registered.get(session_id).filter(|reg| !reg.is_empty()) {
+            None => Vec::new(),
+            Some(reg) if reg.len() == exposed.len() && exposed.iter().all(|name| reg.contains_key(name)) => Vec::new(),
+            Some(reg) => {
+                let wanted: HashSet<&str> = exposed.iter().map(String::as_str).collect();
+                reg.iter()
+                    .filter(|(name, _)| !wanted.contains(name.as_str()))
+                    .map(|(name, entry)| (name.clone(), Arc::clone(&entry.tool)))
+                    .collect()
+            }
+        }
     };
     for (name, ours) in stale {
         let current = {
@@ -254,8 +288,19 @@ pub(crate) fn forget_session(session_id: &str) {
 }
 
 /// How this session's policy exposes one package tool name.
+#[cfg(test)]
 fn stage_for(session_id: &str, name: &str) -> Stage {
-    if let Some(config) = sdk::config(session_id) {
+    let sdk_config = sdk::config(session_id);
+    let policy = super::session_tool_policy_shared(session_id);
+    stage_for_policy(sdk_config.as_ref(), policy.as_deref(), name)
+}
+
+fn stage_for_policy(
+    sdk_config: Option<&crate::protocol::SessionToolConfig>,
+    policy: Option<&super::SessionToolPolicy>,
+    name: &str,
+) -> Stage {
+    if let Some(config) = sdk_config {
         // A client that names its own tools names them exactly, and a custom
         // tool under the same name already owns it.
         if config.disabled.iter().any(|existing| existing == name)
@@ -271,7 +316,7 @@ fn stage_for(session_id: &str, name: &str) -> Stage {
             };
         }
     }
-    let Some(policy) = super::session_tool_policy(session_id) else {
+    let Some(policy) = policy else {
         return Stage::Eager;
     };
     if policy.disabled_tools.contains(name) {

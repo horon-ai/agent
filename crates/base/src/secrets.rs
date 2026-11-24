@@ -152,71 +152,59 @@ pub(crate) mod rules {
     /// Assignment shapes for the API key names configured at runtime.
     pub(crate) fn custom_assignment_regexes() -> Vec<(String, Regex)> {
         let mut compiled = Vec::new();
+        let mut seen: std::collections::HashSet<String> =
+            STATIC_ASSIGNMENT_KEYS.iter().map(|key| (*key).to_string()).collect();
         for source in [
             "HORON_AGENT_OPENROUTER_API_KEY_NAME",
             "HORON_AGENT_OPENAI_COMPAT_API_KEY_NAME",
         ] {
-            let Ok(raw) = std::env::var(source) else { continue };
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
+            let Some(key_name) = std::env::var(source)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            else {
                 continue;
-            }
-            if !trimmed
-                .bytes()
-                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            };
+            if !key_name
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
             {
                 crate::logging::warn(&format!("ignoring invalid custom secret key name from {source}"));
                 continue;
             }
-            if STATIC_ASSIGNMENT_KEYS.contains(&trimmed) || compiled.iter().any(|(k, _): &(String, Regex)| k == trimmed)
-            {
+            if !seen.insert(key_name.clone()) {
                 continue;
             }
-            let pattern = format!(r"(?m)^\s*({}\s*=\s*)([^\r\n]+)", regex::escape(trimmed));
+            let pattern = format!(r"(?m)^\s*({}\s*=\s*)([^\r\n]+)", regex::escape(&key_name));
             if let Ok(regex) = Regex::new(&pattern) {
-                crate::logging::debug(&format!("adding custom secret pattern for key={trimmed}"));
-                compiled.push((trimmed.to_owned(), regex));
+                crate::logging::debug(&format!("adding custom secret pattern for key={key_name}"));
+                compiled.push((key_name, regex));
             }
         }
         compiled
     }
 }
 
-#[inline]
-fn starts_ci(rest: &[u8], needle: &[u8]) -> bool {
-    rest.get(..needle.len())
-        .is_some_and(|head| head.eq_ignore_ascii_case(needle))
-}
-
 /// Cheap pre-check so the regex table is only walked for text that could hold a
 /// credential. The shapes named here mirror [`rules::DIRECT`].
 pub(crate) fn may_contain_secret(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    if bytes.len() < 3 {
-        return false;
-    }
-    bytes.iter().enumerate().any(|(idx, &byte)| {
-        let r = &bytes[idx..];
-        match byte {
-            b's' | b'S' => r.starts_with(b"sk-") || starts_ci(r, b"secret"),
-            b'g' => r.starts_with(b"ghp_") || r.starts_with(b"github_pat_"),
-            b'a' | b'A' => {
-                r.starts_with(b"AIza")
-                    || r.starts_with(b"AKIA")
-                    || starts_ci(r, b"api_key")
-                    || starts_ci(r, b"authorization")
-            }
-            b'y' => r.starts_with(b"ya29."),
-            b'x' => r.starts_with(b"xox"),
-            b'-' => r.starts_with(b"-----BEGIN "),
-            b'e' => r.starts_with(b"eyJ"),
-            b't' | b'T' => starts_ci(r, b"token"),
-            b'b' | b'B' => starts_ci(r, b"bearer "),
-            b'p' | b'P' => starts_ci(r, b"password"),
-            b'c' | b'C' => starts_ci(r, b"cookie"),
-            _ => false,
-        }
-    })
+    let lower = text.to_ascii_lowercase();
+    text.contains("sk-")
+        || text.contains("ghp_")
+        || text.contains("github_pat_")
+        || text.contains("AIza")
+        || text.contains("ya29.")
+        || text.contains("xox")
+        || text.contains("AKIA")
+        || text.contains("-----BEGIN ")
+        || text.contains("eyJ")
+        || lower.contains("api_key")
+        || lower.contains("token")
+        || lower.contains("bearer ")
+        || lower.contains("password")
+        || lower.contains("secret")
+        || lower.contains("authorization")
+        || lower.contains("cookie")
 }
 
 /// File in the horon-agent home that holds the placeholder HMAC key.
@@ -421,34 +409,25 @@ fn is_placeholder(text: &str) -> bool {
 ///
 /// `extra` carries caller-supplied patterns; their matches are labelled
 /// `extra<n>` so they never collide with the shared table's labels.
-fn obfuscate_cow<'a>(text: &'a str, vault: &mut SecretVault, extra: &[Regex]) -> std::borrow::Cow<'a, str> {
+pub fn obfuscate(text: &str, vault: &mut SecretVault, extra: &[Regex]) -> String {
     if !may_contain_secret(text) {
-        return std::borrow::Cow::Borrowed(text);
+        return text.to_string();
     }
-    let mut out = std::borrow::Cow::Borrowed(text);
+
+    let mut out = text.to_string();
     for (label, regex) in rules::direct_regexes() {
-        replace_whole(&mut out, regex, label, vault);
+        out = replace_whole(&out, regex, label, vault);
     }
     for regex in rules::assignment_regexes() {
-        replace_group(&mut out, regex, 2, None, vault);
+        out = replace_group(&out, regex, 2, None, vault);
     }
     for (key_name, regex) in rules::custom_assignment_regexes() {
-        replace_group(&mut out, &regex, 2, Some(&key_name), vault);
+        out = replace_group(&out, &regex, 2, Some(&key_name), vault);
     }
     for (index, regex) in extra.iter().enumerate() {
-        replace_whole(&mut out, regex, &format!("extra{}", index + 1), vault);
+        out = replace_whole(&out, regex, &format!("extra{}", index + 1), vault);
     }
     out
-}
-
-fn obfuscate_in_place(text: &mut String, vault: &mut SecretVault, extra: &[Regex]) {
-    if let std::borrow::Cow::Owned(replaced) = obfuscate_cow(text, vault, extra) {
-        *text = replaced;
-    }
-}
-
-pub fn obfuscate(text: &str, vault: &mut SecretVault, extra: &[Regex]) -> String {
-    obfuscate_cow(text, vault, extra).into_owned()
 }
 
 /// Replace every placeholder in `text` with the value it stands for.
@@ -668,59 +647,74 @@ pub fn mask_json_for_history(value: &mut Value, session_id: &str, mode: SecretsM
     session_vault_with(session_id, |vault| obfuscate_value(value, vault, &[]));
 }
 
-fn replace_whole(out: &mut std::borrow::Cow<'_, str>, regex: &Regex, label: &str, vault: &mut SecretVault) {
-    if let std::borrow::Cow::Owned(replaced) = regex.replace_all(out.as_ref(), |caps: &regex::Captures<'_>| {
-        let Some(secret) = caps.get(0).map(|m| m.as_str()) else {
-            return String::new();
-        };
-        if secret.trim().is_empty() || is_placeholder(secret) {
-            return secret.to_string();
-        }
-        vault.placeholder_for(secret, label)
-    }) {
-        *out = std::borrow::Cow::Owned(replaced);
+fn replace_whole(text: &str, regex: &Regex, label: &str, vault: &mut SecretVault) -> String {
+    if !regex.is_match(text) {
+        return text.to_string();
     }
+    regex
+        .replace_all(text, |caps: &regex::Captures<'_>| {
+            let Some(found) = caps.get(0) else {
+                return String::new();
+            };
+            let secret = found.as_str();
+            if secret.trim().is_empty() || is_placeholder(secret) {
+                return secret.to_string();
+            }
+            vault.placeholder_for(secret, label)
+        })
+        .into_owned()
 }
 
 fn replace_group(
-    out: &mut std::borrow::Cow<'_, str>,
+    text: &str,
     regex: &Regex,
     group: usize,
     label_override: Option<&str>,
     vault: &mut SecretVault,
-) {
-    if let std::borrow::Cow::Owned(replaced) = regex.replace_all(out.as_ref(), |caps: &regex::Captures<'_>| {
-        let Some(whole) = caps.get(0) else {
-            return String::new();
-        };
-        let Some(value) = caps.get(group) else {
-            return whole.as_str().to_string();
-        };
-        if value.as_str().trim().is_empty() || is_placeholder(value.as_str()) {
-            return whole.as_str().to_string();
-        }
-        let label = match label_override {
-            Some(label) => label.to_string(),
-            None => caps
-                .get(1)
-                .map(|key| sanitize_label(key.as_str().trim_end_matches(['=', ' ', ':'])))
-                .unwrap_or_else(|| "secret".to_string()),
-        };
-        let placeholder = vault.placeholder_for(value.as_str(), &label);
-        let whole_text = whole.as_str();
-        let start = value.start() - whole.start();
-        let end = value.end() - whole.start();
-        format!("{}{}{}", &whole_text[..start], placeholder, &whole_text[end..])
-    }) {
-        *out = std::borrow::Cow::Owned(replaced);
+) -> String {
+    if !regex.is_match(text) {
+        return text.to_string();
     }
+    regex
+        .replace_all(text, |caps: &regex::Captures<'_>| {
+            let Some(whole) = caps.get(0) else {
+                return String::new();
+            };
+            let Some(value) = caps.get(group) else {
+                return whole.as_str().to_string();
+            };
+            if value.as_str().trim().is_empty() || is_placeholder(value.as_str()) {
+                return whole.as_str().to_string();
+            }
+            let label = match label_override {
+                Some(label) => label.to_string(),
+                None => caps
+                    .get(1)
+                    .map(|key| sanitize_label(key.as_str().trim_end_matches(['=', ' ', ':'])))
+                    .unwrap_or_else(|| "secret".to_string()),
+            };
+            let placeholder = vault.placeholder_for(value.as_str(), &label);
+            let whole_text = whole.as_str();
+            let start = value.start() - whole.start();
+            let end = value.end() - whole.start();
+            format!("{}{}{}", &whole_text[..start], placeholder, &whole_text[end..])
+        })
+        .into_owned()
 }
 
 fn obfuscate_value(value: &mut Value, vault: &mut SecretVault, extra: &[Regex]) {
     match value {
-        Value::String(text) => obfuscate_in_place(text, vault, extra),
-        Value::Array(entries) => entries.iter_mut().for_each(|e| obfuscate_value(e, vault, extra)),
-        Value::Object(map) => map.values_mut().for_each(|e| obfuscate_value(e, vault, extra)),
+        Value::String(text) => *text = obfuscate(text, vault, extra),
+        Value::Array(entries) => {
+            for entry in entries {
+                obfuscate_value(entry, vault, extra);
+            }
+        }
+        Value::Object(map) => {
+            for entry in map.values_mut() {
+                obfuscate_value(entry, vault, extra);
+            }
+        }
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
@@ -766,24 +760,30 @@ fn restore_strings<'vault>(
 fn obfuscate_block(block: &mut ContentBlock, vault: &mut SecretVault, extra: &[Regex]) {
     match block {
         ContentBlock::Text { text, .. } | ContentBlock::Reasoning { text } | ContentBlock::ReasoningTrace { text } => {
-            obfuscate_in_place(text, vault, extra);
+            *text = obfuscate(text, vault, extra);
         }
-        ContentBlock::AnthropicThinking { thinking, .. } => obfuscate_in_place(thinking, vault, extra),
+        ContentBlock::AnthropicThinking { thinking, .. } => {
+            *thinking = obfuscate(thinking, vault, extra);
+        }
         ContentBlock::OpenAIReasoning { summary, .. } => {
-            summary
-                .iter_mut()
-                .for_each(|item| obfuscate_in_place(item, vault, extra));
+            for item in summary {
+                *item = obfuscate(item, vault, extra);
+            }
         }
-        ContentBlock::ToolResult { content, .. } => obfuscate_in_place(content, vault, extra),
+        ContentBlock::ToolResult { content, .. } => {
+            *content = obfuscate(content, vault, extra);
+        }
         ContentBlock::ToolUse { input, .. } => obfuscate_value(input, vault, extra),
         ContentBlock::ProviderNative { item, .. } => obfuscate_value(item, vault, extra),
         ContentBlock::A2ui {
             envelopes,
             fallback_text,
         } => {
-            envelopes.iter_mut().for_each(|e| obfuscate_value(e, vault, extra));
+            for envelope in envelopes {
+                obfuscate_value(envelope, vault, extra);
+            }
             if let Some(text) = fallback_text {
-                obfuscate_in_place(text, vault, extra);
+                *text = obfuscate(text, vault, extra);
             }
         }
         ContentBlock::Image { .. }

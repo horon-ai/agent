@@ -181,7 +181,7 @@ async fn executable(
         command: command.to_owned(),
         kind: PackageCommandKind::Executable,
         text: None,
-        output: Some(render(&value)),
+        output: Some(invoke::render_value(&value)),
         data: Some(value),
     })
 }
@@ -221,12 +221,4 @@ fn expand(declared: &PackageCommand, arguments: &str) -> Result<String> {
         declared.name
     );
     Ok(text)
-}
-
-/// A child's answer as text, the way a tool result renders one.
-fn render(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
-    }
 }

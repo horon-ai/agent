@@ -220,17 +220,6 @@ enum Declared {
 }
 
 /// Read one declared definition file into `(local name, kind)` pairs.
-fn sha256_hex_buf(bytes: &[u8]) -> [u8; 64] {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = Sha256::digest(bytes);
-    let mut hex_buf = [0u8; 64];
-    for (i, &byte) in digest.iter().enumerate() {
-        hex_buf[i * 2] = HEX[(byte >> 4) as usize];
-        hex_buf[i * 2 + 1] = HEX[(byte & 0x0f) as usize];
-    }
-    hex_buf
-}
-
 fn parse_definitions(text: &str, path: &Path, package_id: &str) -> Result<Vec<(String, Declared)>> {
     let parsed: DefinitionFile<'_> = serde_json::from_str(text)
         .with_context(|| format!("parse the MCP definitions {} of package {package_id}", path.display()))?;
@@ -258,30 +247,13 @@ fn read_verified_definitions(root: &Path, recorded: &StoredFile, package_id: &st
     let path = Path::new(&recorded.path);
     let mut file = open_package_file(root, path)
         .with_context(|| format!("open the installed MCP definitions {}", recorded.path))?;
-    let max_read = recorded.len.max(MAX_DEFINITION_BYTES);
-    let initial_cap = usize::try_from(recorded.len.min(MAX_DEFINITION_BYTES))
-        .unwrap_or(0)
-        .saturating_add(1);
-    let mut bytes = Vec::with_capacity(initial_cap);
-    (&mut file)
-        .take(max_read.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("read the installed MCP definitions {}", recorded.path))?;
-    if recorded.len <= MAX_DEFINITION_BYTES {
-        let len = u64::try_from(bytes.len()).context("the MCP definition chunk length overflowed")?;
-        let hex_buf = sha256_hex_buf(&bytes);
-        let sha256 = std::str::from_utf8(&hex_buf).unwrap_or("");
-        ensure!(
-            len == recorded.len && sha256 == recorded.sha256,
-            "the installed MCP definitions {} are {len} bytes with sha256 {sha256}, recorded {} bytes with {}",
-            recorded.path,
-            recorded.len,
-            recorded.sha256,
-        );
+    let bytes = super::text_resources::read_capped_prefix(&mut file, MAX_DEFINITION_BYTES, &recorded.path)?;
+    let mut len = u64::try_from(bytes.len()).context("the MCP definition chunk length overflowed")?;
+    let hex_buf = if len <= MAX_DEFINITION_BYTES {
+        super::text_resources::sha256_hex_buf(&bytes)
     } else {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
-        let mut len = u64::try_from(bytes.len()).context("the MCP definition chunk length overflowed")?;
         let mut buffer = [0u8; 8 * 1024];
         loop {
             let read = file
@@ -293,20 +265,21 @@ fn read_verified_definitions(root: &Path, recorded: &StoredFile, package_id: &st
             len += u64::try_from(read).context("the MCP definition chunk length overflowed")?;
             hasher.update(&buffer[..read]);
         }
-        let sha256 = hex::encode(hasher.finalize());
-        ensure!(
-            len == recorded.len && sha256 == recorded.sha256,
-            "the installed MCP definitions {} are {len} bytes with sha256 {sha256}, recorded {} bytes with {}",
-            recorded.path,
-            recorded.len,
-            recorded.sha256,
-        );
-        ensure!(
-            len <= MAX_DEFINITION_BYTES,
-            "{} exceeds {MAX_DEFINITION_BYTES} bytes",
-            recorded.path
-        );
-    }
+        super::text_resources::format_sha256_hex(hasher.finalize().into())
+    };
+    let sha256 = std::str::from_utf8(&hex_buf).unwrap_or("");
+    ensure!(
+        len == recorded.len && sha256 == recorded.sha256,
+        "the installed MCP definitions {} are {len} bytes with sha256 {sha256}, recorded {} bytes with {}",
+        recorded.path,
+        recorded.len,
+        recorded.sha256,
+    );
+    ensure!(
+        len <= MAX_DEFINITION_BYTES,
+        "{} exceeds {MAX_DEFINITION_BYTES} bytes",
+        recorded.path
+    );
     let text = std::str::from_utf8(&bytes).with_context(|| format!("{} is not UTF-8", recorded.path))?;
     parse_definitions(text, path, package_id)
 }
@@ -377,29 +350,14 @@ fn declared_files(root: &Path) -> Result<Vec<String>> {
 
 /// Read `file` up to `limit` bytes as UTF-8 text.
 fn read_capped(file: std::fs::File, limit: u64, path: &Path) -> Result<String> {
-    let cap = match file.metadata() {
-        Ok(meta) => usize::try_from(meta.len().min(limit)).unwrap_or(0).saturating_add(1),
-        Err(_) => 0,
-    };
-    let mut bytes = Vec::with_capacity(cap);
-    file.take(limit.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("read {}", path.display()))?;
-    ensure!(
-        bytes.len() <= usize::try_from(limit).unwrap_or(usize::MAX),
-        "{} exceeds {limit} bytes",
-        path.display()
-    );
-    String::from_utf8(bytes).with_context(|| format!("{} is not UTF-8", path.display()))
+    let label = path.display().to_string();
+    let bytes = super::text_resources::read_capped_file(file, limit, &label)?;
+    String::from_utf8(bytes).with_context(|| format!("{label} is not UTF-8"))
 }
 
 /// A local server name: lowercase ASCII letters, digits, `-` and `_`.
 fn valid_name(name: &str, limit: usize) -> bool {
-    !name.is_empty()
-        && name.len() <= limit
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_')
+    name.len() <= limit && super::text_resources::is_resource_name(name)
 }
 
 /// A mode token: one argv element without whitespace or control bytes.
