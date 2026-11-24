@@ -41,7 +41,8 @@ permissions:
 
 concurrency:
   group: structural-perf-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Same rule as ci.yml: `main` and `dev` queue, every other ref cancels.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
 jobs:
   # Same classification as ci.yml: non-Rust and documentation-only PRs skip
