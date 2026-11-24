@@ -140,7 +140,7 @@ Windows 동작이 바뀌는 릴리스마다 확인한다.
 
 Windows는 다음으로 덮는다.
 
-- `.github/workflows/ci.yml`: 배포 빌드, 테스트 컴파일, 플랫폼 대상 테스트, 런타임 스모크 테스트, 수명 주기 종단 테스트, 설치 스크립트 검증, PowerShell 문법 검사.
+- `.github/workflows/ci.yml`: 배포 빌드, 통합 테스트 컴파일, 플랫폼 대상 테스트, 런타임 스모크 테스트, 수명 주기 종단 테스트, 설치 스크립트 검증, PowerShell 문법 검사. Rust 변경 PR마다 `windows-cross-check`(`cargo-xwin`)와 `windows-arm64-check`(`justrust`)가 항상 돌며, 네이티브 `windows-build-test` 러너는 Windows 영향 PR, 매니페스트·잠금 파일이나 `ci:all-os` 라벨 변경, 그리고 `dev`와 `main` 푸시마다 실행된다.
 - `.github/workflows/windows-smoke.yml`: 수동으로 실행하는 x64와 ARM64 스모크 검증.
 - `.github/workflows/release.yml`: x64와 ARM64 빌드(아키텍처마다 별도 작업), Windows 배포에 필요한 관리형 서명, 서명 검증, 패키징, 체크섬. 각 플랫폼 작업은 서로를 기다리지 않고 자기 자산을 초안 릴리스에 올린다. 마지막 `Finalize release` 작업은 모든 플랫폼 자산이 갖춰졌을 때만 릴리스를 공개하고, 하나라도 빠지면 초안으로 남긴다. ARM64 빌드가 실패해도 x64 서명과 업로드는 진행된다.
 
