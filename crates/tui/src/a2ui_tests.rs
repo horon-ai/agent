@@ -312,5 +312,5 @@ fn inplace_a2ui_update_recounts_scroll_heights_and_registers_as_copyable_answer(
         Item::Warning(text) => Some(text.as_str()),
         _ => None,
     });
-    assert_eq!(last_warning, Some("copy: the latest answer has no code block"));
+    assert_eq!(last_warning, Some("copy: the last answer has no code block"));
 }
