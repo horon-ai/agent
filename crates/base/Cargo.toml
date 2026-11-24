@@ -78,6 +78,7 @@ horon-agent-logging = { path = "../logging" }
 base64 = "0.22"
 sha2 = "0.10"
 hmac = "0.12"            # stable secret placeholders (HMAC-SHA256 of the value)
+ring = { version = "0.17.14", default-features = false, features = ["alloc", "dev_urandom_fallback"] }
 horon-agent-transport = { path = "../transport" }
 rand = "0.9.3"
 hex = "0.4"

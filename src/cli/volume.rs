@@ -14,9 +14,10 @@ use crate::cli::args::{VolumeCommand, VolumeKeyCommand};
 use crate::memory::export::{
     VolumeLayout, archive,
     control_plane::{DEFAULT_ENDPOINT, HttpControlPlane, Secret},
+    crypto::{SourceKeyProvider, StaticKeyProvider, resolve_key_material},
     delete, fence, key,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde_json::json;
 
 /// Resolve the volume this process serves.
@@ -29,8 +30,26 @@ fn layout() -> Result<VolumeLayout> {
 pub(crate) fn run(command: &VolumeCommand) -> Result<()> {
     let layout = layout()?;
     match command {
-        VolumeCommand::Export { output, json } => export(&layout, output, *json),
-        VolumeCommand::Import { input, json } => import(&layout, input, *json),
+        VolumeCommand::Export {
+            output,
+            key_id,
+            key_env,
+            key_file,
+            json,
+        } => export(
+            &layout,
+            output,
+            key_id.as_deref(),
+            key_env.as_deref(),
+            key_file.as_deref(),
+            *json,
+        ),
+        VolumeCommand::Import {
+            input,
+            key_env,
+            key_file,
+            json,
+        } => import(&layout, input, key_env.as_deref(), key_file.as_deref(), *json),
         VolumeCommand::Quiesce { json } => quiesce(&layout, *json),
         VolumeCommand::Resume { json } => resume(&layout, *json),
         VolumeCommand::Key(action) => key_command(&layout, action),
@@ -46,8 +65,38 @@ pub(crate) fn run(command: &VolumeCommand) -> Result<()> {
     }
 }
 
-fn export(layout: &VolumeLayout, output: &std::path::Path, json: bool) -> Result<()> {
-    let report = archive::export(layout, output)?;
+fn export(
+    layout: &VolumeLayout,
+    output: &std::path::Path,
+    key_id: Option<&str>,
+    key_env: Option<&str>,
+    key_file: Option<&std::path::Path>,
+    json: bool,
+) -> Result<()> {
+    let report = if key_env.is_some() || key_file.is_some() {
+        let resolved_id = match key_id {
+            Some(id) => id.to_string(),
+            None => match key::read_key(layout)? {
+                Some(record) if !record.is_revoked() => record.key_id,
+                Some(record) => bail!(
+                    "the volume key `{}` is revoked; supply an active key with --key-id",
+                    record.key_id
+                ),
+                None => {
+                    return Err(anyhow!(
+                        "encryption key source provided without --key-id and the volume has no key record"
+                    ));
+                }
+            },
+        };
+        let material = resolve_key_material(&resolved_id, key_env, key_file)?;
+        let provider = material.consume(|bytes| StaticKeyProvider::new(resolved_id.clone(), bytes.to_vec()))?;
+        archive::export_with_key(layout, output, &provider, &resolved_id)?
+    } else if key_id.is_some() {
+        bail!("--key-id requires --key-env or --key-file");
+    } else {
+        archive::export(layout, output)?
+    };
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
@@ -62,8 +111,19 @@ fn export(layout: &VolumeLayout, output: &std::path::Path, json: bool) -> Result
     Ok(())
 }
 
-fn import(layout: &VolumeLayout, input: &std::path::Path, json: bool) -> Result<()> {
-    let report = archive::import(layout, input)?;
+fn import(
+    layout: &VolumeLayout,
+    input: &std::path::Path,
+    key_env: Option<&str>,
+    key_file: Option<&std::path::Path>,
+    json: bool,
+) -> Result<()> {
+    let report = if key_env.is_some() || key_file.is_some() {
+        let provider = SourceKeyProvider::new(key_env.map(str::to_string), key_file.map(std::path::Path::to_path_buf));
+        archive::import_with_key(layout, input, &provider)?
+    } else {
+        archive::import(layout, input)?
+    };
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());

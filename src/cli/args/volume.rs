@@ -9,6 +9,15 @@ pub(crate) enum VolumeCommand {
     Export {
         /// Path to write the tar to
         output: std::path::PathBuf,
+        /// Encrypt archive entries with AES-256-GCM under this key identifier (defaults to the active volume key record)
+        #[arg(long)]
+        key_id: Option<String>,
+        /// Environment variable holding the 32-byte encryption key (raw, 64 hex, or base64)
+        #[arg(long)]
+        key_env: Option<String>,
+        /// File holding the 32-byte encryption key (raw, 64 hex, or base64)
+        #[arg(long)]
+        key_file: Option<std::path::PathBuf>,
         /// Print the report as JSON
         #[arg(long)]
         json: bool,
@@ -18,6 +27,12 @@ pub(crate) enum VolumeCommand {
     Import {
         /// Path of the tar to import
         input: std::path::PathBuf,
+        /// Environment variable holding the 32-byte decryption key for an encrypted archive
+        #[arg(long)]
+        key_env: Option<String>,
+        /// File holding the 32-byte decryption key for an encrypted archive
+        #[arg(long)]
+        key_file: Option<std::path::PathBuf>,
         /// Print the report as JSON
         #[arg(long)]
         json: bool,

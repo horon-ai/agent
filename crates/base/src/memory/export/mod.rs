@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 pub mod archive;
 pub mod control_plane;
+pub mod crypto;
 pub mod delete;
 pub mod fence;
 pub mod key;
@@ -39,6 +40,10 @@ pub mod manifest;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "crypto_tests.rs"]
+mod crypto_tests;
 
 /// Directory under `HORON_HOME` that holds the memory store.
 pub const STORE_DIRNAME: &str = "memory";
