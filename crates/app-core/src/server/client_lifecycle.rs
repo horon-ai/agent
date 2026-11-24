@@ -617,10 +617,10 @@ pub(super) async fn handle_client(
     let mut subscribed_working_dir: Option<std::path::PathBuf> = None;
     let client_start = std::time::Instant::now();
 
-    let provider = provider_template.fork_for_new_session();
+    let mut provider = provider_template.fork_for_new_session();
     let provider_fork_ms = client_start.elapsed().as_millis();
     let t0 = std::time::Instant::now();
-    let registry = Registry::new(provider.clone()).await;
+    let mut registry = Registry::new(provider.clone()).await;
     let registry_ms = t0.elapsed().as_millis();
 
     let mut swarm_enabled = crate::config::config().features.swarm;
@@ -652,7 +652,7 @@ pub(super) async fn handle_client(
         client_start.elapsed().as_millis()
     ));
     let mut client_session_id = new_agent.session_id().to_string();
-    let friendly_name = new_agent.session_short_name().map(|s| s.to_string());
+    let mut friendly_name = new_agent.session_short_name().map(|s| s.to_string());
     let client_connection_id = id::new_id("conn");
     let connected_at = Instant::now();
     let (disconnect_tx, mut disconnect_rx) = mpsc::unbounded_channel::<()>();
@@ -735,7 +735,8 @@ pub(super) async fn handle_client(
     let writer_clone = Arc::clone(&writer);
     let client_connection_id_for_events = client_connection_id.clone();
     let client_connections_for_events = Arc::clone(&client_connections);
-    let client_session_id_for_events = client_session_id.clone();
+    let client_session_id_for_events = Arc::new(std::sync::RwLock::new(client_session_id.clone()));
+    let event_forwarder_session_id = Arc::clone(&client_session_id_for_events);
     let acp_v2_for_events = Arc::clone(&acp_v2);
     let event_handle = tokio::spawn(async move {
         let mut flushed = Vec::new();
@@ -795,7 +796,13 @@ pub(super) async fn handle_client(
                 // sequence number. A client can then prove that everything
                 // after the `seq` in its snapshot is new, without inferring
                 // order from arrival.
-                let seq = super::session_observation::stamp_event_delivery(&client_session_id_for_events);
+                let seq = {
+                    let session_id = event_forwarder_session_id
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
+                    super::session_observation::stamp_event_delivery(&session_id)
+                };
                 encode_event_stamped(&event, seq)
             };
             let mut w = writer_clone.lock().await;
@@ -1758,6 +1765,7 @@ pub(super) async fn handle_client(
                 acp: acp_options,
                 history_message_ids: requested_history_message_ids,
                 a2ui: requested_a2ui,
+                fresh_session,
             } => {
                 if let Err(message) =
                     validated_subscribe_working_dir(
@@ -1770,6 +1778,89 @@ pub(super) async fn handle_client(
                         retry_after_secs: None,
                     });
                     continue;
+                }
+                if target_session_id.is_none() && fresh_session && client_subscribed {
+                    if client_is_processing {
+                        let _ = client_event_tx.send(ServerEvent::Error {
+                            id,
+                            message: "Cannot create a new session while a turn is active on this connection"
+                                .to_string(),
+                            retry_after_secs: None,
+                        });
+                        continue;
+                    }
+                    if let Some(handle) = prewarm_task.take() {
+                        handle.abort();
+                    }
+                    let old_session_id = client_session_id.clone();
+                    super::state::unregister_session_event_sender(
+                        &swarm_members,
+                        &old_session_id,
+                        &client_connection_id,
+                    )
+                    .await;
+                    let working_dir_for_agent = subscribe_working_dir
+                        .as_deref()
+                        .unwrap_or(&initial_working_dir);
+                    let new_provider = provider_template.fork_for_new_session();
+                    let new_registry = Registry::new(new_provider.clone()).await;
+                    let mut new_agent = crate::hooks::with_client_terminal_env(terminal_env.clone(), async {
+                        Agent::new_provisional_with_initial_working_dir(
+                            Arc::clone(&new_provider),
+                            new_registry.clone(),
+                            Some(working_dir_for_agent),
+                        )
+                    })
+                    .await;
+                    new_agent.set_memory_enabled(crate::config::config().features.memory);
+                    new_agent.set_persistent_runtime(true);
+                    let new_session_id = new_agent.session_id().to_string();
+                    friendly_name = new_agent.session_short_name().map(str::to_string);
+                    session_control = SessionControlHandle::new(
+                        new_session_id.clone(),
+                        new_agent.soft_interrupt_queue(),
+                        new_agent.background_tool_signal(),
+                        new_agent.graceful_shutdown_signal(),
+                    );
+                    {
+                        let mut signals = shutdown_signals.write().await;
+                        signals.insert(new_session_id.clone(), session_control.stop_current_turn_signal());
+                    }
+                    register_session_interrupt_queue(
+                        &soft_interrupt_queues,
+                        &new_session_id,
+                        new_agent.soft_interrupt_queue(),
+                    )
+                    .await;
+                    let new_agent_arc = Arc::new(Mutex::new(new_agent));
+                    {
+                        let mut sessions_guard = sessions.write().await;
+                        sessions_guard.insert(new_session_id.clone(), Arc::clone(&new_agent_arc));
+                    }
+                    {
+                        let mut connections = client_connections.write().await;
+                        if let Some(info) = connections.get_mut(&client_connection_id) {
+                            info.session_id = new_session_id.clone();
+                            info.is_processing = false;
+                            info.current_tool_name = None;
+                        }
+                    }
+                    *client_session_id_for_events
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner()) = new_session_id.clone();
+                    client_session_id = new_session_id;
+                    agent = new_agent_arc;
+                    registry = new_registry;
+                    provider = new_provider;
+                    provisional_session = true;
+                    crate::runtime_memory_log::emit_event(
+                        crate::runtime_memory_log::RuntimeMemoryLogEvent::new(
+                            "session_created",
+                            "new_live_session_attached",
+                        )
+                        .with_session_id(client_session_id.clone())
+                        .force_attribution(),
+                    );
                 }
                 // The editor's servers belong to the previous attachment: stop
                 // them before the Subscribe reply, so a client that saw the
@@ -1865,6 +1956,9 @@ pub(super) async fn handle_client(
                         if was_warm && client_session_id == pre_resume_session_id {
                             prewarm_task = Some(spawn_deferred_prewarm(&agent));
                         }
+                        *client_session_id_for_events
+                            .write()
+                            .unwrap_or_else(|e| e.into_inner()) = client_session_id.clone();
                         session_control = refresh_session_control_handle(
                             &client_session_id,
                             &agent,
@@ -2173,6 +2267,9 @@ pub(super) async fn handle_client(
                 if client_session_id != pre_resume_session_id {
                     provisional_session = false;
                 }
+                *client_session_id_for_events
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner()) = client_session_id.clone();
                 if acp_v2.load(Ordering::Acquire) {
                     let _ = client_event_tx.send(super::foreground_state::snapshot(&client_session_id));
                 }

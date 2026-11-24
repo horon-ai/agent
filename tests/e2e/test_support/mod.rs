@@ -343,6 +343,7 @@ impl WsTestClient {
             acp: None,
             history_message_ids: false,
             a2ui: None,
+            fresh_session: false,
         })
         .await
     }

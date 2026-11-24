@@ -15,6 +15,7 @@ fn plain_subscribe(id: u64) -> Request {
         acp: None,
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     }
 }
 
@@ -52,6 +53,7 @@ fn acp_subscribe(id: u64, acp: AcpSubscribeOptions) -> Request {
         acp: Some(acp),
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     }
 }
 

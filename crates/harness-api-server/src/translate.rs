@@ -187,20 +187,16 @@ pub struct BridgeState {
     /// Legacy and API ids for a context-only message. Its daemon completion
     /// event is a request reply, not a model turn boundary.
     pending_no_reply_message_id: Option<(u64, u64)>,
-    /// Legacy id of an in-flight `create/attach` subscribe.
-    pending_attach_id: Option<(u64, u64, Option<String>)>,
-    /// Subscribe errors can arrive before the correlated state response.
-    pending_attach_subscribe_id: Option<u64>,
-    /// Subscribe history may arrive before or after the correlated state reply.
-    /// Keep its correlation independently, and consume even non-recovery history
-    /// so duplicates cannot later inject a continuation into a completed turn.
-    pending_recovery_history: Option<(u64, Option<String>)>,
+    /// In-flight `create_session`/`attach_session` requests keyed by wire ids so
+    /// concurrent calls on one connection correlate independently.
+    pending_attaches: Vec<PendingAttach>,
+    /// In-flight subscribe recovery history requests (`(subscribe_id, target_session)`).
+    pending_recovery_histories: Vec<(u64, Option<String>)>,
     /// Legacy and API ids for an in-flight session fork.
     pending_fork_id: Option<(u64, u64)>,
-    /// Legacy id of the unsolicited model-catalog probe sent after attach. Its
-    /// reply becomes a `model_info` event rather than a request reply, so it is
-    /// tracked apart from `pending_simple`.
-    pending_model_probe: Option<u64>,
+    /// Legacy ids of unsolicited model-catalog probes sent after attach. Their
+    /// replies become `model_info` events rather than request replies.
+    pending_model_probes: Vec<u64>,
     /// Legacy id -> API id for simple acked requests (ping, clear, ...).
     pending_simple: Vec<(u64, u64, SimpleKind)>,
     /// Every session the daemon has told us about, newest snapshot wins.
@@ -212,10 +208,6 @@ pub struct BridgeState {
     pub(crate) known_sessions: Vec<String>,
     /// Working directory per session, as far as it is known.
     session_dirs: std::collections::BTreeMap<String, String>,
-    /// Directory sent with an in-flight `create_session` subscribe. A fresh
-    /// session has no persisted metadata until its first prompt, so the
-    /// attach reply falls back to this instead of reporting no directory.
-    pending_create_dir: Option<String>,
     /// Models the daemon last reported for this session.
     ///
     /// The daemon volunteers the catalog on attach and again whenever it
@@ -254,6 +246,16 @@ pub struct BridgeState {
     /// to 16 MiB per request. `None` in tests and any direct caller: the cap
     /// then measures the serialized request, which is what it always did.
     pub request_envelope_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PendingAttach {
+    subscribe_id: u64,
+    state_id: u64,
+    catalog_id: u64,
+    api_id: u64,
+    requested_session: Option<String>,
+    create_dir: Option<String>,
 }
 
 impl BridgeState {
@@ -399,11 +401,11 @@ impl BridgeState {
     fn pending_request_count(&self) -> u64 {
         let counters = [
             self.pending_simple.len() as u64,
-            self.pending_attach_id.is_some() as u64,
-            self.pending_attach_subscribe_id.is_some() as u64,
-            self.pending_recovery_history.is_some() as u64,
+            self.pending_attaches.len() as u64,
+            self.pending_attaches.len() as u64,
+            self.pending_recovery_histories.len() as u64,
             self.pending_fork_id.is_some() as u64,
-            self.pending_model_probe.is_some() as u64,
+            self.pending_model_probes.len() as u64,
             self.pending_no_reply_message_id.is_some() as u64,
             self.pending_control_done_ids.len() as u64,
             self.pending_activity_snapshots.len() as u64,
@@ -428,11 +430,11 @@ impl BridgeState {
         // that mistypes a session id loses every other session it was
         // streaming, and the SDK reports a bare EPIPE. Answer locally instead,
         // with the code that actually says what went wrong.
-        // `pending_attach_id` means a subscribe is already on the wire, so the
+        // `!self.pending_attaches.is_empty()` means a subscribe is already on the wire, so the
         // daemon will have a session by the time this arrives: a client that
         // pipelines `create_session` and `send_message` without awaiting must
         // still work. Only a connection that never asked to attach is refused.
-        if self.session_id.is_none() && self.pending_attach_id.is_none() && REQUIRES_ATTACH.contains(&req) {
+        if self.session_id.is_none() && self.pending_attaches.is_empty() && REQUIRES_ATTACH.contains(&req) {
             let requested = request["session_id"].as_str().unwrap_or("");
             return vec![Outbound::Reply(ServerFrame::reply(
                 api_id,
@@ -507,7 +509,8 @@ impl BridgeState {
             if request["session_id"].as_str().is_none_or(str::is_empty) {
                 return Self::error_reply(api_id, ErrorCode::InvalidRequest, "session_id must not be empty");
             }
-            if let Some((_, _, Some(target))) = &self.pending_attach_id
+            if let Some(pending) = self.pending_attaches.last()
+                && let Some(target) = &pending.requested_session
                 && self.session_id.is_none()
                 && request["session_id"].as_str() != Some(target.as_str())
             {
@@ -619,11 +622,6 @@ impl BridgeState {
                 let requested_session = (req == "attach_session")
                     .then(|| request["session_id"].as_str().map(str::to_string))
                     .flatten();
-                self.pending_recovery_history = Some((id, requested_session.clone()));
-                self.pending_attach_id = Some((state_id, api_id, requested_session));
-                self.pending_attach_subscribe_id = Some(id);
-                self.pending_model_probe = Some(catalog_id);
-                self.pending_create_dir = None;
                 let mut subscribe = json!({
                     "type": "subscribe",
                     "id": id,
@@ -636,16 +634,14 @@ impl BridgeState {
                     "history_message_ids": true,
                 });
                 if let Err(reply) = a2ui::attach_subscribe_a2ui(self, &mut subscribe, request, req, api_id) {
-                    self.pending_attach_id = None;
-                    self.pending_attach_subscribe_id = None;
-                    self.pending_model_probe = None;
-                    self.pending_create_dir = None;
                     return reply;
                 }
                 if self.crash_on_disconnect {
                     subscribe["crash_on_disconnect"] = json!(true);
                 }
+                let mut create_dir = None;
                 if req == "create_session" {
+                    subscribe["fresh_session"] = json!(true);
                     if let Some(prompt) = request["system_prompt"].as_str() {
                         subscribe["system_prompt"] = json!(prompt);
                     }
@@ -654,7 +650,7 @@ impl BridgeState {
                         .map(str::to_string)
                         .or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()));
                     subscribe["working_dir"] = json!(working_dir);
-                    self.pending_create_dir = working_dir.clone();
+                    create_dir = working_dir;
                 } else if let Some(target) = request["session_id"].as_str() {
                     // The daemon owns both live and persisted session roots.
                     // Empty panels have no file yet, and a cached disk cwd may
@@ -662,6 +658,16 @@ impl BridgeState {
                     // the bridge's process cwd just to bootstrap attachment.
                     subscribe["target_session_id"] = json!(target);
                 }
+                self.pending_recovery_histories.push((id, requested_session.clone()));
+                self.pending_attaches.push(PendingAttach {
+                    subscribe_id: id,
+                    state_id,
+                    catalog_id,
+                    api_id,
+                    requested_session,
+                    create_dir,
+                });
+                self.pending_model_probes.push(catalog_id);
                 // The daemon assigns the session during subscribe but reports
                 // the id via `state`, so chase the subscribe with get_state.
                 // The model identity arrives the same way, via the catalog
@@ -1431,7 +1437,7 @@ impl BridgeState {
                     return Self::error_reply(api_id, ErrorCode::InvalidRequest, "action must not be empty");
                 };
                 let id = self.legacy_id();
-                self.pending_simple.push((id, api_id, SimpleKind::ControlReceipt));
+                self.pending_simple.push((id, api_id, SimpleKind::ApplyControl));
                 let mut frame = json!({
                     "type": "apply_control",
                     "id": id,
@@ -1757,15 +1763,15 @@ impl BridgeState {
             "state" => {
                 let session_id = event["session_id"].as_str().unwrap_or("").to_string();
                 let id = event["id"].as_u64().unwrap_or(0);
-                if let Some((state_id, api_id, requested_session)) = &self.pending_attach_id
-                    && *state_id == id
-                    && requested_session
-                        .as_deref()
-                        .is_none_or(|requested| requested == session_id)
-                {
-                    let api_id = *api_id;
-                    self.pending_attach_id = None;
-                    self.pending_attach_subscribe_id = None;
+                if let Some(index) = self.pending_attaches.iter().position(|entry| {
+                    entry.state_id == id
+                        && entry
+                            .requested_session
+                            .as_deref()
+                            .is_none_or(|requested| requested == session_id)
+                }) {
+                    let entry = self.pending_attaches.remove(index);
+                    let api_id = entry.api_id;
                     // `state` snapshots can also be broadcast for other live
                     // sessions. Only the reply correlated with this connection's
                     // attach request establishes its identity. Otherwise opening
@@ -1798,9 +1804,8 @@ impl BridgeState {
                     let working_dir = metadata
                         .as_ref()
                         .and_then(|metadata| metadata.working_dir.clone())
-                        .or_else(|| self.pending_create_dir.take())
+                        .or(entry.create_dir)
                         .or_else(|| self.session_dirs.get(&session_id).cloned());
-                    self.pending_create_dir = None;
                     if let Some(dir) = &working_dir
                         && !session_id.is_empty()
                     {
@@ -2122,27 +2127,28 @@ impl BridgeState {
                 // which is the only place it appears: remember it so
                 // `list_sessions` can answer with more than this connection.
                 self.note_sessions(event);
-                if self
-                    .pending_recovery_history
-                    .as_ref()
-                    .is_some_and(|(subscribe_id, target)| {
-                        *subscribe_id == id
-                            && event["session_id"].as_str().is_some_and(|sid| {
-                                !sid.is_empty() && target.as_deref().is_none_or(|target| target == sid)
-                            })
-                    })
-                {
-                    self.pending_recovery_history = None;
+                if let Some(index) = self.pending_recovery_histories.iter().position(|(subscribe_id, target)| {
+                    *subscribe_id == id
+                        && event["session_id"].as_str().is_some_and(|sid| {
+                            !sid.is_empty() && target.as_deref().is_none_or(|target| target == sid)
+                        })
+                }) {
+                    self.pending_recovery_histories.remove(index);
                     let frames: Vec<_> = Self::attachment_recovery(event).into_iter().collect();
                     return frames;
                 }
                 // The catalog probe rides the same `history` reply shape but
                 // carries no messages: it is model identity, not transcript.
-                if self.pending_model_probe == Some(id) {
-                    self.pending_model_probe = None;
+                if let Some(index) = self.pending_model_probes.iter().position(|probe_id| *probe_id == id) {
+                    self.pending_model_probes.remove(index);
                     self.note_models(event);
+                    let probe_session = event["session_id"]
+                        .as_str()
+                        .filter(|sid| !sid.is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| session(self));
                     return vec![
-                        ServerFrame::event(self.model_info(session(self), event)),
+                        ServerFrame::event(self.model_info(probe_session, event)),
                         ServerFrame::event(self.runtime_info()),
                     ];
                 }
@@ -2396,7 +2402,10 @@ impl BridgeState {
             }
             "control_receipt" => {
                 let id = event["id"].as_u64().unwrap_or(0);
-                let Some(api_id) = self.take_simple(id, SimpleKind::ControlReceipt) else {
+                let Some(api_id) = self
+                    .take_simple(id, SimpleKind::ApplyControl)
+                    .or_else(|| self.take_simple(id, SimpleKind::ControlReceipt))
+                else {
                     return vec![];
                 };
                 let outcome = match event["outcome"].as_str().unwrap_or_default() {
@@ -2503,18 +2512,22 @@ impl BridgeState {
                 }
             }
             "error" => {
-                // Tool and retry refusals leave the current turn untouched.
+                // Tool, retry, and control-validation refusals leave the current turn untouched.
                 let id = event["id"].as_u64().unwrap_or(0);
                 if let Some(index) = self
                     .pending_simple
                     .iter()
                     .position(|(pending_id, _, kind)| *pending_id == id && kind.error_is_reply_only())
                 {
-                    let (_, api_id, _) = self.pending_simple.remove(index);
+                    let (_, api_id, kind) = self.pending_simple.remove(index);
+                    let code = match kind {
+                        SimpleKind::ApplyControl => ErrorCode::InvalidRequest,
+                        _ => ErrorCode::Internal,
+                    };
                     return vec![ServerFrame::reply(
                         api_id,
                         ApiEvent::Error {
-                            code: ErrorCode::Internal,
+                            code,
                             message: event["message"].as_str().unwrap_or_default().to_string(),
                             details: None,
                         },
@@ -2524,21 +2537,23 @@ impl BridgeState {
                 self.observed_turn_active = false;
                 self.pending_control_done_ids.remove(&id);
                 self.pending_activity_snapshots.remove(&id);
-                if let Some((state_id, api_id, target)) = self.pending_attach_id.as_ref()
-                    && (self.pending_attach_subscribe_id == Some(id) || *state_id == id)
+                if let Some(index) = self
+                    .pending_attaches
+                    .iter()
+                    .position(|entry| entry.subscribe_id == id || entry.state_id == id)
                 {
-                    let api_id = *api_id;
-                    let code = if target.is_some() {
+                    let entry = self.pending_attaches.remove(index);
+                    self.pending_recovery_histories
+                        .retain(|(subscribe_id, _)| *subscribe_id != entry.subscribe_id);
+                    self.pending_model_probes
+                        .retain(|probe_id| *probe_id != entry.catalog_id);
+                    let code = if entry.requested_session.is_some() {
                         ErrorCode::UnknownSession
                     } else {
                         ErrorCode::Internal
                     };
-                    self.pending_attach_id = None;
-                    self.pending_attach_subscribe_id = None;
-                    self.pending_model_probe = None;
-                    self.pending_recovery_history = None;
                     return vec![ServerFrame::reply(
-                        api_id,
+                        entry.api_id,
                         ApiEvent::Error {
                             code,
                             message: event["message"].as_str().unwrap_or_default().to_string(),

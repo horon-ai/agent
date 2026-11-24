@@ -338,6 +338,10 @@ pub enum Request {
         /// non-A2UI clients so existing Subscribe wire bytes remain unchanged.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         a2ui: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities>,
+        /// Request a brand-new session even if this transport connection is
+        /// already subscribed to an earlier session (used by harness `create_session`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        fresh_session: bool,
     },
 
     /// Declare that this client is intentionally detaching before its transport

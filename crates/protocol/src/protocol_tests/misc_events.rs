@@ -97,6 +97,7 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         acp: None,
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"subscribe\""));
@@ -117,6 +118,7 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         acp: _,
         history_message_ids: _,
         a2ui: _,
+        fresh_session: _,
     } = decoded
     else {
         return Err(anyhow!("expected Subscribe"));
@@ -158,6 +160,7 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
         acp: _,
         history_message_ids: _,
         a2ui: _,
+        fresh_session: _,
     } = decoded
     else {
         return Err(anyhow!("expected Subscribe"));

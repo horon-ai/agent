@@ -95,6 +95,7 @@ impl Client {
             acp: None,
             history_message_ids: false,
             a2ui: None,
+            fresh_session: false,
         };
         let json = serde_json::to_string(&request)? + "\n";
         self.writer.write_all(json.as_bytes()).await?;

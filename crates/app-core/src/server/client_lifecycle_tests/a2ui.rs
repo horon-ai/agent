@@ -266,6 +266,7 @@ async fn socket_subscribe_a2ui_round_trip_and_invalid_event_rejection() {
             acp: None,
             history_message_ids: false,
             a2ui: Some(A2uiSessionCapabilities::default()),
+            fresh_session: false,
         })
         .unwrap(),
     )

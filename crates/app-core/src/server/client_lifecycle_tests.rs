@@ -1085,6 +1085,7 @@ fn subscribe_request(working_dir: Option<&str>) -> Request {
         acp: None,
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     }
 }
 

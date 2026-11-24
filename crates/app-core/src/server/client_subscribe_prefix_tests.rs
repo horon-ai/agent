@@ -31,6 +31,7 @@ fn subscribe_to(target: &str) -> Request {
         acp: None,
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     }
 }
 

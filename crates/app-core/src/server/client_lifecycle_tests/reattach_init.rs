@@ -355,6 +355,7 @@ async fn target_aware_reattach_serves_history_without_a_placeholder_prewarm() {
             acp: None,
             history_message_ids: false,
             a2ui: None,
+            fresh_session: false,
         },
     )
     .await;
