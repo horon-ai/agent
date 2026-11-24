@@ -258,7 +258,11 @@ impl CommandLiveAdapter {
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::null())
+            .env_remove("HORON_LIVE_ENDPOINT")
+            .env_remove("HORON_LIVE_MODEL")
+            .env_remove("HORON_LIVE_ADAPTER")
+            .env_remove("HORON_LIVE_API_KEY");
         if !config.endpoint.is_empty() {
             command.env("HORON_LIVE_ENDPOINT", &config.endpoint);
         }
@@ -323,13 +327,17 @@ impl CommandLiveAdapter {
 impl LiveVoiceAdapter for CommandLiveAdapter {
     fn start(&mut self, config: &LiveVoiceConfig, generation: u64) -> Result<(), LiveError> {
         self.spawn(config, generation)?;
-        self.send_json(serde_json::json!({
+        if let Err(error) = self.send_json(serde_json::json!({
             "type": "start",
             "generation": generation,
             "adapter": config.adapter,
             "endpoint": config.endpoint,
             "model": config.model,
-        }))
+        })) {
+            self.shutdown();
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn begin_capture(&mut self, generation: u64, capture_id: u64) -> Result<(), LiveError> {
@@ -522,6 +530,10 @@ impl LiveVoice {
         self.pending_send.take()
     }
 
+    pub(crate) fn clear_pending_send(&mut self) {
+        self.pending_send = None;
+    }
+
     /// Inject a custom adapter implementation (used by tests and embedded hosts).
     #[cfg(test)]
     pub(crate) fn set_adapter(&mut self, adapter: Box<dyn LiveVoiceAdapter>) {
@@ -551,7 +563,6 @@ impl LiveVoice {
     /// Revoke session consent and stop any active live audio capture or session.
     pub(crate) fn forget(&mut self) {
         self.consent = false;
-        self.pending_send = None;
         self.stop();
         if !self.custom_adapter
             && let Some(mut adapter) = self.adapter.take()
@@ -603,6 +614,9 @@ impl LiveVoice {
             return LiveStart::Fallback("no live voice adapter available".to_string());
         };
         if let Err(reason) = adapter.start(&config, generation) {
+            if !self.custom_adapter {
+                adapter.shutdown();
+            }
             self.generation += 1;
             self.phase = LivePhase::Idle;
             return LiveStart::Fallback(reason.to_string());
@@ -664,7 +678,10 @@ impl LiveVoice {
         if !self.consent {
             return Err(LiveError::new(CONSENT));
         }
-        self.config.check_ready(self.custom_adapter)?;
+        if let Err(reason) = self.config.check_ready(self.custom_adapter) {
+            self.stop();
+            return Err(reason);
+        }
         if self.adapter.is_none() {
             self.adapter = Some(Box::new(CommandLiveAdapter::new()));
             self.custom_adapter = false;
@@ -678,6 +695,9 @@ impl LiveVoice {
             return Err(LiveError::new("no live voice adapter attached"));
         };
         if let Err(reason) = adapter.reconnect(&config, generation) {
+            if !self.custom_adapter {
+                adapter.shutdown();
+            }
             self.generation += 1;
             self.phase = LivePhase::Idle;
             return Err(reason);
@@ -686,9 +706,9 @@ impl LiveVoice {
         Ok(generation)
     }
 
-    /// Leave live audio mode cleanly while preserving the caller's text session.
+    /// Leave live audio mode cleanly, forgetting session consent while preserving the text session.
     pub(crate) fn leave(&mut self) {
-        self.stop();
+        self.forget();
     }
 
     /// Poll adapter events and filter out any stale generation or retired capture.
@@ -745,11 +765,11 @@ impl LiveVoice {
                         self.phase = LivePhase::Ready;
                     }
                 }
-                let cleaned = text.trim();
+                let cleaned = sanitize_live_transcript(&text);
                 if cleaned.is_empty() {
                     return Some(LiveOutcome::Notice("live voice: no speech captured".to_string()));
                 }
-                Some(LiveOutcome::Submit(cleaned.to_string()))
+                Some(LiveOutcome::Submit(cleaned))
             }
             LiveAdapterEvent::Disconnected { generation, reason } | LiveAdapterEvent::Error { generation, reason } => {
                 if generation != self.generation {
@@ -804,4 +824,23 @@ impl Drop for LiveVoice {
             adapter.shutdown();
         }
     }
+}
+
+fn sanitize_live_transcript(raw: &str) -> String {
+    let mut out = String::new();
+    for line in raw.lines() {
+        let clean: String = line
+            .chars()
+            .filter(|character| *character == '\t' || !character.is_control())
+            .collect();
+        let clean = clean.trim();
+        if clean.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(clean);
+    }
+    out
 }

@@ -75,11 +75,17 @@ fn export(
 ) -> Result<()> {
     let report = if key_env.is_some() || key_file.is_some() {
         let resolved_id = match key_id {
-            Some(id) => id.to_string(),
+            Some(id) => {
+                let trimmed = id.trim();
+                if trimmed.is_empty() {
+                    bail!("key_id cannot be empty");
+                }
+                trimmed.to_string()
+            }
             None => match key::read_key(layout)? {
                 Some(record) if !record.is_revoked() => record.key_id,
                 Some(record) => bail!(
-                    "the volume key `{}` is revoked; supply an active key with --key-id",
+                    "cannot export volume: user data key `{}` has been revoked and the volume is closed for deletion",
                     record.key_id
                 ),
                 None => {

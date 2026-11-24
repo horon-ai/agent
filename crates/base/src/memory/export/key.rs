@@ -16,13 +16,11 @@
 //!   a deletion request cannot be served again by mistake, even if the data is
 //!   still on disk.
 //!
-//! **The encryption gap, stated rather than implied.** Envelope encryption of
-//! the page files and of the export tar needs an authenticated-encryption crate
-//! that is not in `Cargo.lock`, and this change does not add dependencies. So
-//! the contract is complete and tested, and the crypto is not written by hand:
-//! the export manifest records `encryption: none`, and the manifest validator
-//! refuses any other value so a tar the operator cannot open is never installed
-//! as if it were plaintext.
+//! **Archive encryption and at-rest scope.** Sealed export archives use
+//! `AES-256-GCM` per entry (`HME1`, see `crypto.rs`) when exported with a key,
+//! while unencrypted exports record `encryption: none` and are rejected when
+//! an archive carries any unrecognised or missing-key encryption header. Live
+//! on-disk page files rely on platform at-rest volume encryption.
 
 use super::{VolumeLayout, now_rfc3339, write_private_file};
 use anyhow::{Context, Result, anyhow};

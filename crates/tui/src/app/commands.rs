@@ -584,7 +584,7 @@ impl App {
             "leave" | "off" | "exit" => {
                 self.voice.live.leave();
                 self.transcript
-                    .push_notice("live voice: left audio mode; text session remains active");
+                    .push_notice("live voice: left audio mode; consent forgotten and text session remains active");
             }
             "reconnect" => match self.voice.live.reconnect() {
                 Ok(gen_id) => self.transcript.push_notice(format!(
@@ -660,8 +660,11 @@ impl App {
 
     /// Drain live voice adapter events, retiring consent/captures if disconnected.
     pub(crate) fn tick_live_voice(&mut self) -> bool {
-        if self.disconnected && (self.voice.live.consent_given() || self.voice.live.phase() != LivePhase::Idle) {
-            self.voice.live.forget();
+        if self.disconnected {
+            self.voice.live.clear_pending_send();
+            if self.voice.live.consent_given() || self.voice.live.phase() != LivePhase::Idle {
+                self.voice.live.forget();
+            }
         }
         let outcomes = self.voice.live.poll();
         if outcomes.is_empty() {

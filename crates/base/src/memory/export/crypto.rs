@@ -30,8 +30,8 @@ pub struct StaticKeyProvider {
 impl StaticKeyProvider {
     /// Construct a provider for `key_id` and raw key `bytes`.
     pub fn new(key_id: impl Into<String>, bytes: Vec<u8>) -> Result<Self> {
-        let key_id = key_id.into();
-        if key_id.trim().is_empty() {
+        let key_id = key_id.into().trim().to_string();
+        if key_id.is_empty() {
             bail!("key_id cannot be empty");
         }
         if bytes.len() != KEY_LEN {
@@ -91,10 +91,14 @@ impl KeyProvider for SourceKeyProvider {
     }
 }
 
-/// Read 32-byte key material from `env_var` first, then `file`.
+/// Read 32-byte key material from `env_var` or `file`.
 pub fn resolve_key_material(key_id: &str, env_var: Option<&str>, file: Option<&Path>) -> Result<KeyMaterial> {
-    if key_id.trim().is_empty() {
+    let key_id = key_id.trim();
+    if key_id.is_empty() {
         bail!("key_id cannot be empty");
+    }
+    if env_var.is_some() && file.is_some() {
+        bail!("pass either --key-env or --key-file, not both");
     }
     if let Some(variable) = env_var {
         let value = std::env::var(variable)
