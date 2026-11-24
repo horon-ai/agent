@@ -316,6 +316,36 @@ reports them, `get_runtime_info()` keeps `reasoning_effort` and `auth_method`,
 and a turn's `usage` keeps `cache_creation_input`. A field the wire omits stays
 absent from the mapping, or `None` on `TurnUsage`; an omitted count is not zero.
 
+## A2UI v1.0 surfaces
+
+A2UI support (`a2ui_v1`, protocol v1.32) is opt-in per connection and per session. Leaving `a2ui=None` on `ConnectOptions`, `CreateSessionOptions`, and `AttachSessionOptions` preserves the exact tool catalog and prompt cache prefix of prior versions, and unnegotiated connections never deliver `a2ui_envelope` frames.
+
+```python
+from horon_agent_sdk import (
+    A2UI_BASIC_CATALOG_V1_0,
+    A2UI_VERSION_V1_0,
+    ConnectOptions,
+    CreateSessionOptions,
+    HoronAgentClient,
+)
+
+caps = {
+    "version": A2UI_VERSION_V1_0,
+    "supported_catalog_ids": [A2UI_BASIC_CATALOG_V1_0],
+    "accepts_inline_catalogs": False,
+}
+client = await HoronAgentClient.connect(ConnectOptions(a2ui=caps))
+session = await client.create_session_with_options(CreateSessionOptions(a2ui=caps))
+turn = await client.run(session["session_id"], "Show a confirmation card")
+print(turn.a2ui_envelopes)
+await client.send_a2ui_event(
+    session["session_id"],
+    {"version": "1.0", "action": {"name": "confirm", "surfaceId": "main"}},
+)
+```
+
+Use `configure_a2ui(session_id, caps_or_none)` to toggle A2UI capabilities on an attached session, and collect streamed envelopes from `TurnResult.a2ui_envelopes` (`A2uiEnvelopeEvent`).
+
 ## Binary resolution order
 
 `launch()` resolves the runtime in this order:

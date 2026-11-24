@@ -495,6 +495,7 @@ pub(crate) fn ends_replay(event: &ApiEvent) -> bool {
             | ApiEvent::ApprovalPending { .. }
             | ApiEvent::ApprovalResolved { .. }
             | ApiEvent::AskRequested { .. }
+            | ApiEvent::A2uiEnvelope { .. }
             | ApiEvent::Error { .. }
     )
 }

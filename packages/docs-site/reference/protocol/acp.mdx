@@ -332,6 +332,14 @@ cargo test --locked -p horon-agent --test acp_tck -- --ignored --test-threads=1 
 
 `tests/acp_stdio_v2.rs` runs v2 scenarios IS-1 through IS-21 and the v1/v2 side-by-side scenarios, and validates frames against `tests/fixtures/acp/schema-v2.0.0-alpha.16.json`. IS-16 covers `tool_call/cancel`, IS-17 covers `terminal/cancel` and the `background` list, IS-18 covers `terminal_output_chunk`, IS-19 covers an audio prompt, IS-20 covers a live soft interrupt and IS-21 covers holding a prompt during work, all against a real daemon. `scripts/test/acp_tck.sh` takes `--protocol-version 1|2` and defaults to v1. The official acp-tck judges against its own copy of the v2 schema (alpha.9, unstable), so its result is not evidence of alpha.16 conformance. Before the switch to alpha.16, both TCK tests (v1, v2) passed on the integration branch and both verdicts were conformant. At that point the v2 mandatory items passed 24, the capability items passed 49 with 16 skipped and no failures. The v1 mandatory items passed 31.
 
+## A2UI v1.0 surfaces
+
+A2UI support in `horon-agent acp` is **additive and opt-in** for both protocol v1 and v2 (`src/cli/acp/a2ui.rs`). Clients that do not advertise renderer capabilities never receive `application/a2ui+json` resources, never unlock the `a2ui` tool, and see identical frames and prompt cache behavior.
+
+- **Negotiation (`initialize`, `session/new`, `session/resume`)**: Send `_meta.a2ui` or `_meta.a2uiRendererCapabilities` under `params.capabilities` during `initialize` (echoed under `result._meta.a2ui`), or override per session in `session/new` / `session/resume` `_meta.a2ui`. Accepted versions are `"1.0"` (`"v1.0"`) and `"v0.9"`, defaulting to `https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json` when omitted.
+- **Outbound streaming and replay**: Validated envelopes stream as `EmbeddedResource` content blocks (`uri: "a2ui://surface/<id>"`, `mimeType: "application/a2ui+json"`, `text: "<json>"`) inside `agent_message_chunk` (v1) or `agent_message` (v2), alongside any optional plain-text fallback. `session/resume` with history replay emits stored `ContentBlock::A2ui` blocks as matching `EmbeddedResource` updates without leaking raw `[A2UI ...]` card text when negotiated.
+- **Inbound user actions (`session/prompt`)**: Editors return `action`, `callAgentFunction`, or `error` events inside an `EmbeddedResource` prompt block with `mimeType: "application/a2ui+json"` (and optional `a2uiRendererDataModel` in resource or block `_meta`) or `params._meta.a2uiEvent`. Each payload is validated against A2UI v1.0 schemas, depth/size limits, and identifier rules before entering the session; conflicting or duplicate A2UI resource blocks in one prompt fail with `-32602`.
+
 ## Configuration
 
 `[acp]` in `config.toml`:

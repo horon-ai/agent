@@ -1045,3 +1045,11 @@ grep 모드에서 `before`와 `after`로 일치한 줄 앞뒤를 원래 줄 번�
 `horon diagnostics <파일>...`은 각 파일의 언어 서버에 진단을 요청해 파일별로 묶고, 오류를 경고보다 앞에 두며, 항목마다 번호를 붙여 보여 줍니다. 검사할 수 없는 파일(없는 파일, 형식에 맞는 언어 서버 없음, 서버 미설치)도 이유와 함께 목록에 남습니다. 파일은 수정하지 않습니다. `--json`은 같은 목록을 반환합니다.
 
 `horon diagnostics <파일>... --select 1,3 --delegate`는 선택한 항목의 파일을 표시한 뒤, 그 진단만 고치도록 일반 한 번 실행(`horon run`)을 시작합니다. 그래서 승인, 도구 정책, 격리가 다른 실행과 똑같이 적용됩니다. 목록에 없는 번호는 모델을 호출하기 전에 거부합니다. `--select`와 `--delegate`는 함께 써야 합니다.
+
+## 기능 게이트된 A2UI 도구(`a2ui`)
+
+`a2ui`는 의도적으로 `CORE_TOOLS`와 모든 기본 프로필 밖에 둡니다(`crates/app-core/src/tool/a2ui.rs`, `crates/tool-types/src/a2ui.rs`). 붙은 클라이언트가 `A2uiSessionCapabilities`를 협상할 때만 세션 단위로 등록되므로, 협상하지 않은 모든 세션에서 기본 `core` 도구 수 열여덟 개, 즉시 스키마 8,975바이트, 정적 프롬프트 1,322바이트가 그대로 유지됩니다.
+
+- **허용 입력**: `envelopes`(비어 있지 않은 A2UI v1.0 `agent_to_renderer` 봉투 배열, 예: `createSurface`, `updateComponents`, `updateDataModel`, `deleteSurface`, 허용된 `callRendererFunction`), 선택 `fallback_text`, 선택 `final_response`(전송 후 어시스턴트 턴 종료), 선택 `intent`를 받습니다.
+- **검증과 자가 수정**: 모든 배치는 봉투 크기(최대 256 KiB), JSON 깊이(최대 32), 배치 길이(최대 64개), 표면당 컴포넌트 수(최대 500개), 카탈로그 허용 목록(기본 `https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json`), 순환 없는 루트 도달 가능 컴포넌트 그래프, 안전한 URI 스킴(`javascript:`, `data:`, `file:`, `vbscript:` 거부)을 검사합니다. 검증 오류는 데몬 밖으로 나가기 전에 모델로 되돌아가므로 잘못된 봉투를 내보내지 않고 스스로 고칠 수 있습니다.
+- **저장과 비UI 대체 표시**: 검증된 배치는 `StoredMessage` 안에 `ContentBlock::A2ui`로 저장되며, 프로바이더 이력에는 간결한 `[A2UI summary]` 줄로 들어가고, 비UI 리더(`horon run --a2ui`, `horon export`, `horon-tui` 읽기 전용 대체 카드)에서는 `render_a2ui_text_card`로 렌더링됩니다.
