@@ -254,4 +254,17 @@ fn column_cap_handles_exact_multibyte_boundaries_and_non_json_text() {
     )
     .expect("long non-json text exceeding columns triggers preview");
     assert!(wrapped.contains("artifact://"), "{wrapped}");
+
+    let invalid_json_prefix = "  { not_valid_json_expression_exceeding_columns };";
+    let wrapped_brace = preview(
+        "cols",
+        "bash",
+        invalid_json_prefix,
+        BUDGET,
+        12,
+        crate::config::SecretsMode::Off,
+        &DEFAULT_SETTINGS,
+    )
+    .expect("long invalid json starting with brace triggers preview");
+    assert!(wrapped_brace.contains("artifact://"), "{wrapped_brace}");
 }

@@ -270,26 +270,17 @@ impl PackageControl {
         // The callbacks run before the new generation is announced and before
         // the receipt of the operation that produced it is built, so a client
         // that reads `disabled` has seen every live holder cancelled.
-        let registry = crate::extensions::lifecycle::PackageLifecycleRegistry::shared();
-        let mut revoked = crate::extensions::lifecycle::RevocationReport::default();
-        for summary in next.packages() {
-            let cause = match summary.state {
-                PackageControlState::Installed => continue,
-                PackageControlState::Disabled => crate::extensions::lifecycle::RevocationCause::Disabled,
-                PackageControlState::Revoked => crate::extensions::lifecycle::RevocationCause::Removed,
-            };
-            if previous
-                .packages()
+        let previous_packages = previous.packages();
+        let revoked = crate::extensions::lifecycle::PackageLifecycleRegistry::shared().apply_states(
+            |package_id| match previous_packages.binary_search_by(|prior| prior.id.as_str().cmp(package_id)) {
+                Ok(idx) => Some(control_package_state(previous_packages[idx].state)),
+                Err(_) => None,
+            },
+            next.packages()
                 .iter()
-                .find(|prior| prior.id == summary.id)
-                .is_some_and(|prior| prior.state == summary.state)
-            {
-                continue;
-            }
-            let fired = registry.revoke(&summary.id, next.generation(), cause);
-            revoked.fired += fired.fired;
-            revoked.failed += fired.failed;
-        }
+                .map(|summary| (summary.id.as_str(), control_package_state(summary.state))),
+            next.generation(),
+        );
         if revoked.fired > 0 {
             crate::logging::info(&format!(
                 "package catalog generation {}: {} live package holders were cancelled",
@@ -715,5 +706,13 @@ fn summary_of(record: &PackageRecord) -> PackageSummary {
             PackageState::Revoked => PackageControlState::Revoked,
         },
         generation: record.generation,
+    }
+}
+
+fn control_package_state(state: PackageControlState) -> PackageState {
+    match state {
+        PackageControlState::Installed => PackageState::Installed,
+        PackageControlState::Disabled => PackageState::Disabled,
+        PackageControlState::Revoked => PackageState::Revoked,
     }
 }
