@@ -132,7 +132,12 @@ class ClassifyChangesTests(unittest.TestCase):
         docs_site = pr("packages/docs-site/guides/intro.mdx")
         self.assertFalse(docs_site["rust"])
         self.assertTrue(docs_site["docs_site"])
-        self.assertFalse(docs_site["docs_only"])
+        self.assertTrue(docs_site["docs_only"])
+        # A documentation change regenerates the site pages; the pair stays a
+        # documentation change on a pull request and on its `dev` push.
+        regenerated = ("docs/runtime/TOOLS.md", "packages/docs-site/reference/runtime/tools.mdx")
+        self.assertEqual(pr(*regenerated), DOCS_ONLY)
+        self.assertEqual(push(regenerated), DOCS_ONLY)
 
         workflows_only = pr(".github/workflows/ci.yml", ".github/workflows/benchmark-docs.yml", "tests/test_ci_workflow_guards.py")
         self.assertFalse(workflows_only["rust"])

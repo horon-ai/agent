@@ -201,9 +201,8 @@ python3 scripts/ci/check_headless_graph.py
 
 `ci.yml`과 `structural-perf.yml`은 `Changed Paths` 잡(`scripts/ci/classify_changes.py`, 16개 불리언 레인 출력)으로 시작해 파일별로 변경을 분류한다. PR은 대상 베이스와 비교하고, `dev` 첫 시도 푸시는 같은 워크플로의 최근 성공 `dev` 푸시 실행 헤드와 비교한다(two-dot diff).
 
-- **문서 전용**(`README`, `PHILOSOPHY*.md`, `docs/`, `AGENTS.md`, 템플릿; `docs_only=true`): `Documentation Checks`(링크, UTF-8, 영어/한국어 쌍, 설치 주장 표 일관성)와 `Documentation Corpus Test`(`docs/`가 바이너리에 컴파일되므로 `horon_agent_docs` 테스트는 여전히 실행)를 돌린다. 릴리스 빌드, OS 테스트 매트릭스, SDK 잡, `Quality Guardrails`, 구조 성능 게이트는 건너뛴다.
+- **문서 전용**(`README`, `PHILOSOPHY*.md`, `docs/`, `AGENTS.md`, 템플릿, `packages/docs-site/`; `docs_only=true`): `Documentation Checks`(링크, UTF-8, 영어/한국어 쌍, 설치 주장 표 일관성)와 `Documentation Corpus Test`(`docs/`가 바이너리에 컴파일되므로 `horon_agent_docs` 테스트는 여전히 실행)를 돌리고, 사이트 페이지가 바뀌었으면 `Documentation Site`(`sync_docs_site.py --check`, Mintlify 빌드 및 깨진 링크 검사)도 돌린다. 릴리스 빌드, OS 테스트 매트릭스, SDK 잡, `Quality Guardrails`, 구조 성능 게이트는 건너뛴다. 문서 변경과 그 변경이 다시 만든 사이트 페이지는 풀 리퀘스트에서도, 그 `dev` 푸시에서도 이 레인에 남는다.
 - **범위 한정 비-Rust 레인:**
-  - `packages/docs-site/`(`docs_site=true`, `rust=false`)는 `Documentation Site`(`sync_docs_site.py --check`, Mintlify 빌드 및 깨진 링크 검사)만 돌리고 Rust, SDK, 구조 게이트를 건너뛴다.
   - `.github/workflows/*`(`workflows=true`, `rust=false`)는 `Workflow Lint`(`actionlint`), `Release Automation`, `PowerShell Syntax`를 돌리고 Rust 빌드를 건너뛴다.
   - 단독 TypeScript SDK, Python SDK, npm 런처, 설치 스크립트 수정(`ts_sdk`, `py_sdk`, `npm_pkg`, `install_scripts`이며 `rust=false`)은 일치하는 레인(`TypeScript SDK`, `Python SDK`, `Setup Friction Eval`, `PowerShell Syntax`, `Release Automation`)과 비-Rust `Quality Guardrails` 검사를 돌리고 `Build & Test`, Windows 크로스 검사, `structural-perf`를 건너뛴다.
 - **Rust 변경(`rust=true`):** `Quality Guardrails`, `Build & Test`(PR에서는 `scripts/ci/workspace_impact.py`로 영향받은 크레이트와 통합 타깃만 컴파일·테스트하며 매니페스트, 락파일, 공용 인프라나 `ci:all-os`/`ci:full`이면 전체 워크스페이스로 폴백), `windows-cross-check`(`cargo-xwin`), `windows-arm64-check`(`justrust`), `Release Automation`, `Structural performance gate`(Linux에서 `mold`로 통합 `--no-run` 컴파일)를 돌린다.
@@ -213,7 +212,7 @@ python3 scripts/ci/check_headless_graph.py
 - **Rust 캐시는 `main`에서만 저장한다.** `main`이 기본 브랜치이므로 모든 브랜치와 풀 리퀘스트가 `main`의 항목을 복원할 수 있는 반면, `main`은 `dev` 항목을 복원하지 못하며 두 사본을 두면 10 GB 캐시 한도를 넘는다. CI, 구조 성능, 패키지, 소크(soak) 캐시는 첫 시도 `main` 실행에서 저장하고, 벤치마크·로딩 A/B·Windows 스모크 캐시는 실행 ref가 `main`일 때만 저장한다. `tests/test_ci_workflow_guards.py`가 각 `save-if` 조건을 고정한다.
 - `CI Required`와 `Structural performance required`는 항상 완료되며 게이트가 실패했거나 취소됐을 때만 실패한다. 건너뛴 게이트 때문에 검사가 대기 상태로 남지 않도록 이 둘을 필수 체크로 사용한다.
 - 모든 액션은 `# vX` 주석과 함께 커밋 해시로 고정한다(Dependabot이 최신 유지). `release.yml`, `release-tag.yml`, 배포 워크플로는 이 게이팅 대상이 아니다. `actionlint`는 아무것도 보고하지 않아야 한다(`Workflow Lint`).
-- **`main` 밖에서는 후속 실행이 이전 실행을 취소한다.** `main`을 제외한 모든 ref에서는 같은 ref의 새 실행이 이전 실행을 취소한다. `main`의 푸시 실행은 릴리스 근거이므로 실행 중인 것은 취소하지 않는다(대기 중인 것만 GitHub가 교체 가능). `dev`에서는 푸시와 수동 실행이 같은 그룹을 써서 서로를 취소하므로, 취소된 `dev` 푸시 실행 뒤에는 그 실행의 `Re-run all jobs`를 사용한다. `dev`를 `main` 커밋으로 fast-forward하지 않는다(동기화는 머지 커밋 PR). 그러면 취소된 `dev` 실행이 릴리스 커밋의 최신 푸시 실행이 돼 `scripts/release/check_ci.py`가 거부한다.
+- **`main`과 `dev` 밖에서는 후속 실행이 이전 실행을 취소한다.** 그 밖의 모든 ref에서는 같은 ref의 새 실행이 이전 실행을 취소한다. `main`의 푸시 실행은 릴리스 근거이므로 실행 중인 것은 취소하지 않는다. `dev`에서는 새 실행이 실행 중인 것을 기다린다. 취소된 `dev` 실행은 녹색 헤드를 남기지 않아 다음 푸시가 더 오래된 실행과 비교되고 모든 게이트를 다시 돌리기 때문이다. GitHub가 대기 중인 실행을 더 새 실행으로 교체하므로 기다리는 실행은 많아야 하나이고, 그 실행은 자신이 기다린 실행과 비교해 분류된다. `dev`의 푸시와 수동 실행은 같은 그룹을 쓴다. 취소되거나 실패한 `dev` 푸시 실행 뒤에는 그 실행의 `Re-run all jobs`를 사용한다. `dev`를 `main` 커밋으로 fast-forward하지 않는다(동기화는 머지 커밋 PR). 그러면 취소된 `dev` 실행이 릴리스 커밋의 최신 푸시 실행이 돼 `scripts/release/check_ci.py`가 거부한다.
 
 ## 작업 규칙: 워크트리, 브랜치, 커밋, 풀 리퀘스트
 

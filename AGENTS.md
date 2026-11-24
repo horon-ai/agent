@@ -478,15 +478,16 @@ to `dev` against the head of the last successful `dev` push run of the same
 workflow (two-dot diff).
 
 - **Documentation only** (`README`, `PHILOSOPHY*.md`, `docs/`, `AGENTS.md`,
-  templates; `docs_only=true`): runs `Documentation Checks` (links, UTF-8,
-  English/Korean pairs, install claim table consistency) and
-  `Documentation Corpus Test` (`docs/` is compiled into the binary, so the
-  `horon_agent_docs` tests still run). Release builds, the OS test matrix,
-  SDK jobs, `Quality Guardrails` and the structural performance gate are skipped.
+  templates, `packages/docs-site/`; `docs_only=true`): runs `Documentation
+  Checks` (links, UTF-8, English/Korean pairs, install claim table
+  consistency), `Documentation Corpus Test` (`docs/` is compiled into the
+  binary, so the `horon_agent_docs` tests still run) and, when site pages
+  changed, `Documentation Site` (`sync_docs_site.py --check`, Mintlify build
+  and broken-links check). Release builds, the OS test matrix, SDK jobs,
+  `Quality Guardrails` and the structural performance gate are skipped. A
+  documentation change and the site pages it regenerates stay in this lane,
+  on the pull request and on its `dev` push.
 - **Scoped non-Rust lanes:**
-  - `packages/docs-site/` (`docs_site=true`, `rust=false`) runs only
-    `Documentation Site` (`sync_docs_site.py --check`, Mintlify build and
-    broken-links check), skipping Rust, SDK and structural gates.
   - `.github/workflows/*` (`workflows=true`, `rust=false`) runs
     `Workflow Lint` (`actionlint`), `Release Automation` and
     `PowerShell Syntax`, skipping Rust builds.
@@ -538,14 +539,18 @@ workflow (two-dot diff).
 - Every action is pinned to a commit with a `# vX` comment (Dependabot keeps them
   current); `release.yml`, `release-tag.yml` and the publish workflows are not
   part of this gating. `actionlint` must report nothing (`Workflow Lint`).
-- **Superseded runs are cancelled outside `main`.** A newer run on the same ref
-  cancels the older one on every ref except `main`, whose push runs are release
-  evidence: a running one is never cancelled, though GitHub can still replace a
-  run that is only pending. On `dev` a push and a manual dispatch share the
-  group and cancel each other; after a cancelled `dev` push run, use `Re-run all
-  jobs` on that run. Never fast-forward `dev` to a `main` commit (the sync is the
-  merge-commit PR): a cancelled `dev` run would then be the newest push run for a
-  release commit, and `scripts/release/check_ci.py` rejects it.
+- **Superseded runs are cancelled outside `main` and `dev`.** A newer run on
+  the same ref cancels the older one on every other ref. On `main` a push run
+  is release evidence, so a running one is never cancelled. On `dev` a newer
+  run waits for the running one instead: a cancelled `dev` run leaves no green
+  head, so the next push would be compared with an older one and run every gate
+  again. GitHub replaces a run that is only pending with a newer one, so at most
+  one waits, and it is classified against the run it waited for. A push and a
+  manual dispatch on `dev` share the group. After a cancelled or failed `dev`
+  push run, use `Re-run all jobs` on that run. Never fast-forward `dev` to a
+  `main` commit (the sync is the merge-commit PR): a cancelled `dev` run would
+  then be the newest push run for a release commit, and
+  `scripts/release/check_ci.py` rejects it.
 
 ## Working rules: worktree, branch, commit, pull request
 
