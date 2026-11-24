@@ -9,6 +9,7 @@
 //! `ratatui` backend, so the tests draw into a `TestBackend` instead of a
 //! terminal. [`run`] is the only entry point that touches the real terminal.
 
+pub mod a2ui;
 pub mod app;
 mod artifact;
 mod clipboard;

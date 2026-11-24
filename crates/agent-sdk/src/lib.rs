@@ -40,6 +40,7 @@
 //! let session = client.create_session_with_options(CreateSessionOptions {
 //!     working_dir: Some("/path/to/project".into()),
 //!     system_prompt: Some("You are a concise code reviewer.".into()),
+//!     ..CreateSessionOptions::default()
 //! })?;
 //! # Ok::<(), horon_agent_sdk::Error>(())
 //! ```
@@ -131,7 +132,47 @@
 //! under `[websearch]` in `config.toml`; it needs no SDK code. The session tool
 //! policy governs it like any tool. A custom tool named `websearch` replaces it
 //! and is always called through your application.
+//!
+//! # A2UI v1.0 surfaces
+//!
+//! A2UI support (`a2ui_v1`, protocol v1.32) is opt-in per connection and per
+//! session. Leaving `a2ui` as `None` in [`ConnectOptions`], [`CreateSessionOptions`],
+//! and [`AttachSessionOptions`] keeps the default tool catalog and prompt cache
+//! unchanged, and the SDK suppresses unnegotiated `a2ui_envelope` frames.
+//!
+//! ```no_run
+//! use horon_agent_sdk::{
+//!     A2UI_BASIC_CATALOG_V1_0, A2UI_VERSION_V1_0, A2uiSessionCapabilities,
+//!     ConnectOptions, CreateSessionOptions, HoronAgentClient, RunOptions,
+//! };
+//! use serde_json::json;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let caps = A2uiSessionCapabilities {
+//!     version: A2UI_VERSION_V1_0.to_string(),
+//!     supported_catalog_ids: vec![A2UI_BASIC_CATALOG_V1_0.to_string()],
+//!     accepts_inline_catalogs: false,
+//! };
+//! let client = HoronAgentClient::connect(ConnectOptions {
+//!     a2ui: Some(caps.clone()),
+//!     ..ConnectOptions::default()
+//! })?;
+//! let session = client.create_session_with_options(CreateSessionOptions {
+//!     a2ui: Some(caps),
+//!     ..CreateSessionOptions::default()
+//! })?;
+//! let turn = client.run(&session.session_id, "Render a confirmation card", RunOptions::default())?;
+//! println!("received {} A2UI envelopes", turn.a2ui_envelopes.len());
+//! client.send_a2ui_event(
+//!     &session.session_id,
+//!     json!({ "version": "1.0", "action": { "name": "confirm", "surfaceId": "main" } }),
+//!     None,
+//! )?;
+//! # Ok(())
+//! # }
+//! ```
 
+mod a2ui;
 mod cancellable_work;
 mod client;
 pub mod collections;
@@ -159,6 +200,7 @@ pub mod worktrees;
 #[path = "sdk_tests/parity.rs"]
 mod parity_tests;
 
+pub use a2ui::{A2uiEnvelopeEvent, AttachSessionOptions};
 pub use client::{
     AssistantTextMessage, ConnectOptions, CreateSessionOptions, EventStream, FileContent, FileStatus,
     GlobalEventStream, GlobalEventsOptions, HoronAgentClient, RunOptions, RuntimeInfo, SearchTextOptions, ToolCall,
@@ -220,10 +262,11 @@ pub mod transcript_text {
 /// The protocol types, re-exported so a client needs one dependency, not two.
 pub use horon_agent_harness_api as api;
 pub use horon_agent_harness_api::{
-    ApiEvent, ApiRequest, AskSelection, BackgroundWorkItem, CanonicalEventRecord, CanonicalRecordRef, EffectiveSetting,
-    HistoryMessage, MessageModes, ModelRouteInfo, PayloadRef, PermissionDecision, RenderedImage, RenderedImageAnchor,
-    RenderedImageSource, ResponseStats, SessionBlobChunk, SessionBlobStatus, SessionEventPage, SessionHeads,
-    SessionHistoryPage, SessionImportResult, SessionInfo, SessionRecordBlobStatus, SessionToolDefinition,
-    StoreErrorDetail, TextMatch, ToolConfiguration, TurnStopReason, api_socket_path,
+    A2UI_BASIC_CATALOG_V1_0, A2UI_MIME_TYPE, A2UI_URI_SCHEME, A2UI_VERSION_V0_9, A2UI_VERSION_V1_0,
+    A2uiSessionCapabilities, ApiEvent, ApiRequest, AskSelection, BackgroundWorkItem, CanonicalEventRecord,
+    CanonicalRecordRef, EffectiveSetting, HistoryMessage, MessageModes, ModelRouteInfo, PayloadRef, PermissionDecision,
+    RenderedImage, RenderedImageAnchor, RenderedImageSource, ResponseStats, SessionBlobChunk, SessionBlobStatus,
+    SessionEventPage, SessionHeads, SessionHistoryPage, SessionImportResult, SessionInfo, SessionRecordBlobStatus,
+    SessionToolDefinition, StoreErrorDetail, TextMatch, ToolConfiguration, TurnStopReason, api_socket_path,
 };
 pub use horon_agent_harness_api::{ModelUsage, RuntimeCommand, RuntimeCommandOutput, compare_model_usage};

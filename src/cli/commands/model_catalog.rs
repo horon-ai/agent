@@ -60,7 +60,7 @@ pub(super) async fn run(filter: &ModelListFilter, json: bool) -> Result<()> {
             }
         }
         if let Some(search) = search.as_deref() {
-            report.models.retain(|model| model.to_lowercase().contains(search));
+            report.models.retain(|model| contains_case_insensitive(model, search));
         }
         reports.push(report);
     }
@@ -86,4 +86,17 @@ pub(super) async fn run(filter: &ModelListFilter, json: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if haystack.is_ascii() && needle_lower.is_ascii() {
+        return haystack
+            .as_bytes()
+            .windows(needle_lower.len())
+            .any(|window| window.eq_ignore_ascii_case(needle_lower.as_bytes()));
+    }
+    haystack.to_lowercase().contains(needle_lower)
 }

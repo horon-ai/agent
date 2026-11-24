@@ -147,6 +147,23 @@ JSON 객체가 아니거나 `type`이 없는 줄은 무시한다. 호스트가 �
 
 시험용 프로바이더, 제어 가능한 데몬 시계와 JSONL 기록을 사용한다. 기존 데몬 기한 직전과 기한에 맞춰 시계를 움직인다. 처음에는 질문이 대기 중이고 다음에는 처리가 끝나는지 확인한다. RPC 하위 프로세스 검증에는 네트워크와 터미널 화면이 필요 없다.
 
+## 선택형 A2UI v1.0 표면 기능(`a2ui_v1`)
+
+표준 입출력 RPC 호스트는 첫 프롬프트 전에 A2UI v1.0 렌더링에 선택 참여할 수 있으며, 협상하지 않은 호스트의 동작은 바뀌지 않는다(`src/cli/rpc/command.rs`, `src/cli/rpc/frame.rs`).
+
+| 프레임 / 필드 | 방향 | 역할 |
+| --- | --- | --- |
+| `negotiate_protocol` (`capabilities: ["a2ui_v1"]`, 선택 `a2ui`) | 호스트 -> 에이전트 | 연결 수명 동안 `a2ui_v1`과 선택적 렌더러 기능(`version`, `supportedCatalogIds`, `acceptsInlineCatalogs`)을 고정 |
+| `a2ui_update` | 에이전트 -> 호스트 | 검증된 `agent_to_renderer` 봉투 한 건(`toolCallId`, `sequence`, `envelope`, 선택 `fallbackText`) 스트리밍 |
+| `message_end` / `get_messages` (`type: "a2ui"` 항목) | 에이전트 -> 호스트 | 텍스트 블록과 함께 어시스턴트 A2UI 콘텐츠 항목(`envelopes`, 선택 `fallbackText`) 보존 |
+| `a2ui_event` | 호스트 -> 에이전트 | 검증된 `action`, `callAgentFunction`, `error` `envelope`(선택 `dataModel` 포함)를 활성 세션으로 전달 |
+
+- `a2ui_v1`을 생략한 연결에서는 `a2ui` 도구가 열리지 않고 `a2ui_update`가 나가지 않으며, `a2ui_event`는 오류 응답으로 거절된다.
+
+### 일회성 `horon run` 플래그
+
+`horon-agent run`은 `--a2ui`와 반복 가능한 `--a2ui-catalog <uri>`를 받는다(`src/cli/commands/a2ui_run.rs`). 일반 `horon run --a2ui`는 표준 출력에 읽기 쉬운 `[A2UI surface: ...]` 대체 카드를 찍고, `--json`은 JSON 응답에 `type: "a2ui"` 블록을 추가하며, `--ndjson`은 `type: "a2ui"` 스트림 프레임(`sequence`, `envelope`, `fallback_text`)을 내보낸다. `--a2ui` 없이 `horon run`을 실행하면 기본 도구 집합과 프롬프트 접두사가 바이트 단위로 그대로 유지된다.
+
 ## 검증
 
 어댑터에는 데몬을 프로세스 안 소켓 쌍으로 스크립트하는 통합 시험이 있어, 데몬도 모델도 없이 실제 프로토콜 경로를 돌린다. 시작 핸드셰이크, 버전 협상, 알 수 없는 명령, JSON이 아닌 줄, `get_state`, 프롬프트 한 턴, 유휴 상태의 `abort`, 한도를 넘는 프레임, `set_todos` 저장, 모델 카탈로그 투영을 다룬다.

@@ -113,6 +113,12 @@ impl StreamRule {
         if self.tool_any {
             return true;
         }
+        if self.tool_names.is_empty() {
+            return false;
+        }
+        if tool.bytes().all(|byte| !byte.is_ascii_uppercase()) {
+            return self.tool_names.contains(tool);
+        }
         let lowered = tool.to_ascii_lowercase();
         self.tool_names.contains(lowered.as_str())
     }
@@ -281,7 +287,11 @@ impl TurnStreamRules {
     /// are resolved deterministically: the earlier entry wins and the later one
     /// is still available on the next attempt.
     pub(super) fn check(&mut self, text: &str) -> Option<StreamRuleAction> {
-        if self.rules.is_empty() {
+        if !self.rules.iter().any(|rule| {
+            rule.text
+                && rule.delivery == crate::config::StreamRuleDelivery::Interrupt
+                && !self.matched.contains(&rule.id)
+        }) {
             return None;
         }
         let window = lookback_window(text);
@@ -337,12 +347,13 @@ impl TurnStreamRules {
         if self.rules.is_empty() {
             return None;
         }
-        let serialized = serde_json::to_string(input).unwrap_or_default();
+        let mut serialized: Option<String> = None;
         let rule = self.rules.iter().find(|rule| {
-            !self.matched.contains(&rule.id)
-                && rule.watches_tool(tool)
-                && self.tool_path_matches(rule, input)
-                && rule.pattern.is_match(&serialized)
+            if self.matched.contains(&rule.id) || !rule.watches_tool(tool) || !self.tool_path_matches(rule, input) {
+                return false;
+            }
+            let text = serialized.get_or_insert_with(|| serde_json::to_string(input).unwrap_or_default());
+            rule.pattern.is_match(text)
         })?;
         let hit = StreamRuleHit {
             id: rule.id.clone(),

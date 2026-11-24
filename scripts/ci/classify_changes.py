@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Decide which CI gates a change needs, from the files it touches.
 
-Writes 15 boolean keys (`code`, `docs`, `docs_only`, `rust`, `docs_site`,
+Writes 16 boolean keys (`code`, `docs`, `docs_only`, `rust`, `docs_site`,
 `ts_sdk`, `py_sdk`, `npm_pkg`, `install_scripts`, `release_scripts`,
-`workflows`, `tui_only`, `platform_windows`, `platform_macos`, `full_matrix`)
+`workflows`, `tui_only`, `tui_smoke`, `platform_windows`, `platform_macos`,
+`full_matrix`)
 to `$GITHUB_OUTPUT` and prints the same lines plus one `::notice::` line.
 Every uncertainty resolves to running everything, so a lookup or diff error
 costs runner minutes and never skips a gate.
@@ -203,6 +204,14 @@ PLATFORM_WINDOWS_PATTERNS = (
     "*.ps1",
 )
 
+TUI_SMOKE_PATTERNS = (
+    "crates/tui/*",
+    "crates/agent-sdk/*",
+    "src/cli/tui_handoff.rs",
+    "scripts/test/*tui*",
+    "scripts/test/install_release_layout_smoke.sh",
+)
+
 FULL_RUN = {
     "code": True,
     "docs": False,
@@ -216,6 +225,7 @@ FULL_RUN = {
     "release_scripts": True,
     "workflows": True,
     "tui_only": False,
+    "tui_smoke": True,
     "platform_windows": True,
     "platform_macos": True,
     "full_matrix": True,
@@ -283,6 +293,7 @@ def classify(
             "release_scripts": False,
             "workflows": False,
             "tui_only": False,
+            "tui_smoke": False,
             "platform_windows": False,
             "platform_macos": False,
             "full_matrix": False,
@@ -304,6 +315,9 @@ def classify(
         for path in files
     )
     full_matrix = any(matches(path, FULL_MATRIX_PATTERNS) for path in files)
+    tui_smoke = full_matrix or any(
+        matches(path, TUI_SMOKE_PATTERNS) for path in files
+    )
     platform_macos = full_matrix or any(
         matches(path, PLATFORM_MACOS_PATTERNS) for path in files
     )
@@ -320,6 +334,7 @@ def classify(
         platform_macos = True
         full_matrix = True
         tui_only = False
+        tui_smoke = True
 
     return {
         "code": True,
@@ -334,6 +349,7 @@ def classify(
         "release_scripts": release_scripts,
         "workflows": workflows,
         "tui_only": tui_only,
+        "tui_smoke": tui_smoke,
         "platform_windows": platform_windows,
         "platform_macos": platform_macos,
         "full_matrix": full_matrix,

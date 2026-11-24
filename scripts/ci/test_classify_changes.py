@@ -30,6 +30,7 @@ FULL = {
     "release_scripts": True,
     "workflows": True,
     "tui_only": False,
+    "tui_smoke": True,
     "platform_windows": True,
     "platform_macos": True,
     "full_matrix": True,
@@ -47,6 +48,7 @@ DOCS_ONLY = {
     "release_scripts": False,
     "workflows": False,
     "tui_only": False,
+    "tui_smoke": False,
     "platform_windows": False,
     "platform_macos": False,
     "full_matrix": False,
@@ -95,6 +97,7 @@ class ClassifyChangesTests(unittest.TestCase):
                 "release_scripts": False,
                 "workflows": False,
                 "tui_only": False,
+                "tui_smoke": False,
                 "platform_windows": False,
                 "platform_macos": False,
                 "full_matrix": False,
@@ -158,6 +161,22 @@ class ClassifyChangesTests(unittest.TestCase):
         tui_only = pr("crates/tui/src/app.rs")
         self.assertTrue(tui_only["rust"])
         self.assertTrue(tui_only["tui_only"])
+        self.assertTrue(tui_only["tui_smoke"])
+
+        for trigger in (
+            "crates/agent-sdk/src/lib.rs",
+            "src/cli/tui_handoff.rs",
+            "scripts/test/tui_pty_smoke.py",
+        ):
+            with self.subTest(tui_trigger=trigger):
+                triggered = pr(trigger)
+                self.assertTrue(triggered["rust"])
+                self.assertTrue(triggered["tui_smoke"])
+
+        non_tui = pr("crates/extension-types/src/lib.rs")
+        self.assertTrue(non_tui["rust"])
+        self.assertFalse(non_tui["tui_smoke"])
+        self.assertTrue(push(["crates/extension-types/src/lib.rs"])["tui_smoke"])
 
         shared_unix = pr("crates/platform-linux/src/unix.rs")
         self.assertTrue(shared_unix["rust"])

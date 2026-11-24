@@ -308,11 +308,22 @@ impl AcpRuntime {
                 return Ok(());
             }
         };
-        let (text, images) = match prompt_from_params(&message.params) {
-            Ok(prompt) => prompt,
+        let inbound_a2ui = match a2ui::extract_inbound_a2ui_event(&message.params) {
+            Ok(event) => event,
             Err(err) => {
-                self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await?;
+                self.write_error_value(id, JSONRPC_INVALID_PARAMS, err.message).await?;
                 return Ok(());
+            }
+        };
+        let (text, images) = if inbound_a2ui.is_some() && message.params.get("prompt").is_none() {
+            (String::new(), Vec::new())
+        } else {
+            match prompt_from_params(&message.params) {
+                Ok(prompt) => prompt,
+                Err(err) => {
+                    self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await?;
+                    return Ok(());
+                }
             }
         };
         let session = {
@@ -338,7 +349,10 @@ impl AcpRuntime {
         }
 
         let cancel = message.cancel;
-        if let Err(err) = self.run_prompt(id.clone(), session, text, images, &cancel).await {
+        if let Err(err) = self
+            .run_prompt(id.clone(), session, text, images, inbound_a2ui, &cancel)
+            .await
+        {
             if cancel.is_recorded() {
                 self.write_result(id, prompt_response("cancelled", &TurnUsage::default()))
                     .await?;
@@ -356,10 +370,13 @@ impl AcpRuntime {
         session: Arc<DaemonSession>,
         text: String,
         images: Vec<(String, String)>,
+        inbound_a2ui: Option<a2ui::InboundA2uiEvent>,
         cancel: &CancelSignal,
     ) -> Result<()> {
         let mut guard = PromptRunGuard::new(&session);
-        if let Some(command) = parse_acp_slash_command(&text) {
+        if inbound_a2ui.is_none()
+            && let Some(command) = parse_acp_slash_command(&text)
+        {
             let response = match command {
                 Ok(command) => self.run_session_command(&session, command).await,
                 Err(err) => Err(err),
@@ -392,14 +409,21 @@ impl AcpRuntime {
         session.permissions.end_cancelled_turn();
         session.client_calls.end_cancelled_turn();
         let prompt_id = session.next_id();
-        let message = Request::Message {
-            id: prompt_id,
-            content: text,
-            images,
-            system_reminder: None,
-            active_skill: None,
-            no_reply: false,
-            expected_run_id: None,
+        let message = match inbound_a2ui {
+            Some(a2ui_event) => Request::A2uiEvent {
+                id: prompt_id,
+                envelope: a2ui_event.envelope,
+                data_model: a2ui_event.data_model,
+            },
+            None => Request::Message {
+                id: prompt_id,
+                content: text,
+                images,
+                system_reminder: None,
+                active_skill: None,
+                no_reply: false,
+                expected_run_id: None,
+            },
         };
         let mut events = match session.foreground_request(Some(prompt_id), &message).await {
             Ok(events) => events,
@@ -416,7 +440,8 @@ impl AcpRuntime {
             let _ = session.send(&Request::Cancel { id: cancel_id }).await;
         }
 
-        let options = MapperOptions::new(&self.client_capabilities(), session.cwd.lock().await.clone());
+        let mut options = MapperOptions::new(&self.client_capabilities(), session.cwd.lock().await.clone());
+        options.a2ui = self.is_a2ui_negotiated();
         let mut mapper = EventMapper::new(self.profile, options, turn_token(prompt_id));
         let mut outcome = TurnOutcome::default();
         let mut turn_usage = TurnUsage::default();
@@ -461,7 +486,9 @@ impl AcpRuntime {
             }
             match event {
                 ServerEvent::Ack { .. } => {}
-                ServerEvent::Done { id } if id == prompt_id => break TurnEnd::Done,
+                ServerEvent::Done { id } | ServerEvent::ContextMessageAdded { id } if id == prompt_id => {
+                    break TurnEnd::Done;
+                }
                 ServerEvent::Error { id, message, .. } if id == prompt_id => break TurnEnd::Error(message),
                 ServerEvent::TurnStopped { .. } if cancel.is_recorded() => {
                     abandoned_on_turn_stopped = true;

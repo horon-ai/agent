@@ -14,6 +14,7 @@ mod notifications;
 
 pub use comm_format::*;
 pub use horon_agent_session_types::TurnStopReason;
+pub use horon_agent_tool_types::a2ui;
 pub use notifications::{FeatureToggle, NotificationType};
 
 use horon_agent_batch_types::BatchProgress;

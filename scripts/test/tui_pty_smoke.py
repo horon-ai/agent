@@ -679,6 +679,9 @@ class PosixTerminal:
 
     def __init__(self, argv: list[str], cwd: str, env: dict) -> None:
         self.argv = argv
+        self.cwd = cwd
+        self.home = env.get("HORON_HOME", "")
+        self.runtime_dir = env.get("HORON_AGENT_RUNTIME_DIR", "")
         self.transcript = ""
         self.screen = TerminalScreen(rows=40, cols=120)
         self.master, slave = pty.openpty()
@@ -701,6 +704,19 @@ class PosixTerminal:
         self.transcript += text
         self.screen.feed(text)
 
+    def _drain_master(self, window: float = 0.05) -> None:
+        while True:
+            readable, _, _ = select.select([self.master], [], [], window)
+            if not readable:
+                break
+            try:
+                chunk = os.read(self.master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            self.append(chunk.decode("utf-8", "replace"))
+
     def _read_until(
         self,
         matcher: Callable[..., bool],
@@ -711,6 +727,7 @@ class PosixTerminal:
         since: int = 0,
     ) -> None:
         deadline = time.monotonic() + timeout
+        early_exit: int | None = None
         while time.monotonic() < deadline:
             if matcher(needle, since=since):
                 return
@@ -723,10 +740,24 @@ class PosixTerminal:
                 if not chunk:
                     break
                 self.append(chunk.decode("utf-8", "replace"))
+            early_exit = self.process.poll()
+            if early_exit is not None:
+                self._drain_master(0.05)
+                break
         if not matcher(needle, since=since):
+            code = early_exit if early_exit is not None else self.process.poll()
+            state = f"exited {code}" if code is not None else f"still running after {timeout:.1f}s"
             raise Failure(
-                f"{what}: never saw {needle!r}\n--- rendered screen ---\n{self.screen.render()}"
-                f"\n--- transcript ---\n{self.transcript}"
+                f"{what}: never saw {needle!r}\n"
+                + format_failure_diagnostics(
+                    phase=what,
+                    state=state,
+                    cwd=self.cwd,
+                    home=self.home,
+                    runtime_dir=self.runtime_dir,
+                    rendered=self.screen.render(),
+                    transcript=self.transcript,
+                )
             )
 
     def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
@@ -796,7 +827,18 @@ class PosixTerminal:
                     self.append(chunk.decode("utf-8", "replace"))
                 return code
         self.process.kill()
-        raise Failure(f"process did not exit within {timeout}s\n--- transcript ---\n{self.transcript}")
+        raise Failure(
+            f"process did not exit within {timeout}s\n"
+            + format_failure_diagnostics(
+                phase="wait",
+                state=f"timed out after {timeout:.1f}s",
+                cwd=self.cwd,
+                home=self.home,
+                runtime_dir=self.runtime_dir,
+                rendered=self.screen.render(),
+                transcript=self.transcript,
+            )
+        )
 
     def close(self) -> None:
         if self.process.poll() is None:
@@ -826,6 +868,9 @@ class WindowsTerminal:
                 "pywinpty is not installed, so no ConPTY is available: "
                 f"{CONPTY_IMPORT_ERROR or 'import failed'}"
             )
+        self.cwd = cwd
+        self.home = env.get("HORON_HOME", "")
+        self.runtime_dir = env.get("HORON_AGENT_RUNTIME_DIR", "")
         self.transcript = ""
         self.screen = TerminalScreen(rows=40, cols=120)
         self._lock = threading.Lock()
@@ -864,6 +909,9 @@ class WindowsTerminal:
             with self._lock:
                 if matcher(needle, since=since):
                     return
+            if not self.process.isalive() or not self._reader.is_alive():
+                self._reader.join(timeout=0.5)
+                break
             time.sleep(0.05)
         with self._lock:
             if matcher(needle, since=since):
@@ -875,8 +923,16 @@ class WindowsTerminal:
         # first write. The console cannot tell them apart, the process can.
         state = "still running" if self.process.isalive() else f"exited {self.process.exitstatus!r}"
         raise Failure(
-            f"{what}: never saw {needle!r} (client {state})"
-            f"\n--- rendered screen ---\n{rendered}\n--- transcript ---\n{text}"
+            f"{what}: never saw {needle!r} (client {state})\n"
+            + format_failure_diagnostics(
+                phase=what,
+                state=f"client {state}",
+                cwd=self.cwd,
+                home=self.home,
+                runtime_dir=self.runtime_dir,
+                rendered=rendered,
+                transcript=text,
+            )
         )
 
     def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
@@ -908,9 +964,21 @@ class WindowsTerminal:
             # The client left before it could be typed at: say what it printed
             # and how it ended, which is the whole diagnosis on a runner whose
             # console dies with it.
+            self._reader.join(timeout=0.5)
+            with self._lock:
+                rendered = self.screen.render()
+                text = self.transcript
             raise Failure(
-                f"the client was gone before it could be typed at ({closed}; "
-                f"exitstatus={self.process.exitstatus})\n--- transcript ---\n{self.transcript}"
+                f"the client was gone before it could be typed at ({closed})\n"
+                + format_failure_diagnostics(
+                    phase="send",
+                    state=f"exitstatus={self.process.exitstatus!r}",
+                    cwd=self.cwd,
+                    home=self.home,
+                    runtime_dir=self.runtime_dir,
+                    rendered=rendered,
+                    transcript=text,
+                )
             ) from closed
 
     def wait(self, timeout: float) -> int:
@@ -925,8 +993,20 @@ class WindowsTerminal:
             time.sleep(0.05)
         self.close()
         with self._lock:
+            rendered = self.screen.render()
             text = self.transcript
-        raise Failure(f"process did not exit within {timeout}s\n--- transcript ---\n{text}")
+        raise Failure(
+            f"process did not exit within {timeout}s\n"
+            + format_failure_diagnostics(
+                phase="wait",
+                state=f"timed out after {timeout:.1f}s",
+                cwd=self.cwd,
+                home=self.home,
+                runtime_dir=self.runtime_dir,
+                rendered=rendered,
+                transcript=text,
+            )
+        )
 
     def close(self) -> None:
         try:
@@ -947,27 +1027,117 @@ def Terminal(argv: list[str], cwd: str, env: dict):
 # ---------------------------------------------------------------------------
 
 
-def prime_server(launch: Launch, cwd: str, env: dict) -> subprocess.Popen:
-    """Start the daemon the client needs and keep a handle on it.
+def read_file_tail(path: str, limit: int = 80) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return ""
+    return "".join(lines[-limit:]).strip()
+
+
+def windows_pipe_name(socket_path: str) -> str:
+    stem = "".join(ch for ch in os.path.splitext(os.path.basename(socket_path))[0]
+                   if ch.isalnum() or ch in "-_")[:32] or "horon-agent"
+    digest = hashlib.sha256(socket_path.replace("\\", "/").lower().encode()).hexdigest()
+    return "\\\\.\\pipe\\%s-%s" % (stem, digest[:16])
+
+
+def endpoint_ready(env: dict[str, str]) -> bool:
+    """Return True when the daemon's IPC endpoint accepts or signals readiness."""
+    socket_path = env.get("HORON_AGENT_SOCKET") or os.path.join(
+        env.get("HORON_AGENT_RUNTIME_DIR", ""), "horon-agent.sock"
+    )
+    if not socket_path:
+        return False
+    if POSIX:
+        if not os.path.exists(socket_path):
+            return False
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.settimeout(0.5)
+            probe.connect(socket_path)
+            return True
+        except OSError:
+            return False
+        finally:
+            probe.close()
+    import ctypes
+
+    pipe_name = windows_pipe_name(socket_path)
+    kernel32 = getattr(ctypes, "windll", None)
+    if kernel32 is None:
+        return False
+    if kernel32.kernel32.WaitNamedPipeW(pipe_name, 0) != 0:
+        return True
+    # ERROR_SEM_TIMEOUT (121) indicates the named pipe exists with busy instances.
+    return ctypes.GetLastError() == 121
+
+
+def wait_for_server_ready(
+    server: subprocess.Popen,
+    probe: Callable[[], bool],
+    stderr_path: str,
+    cwd: str,
+    home: str,
+    runtime_dir: str,
+    timeout: float = STARTUP_TIMEOUT,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        code = server.poll()
+        if code is not None:
+            stderr_tail = read_file_tail(stderr_path)
+            raise Failure(
+                f"[phase=prime_server] daemon exited early with status {code}"
+                + (f"\n--- daemon stderr ---\n{stderr_tail}" if stderr_tail else "")
+                + f"\n--- diagnostics ---\n{case_diagnostics(cwd, home, runtime_dir=runtime_dir)}"
+            )
+        if probe():
+            return
+        if time.monotonic() >= deadline:
+            server.terminate()
+            try:
+                server.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                server.kill()
+            stderr_tail = read_file_tail(stderr_path)
+            raise Failure(
+                f"[phase=prime_server] daemon endpoint did not become ready within {timeout:.1f}s"
+                + (f"\n--- daemon stderr ---\n{stderr_tail}" if stderr_tail else "")
+                + f"\n--- diagnostics ---\n{case_diagnostics(cwd, home, runtime_dir=runtime_dir)}"
+            )
+        time.sleep(0.05)
+
+
+def prime_server(launch: Launch, cwd: str, env: dict, timeout: float = STARTUP_TIMEOUT) -> subprocess.Popen:
+    """Start the daemon the client needs and poll its IPC endpoint until ready.
 
     The launcher is what starts the server on a terminal, but on Windows its
     console is gone before the client finishes, so the client is started
     directly and the server is started here with the documented `serve`
-    subcommand. The launcher's own piped run is not usable for this: it starts
-    the server and then waits on its own first-run work, and the case already
-    covers that path as the headless message check.
+    subcommand. Stderr is captured so early exits or bind failures report why
+    immediately instead of failing silently later.
     """
-    server = subprocess.Popen(
-        [launch.argv0, "serve"],
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    stderr_path = os.path.join(cwd, "prime-server-stderr.log")
+    with open(stderr_path, "w", encoding="utf-8", errors="replace") as stderr_handle:
+        server = subprocess.Popen(
+            [launch.argv0, "serve"],
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_handle,
+        )
+    wait_for_server_ready(
+        server,
+        lambda: endpoint_ready(env),
+        stderr_path,
+        cwd,
+        env.get("HORON_HOME", ""),
+        env.get("HORON_AGENT_RUNTIME_DIR", ""),
+        timeout=timeout,
     )
-    # The daemon binds its endpoint after it has read its settings; a pause
-    # saves a client that would otherwise dial before it is up.
-    time.sleep(5.0)
     return server
 
 
@@ -978,6 +1148,8 @@ def daemon_log_tail(home: str, limit: int = 60) -> str:
     place the daemon says what it did: whether it bound, which provider it
     loaded, and why a session was refused.
     """
+    if not home:
+        return "(no HORON_HOME set)"
     directory = os.path.join(home, "logs")
     try:
         names = sorted(name for name in os.listdir(directory) if name.endswith(".log"))
@@ -999,10 +1171,7 @@ def pipe_state(socket_path: str) -> str:
     """
     if POSIX:
         return "(unix socket, binding is a pathname)"
-    stem = "".join(ch for ch in os.path.splitext(os.path.basename(socket_path))[0]
-                   if ch.isalnum() or ch in "-_")[:32] or "horon-agent"
-    digest = hashlib.sha256(socket_path.replace("\\", "/").lower().encode()).hexdigest()
-    name = "\\\\.\\pipe\\%s-%s" % (stem, digest[:16])
+    name = windows_pipe_name(socket_path)
     try:
         # Opening read+write is what the launcher's probe does; the instance is
         # only taken for the instant this handle lives.
@@ -1012,9 +1181,9 @@ def pipe_state(socket_path: str) -> str:
         return f"{name}: {error}"
 
 
-def case_diagnostics(case_root: str, home: str) -> str:
+def case_diagnostics(case_root: str, home: str, runtime_dir: str | None = None) -> str:
     """Everything a launch that never finished leaves behind, for one message."""
-    run_dir = os.path.join(case_root, "run")
+    run_dir = runtime_dir or os.path.join(case_root, "run")
     try:
         listing = sorted(os.listdir(run_dir))
     except OSError as error:
@@ -1025,6 +1194,29 @@ def case_diagnostics(case_root: str, home: str) -> str:
         f"\nruntime dir {run_dir}: {listing}"
         f"\n--- daemon log ---\n{daemon_log_tail(home)}"
     )
+
+
+def format_failure_diagnostics(
+    *,
+    phase: str,
+    state: str,
+    cwd: str,
+    home: str,
+    runtime_dir: str = "",
+    rendered: str = "",
+    transcript: str = "",
+) -> str:
+    parts = [f"[phase={phase}] ({state})"]
+    if rendered:
+        parts.append(f"--- rendered screen ---\n{rendered}")
+    parts.append(f"--- transcript ---\n{transcript}")
+    if cwd:
+        stderr_tail = read_file_tail(os.path.join(cwd, "prime-server-stderr.log"))
+        if stderr_tail:
+            parts.append(f"--- prime-server stderr ---\n{stderr_tail}")
+    if cwd or home or runtime_dir:
+        parts.append(f"--- diagnostics ---\n{case_diagnostics(cwd, home, runtime_dir=runtime_dir)}")
+    return "\n".join(parts)
 
 
 def happy_path(launch: Launch, case_root: str, base_url: str) -> str:

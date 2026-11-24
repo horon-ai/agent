@@ -73,3 +73,21 @@ fn one_long_line_is_cut_to_what_a_preview_keeps() {
     let row = &build_rows(vec![item("call-5", "terminal", Some(&long))])[0];
     assert_eq!(row.output[0].chars().count(), 160);
 }
+
+#[test]
+fn a_terminal_row_skips_blank_tail_lines_while_preserving_order() {
+    let listed = build_rows(vec![item(
+        "call-6",
+        "terminal",
+        Some("older\none\n\ntwo\nthree\n   \nfour\n\n"),
+    )]);
+    assert_eq!(
+        listed[0].output,
+        vec![
+            "one".to_string(),
+            "two".to_string(),
+            "three".to_string(),
+            "four".to_string(),
+        ]
+    );
+}

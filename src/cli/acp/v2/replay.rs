@@ -116,14 +116,32 @@ fn row_id(message: &HistoryMessage, index: usize) -> String {
 
 /// Every replay update of `messages`, in order. `images` are the history's
 /// rendered images; those attached to a user prompt follow its text.
+#[cfg(test)]
 pub(crate) fn replay_updates(messages: &[HistoryMessage], images: &[RenderedImage], cwd: &Path) -> Vec<Value> {
-    walk_history(messages, images, cwd).0
+    replay_updates_with_a2ui(messages, images, cwd, false)
+}
+
+/// Replay stored history with A2UI negotiation flag governing whether A2UI payloads
+/// render as `EmbeddedResource` (`a2ui_enabled = true`) or readable text cards.
+pub(crate) fn replay_updates_with_a2ui(
+    messages: &[HistoryMessage],
+    images: &[RenderedImage],
+    cwd: &Path,
+    a2ui_enabled: bool,
+) -> Vec<Value> {
+    walk_history(messages, images, cwd, a2ui_enabled).0
 }
 
 /// The id state the last turn of `messages` ends in; `None` for a history
 /// with no turn. The same walk as [`replay_updates`], so the two never differ.
+#[cfg(test)]
 pub(crate) fn resume_position(messages: &[HistoryMessage]) -> Option<Position> {
-    walk_history(messages, &[], Path::new("/")).1.position
+    resume_position_with_a2ui(messages, false)
+}
+
+/// Position counterpart to [`replay_updates_with_a2ui`].
+pub(crate) fn resume_position_with_a2ui(messages: &[HistoryMessage], a2ui_enabled: bool) -> Option<Position> {
+    walk_history(messages, &[], Path::new("/"), a2ui_enabled).1.position
 }
 
 /// Whether row `index` started a turn. From the first marked row on, every
@@ -137,15 +155,28 @@ fn starts_turn(message: &HistoryMessage, index: usize, first_marked: Option<usiz
     }
 }
 
-fn walk_history(messages: &[HistoryMessage], images: &[RenderedImage], cwd: &Path) -> (Vec<Value>, Walk) {
+fn walk_history(
+    messages: &[HistoryMessage],
+    images: &[RenderedImage],
+    cwd: &Path,
+    a2ui_enabled: bool,
+) -> (Vec<Value>, Walk) {
     let first_marked = messages.iter().position(|message| message.turn_start);
     let mut walk = Walk::default();
     let mut updates = Vec::new();
     let mut user_prompts = 0usize;
+    let mut pending_a2ui: Vec<super::super::a2ui::PendingA2uiMessage> = Vec::new();
     for (index, message) in messages.iter().enumerate() {
         let starts = starts_turn(message, index, first_marked);
         match message.role.as_str() {
             "user" => {
+                flush_pending_a2ui_v2(
+                    &mut updates,
+                    &mut walk,
+                    &mut pending_a2ui,
+                    &format!("replay-a2ui-{index}"),
+                    a2ui_enabled,
+                );
                 let id = row_id(message, index);
                 if starts {
                     walk.start(&id);
@@ -165,17 +196,35 @@ fn walk_history(messages: &[HistoryMessage], images: &[RenderedImage], cwd: &Pat
             "assistant" => {
                 let ids = walk.open_message(&row_id(message, index));
                 let (mut thought, mut agent) = (false, false);
-                for part in split_reasoning(&message.content) {
-                    match part {
-                        Part::Thought(text) => {
-                            walk.thought.push(json!({ "type": "text", "text": text }));
-                            thought = true;
-                        }
-                        Part::Text(text) => {
-                            walk.agent.push(json!({ "type": "text", "text": text }));
-                            agent = true;
+                let (text_to_split, matched_a2ui) = if pending_a2ui.is_empty() {
+                    (message.content.clone(), Vec::new())
+                } else {
+                    let (remaining, matched) =
+                        super::super::a2ui::split_assistant_text_and_pending_a2ui(&message.content, &mut pending_a2ui);
+                    if a2ui_enabled {
+                        (remaining, matched)
+                    } else {
+                        (message.content.clone(), Vec::new())
+                    }
+                };
+                if !text_to_split.is_empty() {
+                    for part in split_reasoning(&text_to_split) {
+                        match part {
+                            Part::Thought(text) => {
+                                walk.thought.push(json!({ "type": "text", "text": text }));
+                                thought = true;
+                            }
+                            Part::Text(text) => {
+                                walk.agent.push(json!({ "type": "text", "text": text }));
+                                agent = true;
+                            }
                         }
                     }
+                }
+                if !matched_a2ui.is_empty() {
+                    walk.agent
+                        .extend(super::super::a2ui::embedded_resources_for_pending(&matched_a2ui));
+                    agent = true;
                 }
                 if thought {
                     updates.push(whole_message(MessageKind::AgentThought, &ids.thought(), &walk.thought));
@@ -184,25 +233,79 @@ fn walk_history(messages: &[HistoryMessage], images: &[RenderedImage], cwd: &Pat
                     updates.push(whole_message(MessageKind::AgentMessage, &ids.agent(), &walk.agent));
                 }
             }
-            "tool" => {
-                walk.tool_round();
-                if let Some(call) = &message.tool_data {
+            "tool" => match &message.tool_data {
+                Some(call) if super::super::a2ui::is_a2ui_tool_name(&call.name) => {
+                    if let Some(entry) =
+                        super::super::a2ui::extract_replay_a2ui_message(&call.id, &call.input, &message.content)
+                    {
+                        pending_a2ui.push(entry);
+                    } else if !a2ui_enabled {
+                        walk.tool_round();
+                        updates.push(tool_update(call, &message.content, message.verdict, cwd));
+                    }
+                }
+                Some(call) => {
+                    walk.tool_round();
                     updates.push(tool_update(call, &message.content, message.verdict, cwd));
                 }
-            }
+                None => {
+                    walk.tool_round();
+                }
+            },
             // A system row is never a message. One that started a turn (an
             // `[auto]` or system turn) keys that turn's ids; a reminder inside
             // a turn and the compacted-history notice (no stored id) start
             // nothing. Background task notes arrive inside a running turn.
             "system" => {
                 if let (true, Some(id)) = (starts, &message.message_id) {
+                    flush_pending_a2ui_v2(
+                        &mut updates,
+                        &mut walk,
+                        &mut pending_a2ui,
+                        &format!("replay-a2ui-{index}"),
+                        a2ui_enabled,
+                    );
                     walk.start(id);
                 }
             }
             _ => {}
         }
     }
+    flush_pending_a2ui_v2(
+        &mut updates,
+        &mut walk,
+        &mut pending_a2ui,
+        &format!("replay-a2ui-{}", messages.len()),
+        a2ui_enabled,
+    );
     (updates, walk)
+}
+
+fn flush_pending_a2ui_v2(
+    updates: &mut Vec<Value>,
+    walk: &mut Walk,
+    pending_a2ui: &mut Vec<super::super::a2ui::PendingA2uiMessage>,
+    fallback_id: &str,
+    a2ui_enabled: bool,
+) {
+    if pending_a2ui.is_empty() {
+        return;
+    }
+    let drained = std::mem::take(pending_a2ui);
+    let ids = walk.open_message(fallback_id);
+    if a2ui_enabled {
+        walk.agent
+            .extend(super::super::a2ui::embedded_resources_for_pending(&drained));
+    } else {
+        for entry in drained {
+            if !entry.expected_card.is_empty() {
+                walk.agent.push(json!({ "type": "text", "text": entry.expected_card }));
+            }
+        }
+    }
+    if !walk.agent.is_empty() {
+        updates.push(whole_message(MessageKind::AgentMessage, &ids.agent(), &walk.agent));
+    }
 }
 
 /// One stored tool call as a completed upsert that creates it on a client that

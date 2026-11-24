@@ -126,6 +126,8 @@ pub struct TurnResult {
     pub tool_calls: Vec<ToolCall>,
     /// Usage from the latest provider call in this turn, not a sum of calls.
     pub usage: Option<Usage>,
+    /// A2UI v1.0 envelopes emitted during this turn when `a2ui_v1` is active.
+    pub a2ui_envelopes: Vec<crate::a2ui::A2uiEnvelopeEvent>,
 }
 
 /// One assistant text message, excluding interleaved reasoning.

@@ -517,3 +517,36 @@ fn api_stdio_accepts_alias_and_daemon_socket_but_not_api_socket() {
         );
     }
 }
+
+#[test]
+fn run_parses_a2ui_flag_and_repeatable_catalogs() {
+    let args = Args::try_parse_from([
+        "horon-agent",
+        "run",
+        "--a2ui",
+        "--a2ui-catalog",
+        "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+        "--a2ui-catalog",
+        "https://example.com/custom.json",
+        "Build status card",
+    ])
+    .expect("parse run --a2ui with catalogs");
+    match args.command {
+        Some(Command::Run {
+            model_overrides,
+            message,
+            ..
+        }) => {
+            assert!(model_overrides.a2ui);
+            assert_eq!(
+                model_overrides.a2ui_catalog,
+                vec![
+                    "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+                    "https://example.com/custom.json",
+                ]
+            );
+            assert_eq!(message, "Build status card");
+        }
+        other => panic!("expected Run command, got {other:?}"),
+    }
+}

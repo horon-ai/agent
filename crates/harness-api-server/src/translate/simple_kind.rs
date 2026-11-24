@@ -6,6 +6,8 @@ pub(crate) enum SimpleKind {
     RuntimeCommand,
     /// Awaiting `package_control_result`.
     PackageControl,
+    /// Awaiting `done` for `configure_a2ui`.
+    ConfigureA2ui,
     Detach,
     Tools,
     ToolControl,

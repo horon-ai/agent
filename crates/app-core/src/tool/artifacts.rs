@@ -72,9 +72,15 @@ fn preview(
     if columns != 0 && (!has_wide_line(text, columns) || text.contains(ARTIFACT_SCHEME)) {
         columns = 0;
     }
-    if (columns != 0 || may_raise_budget) && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok() {
-        columns = 0;
-        over_budget = text.len() > budget_bytes;
+    if columns != 0 || may_raise_budget {
+        let looks_json = matches!(
+            text.trim_start().as_bytes().first().copied(),
+            Some(b'{' | b'[' | b'"' | b't' | b'f' | b'n' | b'-' | b'0'..=b'9')
+        );
+        if looks_json && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok() {
+            columns = 0;
+            over_budget = text.len() > budget_bytes;
+        }
     }
     if !over_budget && columns == 0 {
         return None;

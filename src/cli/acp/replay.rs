@@ -25,9 +25,11 @@ pub(super) fn replay_updates(
 ) -> Vec<Value> {
     let mut updates = Vec::new();
     let mut user_prompts = 0usize;
+    let mut pending_a2ui: Vec<a2ui::PendingA2uiMessage> = Vec::new();
     for (index, message) in messages.iter().enumerate() {
         match message.role.as_str() {
             "user" => {
+                flush_pending_a2ui(&mut updates, &mut pending_a2ui, index, options.a2ui);
                 let message_id = format!("replay-{index}");
                 updates.push(chunk("user_message_chunk", &message_id, text_block(&message.content)));
                 for image in images.iter().filter(|image| {
@@ -39,15 +41,32 @@ pub(super) fn replay_updates(
                 user_prompts += 1;
             }
             "assistant" => {
-                for part in split_reasoning(&message.content) {
-                    let (update, kind, text) = match part {
-                        Part::Thought(text) => ("agent_thought_chunk", "thought", text),
-                        Part::Text(text) => ("agent_message_chunk", "msg", text),
-                    };
-                    updates.push(chunk(update, &format!("replay-{index}-{kind}"), text_block(&text)));
+                let message_id = format!("replay-{index}-msg");
+                if pending_a2ui.is_empty() {
+                    emit_assistant_text_parts(&mut updates, index, &message.content);
+                } else if options.a2ui {
+                    let (remaining_text, matched) =
+                        a2ui::split_assistant_text_and_pending_a2ui(&message.content, &mut pending_a2ui);
+                    if !remaining_text.is_empty() {
+                        emit_assistant_text_parts(&mut updates, index, &remaining_text);
+                    }
+                    for resource in a2ui::embedded_resources_for_pending(&matched) {
+                        updates.push(chunk("agent_message_chunk", &message_id, resource));
+                    }
+                } else {
+                    let (_remaining, _matched) =
+                        a2ui::split_assistant_text_and_pending_a2ui(&message.content, &mut pending_a2ui);
+                    emit_assistant_text_parts(&mut updates, index, &message.content);
                 }
             }
             "tool" => match &message.tool_data {
+                Some(call) if a2ui::is_a2ui_tool_name(&call.name) => {
+                    if let Some(entry) = a2ui::extract_replay_a2ui_message(&call.id, &call.input, &message.content) {
+                        pending_a2ui.push(entry);
+                    } else if !options.a2ui {
+                        tool_updates(&mut updates, call, &message.content, message.verdict, options);
+                    }
+                }
                 Some(call) => tool_updates(&mut updates, call, &message.content, message.verdict, options),
                 None => updates.push(agent_text(index, &message.content)),
             },
@@ -63,7 +82,46 @@ pub(super) fn replay_updates(
             _ => updates.push(agent_text(index, &message.content)),
         }
     }
+    flush_pending_a2ui(&mut updates, &mut pending_a2ui, messages.len(), options.a2ui);
     updates
+}
+
+fn emit_assistant_text_parts(updates: &mut Vec<Value>, index: usize, text: &str) {
+    for part in split_reasoning(text) {
+        let (update, kind, part_text) = match part {
+            Part::Thought(part_text) => ("agent_thought_chunk", "thought", part_text),
+            Part::Text(part_text) => ("agent_message_chunk", "msg", part_text),
+        };
+        updates.push(chunk(update, &format!("replay-{index}-{kind}"), text_block(&part_text)));
+    }
+}
+
+fn flush_pending_a2ui(
+    updates: &mut Vec<Value>,
+    pending_a2ui: &mut Vec<a2ui::PendingA2uiMessage>,
+    index: usize,
+    a2ui_enabled: bool,
+) {
+    if pending_a2ui.is_empty() {
+        return;
+    }
+    let drained = std::mem::take(pending_a2ui);
+    let message_id = format!("replay-{index}-a2ui-msg");
+    if a2ui_enabled {
+        for resource in a2ui::embedded_resources_for_pending(&drained) {
+            updates.push(chunk("agent_message_chunk", &message_id, resource));
+        }
+    } else {
+        for entry in drained {
+            if !entry.expected_card.is_empty() {
+                updates.push(chunk(
+                    "agent_message_chunk",
+                    &message_id,
+                    text_block(&entry.expected_card),
+                ));
+            }
+        }
+    }
 }
 
 /// A completed call: the call, the plan a todo write showed, then the final

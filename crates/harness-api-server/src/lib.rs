@@ -54,8 +54,8 @@ pub(crate) use bridge::{
 
 use anyhow::{Context, Result};
 use horon_agent_harness_api::{
-    API_VERSION_MAJOR, ApiEvent, CAPABILITY_BACKGROUND_OUTPUT_V1, CAPABILITY_LIVE_TODO_V1, ErrorCode,
-    OPT_IN_EVENT_CAPABILITIES, ServerFrame,
+    API_VERSION_MAJOR, ApiEvent, CAPABILITY_A2UI_V1, CAPABILITY_BACKGROUND_OUTPUT_V1, CAPABILITY_LIVE_TODO_V1,
+    ErrorCode, OPT_IN_EVENT_CAPABILITIES, ServerFrame,
 };
 use serde_json::Value;
 use std::path::PathBuf;
@@ -150,6 +150,7 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1,
     horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1,
     horon_agent_harness_api::CAPABILITY_CONSULT_FORK_V1,
+    CAPABILITY_A2UI_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -384,6 +385,7 @@ where
     let runtime_commands_supported = daemon_caps.iter().any(|cap| cap == "runtime_commands");
     let session_tools_supported = daemon_caps.iter().any(|cap| cap == "session_tools");
     let consult_fork_supported = daemon_caps.iter().any(|cap| cap == "consult_fork_v1");
+    let a2ui_supported = daemon_caps.iter().any(|cap| cap == CAPABILITY_A2UI_V1);
     let soft_interrupt_ids_supported = daemon_caps.iter().any(|cap| cap == "soft_interrupt_ids");
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
@@ -404,6 +406,13 @@ where
             && requested_events.is_some_and(|requested| requested.iter().any(|cap| cap.as_str() == Some(capability))))
         .then_some(capability)
     });
+    let default_a2ui = match translate::a2ui::parse_optional_capabilities(hello.get("a2ui"), reply_to) {
+        Ok(caps) => caps,
+        Err(frame) => {
+            write_json_line(&mut write_half, &frame).await?;
+            return Ok(());
+        }
+    };
     let hello_ok = ServerFrame::reply(
         reply_to,
         ApiEvent::HelloOk {
@@ -418,6 +427,7 @@ where
                 // `consult_fork_v1`; drop them when the connected daemon lacks support.
                 .filter(|cap| *cap != horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1 || runtime_commands_supported)
                 .filter(|cap| *cap != horon_agent_harness_api::CAPABILITY_CONSULT_FORK_V1 || consult_fork_supported)
+                .filter(|cap| *cap != CAPABILITY_A2UI_V1 || a2ui_supported)
                 .map(str::to_string)
                 .chain(user_connections_supported.then(|| "session_connections".to_string()))
                 .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))
@@ -446,6 +456,8 @@ where
     state.durable_runtime_api_supported = durable_runtime_api_supported;
     state.cancellable_work_api_supported = cancellable_work_api_supported;
     state.session_fork_at_supported = session_fork_at_supported;
+    state.a2ui_supported = a2ui_supported;
+    state.default_a2ui = default_a2ui;
     // The daemon, and therefore this capability, is one per bridge process, so
     // the forwarding module records it instead of every `BridgeState` site.
     translate::effective_settings::set_supported(effective_settings_api_supported);

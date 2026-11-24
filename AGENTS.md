@@ -321,6 +321,33 @@ project-local MCP config is skipped unless its digest was trusted, and
 
 ## Build, run, verify
 
+### CI-first local verification (takes precedence for agent sessions)
+
+GitHub Actions owns full verification for this repository. Where the reference
+commands or table below conflict with this subsection, these rules win:
+
+1. **GitHub CI runs full checks.** Never run workspace-wide `cargo clippy`,
+   `cargo test`, `cargo doc`, cross-OS checks (`cargo xwin`, `justrust`), or full
+   `scripts/ci/check_all.sh` locally; check PR CI (`scripts/ci/run_warnings.py`
+   at 0 warnings).
+2. **Scoped local checks.** Run only single-crate checks (`cargo check --locked
+   -p <crate>`, one targeted test) or non-Cargo gates (`actionlint`,
+   `check_docs_links.py`), plus minimal (1 to 2) scoped before/after
+   measurements when an optimization needs local evidence.
+3. **`build-lock` discipline.** Serialize heavy local Cargo work with
+   `~/.local/bin/build-lock`; allow one waiter per session (no polling loops or
+   duplicate `hc wait` waiters; clear stale duplicates). Skip waiting when load
+   per core < 2, and defer to CI under high contention.
+4. **PR-first loop.** Open or update the PR first; if CI fails, reproduce only
+   the single failing test locally. Merge only when green with 0 warnings.
+5. **Hard test bounds.** Run local tests with a hard timeout (e.g., 90s) and
+   `-- --test-threads=1` so hung tests never hold `build-lock`.
+6. **Adopted 2026-11-24** per owner directive after shared MacBook `build-lock`
+   queues stalled concurrent sessions.
+
+Reference commands and pre-push gate table (run by CI or selectively on a single
+touched component per the rules above):
+
 ```bash
 cargo build -p horon-agent
 cargo build -p horon-tui
@@ -330,7 +357,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-Run before pushing, by what the change touches:
+CI gates and optional manual commands by changed area:
 
 |Change|Command|
 |---|---|

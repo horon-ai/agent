@@ -859,6 +859,18 @@ pub enum ApiEvent {
     /// client can tell "never installed" from "removed".
     PackageControl { receipt: crate::PackageControlReceipt },
 
+    /// Validated A2UI v1.0 server-to-client envelope emitted by the assistant.
+    ///
+    /// Delivered only to clients that requested `a2ui_v1` in `hello.event_capabilities`.
+    A2uiEnvelope {
+        session_id: String,
+        tool_call_id: String,
+        sequence: u32,
+        envelope: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fallback_text: Option<String>,
+    },
+
     /// Forward-compatibility catch-all: clients must skip this silently.
     #[serde(other)]
     Unknown,
@@ -885,6 +897,7 @@ impl ApiEvent {
             Self::TodoChanged { .. } => Some(crate::CAPABILITY_LIVE_TODO_V1),
             Self::EffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
             Self::PackageControl { .. } => Some(crate::CAPABILITY_PACKAGE_CONTROL_V1),
+            Self::A2uiEnvelope { .. } => Some(crate::CAPABILITY_A2UI_V1),
             _ => None,
         }
     }

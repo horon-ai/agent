@@ -735,6 +735,37 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 
 `todo_edit_v1`은 `todo_state`에 버전 식별자를 추가하고 연결된 세션에서 `set_todo_status`를 허용합니다. `session_id`, `todo_id`, `expected_revision`과 바꿀 `status`를 보냅니다. 데몬은 버전 식별자가 일치할 때만 저장합니다. `todo_edit_result`에는 `applied`, 현재 목록과 버전 식별자, 최신 목록이 있으면 `stale_revision`이 들어갑니다. 저장에 성공하면 기존 `todo_changed` 이벤트로 클라이언트에 알립니다.
 
+## A2UI v1.0 표면(프로토콜 1.32)
+
+하네스 API는 주 버전 1을 유지하고 부 버전 32로 올랐습니다. 여기의 모든 표면은 **추가형이며 선택 참여(opt-in)** 입니다. `a2ui_v1`을 협상하지 않은 클라이언트는 이전과 완전히 같은 도구 목록, 시스템 프롬프트 바이트, 와이어 프레임을 유지합니다.
+
+### 핸드셰이크와 세션 기능
+
+연결에서 아웃바운드 `a2ui_envelope` 이벤트를 받으려면 `hello.event_capabilities`에 `a2ui_v1`을 넣습니다. 선택적으로 `hello`, `create_session`, `attach_session`에 `a2ui` 렌더러 기능(`A2uiSessionCapabilities`: `version`, `supported_catalog_ids`, `accepts_inline_catalogs`)을 선언합니다. 생략하면 데몬은 그 세션에 `a2ui` 도구를 등록하지 않으므로 프롬프트 캐시 접두사가 변하지 않습니다.
+
+```json
+{ "v": 1, "id": 1, "req": "hello", "version": 1, "client": "my-ui", "event_capabilities": ["a2ui_v1"], "a2ui": { "version": "1.0", "supported_catalog_ids": ["https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"], "accepts_inline_catalogs": false } }
+```
+
+| 기능 / 프레임 | 방향 | 필수 / 게이트 | 뜻 |
+| --- | --- | --- | --- |
+| `hello.event_capabilities` (`a2ui_v1`) | 클라이언트 -> 브리지 | 선택 참여 | 연결에서 `a2ui_envelope` 이벤트 전달 허용 |
+| `hello.a2ui`, `create_session.a2ui`, `attach_session.a2ui` | 클라이언트 -> 브리지 | `a2ui_v1` | 선언한 카탈로그로 기능 게이트된 `a2ui` 도구를 활성화 |
+| `configure_a2ui` | 클라이언트 -> 브리지 | `a2ui_v1` | 연결된 세션의 A2UI 렌더러 기능을 갱신하거나 끔(`capabilities: null`) |
+| `a2ui_event` | 클라이언트 -> 브리지 | `a2ui_v1` | 검증된 클라이언트-에이전트 `action`, `callAgentFunction`, `error` 봉투를 전달 |
+| `a2ui_envelope` | 브리지 -> 클라이언트 | `a2ui_v1` | 검증된 `agent_to_renderer` 봉투 한 건(`session_id`, `tool_call_id`, `sequence`, `envelope`, `fallback_text`) 스트리밍 |
+
+### `configure_a2ui`와 `a2ui_event`
+
+```json
+{ "v": 1, "id": 31, "req": "configure_a2ui", "session_id": "session_...", "capabilities": { "version": "1.0", "supported_catalog_ids": ["https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"], "accepts_inline_catalogs": false } }
+{ "v": 1, "id": 32, "req": "a2ui_event", "session_id": "session_...", "envelope": { "version": "1.0", "action": { "name": "confirm", "surfaceId": "main" } }, "data_model": { "step": 1 } }
+```
+
+- 두 요청 모두 `a2ui_v1`과 `session_id` 연결이 필요하며 수락되면 `{ "ev": "ok" }`를 응답합니다.
+- 잘못된 봉투, 금지된 컴포넌트나 URI, 한도 초과 페이로드(256 KiB 초과 또는 깊이 32 초과), 빈 식별자는 모델 루프에 닿기 전에 `invalid_request`로 거절됩니다.
+- 세 SDK는 `configure_a2ui` / `configureA2ui`, `send_a2ui_event` / `sendA2uiEvent`, 연결·생성·연결 재개 옵션의 `a2ui` 필드, `TurnResult.a2ui_envelopes` / `a2uiEnvelopes` (`A2uiEnvelopeEvent`)를 제공합니다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두
@@ -1179,6 +1210,7 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
 - 요청 정의: `crates/harness-api/src/requests.rs`의 `GetRuntimeState`, `ApplyControl`, `GetControlReceipt`, `GetSnapshot`, `AskResponse.answer_id`, 그리고 같은 파일의 `approval_ack`·`failover_ack` 요청(`ApprovalAck`·`FailoverAck`)
 - 이벤트 정의: `crates/harness-api/src/events.rs`의 `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary`, `ControlReceipt`, 그리고 같은 파일의 `approval_ack`·`failover_ack` 이벤트
 - 구현: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
-- 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1`
-- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
+- 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1`, `CAPABILITY_A2UI_V1`
+- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 32`
+- A2UI 표면과 브리지 변환: `crates/harness-api/src/requests.rs`의 `ConfigureA2ui`·`A2uiEvent`, `crates/harness-api/src/events.rs`의 `A2uiEnvelope`, `crates/tool-types/src/a2ui.rs`의 `A2uiSessionCapabilities`, `crates/harness-api-server/src/translate/a2ui.rs`의 브리지 변환
 - `[messages]` 모드: 요청 `GetMessageModes`는 `crates/harness-api/src/requests.rs`, 응답 `MessageModes`는 `crates/harness-api/src/events.rs`에 있고, 브리지가 `crates/harness-api-server/src/message_modes.rs`에서 직접 답한다

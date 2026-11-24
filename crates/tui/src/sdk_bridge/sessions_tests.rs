@@ -276,6 +276,7 @@ fn the_dial_settings_survive_the_first_connection_taking_the_options() {
         ensure_runtime: false,
         supports_user_response: true,
         supports_ask_requests: false,
+        a2ui: None,
     };
     let again = Dial::of(&loaded).options();
     assert_eq!(again.socket_path, loaded.socket_path);
@@ -292,6 +293,7 @@ fn the_dial_settings_survive_the_first_connection_taking_the_options() {
         ensure_runtime: true,
         supports_user_response: false,
         supports_ask_requests: true,
+        a2ui: None,
     };
     let again = Dial::of(&bare).options();
     assert_eq!(again.socket_path, bare.socket_path);

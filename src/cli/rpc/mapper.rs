@@ -17,7 +17,16 @@ use super::frame::{self, AssistantParts};
 enum Block {
     Thinking(String),
     Text(String),
-    ToolCall { id: String, name: String, args: String },
+    ToolCall {
+        id: String,
+        name: String,
+        args: String,
+    },
+    A2ui {
+        tool_call_id: String,
+        envelopes: Vec<(u32, Value)>,
+        fallback_text: Option<String>,
+    },
 }
 
 /// A tool call whose execution frames wait for the assistant `message_end`.
@@ -45,6 +54,7 @@ pub(super) struct Turn {
     provider: String,
     model: String,
     message_seq: u64,
+    a2ui_enabled: bool,
     assistant: Option<Assistant>,
     blocks: Vec<Block>,
     started_blocks: HashSet<usize>,
@@ -55,11 +65,12 @@ pub(super) struct Turn {
 }
 
 impl Turn {
-    pub(super) fn new(provider: String, model: String, message_seq: u64) -> Self {
+    pub(super) fn new(provider: String, model: String, message_seq: u64, a2ui_enabled: bool) -> Self {
         Self {
             provider,
             model,
             message_seq,
+            a2ui_enabled,
             assistant: None,
             blocks: Vec::new(),
             started_blocks: HashSet::new(),
@@ -68,6 +79,14 @@ impl Turn {
             turn_open: false,
             messages: Vec::new(),
         }
+    }
+
+    pub(super) fn set_a2ui_enabled(&mut self, enabled: bool) {
+        self.a2ui_enabled = enabled;
+    }
+
+    pub(super) fn messages(&self) -> &[Value] {
+        &self.messages
     }
 
     /// The last message id handed out, so the next turn keeps counting up.
@@ -137,6 +156,13 @@ impl Turn {
                 Vec::new()
             }
             ServerEvent::MessageEnd { stop_reason } => self.close(stop_reason.as_deref()),
+            ServerEvent::A2uiEnvelope {
+                session_id,
+                tool_call_id,
+                sequence,
+                envelope,
+                fallback_text,
+            } => self.a2ui_envelope(session_id, tool_call_id, sequence, envelope, fallback_text),
             ServerEvent::SessionRenamed { session_id, title, .. } => vec![json!({
                 "type": "session_info_update",
                 "sessionId": session_id,
@@ -482,6 +508,24 @@ impl Turn {
         if self.assistant.is_none() {
             return Vec::new();
         }
+        for block in &mut self.blocks {
+            if let Block::A2ui {
+                tool_call_id,
+                fallback_text,
+                ..
+            } = block
+                && fallback_text.as_deref().is_none_or(|text| text.trim().is_empty())
+                && let Some(arg_fallback) = self
+                    .executions
+                    .iter()
+                    .find(|execution| execution.tool_call_id == *tool_call_id)
+                    .and_then(|execution| execution.args.get("fallback_text").and_then(Value::as_str))
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+            {
+                *fallback_text = Some(arg_fallback.to_string());
+            }
+        }
         let blocks: Vec<Value> = self.blocks.iter().map(block_json).collect();
         let has_tool_call = blocks
             .iter()
@@ -563,6 +607,69 @@ impl Turn {
         frames
     }
 
+    fn a2ui_envelope(
+        &mut self,
+        session_id: String,
+        tool_call_id: String,
+        sequence: u32,
+        envelope: Value,
+        fallback_text: Option<String>,
+    ) -> Vec<Value> {
+        if !self.a2ui_enabled {
+            return Vec::new();
+        }
+        let update = frame::a2ui_update(
+            &session_id,
+            &tool_call_id,
+            sequence,
+            &envelope,
+            fallback_text.as_deref(),
+        );
+        if self.assistant.is_some() {
+            self.push_a2ui_block(&tool_call_id, sequence, envelope, fallback_text);
+            return vec![update];
+        }
+        if append_a2ui_to_last_assistant_message(
+            &mut self.messages,
+            &tool_call_id,
+            sequence,
+            &envelope,
+            fallback_text.as_deref(),
+        ) {
+            return vec![update];
+        }
+        let mut frames = self.ensure_open();
+        self.push_a2ui_block(&tool_call_id, sequence, envelope, fallback_text);
+        frames.push(update);
+        frames
+    }
+
+    fn push_a2ui_block(&mut self, tool_call_id: &str, sequence: u32, envelope: Value, fallback_text: Option<String>) {
+        for block in &mut self.blocks {
+            if let Block::A2ui {
+                tool_call_id: existing_id,
+                envelopes,
+                fallback_text: existing_fallback,
+            } = block
+                && existing_id == tool_call_id
+            {
+                upsert_ordered_envelope(envelopes, sequence, envelope);
+                if existing_fallback.is_none()
+                    && let Some(text) = fallback_text.filter(|t| !t.trim().is_empty())
+                {
+                    *existing_fallback = Some(text);
+                }
+                return;
+            }
+        }
+        let clean_fallback = fallback_text.filter(|t| !t.trim().is_empty());
+        self.blocks.push(Block::A2ui {
+            tool_call_id: tool_call_id.to_string(),
+            envelopes: vec![(sequence, envelope)],
+            fallback_text: clean_fallback,
+        });
+    }
+
     fn current_tool_id(&self) -> Option<String> {
         self.blocks.iter().rev().find_map(|block| match block {
             Block::ToolCall { id, .. } => Some(id.clone()),
@@ -583,7 +690,65 @@ fn block_json(block: &Block) -> Value {
         Block::Thinking(text) => frame::thinking_block(text),
         Block::Text(text) => frame::text_block(text),
         Block::ToolCall { id, name, args } => frame::tool_call_block(id, name, parse_arguments(args)),
+        Block::A2ui {
+            envelopes,
+            fallback_text,
+            ..
+        } => {
+            let ordered: Vec<Value> = envelopes.iter().map(|(_, env)| env.clone()).collect();
+            frame::a2ui_block(&ordered, fallback_text.as_deref())
+        }
     }
+}
+
+fn upsert_ordered_envelope(envelopes: &mut Vec<(u32, Value)>, sequence: u32, envelope: Value) {
+    if let Some((_, slot)) = envelopes.iter_mut().find(|(seq, _)| *seq == sequence) {
+        *slot = envelope;
+        return;
+    }
+    envelopes.push((sequence, envelope));
+    envelopes.sort_by_key(|(seq, _)| *seq);
+}
+
+fn append_a2ui_to_last_assistant_message(
+    messages: &mut [Value],
+    tool_call_id: &str,
+    _sequence: u32,
+    envelope: &Value,
+    fallback_text: Option<&str>,
+) -> bool {
+    let Some(assistant) = messages.iter_mut().rev().find(|msg| {
+        msg.get("role").and_then(Value::as_str) == Some("assistant")
+            && msg.get("content").and_then(Value::as_array).is_some_and(|content| {
+                content.iter().any(|block| {
+                    block.get("type").and_then(Value::as_str) == Some("toolCall")
+                        && block.get("id").and_then(Value::as_str) == Some(tool_call_id)
+                })
+            })
+    }) else {
+        return false;
+    };
+    let Some(content) = assistant.get_mut("content").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    if let Some(a2ui) = content
+        .iter_mut()
+        .find(|block| block.get("type").and_then(Value::as_str) == Some("a2ui"))
+    {
+        if let Some(arr) = a2ui.get_mut("envelopes").and_then(Value::as_array_mut)
+            && !arr.iter().any(|existing| existing == envelope)
+        {
+            arr.push(envelope.clone());
+        }
+        if a2ui.get("fallbackText").is_none()
+            && let Some(text) = fallback_text.filter(|t| !t.trim().is_empty())
+        {
+            a2ui["fallbackText"] = Value::String(text.to_string());
+        }
+        return true;
+    }
+    content.push(frame::a2ui_block(std::slice::from_ref(envelope), fallback_text));
+    true
 }
 
 fn parse_arguments(args: &str) -> Value {

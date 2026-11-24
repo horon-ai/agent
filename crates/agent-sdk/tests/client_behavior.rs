@@ -336,7 +336,7 @@ fn ga_runtime_and_file_methods_map_requests_and_typed_replies() {
 fn out_of_order_replies_reach_the_right_waiter() {
     let client = fake_harness(|frame, writer| match &frame.request {
         // Delay the first request's reply so the second overtakes it.
-        ApiRequest::AttachSession { session_id } => {
+        ApiRequest::AttachSession { session_id, .. } => {
             let id = session_id.clone();
             std::thread::sleep(Duration::from_millis(120));
             reply(frame, ApiEvent::Attached { session: session(&id) }, writer);
@@ -1363,12 +1363,12 @@ fn create_session_options_preserve_system_prompt_wire_values() {
         Some("Review precisely.\nKeep Unicode: λ".to_string()),
         Some(String::new()),
     ] {
-        let created = client
-            .create_session_with_options(CreateSessionOptions {
-                working_dir: Some("/project".into()),
-                system_prompt: prompt.clone(),
-            })
-            .expect("create session");
+        let opts = CreateSessionOptions {
+            working_dir: Some("/project".into()),
+            system_prompt: prompt.clone(),
+            a2ui: None,
+        };
+        let created = client.create_session_with_options(opts).expect("create session");
         assert_eq!(created.session_id, "created");
         let wire = rx.recv_timeout(Duration::from_secs(5)).expect("captured frame");
         assert_eq!(wire["req"], "create_session");

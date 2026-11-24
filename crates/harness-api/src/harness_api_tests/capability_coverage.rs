@@ -44,6 +44,7 @@ use Disposition::{ClientInternal, Covered};
 ///
 /// Sorted by name so additions produce clean diffs.
 const LEDGER: &[(&str, Disposition)] = &[
+    ("A2uiEvent", Covered),
     ("ApplyControl", Covered),
     ("ApprovalAck", Covered),
     ("ArchiveSession", Covered),
@@ -61,6 +62,7 @@ const LEDGER: &[(&str, Disposition)] = &[
     // The ACP adapter's own reply channel for questions it renders itself.
     ("ClientResponse", ClientInternal),
     ("Compact", Covered),
+    ("ConfigureA2ui", Covered),
     // ACP session/new and session/set_mode semantics.
     ("ConfigureSessionMcp", ClientInternal),
     // Debug socket only.
@@ -290,6 +292,7 @@ fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
         "todo_edit_v1",
         "turn_retry_v1",
         "consult_fork_v1",
+        "a2ui_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();
     assert_eq!(
@@ -353,6 +356,15 @@ fn every_gated_request_names_a_defined_capability() {
             session_id: "s1".into(),
             boundary_message_id: "message-1".into(),
         },
+        ApiRequest::ConfigureA2ui {
+            session_id: "s1".into(),
+            capabilities: None,
+        },
+        ApiRequest::A2uiEvent {
+            session_id: "s1".into(),
+            envelope: serde_json::json!({"version": "v0.9"}),
+            data_model: None,
+        },
     ];
     let mut gated = 0;
     for request in requests {
@@ -364,7 +376,7 @@ fn every_gated_request_names_a_defined_capability() {
         gated += 1;
     }
     assert_eq!(
-        gated, 11,
+        gated, 13,
         "the scan must cover every new request, not silently skip one"
     );
 
@@ -407,6 +419,13 @@ fn every_gated_request_names_a_defined_capability() {
         },
         ApiEvent::TodoChanged {
             session_id: "s1".into(),
+        },
+        ApiEvent::A2uiEnvelope {
+            session_id: "s1".into(),
+            tool_call_id: "c1".into(),
+            sequence: 0,
+            envelope: serde_json::json!({"version": "v0.9"}),
+            fallback_text: None,
         },
     ];
     for event in events {
