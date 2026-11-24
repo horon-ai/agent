@@ -502,15 +502,7 @@ jobs:
       RUSTUP_TOOLCHAIN: stable
     strategy:
       fail-fast: false
-      matrix:
-        # Release verification requires the os labels in the job names.
-        include:
-          - os: ubuntu-latest
-            runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            runner: macos-latest
-            target: aarch64-apple-darwin
+      matrix: ${{ fromJSON((github.event_name != 'pull_request' || needs.changes.outputs.platform_macos == 'true' || needs.changes.outputs.full_matrix == 'true') && '{"include":[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]}' || '{"include":[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"}]}') }}
 
     steps:
       # The Linux cleanup runs after checkout because it is the shared script in
@@ -2421,7 +2413,7 @@ jobs:
     name: Build & Test (windows-latest)
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.rust == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' && (github.event_name != 'pull_request' || needs.changes.outputs.platform_windows == 'true' || needs.changes.outputs.full_matrix == 'true') }}
     timeout-minutes: 75
     env:
       RUSTUP_TOOLCHAIN: stable

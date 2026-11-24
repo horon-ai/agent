@@ -399,6 +399,64 @@ class WorkflowGuardTests(unittest.TestCase):
         for message in commits:
             self.assertIn('[skip ci]', message)
 
+    def test_pr_os_matrix_scoping_preserves_push_and_shared_platform_gates(self):
+        import importlib.util
+
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        build_block = workflow.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
+        self.assertIn("github.event_name != 'pull_request'", build_block)
+        self.assertIn("needs.changes.outputs.platform_macos == 'true'", build_block)
+        self.assertIn("needs.changes.outputs.full_matrix == 'true'", build_block)
+
+        win_block = workflow.split('\n  windows-build-test:\n', 1)[1].split('\n  typescript-sdk:\n', 1)[0]
+        win_if = next(line.strip() for line in win_block.splitlines() if line.strip().startswith('if:'))
+        self.assertEqual(
+            win_if,
+            "if: ${{ needs.changes.outputs.rust == 'true' && (github.event_name != 'pull_request' || "
+            "needs.changes.outputs.platform_windows == 'true' || needs.changes.outputs.full_matrix == 'true') }}",
+        )
+
+        # Verify all #[path = "../../platform-linux/src/*.rs"] files included by
+        # crates/platform-macos/src/lib.rs set platform_macos=true in classify_changes.py.
+        macos_lib = (ROOT / 'crates/platform-macos/src/lib.rs').read_text()
+        shared_linux = re.findall(r'#\[path = "\.\./\.\./(platform-linux/src/[^"]+)"\]', macos_lib)
+        self.assertEqual(len(shared_linux), 6, shared_linux)
+
+        spec = importlib.util.spec_from_file_location('classify_changes', ROOT / 'scripts/ci/classify_changes.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        portable_pr = mod.classify('pull_request', ['crates/extension-types/src/lib.rs'])
+        self.assertTrue(portable_pr['rust'])
+        self.assertFalse(portable_pr['platform_macos'])
+        self.assertFalse(portable_pr['platform_windows'])
+        self.assertFalse(portable_pr['full_matrix'])
+
+        for rel in shared_linux:
+            path = f'crates/{rel}'
+            with self.subTest(shared_macos_path=path):
+                res = mod.classify('pull_request', [path])
+                self.assertTrue(res['rust'])
+                self.assertTrue(res['platform_macos'])
+                self.assertFalse(res['platform_windows'])
+
+        labeled = mod.classify('pull_request', ['crates/extension-types/src/lib.rs'], labels={'ci:all-os'})
+        self.assertTrue(labeled['platform_macos'])
+        self.assertTrue(labeled['platform_windows'])
+        self.assertTrue(labeled['full_matrix'])
+
+        for event, ref, attempt in (
+            ('push', 'refs/heads/dev', 1),
+            ('push', 'refs/heads/main', 1),
+            ('workflow_dispatch', 'refs/heads/dev', 1),
+            ('push', 'refs/heads/dev', 2),
+        ):
+            with self.subTest(event=event, ref=ref, attempt=attempt):
+                res = mod.classify(event, ['crates/extension-types/src/lib.rs'], ref=ref, attempt=attempt)
+                self.assertTrue(res['platform_macos'])
+                self.assertTrue(res['platform_windows'])
+                self.assertTrue(res['full_matrix'])
+
 
 if __name__ == '__main__':
     unittest.main()
