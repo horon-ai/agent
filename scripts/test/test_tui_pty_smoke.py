@@ -5,6 +5,10 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
 import unittest
 
 SMOKE_PATH = Path(__file__).resolve().with_name("tui_pty_smoke.py")
@@ -149,6 +153,85 @@ class TerminalScreenTests(unittest.TestCase):
         # Differential redraw replaces only the trailing session suffix on row 38.
         screen.feed("\x1b[38;19Hparent_2")
         self.assertTrue(screen.contains("resumed session_parent_2", since=attach_start))
+
+
+class ReadinessAndDiagnosticsTests(unittest.TestCase):
+    def test_format_failure_diagnostics_includes_phase_state_and_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "prime-server-stderr.log").write_text("bind failed: address in use\n", encoding="utf-8")
+            Path(tmp, "run").mkdir()
+            Path(tmp, "run", "horon-agent.sock").write_text("", encoding="utf-8")
+            home = Path(tmp, "home")
+            home.mkdir()
+            formatted = SMOKE.format_failure_diagnostics(
+                phase="first screen",
+                state="exited 1",
+                cwd=tmp,
+                home=str(home),
+                rendered="screen contents",
+                transcript="raw bytes",
+            )
+        self.assertIn("[phase=first screen] (exited 1)", formatted)
+        self.assertIn("screen contents", formatted)
+        self.assertIn("raw bytes", formatted)
+        self.assertIn("bind failed: address in use", formatted)
+        self.assertIn("horon-agent.sock", formatted)
+
+    def test_wait_for_server_ready_polls_without_wasting_fixed_sleep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr_path = str(Path(tmp, "prime-server-stderr.log"))
+            Path(tmp, "run").mkdir()
+            proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+            try:
+                calls = {"n": 0}
+
+                def probe() -> bool:
+                    calls["n"] += 1
+                    return calls["n"] >= 2
+
+                started = time.monotonic()
+                SMOKE.wait_for_server_ready(proc, probe, stderr_path, tmp, tmp, str(Path(tmp, "run")), timeout=5.0)
+                elapsed = time.monotonic() - started
+                self.assertEqual(calls["n"], 2)
+                self.assertLess(elapsed, 2.0)
+            finally:
+                proc.terminate()
+                proc.wait(timeout=5)
+
+    def test_wait_for_server_ready_reports_early_exit_with_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr_path = str(Path(tmp, "prime-server-stderr.log"))
+            Path(tmp, "run").mkdir()
+            with open(stderr_path, "w", encoding="utf-8") as handle:
+                proc = subprocess.Popen(
+                    [sys.executable, "-c", "import sys; sys.stderr.write('boom on bind\\n'); sys.exit(7)"],
+                    stderr=handle,
+                )
+                proc.wait(timeout=5)
+            with self.assertRaises(SMOKE.Failure) as ctx:
+                SMOKE.wait_for_server_ready(proc, lambda: False, stderr_path, tmp, tmp, str(Path(tmp, "run")), timeout=5.0)
+            msg = str(ctx.exception)
+            self.assertIn("[phase=prime_server]", msg)
+            self.assertIn("status 7", msg)
+            self.assertIn("boom on bind", msg)
+
+    def test_wait_for_server_ready_times_out_with_phase_and_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr_path = str(Path(tmp, "prime-server-stderr.log"))
+            Path(tmp, "run").mkdir()
+            Path(stderr_path).write_text("still initializing\n", encoding="utf-8")
+            proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+            try:
+                with self.assertRaises(SMOKE.Failure) as ctx:
+                    SMOKE.wait_for_server_ready(proc, lambda: False, stderr_path, tmp, tmp, str(Path(tmp, "run")), timeout=0.15)
+                msg = str(ctx.exception)
+                self.assertIn("[phase=prime_server]", msg)
+                self.assertIn("did not become ready", msg)
+                self.assertIn("still initializing", msg)
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=5)
 
 
 if __name__ == "__main__":

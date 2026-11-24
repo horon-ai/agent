@@ -318,6 +318,7 @@ class WorkflowGuardTests(unittest.TestCase):
             'release_scripts': True,
             'workflows': True,
             'tui_only': False,
+            'tui_smoke': True,
             'platform_windows': True,
             'platform_macos': True,
             'full_matrix': True,
@@ -456,6 +457,26 @@ class WorkflowGuardTests(unittest.TestCase):
                 self.assertTrue(res['platform_macos'])
                 self.assertTrue(res['platform_windows'])
                 self.assertTrue(res['full_matrix'])
+
+    def test_tui_smoke_scoping_and_windows_unified_test_compile(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertIn("tui_smoke: ${{ steps.classify.outputs.tui_smoke }}", workflow)
+        build_block = workflow.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
+        for step_name in ('TUI PTY smoke (Linux, macOS)', 'Installed layout TUI smoke'):
+            step_block = build_block.split(f'      - name: {step_name}\n', 1)[1].split('\n      - name:', 1)[0]
+            self.assertIn("needs.changes.outputs.tui_smoke == 'true'", step_block, step_name)
+            self.assertIn("github.event_name != 'pull_request'", step_block, step_name)
+
+        win_block = workflow.split('\n  windows-build-test:\n', 1)[1].split('\n  typescript-sdk:\n', 1)[0]
+        for step_name in ('Cache pywinpty wheel on Windows', 'ConPTY smoke (TUI client on Windows)'):
+            step_block = win_block.split(f'      - name: {step_name}\n', 1)[1].split('\n      - name:', 1)[0]
+            self.assertIn("needs.changes.outputs.tui_smoke == 'true'", step_block, step_name)
+            self.assertIn("github.event_name != 'pull_request'", step_block, step_name)
+
+        compile_count = win_block.count("'test', '--locked'") + len(re.findall(r'\bcargo test\b', win_block))
+        self.assertEqual(compile_count, 1, 'windows-build-test must compile test targets in a single locked cargo call')
+        self.assertIn('--message-format=json-render-diagnostics', win_block)
+        self.assertIn('if ($passed -lt $MinPassed)', win_block)
 
 
 if __name__ == '__main__':
