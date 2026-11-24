@@ -98,8 +98,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: soak-${{ runner.os }}
-          # Save only on dev/main first-attempt pushes; never on failure or PRs.
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          # Save only on a first attempt on `main` (the weekly schedule runs
+          # there): every branch can restore `main` entries, never the reverse,
+          # and a second per-branch copy would evict the CI caches (ci.yml).
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           cache-on-failure: "false"
 
       - name: Contract test the soak report shape

@@ -102,6 +102,9 @@ jobs:
             head -> target
             base -> target
           cache-on-failure: "true"
+          # A dispatch on a work branch saves an entry nothing else can restore;
+          # only `main` saves (see benchmark-os.yml).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build both sides (release)
         shell: bash
