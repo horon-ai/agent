@@ -25,6 +25,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -749,6 +750,42 @@ class ScenarioPlanTests(ServerCase):
         self.assertTrue(json.loads(arguments["content"])["text"].startswith("bench-nonce-"))
         self.assertEqual(self.requests()[0]["via"], "mcp-route")
 
+    def test_mcp_tool_command_invokes_bash_and_finishes_on_nonce(self) -> None:
+        system = (
+            "## MCP Tool Commands\n\n"
+            "Run each as a command with the bash tool.\n"
+            '- "bench_echo" → `mcp__bench_echo` — Echo the text argument back.'
+        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": self.MCP_PROMPT},
+        ]
+        name, arguments = tool_call_of(self.chat(self.MCP_PROMPT, SHELL_TOOLS, messages))
+        self.assertEqual(name, "bash")
+        self.assertTrue(arguments["command"].startswith("mcp__bench_echo --text bench-nonce-"))
+        entry = self.requests()[0]
+        self.assertEqual(entry["via"], "mcp-command")
+        self.assertTrue(entry["bench_echo_exposed"])
+
+        nonce = arguments["command"].rsplit(" ", 1)[-1]
+        answered = messages + [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_mock_1",
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": json.dumps(arguments)},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_mock_1", "content": nonce},
+        ]
+        raw = self.chat(self.MCP_PROMPT, SHELL_TOOLS, answered)
+        self.assertEqual(final_text_of(raw), "mock-ok")
+        self.assertTrue(self.requests()[1]["sentinel_seen"])
+
     def test_namespaced_tool_is_called_with_its_namespace(self) -> None:
         tools = [
             {
@@ -785,12 +822,68 @@ class ScenarioPlanTests(ServerCase):
         self.assertEqual(call["namespace"], "mcp__bench")
         self.assertEqual(self.requests()[0]["via"], "mcp-tool")
 
+    def test_mcp_eval_namespace_calls_eval_and_finishes_on_nonce(self) -> None:
+        eval_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "eval",
+                    "description": (
+                        "Execute Python or JavaScript.\n"
+                        "- `judge`: classification -> help://eval/judge\n"
+                        "- `helpers`: utilities -> help://eval/helpers\n"
+                        "- `agents`: subagents -> help://eval/agents\n"
+                        "- `bench`: fixture echo server -> help://eval/bench"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "language": {"type": "string", "enum": ["py", "js"]},
+                            "code": {"type": "string"},
+                        },
+                        "required": ["language", "code"],
+                    },
+                },
+            }
+        ]
+        name, arguments = tool_call_of(self.chat(self.MCP_PROMPT, eval_tools))
+        self.assertEqual(name, "eval")
+        self.assertEqual(arguments["language"], "js")
+        self.assertIn("await bench.bench_echo(", arguments["code"])
+        entry = self.requests()[0]
+        self.assertEqual(entry["via"], "mcp-eval")
+        self.assertTrue(entry["bench_echo_exposed"])
+
+        nonce = re.search(r"bench-nonce-\d+", arguments["code"]).group(0)
+        messages = [
+            {"role": "user", "content": self.MCP_PROMPT},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_mock_1",
+                        "type": "function",
+                        "function": {"name": "eval", "arguments": json.dumps(arguments)},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_mock_1", "content": nonce},
+        ]
+        raw = self.chat(self.MCP_PROMPT, eval_tools, messages)
+        self.assertEqual(final_text_of(raw), "mock-ok")
+        self.assertTrue(self.requests()[1]["sentinel_seen"])
+
     def test_routing_hint_request_gets_a_hint_not_mock_ok(self) -> None:
-        prompt = "Compress into one routing hint of at most 12 words: WHEN to use the skill."
-        raw = self.chat(prompt, [])
-        self.assertNotEqual(final_text_of(raw), "mock-ok")
-        self.assertIn("bench-skill", final_text_of(raw))
-        self.assertEqual(self.requests()[0]["plan"], "hint")
+        for prompt in (
+            "Compress into one routing hint of at most 12 words: WHEN to use the skill.",
+            "Write one routing hint of at most 15 words: WHEN to call these functions.\n\nNamespace: bench (MCP server bench)",
+        ):
+            with self.subTest(prompt=prompt):
+                raw = self.chat(prompt, [])
+                self.assertNotEqual(final_text_of(raw), "mock-ok")
+                self.assertIn("bench", final_text_of(raw))
+                self.assertEqual(self.requests()[-1]["plan"], "hint")
 
     def test_a_request_without_a_marker_keeps_the_ls_plan(self) -> None:
         name, arguments = tool_call_of(

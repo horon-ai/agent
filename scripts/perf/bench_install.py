@@ -47,7 +47,7 @@ def child_env(root, tag):
     # later reports the same identity. JCODE_VERIFY_VERSION keeps the resolver
     # from executing the binary: the timed first `--version` below must be its
     # first run, and it checks the value from that same call.
-    for key in ('JCODE_VERSION', 'JCODE_RELEASE_COMMIT', 'JCODE_RELEASE_SOURCE'):
+    for key in ('JCODE_VERSION', 'JCODE_RELEASE_COMMIT', 'JCODE_RELEASE_SOURCE', 'COMPETITOR_VERSIONS_JSON'):
         if key in os.environ:
             env[key] = os.environ[key]
     env['JCODE_VERIFY_VERSION'] = '0'
