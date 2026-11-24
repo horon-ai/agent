@@ -636,6 +636,7 @@ impl Agent {
         let secret_vault_registration = crate::secrets::register_session_vault(&session.id);
         // Dispatch reads the same frozen tier snapshot as the tool list.
         crate::tool::register_session_load_tiers(&session.id, load_tiers.clone());
+        crate::tool::register_session_additional_dirs(&session.id, &session.additional_dirs());
         let mut agent = Self {
             provider,
             registry,

@@ -242,6 +242,8 @@ struct SessionToolPolicy {
     consult: bool,
     /// Ephemeral `--no-session` run: skip sidecar persistence under `$HORON_HOME/sessions/`.
     memory_only: bool,
+    /// Additional explicitly granted workspace directories (`--add-dir`).
+    additional_dirs: Vec<std::path::PathBuf>,
     owner: Option<u64>,
 }
 
@@ -545,6 +547,26 @@ pub(crate) fn session_is_memory_only(session_id: &str) -> bool {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(session_id)
         .is_some_and(|policy| policy.memory_only)
+}
+
+/// Publish extra workspace directories (`--add-dir`) reachable by file tools.
+pub(crate) fn register_session_additional_dirs(session_id: &str, dirs: &[String]) {
+    let mut policies = SESSION_TOOL_POLICIES
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(policy) = policies.get_mut(session_id).map(Arc::make_mut) {
+        policy.additional_dirs = dirs.iter().map(std::path::PathBuf::from).collect();
+    }
+}
+
+/// Extra workspace directories granted for `session_id` beyond `working_dir`.
+pub(crate) fn session_additional_dirs(session_id: &str) -> Vec<std::path::PathBuf> {
+    SESSION_TOOL_POLICIES
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(session_id)
+        .map(|policy| policy.additional_dirs.clone())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

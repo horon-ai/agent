@@ -61,6 +61,9 @@ struct NormalizedReadRange {
 }
 
 fn normalize_read_range(params: &ReadInput) -> Result<NormalizedReadRange> {
+    if params.limit == Some(0) {
+        return Err(anyhow::anyhow!("limit must be 1 or greater."));
+    }
     let has_start_end = params.start_line.is_some() || params.end_line.is_some();
     let has_mixed_offset = match (params.start_line, params.end_line, params.offset) {
         (Some(start_line), _, Some(offset)) => {
