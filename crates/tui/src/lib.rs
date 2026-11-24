@@ -1120,3 +1120,5 @@ mod side_app_tests;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+// temporary Wave 4 dry-run probe (Refs: #802)
