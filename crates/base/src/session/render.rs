@@ -719,18 +719,20 @@ mod tests {
 
     #[test]
     fn a2ui_only_message_counts_as_visible_in_compacted_history() {
-        let mut msg = super::super::StoredMessage::default();
-        msg.role = horon_agent_message_types::Role::Assistant;
-        msg.content = vec![horon_agent_message_types::ContentBlock::A2ui {
-            envelopes: vec![serde_json::json!({
-                "version": "v0.9",
-                "createSurface": {
-                    "surfaceId": "main",
-                    "catalogId": horon_agent_tool_types::a2ui::A2UI_BASIC_CATALOG_V1_0
-                }
-            })],
-            fallback_text: Some("Deployment card".to_string()),
-        }];
+        let msg = super::super::StoredMessage {
+            role: horon_agent_message_types::Role::Assistant,
+            content: vec![horon_agent_message_types::ContentBlock::A2ui {
+                envelopes: vec![serde_json::json!({
+                    "version": "v0.9",
+                    "createSurface": {
+                        "surfaceId": "main",
+                        "catalogId": horon_agent_tool_types::a2ui::A2UI_BASIC_CATALOG_V1_0
+                    }
+                })],
+                fallback_text: Some("Deployment card".to_string()),
+            }],
+            ..Default::default()
+        };
         assert!(super::stored_message_renders_visible_message(&msg));
     }
 }
