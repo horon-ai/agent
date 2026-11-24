@@ -101,7 +101,7 @@ Actions that leave a trace outside the local sandbox, affect shared state, or ar
 
 #### Custom rules
 
-This build has no rule table that promotes or demotes actions. There are no subtables such as `[safety.rules]` or `[safety.notifications]` either. Every field of `SafetyConfig` sits flat under `[safety]` (`crates/config-types/src/lib.rs:1347-1353`), and the approval-wait policy lives under `[ambient]` (`:1277-1313`).
+This build has no rule table that promotes or demotes actions. There are no subtables such as `[safety.rules]` or `[safety.notifications]` either. Every field of `SafetyConfig` sits flat under `[safety]` (`crates/config-types/src/lib.rs:1368-1388`), and the approval-wait policy lives under `[ambient]` (`:1298-1366`).
 
 ```toml
 [safety]
@@ -115,7 +115,7 @@ desktop_notifications = true
 # approval_for_clientless_runs = false
 ```
 
-`approval_timeout_secs` defaults to 1800 seconds (`crates/config-types/src/lib.rs:1302`, `:1316-1318`). When it elapses, `approval_default_on_timeout` applies, and its default is `"deny"` (`:1307`, `:1320-1322`). A pending request that expires leaves a record, and a history that cannot be audited closes approvals toward denial (`crates/base/src/safety.rs:340-360`).
+`approval_timeout_secs` defaults to 1800 seconds (`crates/config-types/src/lib.rs:1326`, `:1340-1342`). When it elapses, `approval_default_on_timeout` applies, and its default is `"deny"` (`:1331`, `:1344-1346`). A pending request that expires leaves a record, and a history that cannot be audited closes approvals toward denial (`crates/base/src/safety.rs:340-360`).
 
 ---
 
@@ -219,7 +219,7 @@ desktop_notifications = true
 # ntfy_server = "https://ntfy.sh"
 ```
 
-This build has two notification channels: ntfy.sh and desktop notifications. Email, messenger bot, and cloud relay channels were removed, and `SafetyConfig` has no keys for them (`crates/config-types/src/lib.rs:1347-1353`). If an old config file still contains those keys, it loads and ignores them as unknown fields.
+This build has two notification channels: ntfy.sh and desktop notifications. Email, messenger bot, and cloud relay channels were removed, and `SafetyConfig` has no keys for them (`crates/config-types/src/lib.rs:1368-1388`). If an old config file still contains those keys, it loads and ignores them as unknown fields.
 
 Preferences such as bundling intervals, quiet hours, and minimum urgency do not exist in this build either.
 
@@ -267,7 +267,7 @@ The record types are `AmbientTranscript` and `ActionLog` (`crates/base/src/safet
 
 A human-readable summary sent to the configured notification channel. `generate_summary` builds the string (`crates/base/src/safety.rs:634`).
 
-```
+```text
 Ambient cycle completed (4m 56s)
 
 Done:
@@ -292,7 +292,7 @@ Next cycle: ~35 minutes
 
 #### Storage location
 
-```
+```text
 ~/.horon/safety/
 ├── queue.json              # Pending permission requests
 └── history.json            # Past decisions
@@ -353,11 +353,11 @@ The limits are written in the source. `bash` reaches every path through a shell 
 
 `ask` is the tool that offers the user choices. In this build that tool **waits only while a client that can answer is attached to the session. That wait is cut off at 300 seconds.**
 
-The daemon draws no screen of its own and cannot assume a client is attached. So `ask` first checks whether a reply channel is registered on the session (`crates/app-core/src/tool/ask.rs:359`). The channel is installed when a connection attached to the session advertises `supports_ask_requests`, and it is withdrawn when the connection drops or reattaches to a different session (`crates/app-core/src/server/client_lifecycle.rs:1959-1967`, `crates/app-core/src/tool/ask_bridge.rs:72-89`). The channel's existence is itself the signal that "this connection can show a question and answer it" (`crates/app-core/src/tool/ask_bridge.rs:6-13`). The advertisement is negotiated through `supports_ask_requests` in the harness API `Hello` (`crates/harness-api/src/requests.rs:51-54`).
+The daemon draws no screen of its own and cannot assume a client is attached. So `ask` first checks whether a reply channel is registered on the session (`crates/app-core/src/tool/ask.rs:359`). The channel is installed when a connection attached to the session advertises `supports_ask_requests`, and it is withdrawn when the connection drops or reattaches to a different session (`crates/app-core/src/server/client_lifecycle.rs:1987-1993`, `crates/app-core/src/tool/ask_bridge.rs:78-92`). The channel's existence is itself the signal that "this connection can show a question and answer it" (`crates/app-core/src/tool/ask_bridge.rs:6-13`). The advertisement is negotiated through `supports_ask_requests` in the harness API `Hello` (`crates/harness-api/src/requests.rs:51-54`).
 
-- No channel: after validating the request, it decides the answer with `[tools] ask_policy` and returns immediately. It does not wait (`crates/app-core/src/tool/ask.rs:376-384`).
-- Channel present: it emits `ask_requested` and waits for `ask_response` (`crates/app-core/src/server/client_ask.rs:80`, `crates/app-core/src/tool/ask.rs:386-408`). The cap is `CLIENT_ANSWER_TIMEOUT`, 300 seconds (`crates/app-core/src/tool/ask.rs:31`). So a session with a client attached can have a turn delayed by five minutes in the worst case.
-- No answer (timeout, disconnection, or a response with no usable option): it falls back to the policy and states the reason in the tool text (`crates/app-core/src/tool/ask.rs:216-236`, `:361-369`). With `ask_policy = "error"` the call fails at that point (`:362-367`).
+- No channel: after validating the request, it decides the answer with `[tools] ask_policy` and returns immediately. It does not wait (`crates/app-core/src/tool/ask.rs:377-382`).
+- Channel present: it emits `ask_requested` and waits for `ask_response` (`crates/app-core/src/server/client_ask.rs:89-95`, `crates/app-core/src/tool/ask.rs:395-415`). The cap is `CLIENT_ANSWER_TIMEOUT`, 300 seconds (`crates/app-core/src/tool/ask.rs:31`). So a session with a client attached can have a turn delayed by five minutes in the worst case.
+- No answer (timeout, disconnection, or a response with no usable option): it falls back to the policy and states the reason in the tool text (`crates/app-core/src/tool/ask.rs:216-236`, `:361-375`). With `ask_policy = "error"` the call fails at that point (`:367-372`).
 
 Choices sent by the client are not trusted as-is either. Labels that are not among the question's options are dropped. A question with no usable label is filled with the recommendation and marked as chosen automatically (`crates/app-core/src/tool/ask.rs:238-280`).
 
@@ -376,9 +376,9 @@ pub enum AskPolicy {
 ```
 
 - `recommended` (the default): answers each question with the recommendation the model produced. If the model produced none, it uses the first option. The tool text states that the choice was automatic so the model knows (`crates/app-core/src/tool/ask.rs:203-214`).
-- `error`: when no client can answer, or no answer arrived, it refuses the call with an explanation. The model then decides for itself and continues (`crates/app-core/src/tool/ask.rs:362-367`, `:374-376`).
+- `error`: when no client can answer, or no answer arrived, it refuses the call with an explanation. The model then decides for itself and continues (`crates/app-core/src/tool/ask.rs:367-372`, `:379-381`).
 
-The config field's comment documents the same distinction. `recommended` picks the model's recommendation and says so. `error` refuses the call. The comment also covers the attached-client case. It asks a client that advertised `supports_ask_requests` first, waits up to 300 seconds, and then falls back to the policy (`crates/base/src/config.rs:908-910`). The field is `pub ask_policy: AskPolicy` (`:911`), and the default is `AskPolicy::Recommended` (`:1018`). The type is defined in `crates/tool-types` and re-exported from `crates/base/src/config.rs:19`.
+The config field's comment documents the same distinction. `recommended` picks the model's recommendation and says so. `error` refuses the call. The comment also covers the attached-client case. It asks a client that advertised `supports_ask_requests` first, waits up to 300 seconds, and then falls back to the policy (`crates/base/src/config.rs:905-907`). The field is `pub ask_policy: AskPolicy` (`:908`), and the default is `AskPolicy::Recommended` (`:1016`). The type is defined in `crates/tool-types` and re-exported from `crates/base/src/config.rs:19`.
 
 #### Request limits
 
@@ -469,8 +469,8 @@ This section is the plan from design time. It splits what is in the tree now fro
 - [ ] CLI commands (`horon safety review/list/approve/deny/log`)
 
 #### Stage 4: configuration
-- [x] `[safety]` config section (`crates/base/src/config/default_file.rs:737`)
-- [x] `[ambient]` approval policy (`crates/config-types/src/lib.rs:1277-1313`)
+- [x] `[safety]` config section (`crates/base/src/config/default_file.rs:760`)
+- [x] `[ambient]` approval policy (`crates/config-types/src/lib.rs:1298-1366`)
 - [ ] Custom classification rules (promote or demote actions)
 - [ ] Per-project overrides
 
@@ -651,10 +651,10 @@ failover keys in `ProviderConfig` (`crates/config-types/src/lib.rs`).
   with no second file a checkpoint could swap out.
 - **The key append and the turn creation are not one ACK.** The marker becomes durable before the turn
   (`append_resume_key` at `crates/app-core/src/ambient/resume.rs:367`, then `resume_session_with_message` at
-  `crates/app-core/src/ambient/resume.rs:424`). So the plan's requirement that "turn creation and key recording be
+  `crates/app-core/src/ambient/resume.rs:429`). So the plan's requirement that "turn creation and key recording be
   made durable together in one ACK" is not met by this implementation. Instead it guarantees two things. First, the
   key is already on disk before any turn exists (`writer.append` → fsync). Second, the exec claim path recovers and
-  runs a "key only, no turn" state exactly once (`crates/app-core/src/ambient/resume.rs:378-408`, pinned by
+  runs a "key only, no turn" state exactly once (`crates/app-core/src/ambient/resume.rs:383-408`, pinned by
   `crash_after_the_key_is_durable_recovers_with_one_turn`). The remaining window is between the marker's ACK and the
   turn creation, and the exec claim covers that span rather than atomicity.
 - **The marker event does not move the session's `updated_at`.** The resume decision uses

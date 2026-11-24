@@ -38,7 +38,9 @@ both sides speak; the host half that reads, writes and correlates frames lives i
 `crates/app-core/src/extensions/`. Manifest validation and native file checks
 live in `crates/base/src/packages/` and `crates/platform`. Manifest file paths use
 portable ASCII spelling. Display names and resource content can use Unicode.
-Package registration and child-process supervision are separate implementation steps.
+`horon package` (`src/cli/packages.rs`) validates and registers packages, open
+sessions capture the catalog generation at each turn boundary, and child
+processes pass `crates/base/src/packages/child_gate.rs` (`docs/runtime/PACKAGES.md`).
 
 ## Platform adapters
 
@@ -512,8 +514,8 @@ These boundaries hold when you move crates or widen the tool surface. Each item 
   (`crates/agent-runtime/src/turn_state_tests.rs:201-208`).
 - The cap is 2 (`crates/agent-runtime/src/turn_recovery.rs:31`).
 - The auto-continue decision for an unexpected stop uses the same function in both turn loops (sequential and streaming)
-  (`crates/app-core/src/agent/turn_loops.rs:1522`,
-  `crates/app-core/src/agent/interrupts.rs:867`). Both call
+  (`crates/app-core/src/agent/turn_loops.rs:1457-1460`,
+  `crates/app-core/src/agent/interrupts.rs:861-871`). Both call
   `maybe_auto_continue_unexpected_stop`, which is defined in
   `crates/app-core/src/agent/turn_recovery_wiring.rs:127`.
 
@@ -535,8 +537,9 @@ These boundaries hold when you move crates or widen the tool surface. Each item 
 ### Midstream rules and foreign rule import are off by default
 
 - `[[stream_rules]]` entries are enforced only when `[features] stream_rules` is on, and the default is
-  off (`crates/base/src/config/default_file.rs:342-345`,
-  `crates/config-types/src/lib.rs:1352-1375`).
+  off (`crates/base/src/config/default_file.rs:100-118`,
+  `crates/config-types/src/feature.rs:10-95`,
+  `crates/config-types/src/lib.rs:1077`).
 - Importing external agent rule files is also off by default
   (`FeatureConfig` in `crates/base/src/config.rs`).
 
