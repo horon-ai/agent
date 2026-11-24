@@ -139,6 +139,10 @@ mod git_review_tests;
 #[path = "voice_tests.rs"]
 mod voice_tests;
 
+#[cfg(test)]
+#[path = "voice/live_tests.rs"]
+mod live_tests;
+
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -677,6 +681,7 @@ where
         // redraw decision as an event from the bridge.
         changed |= crate::commands::shell::drain(app);
         changed |= app.tick_voice();
+        changed |= app.tick_live_voice();
         if !app.running {
             break;
         }
@@ -876,7 +881,9 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let hint = if popup.is_some() {
         None
     } else {
-        app.voice_hint().or_else(|| app.completion_hint())
+        app.live_voice_hint()
+            .or_else(|| app.voice_hint())
+            .or_else(|| app.completion_hint())
     };
     // The input pane grows with the draft, but never past a cap and never at
     // the transcript's expense: three rows of conversation stay readable on a

@@ -160,6 +160,7 @@ pub(crate) enum Outcome {
 }
 
 pub(crate) mod capability;
+pub(crate) mod live;
 
 pub(crate) use capability::{Capability, probe};
 use capability::{Flavor, Tool, model_files, models_dir};
@@ -200,6 +201,7 @@ pub(crate) struct Voice {
     finish: Option<Arc<AtomicBool>>,
     events: Receiver<Event>,
     sender: Sender<Event>,
+    pub(crate) live: live::LiveVoice,
 }
 
 impl Default for Voice {
@@ -233,6 +235,7 @@ impl Voice {
             finish: None,
             events,
             sender,
+            live: live::LiveVoice::new(),
         }
     }
 
@@ -522,6 +525,7 @@ pub(crate) fn kill_active_process() {
         // The program may already have ended; the client is stopping.
         stop_group(pid);
     }
+    live::kill_active_process();
 }
 
 /// Stop a process group, treating a program that already ended as done.

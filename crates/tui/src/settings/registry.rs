@@ -456,6 +456,90 @@ pub const REGISTRY: &[SettingSpec] = &[
             description: "Model ids the cycle keys step through, in this order; leave empty to disable cycling.",
         },
     },
+    SettingSpec {
+        id: "voice.live_enabled",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_VOICE_LIVE_ENABLED",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live voice enabled",
+            description: "Opt in to /live real-time voice sessions; off leaves only keyboard input and /voice.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_adapter",
+        kind: SettingKind::Text,
+        env: "HORON_TUI_VOICE_LIVE_ADAPTER",
+        default: DefaultValue::Text(""),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live adapter",
+            description: "External live-audio adapter label (for example `command`); empty leaves live mode disabled.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_endpoint",
+        kind: SettingKind::Text,
+        env: "HORON_TUI_VOICE_LIVE_ENDPOINT",
+        default: DefaultValue::Text(""),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live endpoint",
+            description: "User-configured live voice URL (`ws://`, `wss://`, `http://`, `https://`, `unix://`); no built-in third-party endpoint.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_api_key_env",
+        kind: SettingKind::Text,
+        env: "HORON_TUI_VOICE_LIVE_API_KEY_ENV",
+        default: DefaultValue::Text(""),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live key env",
+            description: "Environment variable name holding the credential passed to `voice.live_command` as HORON_LIVE_API_KEY.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_model",
+        kind: SettingKind::Text,
+        env: "HORON_TUI_VOICE_LIVE_MODEL",
+        default: DefaultValue::Text(""),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live model",
+            description: "Optional model id forwarded to the external live voice adapter.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_command",
+        kind: SettingKind::Array,
+        env: "HORON_TUI_VOICE_LIVE_COMMAND",
+        default: DefaultValue::List(&[]),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Live command",
+            description: "Executable and arguments of the opt-in JSONL live voice adapter subprocess.",
+        },
+    },
+    SettingSpec {
+        id: "voice.live_fallback_to_text",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_VOICE_LIVE_FALLBACK",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Live voice",
+            label: "Text fallback",
+            description: "Return seamlessly to the text composer and attached session when live audio stops or disconnects.",
+        },
+    },
 ];
 
 /// The spec for `id`, or `None` when the key is not declared.

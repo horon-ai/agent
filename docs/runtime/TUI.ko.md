@@ -471,6 +471,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/jobs` | 현재 세션의 백그라운드 작업을 보고 선택한 터미널 작업을 취소한다 |
 | `/keys` | 지금 적용된 키와 동작마다 하는 일을 나열한다 |
 | `/links` | 최근 어시스턴트 답변의 링크를 나열하고 선택한 주소를 연다 |
+| `/live` | 텍스트 폴백을 갖춘 선택형 외부 실시간 음성 세션 어댑터를 제어한다 |
 | `/mcp [probe <server>]` | 신뢰한 MCP 설정을 조회하거나 이름을 지정해 연결을 검사한다 |
 | `/model [name]` | 목록에서 모델을 고르거나, 이름을 준 모델로 전환한다 |
 | `/new` | 이 디렉터리에서 새 세션을 시작한다 |
@@ -505,7 +506,9 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요합니다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생합니다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생합니다. `/voice status`에서 빠진 항목을 확인할 수 있습니다. 필요한 프로그램과 모델은 사용자가 직접 설치합니다. 필요한 프로그램이 없어도 키보드로 입력할 수 있습니다.
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른여덟 명령을 이름 순으로 적었다. `/tools`는 데몬이 현재 세션에 제공하는 도구 목록을 읽고, 데몬이 로딩 단계를 보고하지 않으면 `unknown`으로 표시한다.
+`/live`는 `tui.toml`(`voice.live_enabled`, `voice.live_endpoint`, `voice.live_adapter`, `voice.live_api_key_env`, `voice.live_model`, `voice.live_command`, `voice.live_fallback_to_text`)에 설정한 선택형 외부 실시간 음성 세션 어댑터를 제어합니다. 기본값은 꺼져 있으며 사전 설정된 서드파티 엔드포인트 없이 세션별 `/live consent`를 요구합니다. `/live talk`와 `/live end`로 명시적 수집을 시작·전송하고, `/live stop`·`/live reconnect`로 이전 수집을 폐기한 뒤 재연결하며, `/live leave`로 연결된 세션과 초안을 유지한 채 텍스트 모드로 돌아옵니다. `Alt+V`(`app.live_voice`)가 전환 키이며 `Ctrl+L`은 `app.repaint`로 유지됩니다(`keybindings.toml`에서 재지정 가능).
+
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른아홉 명령을 이름 순으로 적었다. `/tools`는 데몬이 현재 세션에 제공하는 도구 목록을 읽고, 데몬이 로딩 단계를 보고하지 않으면 `unknown`으로 표시한다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
@@ -545,6 +548,7 @@ built-in commands:
   /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one
+  /live                opt-in real-time voice session adapter (consent, start, talk, end, stop, reconnect, leave, status)
   /mcp                 list trusted MCP servers or connect to one with /mcp probe <server>
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
