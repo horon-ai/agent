@@ -14,8 +14,10 @@ name: Package compat
 # only targets with a passing report.
 
 on:
+  # Not on pull requests into `main`: those are release pull requests whose
+  # head already ran here on `dev`, and the push to `main` runs it again.
   pull_request:
-    branches: [dev, main]
+    branches: [dev]
     paths:
       - "crates/base/src/packages/**"
       - "crates/base/src/**/package*"
@@ -284,7 +286,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          # Only `main` (the default branch) saves: every branch and pull
+          # request can restore its entries, and one copy stays under the cache
+          # quota instead of `dev` and `main` evicting each other.
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           cache-on-failure: "false"
           key: package-compat-${{ matrix.target }}
           cache-all-crates: "true"

@@ -186,6 +186,8 @@ TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직�
 
 PR에서는 `.github/workflows/ci.yml`이 크레이트 컴파일 범위(`scripts/ci/workspace_impact.py`), TUI PTY 스모크(`tui_smoke`), 운영체제 러너(이식 가능 Rust 변경은 `ubuntu-latest`와 Windows 교차 검증을 실행하고, 플랫폼 코드·공유 Linux-macOS `#[path]` 소스·매니페스트·잠금 파일·`ci:all-os` 라벨 시 `macos-latest`와 `windows-build-test` 추가), attach/detach soak 길이(`HORON_AGENT_SOAK_CYCLES=20`)를 영향 범위에 맞게 좁히며, 문서 전용 PR은 `Documentation Checks`와 내장 문서 `horon_agent_docs` 코퍼스 테스트만 돌고 `docs-site`·워크플로 전용 PR은 Rust 빌드를 생략한 채 `CI Required`와 `Structural performance required` 집계 검사로 통과한다. `dev`와 `main` 푸시는 항상 전체 3개 운영체제 스위트, 200사이클 soak, 그리고 `scripts/release/check_ci.py`가 확인하는 모든 필수 릴리스 작업을 실행한다.
 
+릴리스 PR(대상 `main`)의 head가 같은 워크플로의 마지막 성공 `dev` 푸시 실행의 head이고, 두 브랜치가 갈라진 뒤 `main` 쪽에 추가된 것이 문서뿐이면 그 PR은 문서 게이트만 실행한다. 그 푸시 실행이 같은 커밋에서 모든 게이트를 이미 돌렸기 때문이다. 병합 뒤 `main` 푸시는 그대로 모든 게이트를 실행한다.
+
 ## 릴리스 번호와 자동 발행
 
 루트 `Cargo.toml`의 `[package].version`이 버전의 단일 출처다. 이 값은 릴리스 라인(MAJOR.MINOR)과 그 라인의 가장 낮은 patch를 정하고, 이후 patch 번호는 태그가 매긴다. 버전을 올리는 커밋은 만들지 않는다.

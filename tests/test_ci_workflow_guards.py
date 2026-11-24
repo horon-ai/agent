@@ -244,12 +244,25 @@ class WorkflowGuardTests(unittest.TestCase):
                 self.assertIn('RUSTUP_TOOLCHAIN: stable', block)
         soak_text = (ROOT / '.github/workflows/soak.yml').read_text()
         self.assertIn('RUSTUP_TOOLCHAIN: stable', soak_text)
-        expected_save_if = (
+        # Only `main`, the default branch, saves Rust caches: every branch and
+        # pull request restores `main` entries, `main` cannot restore `dev`
+        # ones, and a second per-branch copy overflows the 10 GB cache quota.
+        push_save_if = (
             "save-if: ${{ github.event_name == 'push' && "
-            "(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') "
-            "&& github.run_attempt == '1' }}"
+            "github.ref == 'refs/heads/main' && github.run_attempt == '1' }}"
         )
-        for wf in ('ci.yml', 'soak.yml', 'package-windows.yml', 'package-compat.yml', 'structural-perf.yml'):
+        expected_save_if = {
+            'ci.yml': push_save_if,
+            'package-windows.yml': push_save_if,
+            'package-compat.yml': push_save_if,
+            'structural-perf.yml': push_save_if,
+            # The weekly schedule runs on `main`; its push trigger is `dev` only.
+            'soak.yml': "save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}",
+            'benchmark-os.yml': "save-if: ${{ github.ref == 'refs/heads/main' }}",
+            'loading-ab.yml': "save-if: ${{ github.ref == 'refs/heads/main' }}",
+            'windows-smoke.yml': "save-if: ${{ github.ref == 'refs/heads/main' }}",
+        }
+        for wf, save_if in expected_save_if.items():
             text = (ROOT / f'.github/workflows/{wf}').read_text()
             blocks = text.split('uses: Swatinem/rust-cache@')[1:]
             self.assertTrue(blocks, wf)
@@ -258,8 +271,10 @@ class WorkflowGuardTests(unittest.TestCase):
                 with self.subTest(workflow=wf, idx=idx):
                     if 'save-if: false' in segment:
                         continue
-                    self.assertIn(expected_save_if, segment)
-                    self.assertIn('cache-on-failure: "false"', segment)
+                    self.assertIn(save_if, segment)
+                    if wf in ('ci.yml', 'package-windows.yml', 'package-compat.yml',
+                              'structural-perf.yml', 'soak.yml'):
+                        self.assertIn('cache-on-failure: "false"', segment)
 
     def test_documentation_only_changes_never_leave_a_required_check_pending(self):
         # A skipped job reports "skipped", which a branch rule waits on forever.
