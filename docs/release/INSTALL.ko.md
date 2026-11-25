@@ -66,7 +66,7 @@ FreeBSD만 대화형 클라이언트가 없다. 릴리스는 에이전트만 내
 | `aarch64-pc-windows-msvc` | arm64 Windows | 예 |
 | `x86_64-pc-windows-msvc` | x86-64 Windows | 예 |
 
-`scripts/ci/package_compat.py docs-claims`는 여섯 네이티브 타깃 실행 뒤 `Package support matrix`(`support-matrix`) 작업에서 이 표를 읽어, 통과한 보고서가 없는 타깃에 `Yes`(한국어판은 `예`)를 적으면 실패한다. `No`(한국어판은 `아니오`) 행은 보고서가 없어도 되지만, 실패한 타깃의 실행 자체는 집계 작업에서 계속 실패한다. 그래서 여기의 지원 표기는 초록 네이티브 실행 뒤에만 가능하다. `docs/release/INSTALL.md`나 `docs/release/INSTALL.ko.md`의 본문만 고치고 지원 타깃 표는 바꾸지 않은 PR과 푸시에서는 `Check if install claims changed`가 표가 그대로임을 확인한 뒤 여섯 네이티브 타깃 재빌드와 `support-matrix`를 모두 건너뛰며, `Documentation Checks`가 표 정합성(`scripts/ci/test_docs_install_claims.py`)을 검증한다. PR은 베이스와, 푸시는 직전 브랜치 끝과 비교한다. 새 브랜치, 직전 끝과 비교할 수 없는 푸시, 수동 실행은 항상 행렬을 돌린다. FreeBSD와 나머지 플랫폼은 그 워크플로에 러너가 없어 표에 넣지 않으며, 이 문서는 그 플랫폼의 패키지 지원을 주장하지 않는다. 패키지 형식과 선언에 쓰는 여섯 타깃은 [`../runtime/PACKAGES.ko.md`](../runtime/PACKAGES.ko.md)에 있다.
+`scripts/ci/package_compat.py docs-claims`는 여섯 네이티브 타깃 실행 뒤 `Package support matrix`(`support-matrix`) 작업에서 이 표를 읽어, 통과한 보고서가 없는 타깃에 `Yes`(한국어판은 `예`)를 적으면 실패한다. `No`(한국어판은 `아니오`) 행은 보고서가 없어도 되지만, 실패한 타깃의 실행 자체는 집계 작업에서 계속 실패한다. 그래서 여기의 지원 표기는 초록 네이티브 실행 뒤에만 가능하다. `docs/release/INSTALL.md`나 `docs/release/INSTALL.ko.md`의 본문만 고치고 지원 타깃 표는 바꾸지 않은 PR과 푸시에서는 `Check if install claims changed`가 표가 그대로임을 확인한 뒤 여섯 네이티브 타깃 재빌드와 `support-matrix`를 모두 건너뛰며, `Documentation Checks`가 표 정합성(`scripts/ci/test_docs_install_claims.py`)을 검증한다. PR은 베이스와 비교하고, 푸시는 같은 브랜치에서 마지막으로 성공한 `Package compat` 푸시 실행의 head와 비교한다. 그래서 취소되거나 실패한 실행의 범위는 다음 실행이 다시 확인한다. 성공한 실행이 없는 브랜치, 조회·비교 실패, 수동 실행은 항상 행렬을 돌린다. FreeBSD와 나머지 플랫폼은 그 워크플로에 러너가 없어 표에 넣지 않으며, 이 문서는 그 플랫폼의 패키지 지원을 주장하지 않는다. 패키지 형식과 선언에 쓰는 여섯 타깃은 [`../runtime/PACKAGES.ko.md`](../runtime/PACKAGES.ko.md)에 있다.
 
 ## 설치 스크립트와의 관계
 
