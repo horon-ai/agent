@@ -18,6 +18,21 @@ on:
         type: string
         required: false
         default: ""
+      harness_ref:
+        description: "Optional commit carrying the scripts/perf harness; empty uses the workflow ref"
+        type: string
+        required: false
+        default: ""
+      horon_semver:
+        description: "Tag-derived semver stamped onto the candidate build instead of shallow v0.1.0-dev"
+        type: string
+        required: false
+        default: ""
+      horon_release_build:
+        description: "true when the candidate commit matches a published release tag"
+        type: string
+        required: false
+        default: "false"
       os:
         type: string
         required: true
@@ -65,6 +80,16 @@ on:
         type: string
         required: false
         default: ""
+      jcode_platforms_json:
+        description: "Per-OS resolved latest jcode release metadata JSON resolved once by benchmark.yml"
+        type: string
+        required: false
+        default: ""
+      npm_versions_json:
+        description: "Resolved live npm dist-tags.latest versions JSON resolved once by benchmark.yml"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -97,7 +122,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.harness_ref }}
           sparse-checkout: scripts/perf
 
       - name: Turn the suites input into the measure matrix
@@ -317,16 +342,34 @@ jobs:
         # command above, so a failure here is a TUI failure and nothing else.
         if: ${{ steps.sel.outputs.tui == 'true' }}
         shell: bash
+        env:
+          HORON_BUILD_SEMVER: ${{ inputs.horon_semver }}
+          HORON_IS_RELEASE_BUILD: ${{ inputs.horon_release_build }}
         run: |
           set -euo pipefail
+          [[ -z "${HORON_BUILD_SEMVER:-}" ]] || export HORON_AGENT_BUILD_SEMVER="$HORON_BUILD_SEMVER"
+          if [[ "${HORON_IS_RELEASE_BUILD:-false}" == "true" ]]; then
+            export HORON_AGENT_RELEASE_BUILD=1
+          else
+            unset HORON_AGENT_RELEASE_BUILD
+          fi
           cargo build --release --locked -p horon-tui
           cargo build --release --locked -p horon-tui --example render_bench
           cargo build --release --locked -p horon-tui --example scroll_bench
 
       - name: Build release binary and probes
         shell: bash
+        env:
+          HORON_BUILD_SEMVER: ${{ inputs.horon_semver }}
+          HORON_IS_RELEASE_BUILD: ${{ inputs.horon_release_build }}
         run: |
           set -euo pipefail
+          [[ -z "${HORON_BUILD_SEMVER:-}" ]] || export HORON_AGENT_BUILD_SEMVER="$HORON_BUILD_SEMVER"
+          if [[ "${HORON_IS_RELEASE_BUILD:-false}" == "true" ]]; then
+            export HORON_AGENT_RELEASE_BUILD=1
+          else
+            unset HORON_AGENT_RELEASE_BUILD
+          fi
           if [[ -n "$FEATURES" ]]; then
             cargo build --release --locked -p horon-agent --features "$FEATURES"
           else
@@ -414,7 +457,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.harness_ref }}
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
@@ -522,9 +565,26 @@ jobs:
           # anonymous rate limit of the runner's IP. The resolver never passes it
           # to the release binary.
           GH_TOKEN: ${{ github.token }}
+          OS_KEY: ${{ inputs.os }}
+          JCODE_PLATFORMS_JSON: ${{ inputs.jcode_platforms_json }}
+          COMPETITOR_VERSIONS_JSON: ${{ inputs.npm_versions_json }}
         run: |
           set -o pipefail
           mkdir -p "$RESULTS"
+          py=python
+          command -v "$py" >/dev/null 2>&1 || py=python3
+          if [[ -n "${JCODE_PLATFORMS_JSON:-}" ]]; then
+            eval "$("$py" - "$OS_KEY" "$JCODE_PLATFORMS_JSON" <<'PY'
+          import json, shlex, sys
+          os_key, raw = sys.argv[1], sys.argv[2]
+          entry = json.loads(raw).get(os_key) or {}
+          for var, key in (("JCODE_VERSION", "tag"), ("JCODE_RELEASE_COMMIT", "commit"), ("JCODE_RELEASE_SOURCE", "selection")):
+              val = entry.get(key)
+              if val:
+                  print(f"export {var}={shlex.quote(str(val))}")
+          PY
+          )"
+          fi
           rc=0
           # stderr carries the resolver's resolution and verification lines, so
           # the artifact keeps the real installer log beside competitors.txt.
@@ -532,6 +592,7 @@ jobs:
             | tee "$RESULTS/competitors.txt" || rc=$?
           cp "$RUNNER_TEMP/bench-tools/jcode-release.json" "$RESULTS/jcode-release.json" 2>/dev/null || true
           cp "$RUNNER_TEMP/bench-tools/jcode-release.log" "$RESULTS/jcode-release.log" 2>/dev/null || true
+          cp "$RUNNER_TEMP/bench-tools/competitor-provenance.json" "$RESULTS/competitor-provenance.json" 2>/dev/null || true
           exit "$rc"
 
       - name: "Suite: compare (horon vs other agents)"
@@ -554,7 +615,8 @@ jobs:
           # The same release record the artifact and install report keep; the
           # comparison JSON carries it so one file names the measured binary.
           provenance=()
-          [[ -f "$RESULTS/jcode-release.json" ]] && provenance=(--jcode-release "$RESULTS/jcode-release.json")
+          [[ -f "$RESULTS/jcode-release.json" ]] && provenance+=(--jcode-release "$RESULTS/jcode-release.json")
+          [[ -f "$RESULTS/competitor-provenance.json" ]] && provenance+=(--competitor-provenance "$RESULTS/competitor-provenance.json")
           # The dispatched list decides what is measured. Without --tools the
           # script's default set would skip a competitor whose binary is
           # installed but whose name is not a default.
@@ -771,7 +833,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.harness_ref }}
           sparse-checkout: scripts/perf
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8

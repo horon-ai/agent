@@ -40,25 +40,25 @@ OS마다 `.github/workflows/benchmark-os.yml`을 한 번씩 부르고, 그 안�
 ### 실행하기
 
 ```bash
-gh workflow run benchmark.yml --ref dev                                   # 세 OS, 모든 묶음
-gh workflow run benchmark.yml --ref dev -f os=windows                     # Windows만
+gh workflow run benchmark.yml --ref dev                                   # 기본 ref=main, 세 OS, 모든 일반 묶음
+gh workflow run benchmark.yml --ref dev -f ref=<branch> -f os=windows   # 지정 브랜치에서 Windows만
 gh workflow run benchmark.yml --ref dev -f os=linux,macos -f suites=compare,tools
 gh workflow run benchmark.yml --ref dev -f competitors=claude_code,codex
 gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
-gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=tools -f baseline_ref=dev   # 도구 호출당 데몬 CPU, 브랜치와 dev 비교
-gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install -f oneshot_runs=5     # OS·아키텍처별 설치 시간(별도 선택)
+gh workflow run benchmark.yml --ref <branch> -f ref=<branch> -f os=linux -f suites=tools -f baseline_ref=dev   # 도구 호출당 데몬 CPU, 브랜치와 dev 비교
+gh workflow run benchmark.yml --ref dev -f os=all -f suites=install -f oneshot_runs=5                       # OS·아키텍처별 설치 시간(별도 선택)
 ```
 
 | 입력 | 기본값 | 뜻 |
 | --- | --- | --- |
 | `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 위 작업이 뜬다. 설치 묶음은 `freebsd`도 받고 묶음마다 아키텍처 수만큼 작업을 띄운다. 일반 묶음은 이 자리에서 세 호스트 OS에서만 돈다. |
 | `suites` | `all` | `compare`, `packages`, `startup`, `loading`, `tools`, `reload`, `tui`, `compile`, `install` 중 쉼표로 고른다. `compare`는 `packages`도 함께 잰다. `all`은 일반 묶음 전부를 뜻하고 `install`은 넣지 않는다. 설치 묶음은 이름을 적어야만 도는 별도 선택이다 |
-| `competitors` | `jcode,claude_code,codex,opencode,pi,omp,omo` | horon과 비교할 도구. `omp`(oh-my-pi)와 `omo`(oh-my-openagent)가 들어 있다. 설치에 실패했거나 실행 런타임이 없는 도구는 `skipped`로 남는다. |
-| `jcode_version` | 비어 있음 | 고정할 jcode 공개 태그(`vX.Y.Z`). 비우면 비교·설치 행렬 전에 최신 안정 GitHub 릴리스를 한 번 해석해 그 태그·푼 커밋·`latest` 선택을 모든 OS 작업에 넘기므로, 한 회차가 릴리스 두 개를 재는 일이 없다. 해석·자산·체크섬·`--version` 가운데 하나라도 실패하면 jcode를 건너뛰지 않고 실행을 실패로 끝낸다. |
+| `competitors` | `jcode,claude_code,codex,opencode,pi,omp,omo` | horon과 비교할 도구. `omp`(oh-my-pi)와 `omo`(oh-my-openagent)가 들어 있다. 별도 고정이 없으면 회차 시작 때 `competitor_versions.py`가 각 npm 경쟁 도구의 최신 안정 `npm dist-tag latest`(프리릴리스 제외)를 한 번 해석하고 무결성·커밋 출처를 `competitor-provenance.json`에 남긴다. 설치에 실패했거나 실행 런타임이 없는 도구는 `skipped`로 남는다. |
+| `jcode_version` | 비어 있음 | 고정할 jcode 공개 태그(`vX.Y.Z`). 비우면 비교·설치 행렬 전에 `jcode_release.py resolve --per-platform`이 `/releases/latest`와 `/releases?per_page=30`을 조회해 요청한 각 OS마다 `SHA256SUMS`를 갖춘 최신 안정 `vX.Y.Z` 릴리스를 독립적으로 고른다(예: 업스트림 새 태그에 한 OS 자산이 빠져도 Linux는 `v1.1.2`, macOS·Windows는 `v1.0.3` 유지). 각 OS 작업은 배정받은 태그·푼 커밋·`latest` 선택을 `jcode-release.json`에 남긴다. 해석·고정 태그의 자산 누락·체크섬·`--version` 가운데 하나라도 실패하면 jcode를 건너뛰지 않고 실행을 실패로 끝낸다. |
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
 | `oneshot_runs` | `5` | one-shot·스킬·MCP 칸을 빌드마다 몇 번 잴지. `compare.md`의 Host 줄에 이 횟수가 적힌다. 중앙값의 최소 기준이 5이고, 가까운 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다. 설치 묶음은 이 값을 표본 수로 써서 도구마다 콜드 설치와 웜 설치를 그만큼씩 잰다 |
-| `install_ref` | 실행을 요청한 커밋 | `install`에서 잴 후보 설치기의 브랜치나 커밋. 측정 스크립트는 실행을 요청한 커밋에서 읽는다. |
+| `ref` | `main` | 일반 묶음에서 빌드·측정할 horon 대상 브랜치·태그·커밋(`v0.1.0-dev` 대신 태그 기반 semver 각인)이자 `install`의 후보 설치기 ref. 측정 스크립트와 워크플로는 실행을 요청한 ref에서 읽는다. |
 | `baseline_ref` | 빈 값 | 지정하면 그 커밋을 같은 작업 안에서 따로 빌드해 번갈아 잰다. `compare`에서는 `horon-base` 줄이 되고 `tools`에서는 두 번째 데몬이 된다. 설치 묶음은 같은 ref를 작업 안에 따로 체크아웃해 같은 릴리스 자산으로 설치 경로만 번갈아 잰다. 같은 러너의 전후 비교가 된다 |
 | `features` | 빈 값 | **후보** release 빌드에만 붙는 cargo feature(`--features <값>`). `horon-base` 빌드에는 붙지 않으므로 두 줄을 계속 비교할 수 있다. 비우면 빌드 명령이 이 입력이 없던 때와 바이트까지 같고, 아티팩트의 `features.txt`에는 빈 줄이 남는다. 값은 `^[a-z0-9_,-]*$`를 만족해야 한다. `build` 작업의 rust-cache 항목이 이 값으로 갈리므로 feature 빌드가 기본 아티팩트를 재사용하지 않는다 |
 
@@ -127,11 +127,11 @@ python3 scripts/perf/package_workloads.py --binary target/release/horon-agent \
 
 이 묶음은 별도 선택이다. `suites=all`은 절대 고르지 않으므로 `main` 자동 측정과 기존 실행은 예전에 재던 것만 그대로 잰다.
 
-측정 대상은 **배포된 릴리스**이지 측정 중인 코드가 아니다. horon 릴리스는 `RELEASE_TAG`(`v0.1.14`)로 고정한다. 그 값은 `benchmark-install.yml`의 상수이고 가장 최신 태그가 아니므로, 워크플로가 값을 옮기기 전까지 배포된 설치 수치를 그대로 비교할 수 있다. jcode는 예외로, `benchmark.yml`이 회차마다 한 번 해석한 최신 안정 릴리스(또는 `jcode_version` 고정 태그)를 설치 행렬도 함께 쓰므로 사용자가 지금 받는 실행 파일을 비교한다. 표본마다 그 릴리스 신원을 JSON에 남긴다. `install-release`는 어느 작업 트리에서 불러도 같은 릴리스 바이트를 검증·압축 해제·활성화하므로 Rust 변경은 이 수치를 움직이지 못한다. 작업 트리가 기여하는 것은 설치 경로 자체(`scripts/install/install.sh`, `scripts/install/install.ps1`)이고, `baseline_ref` 쌍이 그 경로의 변경을 가려낸다.
+측정 대상은 시험 중인 미태그 빌드가 아니라 **배포된 릴리스**다. `benchmark.yml`에서 부르면 `resolve`가 최신 공개 비프리릴리스 `horon-agent` GitHub 릴리스 태그를 `horon_release_tag`로 고르고, 단독 `benchmark-install.yml` 실행은 별도 지정이 없으면 `v0.1.22`를 기본값으로 쓴다. npm 경쟁 도구는 `resolve`가 회차 시작 때 해석한 `.bench-npm-versions.json`(`npm dist-tag latest`)을 그대로 넘겨받고, `jcode`는 `benchmark.yml`이 플랫폼마다 독립적으로 고른 최신 안정 릴리스(또는 `jcode_version` 고정 태그)를 쓰므로 각 표본이 그 릴리스 신원을 JSON에 남긴다. `install-release`는 어느 작업 트리에서 불러도 같은 릴리스 바이트를 검증·압축 해제·활성화하므로 Rust 변경은 이 수치를 움직이지 못한다. 작업 트리가 기여하는 것은 설치 경로 자체(`scripts/install/install.sh`, `scripts/install/install.ps1`)이고, `baseline_ref` 쌍이 그 경로의 변경을 가려낸다.
 
 `os`는 운영체제 네 종류를 받고 아키텍처마다 작업 하나를 실행한다. `linux`는 `linux-x86_64`와 `linux-aarch64`, `macos`는 `macos-aarch64`와 `macos-15-intel`의 `macos-x86_64`, `windows`는 `windows-x86_64`와 `windows-11-arm`의 `windows-aarch64`, `freebsd`는 FreeBSD 15.1 가상 머신의 `freebsd-x86_64`를 선택한다. `all`은 네 종류를 모두 선택한다. 각 플랫폼은 원본 JSON과 로그를 `install-<platform>-<run_id>`에 올린다. **Install results** 작업은 실행 요약에 전체 표를 게시하고 같은 표를 `install-summary-<run_id>`에 저장한다. 보관 기간은 30일이다.
 
-**측정 구간.** `install_ms`는 설치 프로세스가 성공으로 종료할 때까지 걸린 시간이다. `first_version_ms`는 설치된 실행 파일의 첫 `--version` 프로세스가 종료할 때까지 걸린 시간이다. `total_ms`에는 두 구간과 그 사이에 실행 파일 경로를 찾는 시간이 들어간다. Horon은 고정한 태그와 같은 버전을 출력해야 한다. jcode 설치기는 실행 파일을 실행하지 않고, 같은 첫 호출이 해석한 릴리스 버전을 출력하는지 그 호출에서 확인하므로 timed 실행 전에 미리 데우지 않는다. 실패한 표본에는 오류를 기록하고 통계에서 제외한다. Horon 표본이 실패하거나 jcode 릴리스 검증이 실패하면 보고서를 쓴 뒤 작업을 실패로 처리하며, 보고서에는 `releases.jcode`(태그·푼 커밋·자산·주소·SHA-256)가 남는다.
+**측정 구간.** `install_ms`는 설치 프로세스가 성공으로 종료할 때까지 걸린 시간이다. `first_version_ms`는 설치된 실행 파일의 첫 `--version` 프로세스가 종료할 때까지 걸린 시간이다. `total_ms`에는 두 구간과 그 사이에 실행 파일 경로를 찾는 시간이 들어간다. Horon은 해석된 릴리스 태그와 같은 버전을 출력해야 한다. jcode 설치기는 실행 파일을 실행하지 않고, 같은 첫 호출이 해석한 릴리스 버전을 출력하는지 그 호출에서 확인하므로 timed 실행 전에 미리 데우지 않는다. 실패한 표본에는 오류를 기록하고 통계에서 제외한다. Horon 표본이 실패하거나 jcode 릴리스 검증이 실패하면 보고서를 쓴 뒤 작업을 실패로 처리하며, 보고서에는 `releases.jcode`(태그·푼 커밋·자산·주소·SHA-256)가 남는다.
 
 설치 러너는 시간을 재기 전에 플랫폼 자산과 태그가 가리키는 커밋을 확인한다. 설치 시간에는 압축 파일을 받고 검증하고 푸는 시간이 들어간다. 첫 버전 확인 결과는 같은 표본에 기록한다.
 
@@ -142,14 +142,14 @@ python3 scripts/perf/package_workloads.py --binary target/release/horon-agent \
 
 모드마다 다섯 표본이 최소 기준이다(`oneshot_runs`, 기본 5). 칸마다 중앙값, 중앙값 절대 편차(MAD, 중앙값과의 차이의 중앙값), 최솟값, 최댓값, 표본 수를 적는다. 표준 편차 대신 MAD를 쓰는 이유는 공유 러너의 다운로드와 npm 꼬리 지연이 대칭이 아니기 때문이다. 두 값의 최솟값–최댓값 범위가 겹치는 칸은 우위가 아니라 무승부다. 플랫폼끼리, 실행끼리 절대값을 비교하지 않는다. 러너와 네트워크 경로, 레지스트리 미러가 달라진다.
 
-경쟁 도구 설치나 첫 실행이 실패하면 표본의 `error`에 원인을 기록하고 다른 도구를 계속 잰다. `omp`에 필요한 Bun처럼 운영체제에서 실행 파일과 런타임을 모두 구할 수 있어야 한다. FreeBSD 작업은 그 회차가 해석한 같은 릴리스의 FreeBSD x86_64 자산을 설치하며, 그 자산이 없는 릴리스는 실행을 실패로 끝낸다.
+경쟁 도구 설치나 첫 실행이 실패하면 표본의 `error`에 원인을 기록하고 다른 도구를 계속 잰다. `omp`에 필요한 Bun처럼 운영체제에서 실행 파일과 런타임을 모두 구할 수 있어야 한다. FreeBSD 작업은 그 회차가 해석한 FreeBSD 릴리스의 x86_64 자산을 설치하며, 그 자산이 없는 릴리스는 실행을 실패로 끝낸다.
 
-**기준선.** `-f baseline_ref=<ref>`를 주면 그 ref를 작업 안 `.bench-baseline`에 따로 체크아웃하고, 체크아웃한 트리와 그 설치 경로를 같은 고정 자산으로 견준다. 이 입력이 없으면 두 실행의 차이는 두 네트워크 경로의 차이일 뿐이다.
+**기준선.** `-f baseline_ref=<ref>`를 주면 그 ref를 작업 안 `.bench-baseline`에 따로 체크아웃하고, 체크아웃한 트리와 그 설치 경로를 같은 해석 자산으로 견준다. 이 입력이 없으면 두 실행의 차이는 두 네트워크 경로의 차이일 뿐이다.
 
 ```bash
 gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install -f oneshot_runs=5
 gh workflow run benchmark.yml --ref <branch> -f os=windows -f suites=install -f competitors=jcode
-gh workflow run benchmark.yml --ref <benchmark-branch> -f suites=install -f os=linux,macos -f install_ref=<candidate-sha> -f baseline_ref=<base-sha>
+gh workflow run benchmark.yml --ref <benchmark-branch> -f suites=install -f os=linux,macos -f ref=<candidate-sha> -f baseline_ref=<base-sha>
 gh workflow run benchmark.yml --ref <branch> -f os=freebsd -f suites=install
 ```
 
@@ -159,18 +159,18 @@ macOS를 포함한 모든 플랫폼에서 위 명령으로 측정을 시작한�
 
 ### 자동 측정
 
-`.github/workflows/benchmark-docs.yml`은 `main`에 push된 커밋의 CI가 성공하면 뜬다. 앞 단계가 막으면 뒤 단계는 돌지 않는다.
+`.github/workflows/benchmark-docs.yml`은 `main`에 push된 커밋의 CI가 성공하면 자동으로 뜨며, `benchmark.yml`의 `run_id`를 지정해 `workflow_dispatch`로 수동 실행할 수도 있다. 앞 단계가 막으면 뒤 단계는 돌지 않는다.
 
-1. **코드 변경 확인.** 직전 측정 커밋(`RESULTS.md`의 `<!-- bench-auto:start commit=... -->`) 이후 `src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, `scripts/perf` 중 하나가 바뀌었는지 본다. 기록이 없거나 이력에 없는 커밋이면 부모 커밋과 비교한다. 바뀐 것이 없으면 끝낸다.
-2. **구조 게이트 대기.** 같은 커밋의 `structural-perf.yml` push 실행이 성공할 때까지 최대 80분 기다린다.
-3. **벤치마크.** `benchmark.yml`을 `os=all`, `suites=all`로 부른다. 세 OS가 따로 돈다.
-4. **문서 갱신.** OS별 아티팩트를 모두 받아 `scripts/perf/bench_docs.py render`로 `RESULTS.md`, `RESULTS.ko.md`, `README.md`, `README.ko.md`의 생성 구간을 다시 쓰고, `docs/performance/charts`의 차트를 다시 그리며, 브랜치에 `scripts/ci/sync_docs_site.py`가 있으면 같은 문서에서 사이트 미러를 다시 만든다. 그다음 `docs(perf): record benchmark for <sha> [skip ci]` 커밋 하나를 `main`과 `dev`에 push한다. 렌더러와 차트 스크립트는 측정한 커밋에서 가져오므로 브랜치의 오래된 사본이 다르게 그리지 않는다.
+1. **코드 변경 확인(push 자동 실행).** 직전 측정 커밋(`RESULTS.md`의 `<!-- bench-auto:start commit=... -->`) 이후 `src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, `scripts/perf` 중 하나가 바뀌었는지 본다. 기록이 없거나 이력에 없는 커밋이면 부모 커밋과 비교한다. 바뀐 것이 없으면 끝낸다.
+2. **구조 게이트 대기.** 자동 push 실행은 같은 커밋의 `structural-perf.yml` push 실행이 성공할 때까지 최대 80분 기다린다.
+3. **벤치마크.** `benchmark.yml`을 `ref=main`, `os=all`, `suites=all`로 부른다(수동 `workflow_dispatch`에서는 전달한 `run_id`의 아티팩트를 내려받는다). 세 OS가 따로 돌고, `resolve`가 `horon`에 태그 기반 semver를 각인하는 한편 모든 경쟁 도구(`jcode --per-platform`과 npm `dist-tags.latest`)를 최신 안정 버전으로 해석한다.
+4. **문서 갱신.** OS별 아티팩트를 모두 받아 `scripts/perf/bench_docs.py render`로 `RESULTS.md`, `RESULTS.ko.md`, `README.md`, `README.ko.md`의 생성 구간을 다시 쓰고, `docs/performance/charts`의 차트를 다시 그리며, 브랜치에 `scripts/ci/sync_docs_site.py`가 있으면 같은 문서에서 사이트 미러를 다시 만든다. 그다음 `docs(perf): record benchmark for <sha> [skip ci]` 커밋 하나를 `main`과 `dev`에 push한다. 스크립트 단계는 측정한 커밋에 `scripts/perf/*.py`가 있으면 그 사본을 읽어 렌더링하고, 없으면 체크아웃한 커밋의 사본을 쓴다.
 
 문서 구간에는 OS 요약표(러너, 바이너리, 상태)와 OS별 절이 Linux, macOS, Windows 순서로 들어간다. 실패한 OS는 "일부 실패"로 표시하고 그때까지 잰 값을 남긴다. 결과가 없는 OS도 절을 지우지 않고 "결과 없음"으로 적는다. 구간 밖의 글은 바이트 단위로 그대로 둔다.
 
-같은 아티팩트로 생성 구간 두 개를 더 쓴다. README의 `bench-summary` 구간은 대표 표이고, 각 행이 지표, 각 칸이 그 실행이 기록한 중앙값이며, jcode 버전은 그 실행이 설치한 바이너리에서, 릴리스 신원은 `jcode-release.json`에서 읽는다. RESULTS의 `bench-versions` 구간은 측정한 도구 버전과 러너별 jcode 릴리스(태그, 푼 커밋, 자산, SHA-256, 제공 경로)를 적는다. 두 구간 모두 이전 측정값을 물려받지 않고, 생성 구간 밖의 과거 표는 그 값을 낸 버전 표기를 그대로 유지한다.
+같은 아티팩트로 생성 구간 두 개를 더 쓴다. README의 `bench-summary` 구간은 `horon`과 경쟁 도구 일곱 개(A/B `horon-base` 행 제외)를 나란히 둔 대표 표이고, 각 행이 지표, 각 칸이 그 실행이 기록한 중앙값이며, OS별 `jcode` 버전은 해당 실행이 설치한 바이너리에서, 릴리스 신원은 `jcode-release.json`에서 읽는다. RESULTS의 `bench-versions` 구간도 측정한 여덟 도구 버전(`horon-base` 제외), npm 경쟁 도구의 레지스트리 출처(`package`, `version`, `dist-tag`, `gitHead`, `integrity`), 러너별 `jcode` 릴리스(`tag`, `commit`, `asset`, `SHA-256`, 제공 경로)를 적는다. 두 구간 모두 이전 측정값을 물려받지 않고, 생성 구간 밖의 과거 표는 그 값을 낸 버전 표기를 그대로 유지한다.
 
-자동 생성은 `--require-complete`를 써서 모든 시험 묶음에 산출물이 있을 때 RESULTS 전체 기록을 갱신한다. `suites=compare`를 수동으로 실행한 뒤에는 영·한 README와 RESULTS 각각에 `bench_docs.py render --comparison-only`를 실행한다. 비교 요약과 측정 버전이 갱신되고 전체 기록과 차트가 보존된다.
+렌더러는 `--require-complete`, `--require-all-competitors`, `--require-main-commit --main-ref origin/main`을 함께 넘겨 일부 OS 실패·부분 경쟁 도구·`dev` 커밋·`v0.1.0-dev` 폴백 빌드가 `main` 공개 기록과 차트를 덮어쓰지 못하게 막는다. `origin/main`을 대상으로 세 OS 전체 `suites=compare`를 수동 실행한 뒤에는 영·한 README와 RESULTS 각각에 `--comparison-only`, `--require-all-competitors`, `--require-main-commit --main-ref origin/main`을 주고 `bench_docs.py render`를 실행해 비교 요약과 측정 버전을 갱신하고 전체 기록과 차트를 보존한다.
 
 미러는 `RESULTS.md`와 `RESULTS.ko.md`를 함께 쓰므로 영어와 한국어 Reference 페이지를 같이 다시 만든다. `packages/docs-site/reference/performance/`, `packages/docs-site/ko/reference/performance/`, `packages/docs-site/images/reference/`가 대상이다. 한쪽 언어만 스테이징하면 사이트가 낡은 채로 남고 다음 Documentation Site 검사가 실패한다.
 
@@ -206,11 +206,11 @@ python3 scripts/perf/bench_compare.py --bin horon=./target/release/horon-agent $
   --sessions 1 5 10 --turns 3 --json-out compare.json --markdown-out compare.md
 ```
 
-`install_competitors.sh`는 npm 도구를 고정 버전으로 설치하고 jcode는 릴리스를 해석해 설치한다. jcode는 스크립트 상수 대신 `1jehuang/jcode`의 최신 안정 GitHub 릴리스(또는 `JCODE_VERSION`에 적은 태그)이고, 나머지는 `npm install --prefix`로 `@anthropic-ai/claude-code@2.1.317`, `@openai/codex@0.166.0`, `opencode-ai@1.19.5`, `@earendil-works/pi-coding-agent@1.5.0`, `@oh-my-pi/pi-coding-agent@18.18.0`, `omo-ai@5.1.64`를 쓴다. npm 버전은 `CLAUDE_VERSION`, `CODEX_VERSION`, `OPENCODE_VERSION`, `PI_VERSION`, `OMP_VERSION`, `OMO_VERSION`으로 바꾸고, jcode는 `JCODE_VERSION=v1.2.3`으로 고정하며 같은 다운로드·체크섬·`--version` 검증을 거친다. Windows에서는 Git Bash로 돌리고, npm 도구는 `.cmd` 실행 파일로 기록한다.
+`install_competitors.sh`는 도구를 고정 상수로 묶지 않고 매 실행에서 `jcode` 릴리스와 npm 경쟁 도구를 동적으로 해석한다. 별도 고정이 없으면 `jcode`는 `1jehuang/jcode`의 최신 안정 GitHub 릴리스에서 가져오고, npm 도구(`@anthropic-ai/claude-code`, `@openai/codex`, `opencode-ai`, `@earendil-works/pi-coding-agent`, `@oh-my-pi/pi-coding-agent`, `omo-ai`)는 `scripts/perf/competitor_versions.py prepare-install`이 현재 `npm dist-tag latest`(프리릴리스 제외)를 조회해 설치하거나 `benchmark.yml`이 한 회차 공용으로 넘긴 `COMPETITOR_VERSIONS_JSON`을 재사용해 Linux·macOS·Windows가 같은 npm 릴리스를 재도록 맞춘 뒤 레지스트리 메타데이터와 SHA-512 무결성을 `<dest>/competitor-provenance.json`에 남긴다. 개별 패키지는 `CLAUDE_VERSION`, `CODEX_VERSION`, `OPENCODE_VERSION`, `PI_VERSION`, `OMP_VERSION`, `OMO_VERSION`으로 고정할 수 있고, `jcode`는 `JCODE_VERSION=v1.2.3`으로 고정하며 같은 다운로드·체크섬·`--version` 검증을 거친다. Windows에서는 Git Bash로 돌리고, npm 도구는 `.cmd` 실행 파일로 기록한다.
 
-pi는 1.x부터 `@earendil-works` 이름으로 배포되고 MCP 클라이언트를 내장한다(Node 22.19 이상). 0.73.1(`@mariozechner/pi-coding-agent`)에는 MCP 클라이언트가 없어 MCP 행을 잴 수 없었으므로 1.5.0으로 올렸고, 그래서 이 버전부터 pi의 모든 행이 이전 결과와 다른 버전을 잰다. MCP 측정은 `$PI_CODING_AGENT_DIR/mcp.json`에 픽스처 서버를 `"exposure": "direct"`로 넣는다. 기본값 `codemode`는 도구를 모델에 직접 알리지 않아 가짜 모델이 `mcp__bench__bench_echo`를 부를 수 없기 때문이다. 원샷, 스킬, 세션 측정은 `--no-mcp`로 MCP를 끄고 다른 도구와 같은 조건을 맞춘다.
+pi는 `1.x`부터 `@earendil-works` 이름으로 배포되고 MCP 클라이언트를 내장한다(Node 22.19 이상). 이전 `0.73.1`(`@mariozechner/pi-coding-agent`)에는 MCP 클라이언트가 없어 MCP 행을 잴 수 없었으므로 `npm dist-tag latest`로 해석되는 `1.x` 계열을 사용해 네 시나리오를 모두 측정한다. MCP 측정은 `$PI_CODING_AGENT_DIR/mcp.json`에 픽스처 서버를 `"exposure": "direct"`로 넣는다. 기본값 `codemode`는 도구를 모델에 직접 알리지 않아 가짜 모델이 `mcp__bench__bench_echo`를 부를 수 없기 때문이다. 원샷, 스킬, 세션 측정은 `--no-mcp`로 MCP를 끄고 다른 도구와 같은 조건을 맞춘다.
 
-jcode 릴리스는 벤치마크 회차마다 한 번 해석한다. `scripts/perf/jcode_release.py resolve`가 비교·설치 행렬 전에 GitHub에서 최신 안정 릴리스(또는 `JCODE_VERSION` 고정 태그)를 받아 태그를 커밋으로 풀어 두고, OS 기계마다 그 태그와 커밋을 받는다. 각 기계는 릴리스의 정확한 플랫폼 자산(`jcode-macos-aarch64.tar.gz`, `jcode-macos-x86_64.tar.gz`, `jcode-linux-aarch64.tar.gz`, `jcode-linux-x86_64.tar.gz`, `jcode-freebsd-x86_64.tar.gz`, Windows는 `.exe`)을 요구하고, 릴리스의 `SHA256SUMS`에 그 이름으로 적힌 다이제스트와 SHA-256이 같을 때만 바이트를 쓴다. 두 다운로드는 일시 오류를 5번까지 재시도하고 릴리스 주소가 계속 실패하면 같은 자산을 릴리스 API의 id로 받는다. 기록에는 자산 주소인 `download_url`과 실제 전송을 맡은 `served_url`·`served_by`를 따로 남긴다. 압축을 푼 실행 파일은 `--version`을 한 번 실행해 해석한 태그와 같은지 확인한다. 초안·프리릴리스 태그, 플랫폼 자산이 없는 릴리스, 잘못된 다이제스트, 다른 버전은 `<dest>/failures.txt`에 이유를 남기고 실행을 실패로 끝낸다. `<dest>/jcode-release.json`에는 버전·태그·푼 커밋·자산·주소·SHA-256을 남기고, `benchmark-os.yml`이 설치기 로그와 함께 `bench-results/`로 복사하며 비교 보고서는 같은 기록을 `provenance`로 담는다. 설치 묶음은 설치기의 `--version` 실행을 건너뛰고 timed 첫 실행에서 그 값을 확인하므로, 설치 시간은 그 실행 파일의 첫 실행을 잰다. 태그만 받은 호출은 `selection: pin`, 회차의 `latest` 해석에서 내려온 태그는 `selection: latest`로 기록하고, `served_by`가 그 러너의 자산 취득 경로를 밝힌다.
+jcode 릴리스는 벤치마크 회차마다 한 번 해석한다. `scripts/perf/jcode_release.py resolve --per-platform`(고정 태그가 비어 있을 때 `benchmark.yml`의 기본값)이 비교·설치 행렬 전에 GitHub의 `/releases/latest`와 `/releases?per_page=30`을 조회하고, 요청한 OS마다 해당 OS 자산과 `SHA256SUMS`를 갖춘 최신 안정 `vX.Y.Z` 릴리스를 독립적으로 배정하며(`JCODE_VERSION` 핀이나 단일 태그 모드에서는 공통 릴리스 사용), 각 태그를 커밋으로 풀어 플랫폼별 JSON을 행렬 작업에 넘긴다. 각 기계는 릴리스의 정확한 플랫폼 자산(`jcode-macos-aarch64.tar.gz`, `jcode-macos-x86_64.tar.gz`, `jcode-linux-aarch64.tar.gz`, `jcode-linux-x86_64.tar.gz`, `jcode-freebsd-x86_64.tar.gz`, Windows는 `.exe`)을 요구하고, 릴리스의 `SHA256SUMS`에 그 이름으로 적힌 다이제스트와 SHA-256이 같을 때만 바이트를 쓴다. 두 다운로드는 일시 오류를 5번까지 재시도하고 릴리스 주소가 계속 실패하면 같은 자산을 릴리스 API의 id로 받는다. 기록에는 자산 주소인 `download_url`과 실제 전송을 맡은 `served_url`·`served_by`를 따로 남긴다. 압축을 푼 실행 파일은 `--version`을 한 번 실행해 해석한 태그와 같은지 확인한다. 초안·프리릴리스 태그, 플랫폼 자산이 없는 릴리스, 잘못된 다이제스트, 다른 버전은 `<dest>/failures.txt`에 이유를 남기고 실행을 실패로 끝낸다. `<dest>/jcode-release.json`에는 버전·태그·푼 커밋·자산·주소·SHA-256을 남기고, `benchmark-os.yml`이 설치기 로그와 함께 `bench-results/`로 복사하며 비교 보고서는 같은 기록을 `provenance`로 담는다. 설치 묶음은 설치기의 `--version` 실행을 건너뛰고 timed 첫 실행에서 그 값을 확인하므로, 설치 시간은 그 실행 파일의 첫 실행을 잰다. 태그만 받은 호출은 `selection: pin`, 회차의 `latest` 해석에서 내려온 태그는 `selection: latest`로 기록하고, `served_by`가 그 러너의 자산 취득 경로를 밝힌다.
 
 다른 도구는 기존처럼 실패를 감수한다. 설치에 실패한 도구는 `<dest>/failures.txt`에 `이름<TAB>이유` 한 줄로 남고, `bench_compare.py --install-failures`가 이 파일을 읽어 `compare.md`의 `Skipped:` 줄에 `install failed: <이유>`로 적는다. 측정하지 못한 도구가 하나라도 있으면 `compare.md` 맨 앞에 `> **Warning: N tool(s) were not measured**` 줄이 붙고, GitHub Actions에서는 도구마다 `::warning` 주석과 실행 요약(step summary) 줄이 남아 run 화면에서 바로 보인다. `syscalls`처럼 측정 기능이 빠진 항목은 도구가 아니므로 경고하지 않는다.
 
@@ -221,7 +221,7 @@ jcode 릴리스는 벤치마크 회차마다 한 번 해석한다. `scripts/perf
 | `version_ms` | `--version` 실행 N회(기본 5)의 통계 |
 | `oneshot_ms` | one-shot `run` 질문 1건(기동, `ls` 도구 1회, 최종 응답)의 시간, 그동안의 최대 프로세스 트리 메모리, 도구 왕복 여부 |
 | `oneshot_core` | 같은 one-shot 질문에서 `--tools`를 뺀 실행. 요청이 기본 `core` 표면을 싣는다. 즉시 보내는 도구 7개와 `toolbox`, 시스템 프롬프트의 도구 인덱스다. 행마다 plain one-shot의 home과 작업 폴더를 다시 쓰므로 두 행은 도구 표면만 다르다. JSON `oneshot_core.{ms,peak_rss_bytes,status,error,runs}`이고 실행마다 `oneshot_core.runs[*].request_bytes`가 남는다. 첫 요청이 도구를 하나도 싣지 않은 실행은 시간 없이 `core surface missing`으로 기록한다. core 프로필이 없는 도구(horon과 두 번째 horon 빌드를 뺀 모든 도구)는 `{"skipped": "<label> has no core tool profile"}`을 남긴다. `oneshot_ms` 행은 `RESULTS.md`와 비교할 수 있도록 `--tools bash`를 그대로 쓴다 |
-| `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. 시간을 재는 실행과 별도로, 같은 횟수만큼 `strace`를 씌운 실행을 더 돌려 센다. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
+| `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. 시간을 재는 실행과 별도로, 같은 횟수만큼 `strace`를 씌운 실행을 더 돌려 센다. 정상 종료했지만 플러시가 없는 경우(`pi --no-session`, `Claude Code -p` 등)는 `null`이 아니라 `0`으로 기록한다. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
 | `fsync_paths` | `--syscalls`를 켰을 때 행마다 one-shot을 한 번 더 돌린다. 시간도 재지 않고 호출 수에도 넣지 않는 이 실행을 `strace -f -y`로 추적해 `fsync`·`fdatasync`마다 그 fd 뒤의 파일이나 폴더 이름을 얻는다. JSON `oneshot.fsync_paths[*].{path,count,fsync,fdatasync}`이고 호출이 많은 순서다. 실행의 임시 루트는 `<root>`로, 세션 폴더 이름(`session_<word>_<millis>_<hex>`)은 `session_<id>`로, UUID와 긴 hex id, 긴 숫자열은 `<id>`로 적어 두 실행과 두 빌드가 같은 묶음으로 나뉜다. `strace`가 이름을 얻지 못한 fd는 `fd:<n>`이다. 묶음 수의 합은 추적한 그 실행이 한 flush 수와 같다. `strace`가 없으면 값은 `{"skipped": "strace unavailable"}`이다 |
 | `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다. 표본마다 그 트리에 살아 있는 프로세스 수도 `idle_process_count`, `post_turn_process_count`로 함께 남긴다 |
 | `process_count` | 주어진 세션 수에서 도구가 살려 두는 프로세스 수. 지점별로는 `sessions_memory.points[*].{idle_process_count,post_turn_process_count}`에, 요약으로는 `first_session_idle_processes`·`each_additional_idle_processes`와 `post_turn` 쪽 같은 두 값에 남는다. 개수와 RSS를 한 번의 순회로 읽으므로 개수를 더 재는 일이 메모리 측정 시점을 흔들지 않는다. 두 세션 루트에서 닿는 PID는 한 번만 세고, 이미 끝난 루트는 바이트도 프로세스도 아닌 것으로 세지 않으며, 읽지 못한 표본은 `null`(보고서에서는 —)이지 0이 아니다. 세션당 기울기가 `0.00`이면 세션이 도구 자신의 프로세스(데몬이나 공유 서버) 안에 있고, `1.00` 안팎이면 세션마다 프로세스가 하나씩 늘어난다는 뜻이다 |
@@ -246,10 +246,10 @@ jcode 릴리스는 벤치마크 회차마다 한 번 해석한다. `scripts/perf
 
 두 도구는 pi와 같은 `models.json`·RPC 계약을 쓰므로 같은 하네스를 공유하되 실행 방식과 기본값이 달라 다음을 따로 맞춘다.
 
-| 도구 | 보고서 이름 | npm 패키지 | 고정 버전 | 실행 런타임 | mock 연결 |
+| 도구 | 보고서 이름 | npm 패키지 | 버전 해석 | 실행 런타임 | mock 연결 |
 | --- | --- | --- | --- | --- | --- |
-| `omp` | `oh-my-pi (omp)` | `@oh-my-pi/pi-coding-agent` | `18.18.0` (`OMP_VERSION`) | Bun 1.4.4 이상 (`engines`) | 임시 HOME 아래 `models.json`의 `providers.mock`, `-p --no-session --no-title --model mock/mock-model --no-lsp` |
-| `omo` | `oh-my-openagent (omo)` | `omo-ai` | `5.1.64` (`OMO_VERSION`) | Node 24 이상 또는 Bun | 같은 `models.json`, `-p --no-session --model mock/mock-model --tools bash,read` |
+| `omp` | `oh-my-pi (omp)` | `@oh-my-pi/pi-coding-agent` | `npm dist-tag latest` (`OMP_VERSION` 고정 가능) | Bun 1.4.4 이상 (`engines`) | 임시 HOME 아래 `models.json`의 `providers.mock`, `-p --no-session --no-title --model mock/mock-model --no-lsp` |
+| `omo` | `oh-my-openagent (omo)` | `omo-ai` | `npm dist-tag latest` (`OMO_VERSION` 고정 가능) | Node 24 이상 또는 Bun | 같은 `models.json`, `-p --no-session --model mock/mock-model --tools bash,read` |
 
 - `omp`는 npm CLI를 Bun 스크립트로 배포하므로 compare 작업이 `oven-sh/setup-bun`으로 Bun을 먼저 설치한다. Bun이 없으면 `omp`를, Node도 Bun도 없으면 `omo`를 installer가 `skipped`로 남기고 작업은 계속된다.
 - Bun을 GitHub 릴리스에서 받지 못하면 installer가 npm 레지스트리의 `bun`(`BUN_VERSION`, 기본 1.4.4)으로 대신 설치한다.
@@ -265,7 +265,7 @@ jcode 릴리스는 벤치마크 회차마다 한 번 해석한다. `scripts/perf
 
 - `oneshot_core`: one-shot 질문에서 `--tools` 허용 목록을 뺀 것이라 턴이 기본 `core` 도구 프로필로 돈다. 바이너리에 새 기능이 필요 없으므로 `--bin horon-base=<path>`로 준 기준선 빌드도 같은 방법으로 재고, 그 쌍의 `request_bytes`에서 프롬프트나 도구 설명 변경이 옮긴 바이트가 보인다.
 - `skill`: 프롬프트가 `[bench:skill]`로 시작한다. 가짜 모델은 그 마커를 보고 스킬 전용 도구(`Skill`, `skill`, `skills.read`, `skill_manage`)가 있으면 그것을 부르고, 없으면 설명에 `skill://`가 있는 읽기 도구에 `skill://bench-skill`을 넘기고, 그것도 없으면 읽기 도구나 셸 도구로 프롬프트가 준 `SKILL.md` 절대 경로를 연다. 어느 경로였는지는 요청 기록의 `via`와 보고서의 `Via` 열에 남는다.
-- `mcp`: 프롬프트가 `[bench:mcp]`로 시작한다. 가짜 모델은 이름이 `bench_echo`로 끝나는 도구를 찾아 `{"text": "bench-nonce-N"}`으로 한 번 부른다. 그 도구가 Responses 네임스페이스 안에 있으면 함수 이름은 `bench_echo`, 네임스페이스는 별도 `namespace` 필드로 보낸다(Codex가 받는 `function_call` 모양). 도구 목록에 서버 도구가 없을 때는 각 에이전트가 문서로 정한 경로를 따른다. 고정 도구 `mcp_call`(`mcp-call`), `action` 열거값에 `call`이 있는 관리 도구 `mcp`(`mcp-action`), 프롬프트가 지연 도구로 적은 `mcp__<서버>__bench_echo`를 `ToolSearch`의 `select:<이름>`으로 먼저 불러오는 경로(`tool-search`), omp처럼 프롬프트에 `xd://...bench_echo` 라우트만 적는 도구는 그 라우트를 `write` 도구로 부르는 경로(`mcp-route`)다.
+- `mcp`: 프롬프트가 `[bench:mcp]`로 시작한다. 가짜 모델은 이름이 `bench_echo`로 끝나는 도구를 찾아 `{"text": "bench-nonce-N"}`으로 한 번 부른다. 그 도구가 Responses 네임스페이스 안에 있으면 함수 이름은 `bench_echo`, 네임스페이스는 별도 `namespace` 필드로 보낸다(Codex가 받는 `function_call` 모양). 도구 목록에 서버 도구가 없을 때는 각 에이전트의 프롬프트·도구 스키마가 정한 경로를 따른다. 고정 도구 `mcp_call`(`mcp-call`), `action` 열거값에 `call`이 있는 관리 도구 `mcp`(`mcp-action`), 프롬프트가 지연 도구로 적은 `mcp__<서버>__bench_echo`를 `ToolSearch`의 `select:<이름>`으로 먼저 불러오는 경로(`tool-search`), `omp 19.x`의 `## MCP Tool Commands`(`mcp__bench_echo --text <nonce>`)를 `bash`로 부르는 경로(`mcp-command`) 또는 `mcp.evalNamespaces`를 `eval`로 부르는 경로(`mcp-eval`), 구버전 omp에서 `xd://...bench_echo` 라우트를 `write` 도구로 부르는 경로(`mcp-route`)다.
 - 도구를 불렀는데 센티널이나 nonce가 돌아오지 않으면 마지막 도구 결과의 끝 400자가 실행 기록의 `result_excerpt`에 남는다. 샌드박스 거부나 셸 오류를 다시 돌리지 않고 확인하기 위한 값이다.
 - 왕복은 가정하지 않는다. 스킬은 `SKILL.md` 본문의 `BENCH-SKILL-SENTINEL`을, MCP는 모델이 넘긴 nonce를 나중 요청에서 봐야 `tool_round_trip`이 `true`가 된다. 도구를 부르지 않고 `mock-ok`만 돌아온 실행은 `false`로 남는다.
 - 두 시나리오 모두 프로세스 시작부터 마지막 응답까지를 잰다. 그래서 스킬 탐색, MCP 서버 시작, 도구 등록이 숫자에 들어간다. `mcp_ready_ms`는 그중 서버 준비 구간만 따로 보여 준다.
@@ -285,8 +285,8 @@ jcode 릴리스는 벤치마크 회차마다 한 번 해석한다. `scripts/perf
 | `codex` | 작업 폴더 `.agents/skills`의 픽스처를 셸 도구로 `cat`(`file-read`). Codex는 이 위치를 프로젝트 스킬로 찾아 프롬프트에 올린다. 샌드박스는 끄지 않고 러너에서 동작하게 맞춘다. Linux 러너는 Codex 문서의 Ubuntu 24.04 절차(bubblewrap 설치, AppArmor `bwrap-userns-restrict` 적재)를 먼저 밟는다. 그러지 않으면 명령마다 `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`로 실패한다. Windows는 모든 Codex 실행에 `-c windows.sandbox="unelevated"`를 준다. 지정이 없으면 새 러너에는 준비된 샌드박스가 없어 `-s read-only` 명령이 `rejected: blocked by policy`로 거부되고, `unelevated`는 관리자 설정 없이 쓰도록 문서가 안내하는 방식이다. 또 Windows의 측정 폴더는 `tempfile.mkdtemp`가 아니라 `os.mkdir`로 만들어 `%TEMP%`의 ACL을 물려받는다. `mkdtemp`의 0o700은 CPython 3.12.4 이상에서 SYSTEM, Administrators, 소유자만 허용하는 보호 ACL이 되고, 관리자 러너에서는 소유자가 Administrators 그룹이라 관리자 권한을 뺀 샌드박스 토큰이 그 아래를 `Access to the path ... is denied`로 읽지 못한다 | `$CODEX_HOME/config.toml`의 `[mcp_servers.bench]`와 `tools.bench_echo.approval_mode = "approve"`. 서버는 네임스페이스 도구 `mcp__bench`로 보이고, `name: bench_echo`, `namespace: mcp__bench`로 부른다(`mcp-tool`) |
 | `opencode` | `XDG_CONFIG_HOME/opencode/skills`의 픽스처를 `skill` 도구로 호출(`skill-tool`) | `opencode.json`의 `mcp.bench`(`type: local`) |
 | `pi` | 프롬프트의 스킬 목록과 `read` 도구로 `SKILL.md`를 읽음(`file-read`) | `$PI_CODING_AGENT_DIR/mcp.json`의 `mcpServers`, `"exposure": "direct"`. `mcp__bench__bench_echo`를 바로 부른다(`mcp-tool`) |
-| `omp` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`. 프롬프트의 `xd://...bench_echo` 라우트를 `write`로 호출(`mcp-route`) |
-| `omo` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`, 함수 `mcp_bench_bench_echo`. `--tools`는 허용 목록이고 MCP 도구 이름이 빌드마다 달라질 수 있어 이 시나리오만 `--tools`를 주지 않고 기본 도구 집합(연결된 서버 도구 포함)을 쓴다 |
+| `omp` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`. `omp 19.x`에서는 `## MCP Tool Commands`의 `mcp__bench_echo --text <nonce>`를 `bash`로 호출(`mcp-command`, 또는 `mcp.evalNamespaces`를 `eval`로 호출하는 `mcp-eval`), 구버전은 `xd://...bench_echo` 라우트를 `write`로 호출(`mcp-route`) |
+| `omo` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`, 함수 `mcp_bench_bench_echo`. `--tools`는 허용 목록이고 MCP 도구 이름이 빌드마다 달라질 수 있어 이 시나리오만 `--tools`를 주지 않고 기본 도구 집합(연결된 서버 도구 포함)을 쓴다. 첫 콜드 기동에서는 `omo` 런타임이 stdio MCP 서버를 백그라운드로 연결하므로(`deadlineMs: 0`), 첫 모델 요청에 `mcp_bench_bench_echo` 대신 `tool_search`만 올라오면 `mock_llm_server.py`가 `tool_search`(`query: "bench_echo", source: "mcp"`)를 호출해 서버 도구가 등록될 때까지 기다린다(`mcp-tool`) |
 
 시나리오마다 도구 루트 아래 `<시나리오>/run<N>`에 별도 홈과 작업 폴더를 만든다. 같은 홈을 다시 쓰면 앞 실행이 남긴 MCP 스키마 캐시나 스킬 힌트가 준비 비용을 건너뛰게 된다. 스킬과 MCP 픽스처도 해당 시나리오의 홈에만 두므로 다른 시나리오의 숫자에 섞이지 않는다. 실행이 끝나면 그 루트는 통째로 지운다.
 

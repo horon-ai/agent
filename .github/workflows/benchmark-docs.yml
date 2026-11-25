@@ -25,6 +25,13 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Measure main HEAD and rewrite RESULTS/README even if CODE_PATHS did not change"
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: read
@@ -50,13 +57,15 @@ env:
 jobs:
   gate:
     name: Gate (CI passed, code changed)
-    # A first-party push to main whose CI run succeeded. Fork code never reaches
-    # this point: workflow_run on `branches: [main]` with event `push` is a push
-    # to this repository's main.
+    # A first-party push to main whose CI run succeeded, or a manual dispatch
+    # directly on main. Fork code never reaches this point.
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -64,20 +73,27 @@ jobs:
       actions: read
     outputs:
       run: ${{ steps.changed.outputs.run }}
-      sha: ${{ github.event.workflow_run.head_sha }}
+      sha: ${{ steps.changed.outputs.sha }}
     env:
-      SHA: ${{ github.event.workflow_run.head_sha }}
+      SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+      FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.force && 'true' || 'false' }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - name: Did the agent code change since the last measurement?
         id: changed
         shell: bash
         run: |
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          if [[ "${FORCE_RUN:-false}" == "true" ]]; then
+            echo "workflow_dispatch (force=true): measuring $SHA"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           base=$(python3 scripts/perf/bench_docs.py last-commit --doc "$DOC")
           if [[ -n "$base" ]] && git merge-base --is-ancestor "$base" HEAD 2>/dev/null; then
             echo "last measured commit: $base"
@@ -101,7 +117,7 @@ jobs:
           fi
 
       - name: Wait for the structural performance gate on the same commit
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' && github.event_name == 'workflow_run'
         shell: bash
         run: |
           for _ in $(seq 1 80); do
@@ -125,8 +141,10 @@ jobs:
     uses: ./.github/workflows/benchmark.yml
     with:
       ref: ${{ needs.gate.outputs.sha }}
+      harness_ref: ${{ needs.gate.outputs.sha }}
       os: all
       suites: all
+      competitors: jcode,claude_code,codex,opencode,pi,omp,omo
 
   docs:
     name: Write RESULTS.md on main and dev
@@ -172,9 +190,10 @@ jobs:
         run: |
           # Use the renderer and its dependencies from the measured commit,
           # even when the target branch carries older copies of the scripts.
-          cp scripts/perf/{bench_docs,bench_charts,bench_request_bytes}.py "$RUNNER_TEMP/"
+          cp scripts/perf/*.py "$RUNNER_TEMP/"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags --quiet origin main:refs/remotes/origin/main
           short=$(git rev-parse --short "$SHA")
           failed=()
           for branch in main dev; do
@@ -190,7 +209,8 @@ jobs:
               for pair in "$DOC:en" "$DOC_KO:ko"; do
                 if ! python3 "$RUNNER_TEMP/bench_docs.py" render --doc "${pair%:*}" \
                     --results "$RUNNER_TEMP/bench-results" --commit "$SHA" \
-                    --run-url "$RUN_URL" --lang "${pair#*:}" --require-complete; then
+                    --run-url "$RUN_URL" --lang "${pair#*:}" --require-complete \
+                    --require-all-competitors --require-main-commit --main-ref origin/main; then
                   echo "::error::$branch: ${pair%:*} has no usable bench-auto block"
                   rendered=false
                 fi
@@ -198,7 +218,8 @@ jobs:
               for pair in "README.md:en" "README.ko.md:ko"; do
                 if ! python3 "$RUNNER_TEMP/bench_docs.py" render --doc "${pair%:*}" \
                     --results "$RUNNER_TEMP/bench-results" --commit "$SHA" \
-                    --run-url "$RUN_URL" --lang "${pair#*:}"; then
+                    --run-url "$RUN_URL" --lang "${pair#*:}" --require-all-competitors \
+                    --require-main-commit --main-ref origin/main; then
                   echo "::error::$branch: ${pair%:*} has no usable bench-summary block"
                   rendered=false
                 fi
