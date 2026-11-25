@@ -635,9 +635,7 @@ impl App {
                 return (!rest.is_empty()).then(|| text.to_string());
             }
             while let Some(after_open) = rest.strip_prefix("<system-reminder>") {
-                let Some(end) = after_open.find("</system-reminder>") else {
-                    return None;
-                };
+                let end = after_open.find("</system-reminder>")?;
                 rest = after_open[end + "</system-reminder>".len()..].trim_start();
             }
             (!rest.is_empty()).then(|| rest.to_string())
