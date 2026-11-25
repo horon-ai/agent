@@ -840,7 +840,7 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 다른 저장 세션 읽기를 이미 막는 `session_replication_v1` 기능을 요구한다. 없는
 세션에는 다른 읽기와 같은 `unknown_session` 오류로 답한다.
 `horon export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
-같은 바이트를 쓴다.
+같은 바이트를 쓴다. `--json`은 `{"session_id": ..., "markdown": ...}`로 감싸며, `--json --out <path>`는 그 JSON 본문을 `<path>`에 쓰고(Markdown은 기존 파일 덮어쓰기 허용) 표준 출력에는 JSON 요약(`session_id`, `out`, `format`, `bytes`)을 출력한다.
 
 ### HTML 보고서 (프로토콜 1.27)
 
@@ -859,7 +859,7 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 답한다.
 
 `horon export <session-id> --html [--out <path>]`는 같은 바이트를 쓰고, `--json`은
-`{"session_id": ..., "html": ...}`로 감싼다. Markdown 형식과 달리 이미 있는
+`{"session_id": ..., "html": ...}`로 감싼다(`--json --out <path>`는 그 본문을 `<path>`에 쓰고 표준 출력에 JSON 요약을 출력한다). Markdown 형식과 달리 이미 있는
 `--out` 경로는 덮어쓰지 않고 거절한다. 보고서의 목적지는 사용자가 직접 지목한
 파일이기 때문이다.
 

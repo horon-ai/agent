@@ -4,7 +4,10 @@ description: Provider profiles, model roles and the settings whose defaults are 
 ---
 
 The configuration file is `~/.horon/config.toml` (`<home>/config.toml` when
-`HORON_HOME` is set).
+`HORON_HOME` is set). Run `horon config check [--json]` to validate it before
+launch: it applies a one-time migration from legacy `swarm_spawn_mode` values
+and exits `1` on malformed TOML, unknown TOML keys, or an unknown `[provider]
+default_provider`.
 
 ## Provider profiles
 
@@ -133,5 +136,6 @@ read. `0` disables the sweep; the daemon checks every ten seconds.
 - `HORON_AGENT_JOBS_ARTIFACT_RETENTION` — `rotate` (default) reclaims the oldest
   background task artifacts when the budget is full; `preserve` refuses to start
   a new task instead.
+- `HORON_AGENT_HOSTING_MODE` — `per-user-container` or `shared-worker`; validated at startup by `serve`, `run`, and `mcp` (unknown values exit `1`; `shared-worker` also refuses `horon mcp list` with `HOSTED_POLICY`, exit `1`).
 - `HORON_AGENT_NO_AUTO_UPDATE` — set by the npm launcher so the pinned binaries
   are not replaced by the agent's own updater.

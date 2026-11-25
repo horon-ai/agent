@@ -697,6 +697,12 @@ With `--wait-async`, the deadline also covers waiting for background jobs owned 
 
 `horon run --print-thoughts "..."` prints reasoning that the provider returns as visible text to stderr under a `[thinking]` label, ahead of the answer. The answer stays on stdout, so piped output is unchanged. Without the option, text output is byte-for-byte the same. Reasoning the provider does not return as visible text is not shown, and the option cannot be combined with `--json` or `--ndjson`, whose formats are unchanged.
 
+## Non-zero failure, auto-poke cap, and spend caps
+
+- `horon-agent run` exits with status `1` when a turn stops due to a guardrail (such as `content_filter`), `length` (output limit reached before completion), or an empty turn with no output.
+- Automatic continuation in `horon-agent run` (`auto_poke`) caps follow-up turns at `6` by default (`DEFAULT_RUN_AUTO_POKE_MAX_TURNS = 6`; override with `HORON_AGENT_RUN_AUTO_POKE_MAX_TURNS`, disable with `HORON_AGENT_RUN_AUTO_POKE=0`) and stops early if consecutive turns leave incomplete todos unchanged (stall guard).
+- With `--max-cost <USD>`, a remote unpriced route (non-local `base_url`, even with `auth = "none"`) is rejected upfront with exit `1` before sending requests. An unpriced model on an explicitly local endpoint (loopback, private, link-local, `localhost`, `.local`, `.lan`, or `host.docker.internal`) runs with a stderr warning and reports unpriced counts separately.
+
 ## `--resume` behaviour
 
 Passing `--resume` with no value on a bare launch (`horon-agent --resume`) lists saved non-archived sessions on stdout and exits cleanly. Passing `--resume` with no value alongside a subcommand exits with an error directing callers to `horon-agent --resume`.

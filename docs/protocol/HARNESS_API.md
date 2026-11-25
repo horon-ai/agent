@@ -882,7 +882,7 @@ A session holds several heads after a branched import or after a turn is appende
 
 `export_session_markdown` takes `session_id` and replies with a `session_markdown` event carrying the whole readable transcript in `markdown`. Each turn is a `### User` or `### Assistant` heading followed by its content: text verbatim, a tool call as a fenced JSON block, a tool result as a fenced block, and an image or audio block as a short placeholder. Secrets are redacted with the same pattern table the disk path uses, so a token that never reached the event log cannot appear in the transcript. A tool result longer than 4 KiB is cut at a UTF-8 boundary and replaced with a `… (truncated, N bytes total)` marker.
 
-The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
+The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon export <session-id> [--out <path>]` writes identical bytes, because both call one renderer; `--json` wraps them as `{"session_id": ..., "markdown": ...}`, and `--json --out <path>` writes that JSON payload to `<path>` (overwriting an existing Markdown target) while printing a JSON summary (`session_id`, `out`, `format`, `bytes`) to stdout.
 
 ### HTML report (protocol 1.27)
 
@@ -890,7 +890,7 @@ The reply is not part of the replication protocol and needs no `protocol_version
 
 The document is meant to be saved and opened later without a connection. Every transcript character is escaped, so stored text that looks like markup renders as characters instead of becoming a node; the stylesheet is inline, with no font, image or script reference; and the head carries `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">`, which makes a browser refuse any network load the document might later gain. It requires `session_replication_v1` and answers `unknown_session` for an id the store does not hold.
 
-`horon export <session-id> --html [--out <path>]` writes the same bytes, and `--json` wraps them as `{"session_id": ..., "html": ...}`. Unlike the Markdown form, an `--out` path that already exists is refused rather than overwritten: a report is a destination the reader named by hand.
+`horon export <session-id> --html [--out <path>]` writes the same bytes, and `--json` wraps them as `{"session_id": ..., "html": ...}` (with `--json --out <path>` writing that payload to `<path>` and printing the JSON summary to stdout). Unlike the Markdown form, an `--out` path that already exists is refused rather than overwritten: a report is a destination the reader named by hand.
 
 Two rules a client must not break:
 

@@ -71,7 +71,8 @@ restore rebuilds it.
 ## MCP and skills
 
 `horon mcp` lists configured MCP servers and manages remote-server OAuth
-credentials. Everything external comes in over MCP. Project-local MCP config is
+credentials (under `HORON_AGENT_HOSTING_MODE=shared-worker`, `horon mcp list`
+is refused with `HOSTED_POLICY` and exit `1`). Everything external comes in over MCP. Project-local MCP config is
 skipped until its digest is trusted (`--trust-workspace` records the decision).
 
 Skills are read through `skill://` and managed with `skill_manage`; the workspace

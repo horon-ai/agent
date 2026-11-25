@@ -6,7 +6,7 @@ Language: **English** | [한국어](TUI.ko.md)
 
 ## Running it
 
-Bare `horon` (or `hrn`, or `horon-agent`) on a terminal starts the server when needed and then replaces itself with the `horon-tui` beside it. The replacement passes the working directory as `--cwd`, so a new session belongs to the directory the command was run from.
+Bare `horon` (or `hrn`, or `horon-agent`) on a terminal first checks whether the interactive client can launch, starts the server when needed, and replaces itself with the `horon-tui` beside it. The replacement passes the working directory as `--cwd`, so a new session belongs to the directory the command was run from.
 
 The handoff has three conditions, all checked before the process is replaced (`src/cli/tui_handoff.rs`):
 
@@ -14,7 +14,7 @@ The handoff has three conditions, all checked before the process is replaced (`s
 - `HORON_NO_TUI` must be unset. Setting it to any value forces headless mode on a terminal.
 - `horon-tui` must be a file next to the running executable. A launcher that is a symbolic link is retried at its real location, which matters on macOS.
 
-When a condition fails, the command prints a sentence that names the condition (`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, or `no horon-tui beside this binary`), the one remedy that answers it, and the headless fallback, then exits with a non-zero code. Only a missing client is answered by installing: a pipe or `HORON_NO_TUI` happens with the client already in place, so the sentence names a terminal or the variable instead. A server it started before the check keeps running. Starting `horon-tui` directly skips the decision entirely.
+Because this check runs before checking or starting the daemon (`src/cli/dispatch.rs`), a failed check starts no background server. When a condition fails, the command prints a sentence that names the condition (`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, or `no horon-tui beside this binary`), the one remedy that answers it, and the headless fallback, then exits with code `1`. Only a missing client is answered by installing (`horon-agent install-release`): a pipe or `HORON_NO_TUI` happens with the client already in place, so the sentence names a terminal or the variable instead. Starting `horon-tui` directly skips the handoff decision, checks that both `stdin` and `stdout` are terminals before entering the alternate screen (printing an error and exiting `1` on a pipe or redirect), and renders `"terminal too small"` when the terminal area is smaller than `20x6`.
 
 A resumed session is handed over as well. `horon --resume <id>` passes `--session <id>` to the client, so the client attaches to that session instead of creating one. The socket is not passed on the command line: it is already exported as `HORON_AGENT_SOCKET`, and the client resolves the harness API socket itself.
 
@@ -652,7 +652,7 @@ The archive is optional at every step, and a copy that cannot be verified never 
 - The effort is stored on the server every time it changes, and a change made during a turn waits for that turn to end, so a level chosen mid-turn is not in force until then.
 - The client asks the harness for the session's skills after every connect, every attach and every new session, and the daemon reads the global skill directories again for each of those answers.
 - A turn the daemon starts by itself sends this client no start event, so the `esc` delivery marker does not move: messages sent with `esc` stay drawn as sent into the turn that ended.
-- Starting with `--session <id>` attaches without drawing the stored conversation; `/resume <id>` replays it.
+- Starting with `--session <id>` (including bare `horon --resume <id>` handoff) replays up to the latest 20 stored messages, stripping leading injected `<system-reminder>` blocks; `/resume <id>` replays the full stored history with the same stripping.
 - With the popup closed, Tab completes built-in, harness and command-file names and can complete local workspace paths. Choose a skill from the popup or `/skills`.
 - Only one kept tool call is expanded at a time (the retained call in view when scrolled back, or the newest kept call while following the end). Expanding or folding keeps a held view in place instead of jumping to the end, a copy longer than 64 KiB is cut with `… output truncated`, and the `ctrl+o expands` label is left out when the marker cannot hold it on one row, which happens below 29 columns for a three-digit row count.
 - A second `/new` typed before the first answer arrives reports its session as resumed, because the client holds one flag for the session it is starting.
