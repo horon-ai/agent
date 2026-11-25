@@ -554,3 +554,62 @@ fn listed_paths_have_no_control_characters() {
     assert!(!text.chars().any(char::is_control), "{text:?}");
     assert!(text.contains("\\n") && text.contains("\\u{1b}"));
 }
+
+#[test]
+fn tool_scope_grant_covers_tool_in_workspace_until_revoked_and_refuses_eval_or_high_urgency() {
+    let sandbox = Sandbox::new();
+    let workspace = sandbox.workspace();
+    let other_dir = tempfile::tempdir().expect("other workspace");
+    let other_ws = other_dir.path().canonicalize().expect("canonical other workspace");
+    let now = Timestamp::now();
+
+    let grant = grant_from_request_at(
+        &request(
+            "bash",
+            serde_json::json!({ "command": "echo hi" }),
+            &workspace,
+            "process",
+        ),
+        GrantScope::Tool,
+        now,
+        7,
+    )
+    .expect("normal-urgency tool request can be granted for the workspace");
+    store(grant).expect("store tool grant");
+
+    let empty = serde_json::json!({});
+    let bash_effects = crate::tool::ToolEffects::process();
+    let write_effects = crate::tool::ToolEffects::write();
+    assert!(covered("bash", &empty, Some(&workspace), bash_effects));
+    assert!(!covered("write", &empty, Some(&workspace), write_effects));
+    assert!(!covered("bash", &empty, Some(&other_ws), bash_effects));
+
+    let listed = list();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].scope, "tool");
+    assert_eq!(revoke(&[listed[0].id.as_str()]).unwrap(), 1);
+    assert!(!covered("bash", &empty, Some(&workspace), bash_effects));
+
+    assert!(
+        grant_from_request_at(
+            &request("eval", serde_json::json!({ "code": "1+1" }), &workspace, "eval"),
+            GrantScope::Tool,
+            now,
+            7,
+        )
+        .is_none(),
+        "eval must never persist an always-allow grant"
+    );
+
+    let mut high = request(
+        "bash",
+        serde_json::json!({ "command": "rm -rf x" }),
+        &workspace,
+        "process",
+    );
+    high.urgency = crate::safety::Urgency::High;
+    assert!(
+        grant_from_request_at(&high, GrantScope::Tool, now, 7).is_none(),
+        "high-urgency dual-confirm tools must never accept a tool-wide grant"
+    );
+}

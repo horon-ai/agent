@@ -73,7 +73,8 @@ HORON_NO_TUI=1 horon       # skip the client and print the reason
 
 The client ships with the installer as an optional archive. A release that does
 not publish it, or a digest that does not match, prints one line and installs the
-agent alone; a source build and FreeBSD never stage a released client.
+agent alone; a source build pairs with `horon-tui` compiled from the same source
+tree, and FreeBSD never stages a client.
 Keys, themes, the status line and command files are documented in the
 [TUI reference](/reference/runtime/tui).
 

@@ -715,9 +715,10 @@ impl HoronAgentClient {
             socket_path: None,
             client_name: options.client_name.clone(),
             supports_user_response: options.supports_user_response,
-            // `SshConnectOptions` has no ask flag, so a remote session cannot
-            // claim a question screen this connection never offered.
+            // `SshConnectOptions` has no ask or permission flag, so a remote session
+            // cannot claim an interactive screen this connection never offered.
             supports_ask_requests: false,
+            supports_permission_requests: false,
             request_timeout: options.request_timeout,
             ensure_runtime: false,
             a2ui: options.a2ui.clone(),
@@ -769,6 +770,7 @@ impl HoronAgentClient {
             socket_path: Some(instance.socket_path.clone()),
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             client_name: options.client_name.clone(),
             request_timeout: options.request_timeout,
             ensure_runtime: false,
@@ -787,7 +789,11 @@ impl HoronAgentClient {
     pub fn connect(options: ConnectOptions) -> Result<Self> {
         let path = options.socket_path.clone().unwrap_or_else(api_socket_path);
         if options.ensure_runtime {
-            ensure_runtime(&LaunchOptions::default(), &|_| {})?;
+            let launch_options = LaunchOptions {
+                api_socket: options.socket_path.clone(),
+                ..LaunchOptions::default()
+            };
+            ensure_runtime(&launch_options, &|_| {})?;
         }
         Self::over(Box::new(UnixTransport::connect(&path)?), &options, path, true, None)
     }
@@ -848,6 +854,7 @@ impl HoronAgentClient {
                 client: options.client_name.clone(),
                 supports_user_response: options.supports_user_response,
                 supports_ask_requests: options.supports_ask_requests,
+                supports_permission_requests: options.supports_permission_requests,
                 event_capabilities: horon_agent_harness_api::OPT_IN_EVENT_CAPABILITIES
                     .iter()
                     .map(|capability| (*capability).to_owned())
@@ -2449,6 +2456,7 @@ fn start_global_child(parent: &HoronAgentClient, control: &Arc<GlobalEventContro
         HoronAgentClient::connect(ConnectOptions {
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             socket_path: Some(parent.inner.socket_path.clone()),
             client_name: format!("{}/global-events", parent.inner.client_name),
             request_timeout: parent.inner.request_timeout,

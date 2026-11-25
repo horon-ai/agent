@@ -160,6 +160,8 @@ pub struct BridgeState {
     pub supports_user_response: bool,
     /// Client can render `ask_requested` and answer it, negotiated in Hello.
     pub supports_ask_requests: bool,
+    /// Interactive client renders `approval_pending` and answers it inline, negotiated in Hello.
+    pub supports_permission_requests: bool,
     /// Session id assigned by the daemon for this connection.
     pub session_id: Option<String>,
     /// Legacy id of the in-flight `message` request, so `done` maps to
@@ -618,6 +620,7 @@ impl BridgeState {
                     "id": id,
                     "supports_user_response": self.supports_user_response,
                     "supports_ask_requests": self.supports_ask_requests,
+                    "supports_permission_requests": self.supports_permission_requests,
                     // The transcript this bridge serves keys annotations by the
                     // stored message each row came from. Ask for the ids alone:
                     // negotiating ACP would also switch on the v2-only event
@@ -630,25 +633,8 @@ impl BridgeState {
                 if self.crash_on_disconnect {
                     subscribe["crash_on_disconnect"] = json!(true);
                 }
-                let mut create_dir = None;
-                if req == "create_session" {
-                    subscribe["fresh_session"] = json!(true);
-                    if let Some(prompt) = request["system_prompt"].as_str() {
-                        subscribe["system_prompt"] = json!(prompt);
-                    }
-                    let working_dir = request["working_dir"]
-                        .as_str()
-                        .map(str::to_string)
-                        .or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()));
-                    subscribe["working_dir"] = json!(working_dir);
-                    create_dir = working_dir;
-                } else if let Some(target) = request["session_id"].as_str() {
-                    // The daemon owns both live and persisted session roots.
-                    // Empty panels have no file yet, and a cached disk cwd may
-                    // be older than the live Agent. Never override either with
-                    // the bridge's process cwd just to bootstrap attachment.
-                    subscribe["target_session_id"] = json!(target);
-                }
+                let create_dir =
+                    support::apply_session_subscribe_target(&mut subscribe, request, req == "create_session");
                 self.pending_recovery_histories.push((id, requested_session.clone()));
                 self.pending_attaches.push(PendingAttach {
                     subscribe_id: id,

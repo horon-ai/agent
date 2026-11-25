@@ -131,6 +131,27 @@ impl Agent {
         crate::spend_cap::admit()
     }
 
+    /// Reject `--max-cost` upfront when running against a non-local, authenticated
+    /// custom route whose model has no known per-token pricing. Keyless local
+    /// loopback endpoints remain permitted and report unpriced counts separately.
+    pub fn verify_spend_cap_route(&self, max_cost: Option<f64>) -> Result<()> {
+        let Some(max_usd) = max_cost else {
+            return Ok(());
+        };
+        let source_key = self.compaction_route_from_provider().unwrap_or_else(|| {
+            let runtime = std::env::var("HORON_AGENT_RUNTIME_PROVIDER").into_iter().next();
+            crate::provider_activity::source_key_for_provider_label(&self.provider_name(), runtime.as_deref())
+        });
+        let model = self.provider_model();
+        let priced = crate::provider::pricing::metered_usage_cost_usd(&source_key, &model, 1, 1, 0, 0).is_some();
+        if !priced && !crate::model_pricing::openai_compatible_profile_is_local(&source_key) {
+            anyhow::bail!(
+                "spend cap of ${max_usd:.4} cannot be verified: model '{model}' on remote route '{source_key}' has no known pricing"
+            );
+        }
+        Ok(())
+    }
+
     pub(super) fn record_model_turn_usage(&mut self, turn_id: &str) {
         // Identity is recorded even when usage is not, so runtime info can name
         // the model that served the last response after a fallback switch.

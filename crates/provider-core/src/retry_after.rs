@@ -154,10 +154,13 @@ pub fn retry_after_from_error(error: &Error) -> Option<Duration> {
         .map(|error| error.retry_after.remaining())
 }
 
-/// Select the delay before a retry, preferring a validated server hint over
+/// Select the delay before a retry, preferring a positive server hint over
 /// the provider's normal jittered exponential backoff.
 pub fn retry_delay(attempt: u32, base_ms: u64, server_hint: Option<Duration>) -> Duration {
-    server_hint.unwrap_or_else(|| crate::attempt_tracker::retry_backoff_delay(attempt, base_ms))
+    match server_hint {
+        Some(delay) if !delay.is_zero() => delay,
+        _ => crate::attempt_tracker::retry_backoff_delay(attempt, base_ms),
+    }
 }
 
 #[cfg(test)]

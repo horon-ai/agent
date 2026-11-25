@@ -36,6 +36,7 @@ async fn stdio_stream_handshake_ping_and_eof_release_daemon_connection() {
                 client: "stdio-test".into(),
                 supports_user_response: false,
                 supports_ask_requests: false,
+                supports_permission_requests: false,
                 event_capabilities: Vec::new(),
                 a2ui: None,
             },

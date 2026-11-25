@@ -802,7 +802,7 @@ pub(crate) fn history_message(
     stored: &[crate::session::StoredMessage],
     include_message_ids: bool,
 ) -> crate::protocol::HistoryMessage {
-    let verdict = stored_verdict(&msg, stored);
+    let (verdict, is_error) = stored_tool_outcome(&msg, stored);
     // The row carries its own id, so moving it out costs no copy, and a
     // connection that did not ask for ids allocates nothing here.
     let message_id = if include_message_ids { msg.stored_id } else { None };
@@ -823,22 +823,39 @@ pub(crate) fn history_message(
         },
         tool_data: msg.tool_data,
         verdict,
+        is_error,
     }
 }
 
-/// The verdict on the stored result block a tool row was rendered from.
-fn stored_verdict(
+/// The verdict and error marker on the stored result block a tool row was rendered from.
+fn stored_tool_outcome(
     msg: &crate::session::RenderedMessage,
     stored: &[crate::session::StoredMessage],
-) -> Option<crate::tool::ToolVerdict> {
-    let call = msg.tool_data.as_ref().filter(|_| msg.role == "tool")?;
-    let blocks = &stored.get(msg.stored_index?)?.content;
-    blocks.iter().find_map(|block| match block {
-        crate::message::ContentBlock::ToolResult {
-            tool_use_id, verdict, ..
-        } if *tool_use_id == call.id => *verdict,
-        _ => None,
-    })
+) -> (Option<crate::tool::ToolVerdict>, Option<bool>) {
+    let Some(call) = msg.tool_data.as_ref().filter(|_| msg.role == "tool") else {
+        return (None, None);
+    };
+    let stored_msg = msg
+        .stored_id
+        .as_deref()
+        .and_then(|id| stored.iter().find(|message| message.id == id))
+        .or_else(|| msg.stored_index.and_then(|index| stored.get(index)));
+    let Some(message) = stored_msg else {
+        return (None, None);
+    };
+    message
+        .content
+        .iter()
+        .find_map(|block| match block {
+            crate::message::ContentBlock::ToolResult {
+                tool_use_id,
+                verdict,
+                is_error,
+                ..
+            } if *tool_use_id == call.id => Some((*verdict, is_error.filter(|failed| *failed))),
+            _ => None,
+        })
+        .unwrap_or((None, None))
 }
 
 pub(crate) fn is_v2_only(event: &ServerEvent) -> bool {

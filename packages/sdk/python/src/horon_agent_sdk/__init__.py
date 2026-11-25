@@ -147,7 +147,7 @@ from .tools import (
     ToolResult,
 )
 
-__version__ = "1.2.0"
+__version__ = "0.1.0"
 
 __all__ = [
     "A2UI_BASIC_CATALOG_V1_0",

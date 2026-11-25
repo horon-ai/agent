@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{gateway, memory, storage};
 
 pub(super) mod a2ui_run;
+mod auto_poke;
 pub(super) mod config_cli;
 mod early_commands;
 mod failover_preview;
@@ -892,15 +893,12 @@ pub(super) fn parse_run_cost(raw: &str) -> Result<f64, &'static str> {
     }
 }
 
-fn run_command_auto_poke_enabled() -> bool {
-    std::env::var("HORON_AGENT_RUN_AUTO_POKE")
-        .ok()
-        .map(|value| {
-            let value = value.trim().to_ascii_lowercase();
-            !matches!(value.as_str(), "0" | "false" | "off" | "no")
-        })
-        .unwrap_or_else(|| crate::config::config().features.auto_poke)
-}
+use auto_poke::{
+    AutoPokeStallGuard, RunAutoPokeFollowUp, build_run_auto_poke_follow_up_from_todos, run_command_auto_poke_enabled,
+    run_command_auto_poke_limit_reached, run_command_auto_poke_max_turns as ndjson_auto_poke_max_turns,
+    run_single_message_command_capture_with_auto_poke, run_single_message_command_plain_with_auto_poke, run_todos,
+    take_run_gate_digest_if_turn_ended,
+};
 
 /// Whether headless `horon-agent run` should load MCP servers from `~/.horon/mcp.json`.
 /// Enabled by default; set `HORON_AGENT_RUN_MCP=0` (or `false`/`off`/`no`) to skip MCP
@@ -988,305 +986,6 @@ pub(super) async fn wait_for_cold_cache_mcp_tools(registry: &crate::tool::Regist
     }
 }
 
-fn run_command_auto_poke_max_turns() -> Option<usize> {
-    std::env::var("HORON_AGENT_RUN_AUTO_POKE_MAX_TURNS")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-}
-
-fn run_command_auto_poke_limit_reached(turns_completed: usize, max_turns: Option<usize>) -> bool {
-    max_turns.map(|max_turns| turns_completed >= max_turns).unwrap_or(false)
-}
-
-#[derive(Debug)]
-enum RunAutoPokeFollowUp {
-    Incomplete {
-        count: usize,
-        message: String,
-    },
-    ConfidenceSummary {
-        total_todos: usize,
-        message: String,
-        confidence_spike_challenge: bool,
-    },
-    /// Deferred quality-check reminder for the points this turn flagged and
-    /// never resolved. Delivered once, ahead of the confidence summary.
-    GateDigest {
-        message: String,
-    },
-}
-
-fn run_todos(session_id: &str) -> Vec<crate::todo::TodoItem> {
-    crate::todo::load_todos(session_id).unwrap_or_default()
-}
-
-/// Build the deferred quality-check reminder for a headless run, consuming the
-/// turn's observation log.
-///
-/// The log is cleared whether or not a reminder results, so one turn's points
-/// cannot be raised again against the next turn's work. Returns `None` only when
-/// the turn recorded nothing.
-fn take_run_gate_digest(session_id: &str, already_delivered: bool) -> Option<String> {
-    if already_delivered {
-        return None;
-    }
-    let observations = crate::todo::load_gate_observations(session_id).unwrap_or_default();
-    if observations.is_empty() {
-        return None;
-    }
-    let plan = crate::todo::load_plan(session_id).unwrap_or_default();
-    let goals = crate::todo::load_goals(session_id).unwrap_or_default();
-    let digest = crate::todo::build_gate_digest(&observations, &plan, &goals);
-    let _ = crate::todo::clear_gate_observations(session_id);
-    digest
-}
-
-/// Consume the observation log only once the turn has actually ended.
-///
-/// `take_run_gate_digest` clears the log, so calling it while todos are still
-/// open would destroy the reminder: auto-poke iterates many times with open work
-/// on a long run, and the incomplete-todo follow-up takes precedence, so the
-/// digest string would be dropped on the floor with the log already emptied.
-fn take_run_gate_digest_if_turn_ended(
-    session_id: &str,
-    already_delivered: bool,
-    todos: &[crate::todo::TodoItem],
-) -> Option<String> {
-    let work_remains = todos.iter().any(|todo| {
-        !crate::todo::todo_status_is_completed(&todo.status) && !crate::todo::todo_status_is_cancelled(&todo.status)
-    });
-    if work_remains {
-        return None;
-    }
-    take_run_gate_digest(session_id, already_delivered)
-}
-
-fn build_run_auto_poke_follow_up_from_todos(
-    todos: &[crate::todo::TodoItem],
-    confidence_spike_challenged: bool,
-    gate_digest: Option<String>,
-) -> Option<RunAutoPokeFollowUp> {
-    let incomplete: Vec<_> = todos
-        .iter()
-        .filter(|todo| {
-            !crate::todo::todo_status_is_completed(&todo.status) && !crate::todo::todo_status_is_cancelled(&todo.status)
-        })
-        .cloned()
-        .collect();
-    if !incomplete.is_empty() {
-        return Some(RunAutoPokeFollowUp::Incomplete {
-            count: incomplete.len(),
-            message: build_run_poke_message(&incomplete),
-        });
-    }
-    // Verify the weak points before judging completion confidence: the digest
-    // may prompt work that changes those very assessments.
-    if let Some(message) = gate_digest {
-        return Some(RunAutoPokeFollowUp::GateDigest { message });
-    }
-    if !todos.is_empty()
-        && let Some((message, confidence_spike_challenge)) =
-            build_run_todo_validation_message(todos, !confidence_spike_challenged)
-    {
-        return Some(RunAutoPokeFollowUp::ConfidenceSummary {
-            total_todos: todos.len(),
-            message,
-            confidence_spike_challenge,
-        });
-    }
-    None
-}
-
-fn build_run_poke_message(incomplete: &[crate::todo::TodoItem]) -> String {
-    crate::todo::build_auto_poke_message(incomplete.len())
-}
-
-fn build_run_todo_validation_message(
-    todos: &[crate::todo::TodoItem],
-    allow_confidence_spike_challenge: bool,
-) -> Option<(String, bool)> {
-    let completed: Vec<&crate::todo::TodoItem> = todos
-        .iter()
-        .filter(|todo| crate::todo::todo_status_is_completed(&todo.status))
-        .collect();
-    if completed.is_empty() {
-        return None;
-    }
-
-    let completion_confidence_needs_validation = completed
-        .iter()
-        .any(|todo| !crate::todo::completion_confidence_passes(todo.completion_confidence));
-    let confidence_spike_detected =
-        allow_confidence_spike_challenge && !crate::todo::spike_completed_todos(todos).is_empty();
-
-    if !completion_confidence_needs_validation && !confidence_spike_detected {
-        // Nothing actionable: completing the loop with a generic summary just
-        // spends tokens on "all good" theater, so send nothing and end the run.
-        return None;
-    }
-
-    if completion_confidence_needs_validation {
-        Some((crate::todo::build_todo_completion_continuation_message(todos), false))
-    } else {
-        Some((
-            crate::todo::build_todo_confidence_spike_continuation_message(todos),
-            true,
-        ))
-    }
-}
-
-async fn run_single_message_command_plain_with_auto_poke(
-    agent: &mut crate::agent::Agent,
-    message: &str,
-    print_thoughts: bool,
-    deadline_elapsed: &AtomicBool,
-) -> Result<()> {
-    let mut next_message = message.to_string();
-    let max_turns = run_command_auto_poke_max_turns();
-    let mut turns_completed = 0usize;
-    let mut confidence_spike_challenged = false;
-    let mut gate_digest_delivered = false;
-    loop {
-        thoughts::run_plain_turn(agent, &next_message, print_thoughts, deadline_elapsed).await?;
-        if deadline_elapsed.load(Ordering::Relaxed) {
-            break;
-        }
-        turns_completed += 1;
-        if !run_command_auto_poke_enabled() {
-            break;
-        }
-        let todos = run_todos(agent.session_id());
-        let gate_digest = take_run_gate_digest_if_turn_ended(agent.session_id(), gate_digest_delivered, &todos);
-        match build_run_auto_poke_follow_up_from_todos(&todos, confidence_spike_challenged, gate_digest) {
-            Some(RunAutoPokeFollowUp::GateDigest { message }) => {
-                if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
-                    if let Some(max_turns) = max_turns {
-                        eprintln!(
-                            "We stopped poking after {max_turns} turn(s); some quality-review points are still open."
-                        );
-                    }
-                    break;
-                }
-                gate_digest_delivered = true;
-                next_message = message;
-                eprintln!(
-                    "We asked the agent to double-check this turn's weak points. Set HORON_AGENT_RUN_AUTO_POKE=0 to disable."
-                );
-                continue;
-            }
-            Some(RunAutoPokeFollowUp::ConfidenceSummary {
-                message,
-                confidence_spike_challenge,
-                ..
-            }) => {
-                if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
-                    if let Some(max_turns) = max_turns {
-                        eprintln!(
-                            "We stopped poking after {max_turns} turn(s); the agent's completion confidence still needs validation."
-                        );
-                    }
-                    break;
-                }
-                confidence_spike_challenged |= confidence_spike_challenge;
-                next_message = message;
-                eprintln!(
-                    "Todos are done. Asking the agent for a final confidence check. Set HORON_AGENT_RUN_AUTO_POKE=0 to disable."
-                );
-                continue;
-            }
-            Some(RunAutoPokeFollowUp::Incomplete { count, message }) => {
-                if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
-                    if let Some(max_turns) = max_turns {
-                        eprintln!(
-                            "We stopped poking after {max_turns} turn(s); {} todo(s) are still unfinished.",
-                            count
-                        );
-                    }
-                    break;
-                }
-                next_message = message;
-                eprintln!(
-                    "{} incomplete todo(s). We poked the agent for you. Set HORON_AGENT_RUN_AUTO_POKE=0 to disable.",
-                    count
-                );
-            }
-            None => break,
-        }
-    }
-    Ok(())
-}
-
-async fn run_single_message_command_capture_with_auto_poke(
-    agent: &mut crate::agent::Agent,
-    message: &str,
-) -> Result<String> {
-    let mut next_message = message.to_string();
-    let max_turns = run_command_auto_poke_max_turns();
-    let mut outputs = Vec::new();
-    let mut turns_completed = 0usize;
-    let mut confidence_spike_challenged = false;
-    let mut gate_digest_delivered = false;
-    loop {
-        outputs.push(agent.run_once_capture(&next_message).await?);
-        turns_completed += 1;
-        if !run_command_auto_poke_enabled() {
-            break;
-        }
-        let todos = run_todos(agent.session_id());
-        let gate_digest = take_run_gate_digest_if_turn_ended(agent.session_id(), gate_digest_delivered, &todos);
-        match build_run_auto_poke_follow_up_from_todos(&todos, confidence_spike_challenged, gate_digest) {
-            Some(RunAutoPokeFollowUp::GateDigest { message }) => {
-                if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
-                    if let Some(max_turns) = max_turns {
-                        eprintln!(
-                            "We stopped poking after {max_turns} turn(s); some quality-review points are still open."
-                        );
-                    }
-                    break;
-                }
-                gate_digest_delivered = true;
-                next_message = message;
-                eprintln!(
-                    "We asked the agent to double-check this turn's weak points. Set HORON_AGENT_RUN_AUTO_POKE=0 to disable."
-                );
-                continue;
-            }
-            Some(RunAutoPokeFollowUp::ConfidenceSummary {
-                message,
-                confidence_spike_challenge,
-                ..
-            }) => {
-                if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
-                    if let Some(max_turns) = max_turns {
-                        outputs.push(format!(
-                            "We stopped poking after {max_turns} turn(s); the agent's completion confidence still needs validation."
-                        ));
-                    }
-                    break;
-                }
-                confidence_spike_challenged |= confidence_spike_challenge;
-                next_message = message;
-                continue;
-            }
-            Some(RunAutoPokeFollowUp::Incomplete { count, message }) => {
-                if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
-                    if let Some(max_turns) = max_turns {
-                        outputs.push(format!(
-                            "We stopped poking after {max_turns} turn(s); {} todo(s) are still unfinished.",
-                            count
-                        ));
-                    }
-                    break;
-                }
-                next_message = message;
-            }
-            None => break,
-        }
-    }
-    Ok(outputs.join("\n\n"))
-}
-
 pub(super) fn restore_agent_session_if_requested(
     agent: &mut crate::agent::Agent,
     resume_session: Option<&str>,
@@ -1322,12 +1021,13 @@ async fn run_single_message_command_ndjson(
         }),
     )?;
 
-    let max_turns = run_command_auto_poke_max_turns();
+    let max_turns = ndjson_auto_poke_max_turns();
     let mut next_message = message.to_string();
     let mut result: Result<()> = Ok(());
     let mut turns_completed = 0usize;
     let mut confidence_spike_challenged = false;
     let mut gate_digest_delivered = false;
+    let mut stall_guard = AutoPokeStallGuard::default();
     loop {
         let turn_result = {
             let mut run_future =
@@ -1377,6 +1077,7 @@ async fn run_single_message_command_ndjson(
         let gate_digest = take_run_gate_digest_if_turn_ended(agent.session_id(), gate_digest_delivered, &todos);
         match build_run_auto_poke_follow_up_from_todos(&todos, confidence_spike_challenged, gate_digest) {
             Some(RunAutoPokeFollowUp::GateDigest { message }) => {
+                stall_guard.reset_incomplete();
                 if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
                     if let Some(max_turns) = max_turns {
                         eprintln!(
@@ -1397,6 +1098,7 @@ async fn run_single_message_command_ndjson(
                 message,
                 confidence_spike_challenge,
             }) => {
+                stall_guard.reset_incomplete();
                 if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
                     if let Some(max_turns) = max_turns {
                         write_json_line(
@@ -1426,6 +1128,18 @@ async fn run_single_message_command_ndjson(
                 continue;
             }
             Some(RunAutoPokeFollowUp::Incomplete { count, message }) => {
+                if stall_guard.is_stalled_incomplete(&todos) {
+                    write_json_line(
+                        &mut stdout,
+                        &serde_json::json!({
+                            "type": "auto_poke_stopped",
+                            "session_id": session_id,
+                            "incomplete_todos": count,
+                            "reason": "stalled",
+                        }),
+                    )?;
+                    break;
+                }
                 if run_command_auto_poke_limit_reached(turns_completed, max_turns) {
                     if let Some(max_turns) = max_turns {
                         write_json_line(
@@ -1454,6 +1168,14 @@ async fn run_single_message_command_ndjson(
             None => break,
         }
     }
+
+    let result = match result {
+        Ok(()) => match agent.one_shot_incomplete_failure() {
+            Some(reason) => Err(anyhow::anyhow!(reason)),
+            None => Ok(()),
+        },
+        Err(err) => Err(err),
+    };
 
     match result {
         Ok(()) => {

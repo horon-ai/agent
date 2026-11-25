@@ -124,6 +124,9 @@ pub(in crate::cli) async fn run_single_message_with_agent(
             if elapsed.load(Ordering::Relaxed) {
                 return Ok(());
             }
+            if let Some(reason) = agent.one_shot_incomplete_failure() {
+                anyhow::bail!(reason);
+            }
             let a2ui = super::a2ui_run::collect_a2ui_json_blocks(&agent.messages()[msg_start..]);
             let report = RunCommandReport {
                 session_id: agent.session_id().to_string(),
@@ -147,6 +150,11 @@ pub(in crate::cli) async fn run_single_message_with_agent(
         } else {
             let msg_start = agent.messages().len();
             run_single_message_command_plain_with_auto_poke(agent, message, limits.print_thoughts, &elapsed).await?;
+            if !elapsed.load(Ordering::Relaxed)
+                && let Some(reason) = agent.one_shot_incomplete_failure()
+            {
+                anyhow::bail!(reason);
+            }
             if !elapsed.load(Ordering::Relaxed) && limits.a2ui {
                 super::a2ui_run::print_a2ui_text_cards(&agent.messages()[msg_start..])?;
             }

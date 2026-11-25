@@ -64,6 +64,10 @@ pub struct HistoryMessage {
     /// bytes they always had.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<horon_agent_tool_types::ToolVerdict>,
+    /// Whether the stored tool result this row shows recorded `is_error = true`.
+    /// Absent when unset/false so existing rows keep the bytes they always had.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_error: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

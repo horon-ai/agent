@@ -929,18 +929,19 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 | 필드 | 타입 | 없을 때 | 뜻 |
 | --- | --- | --- | --- |
 | `supports_ask_requests` | 불리언 | `false` | 이 연결이 `ask` 도구의 질문을 그리고 답한다 |
+| `supports_permission_requests` | 불리언 | `false` | 이 연결이 `approval_pending` 프롬프트를 보여 주고 `permission_decision`으로 대화형 승인 답을 보낸다 |
 
-브리지는 이 필드를 `hello["supports_ask_requests"].as_bool().unwrap_or(false)`로 읽으므로(`crates/harness-api-server/src/lib.rs`), 이 필드가 없던 클라이언트는 아무것도 알리지 않은 채로 계속 동작한다. 이 필드는 능력 문자열도 프로토콜 마이너 협상도 아니다. 사람에게 묻는 방향을 정할 뿐이다. 붙어 있는 연결이 이 필드를 알린 세션은 그 연결에서 질문을 받고 호출이 답을 기다리며, 그런 연결이 없는 세션은 `ask_policy`로 넘어간다(`docs/safety/SAFETY.ko.md`).
+브리지는 두 필드를 각각 `hello["supports_ask_requests"].as_bool().unwrap_or(false)`와 `hello["supports_permission_requests"].as_bool().unwrap_or(false)`로 읽으므로(`crates/harness-api-server/src/lib.rs`), 이 필드가 없던 클라이언트는 아무것도 알리지 않은 채로 계속 동작한다. 두 필드 모두 능력 문자열이나 프로토콜 마이너 협상이 아니며, 턴이 이 연결의 대화형 응답을 기다릴지를 정한다. 붙어 있는 연결이 `supports_ask_requests`를 알린 세션은 그 연결에서 질문을 받고 호출이 답을 기다리며, 없으면 `ask_policy`로 넘어간다(`docs/safety/SAFETY.ko.md`). 마찬가지로 턴을 소유한 연결이 `supports_permission_requests`를 알리면 승인이 필요한 도구 호출은 `approval_pending`을 내보낸 뒤 모델 재시도로 바로 실패하지 않고 `permission_decision`(`allow`, `allow_always`, `deny`) 응답이 올 때까지 대기한다.
 
-SDK 셋은 이 값을 연결 옵션 하나로 내주고, 모두 기본값을 끔으로 둔다.
+SDK 셋은 두 값을 연결 옵션으로 내주고, 모두 기본값을 끔으로 둔다.
 
-| SDK | 옵션 | 기본값 |
-| --- | --- | --- |
-| Rust | `ConnectOptions::supports_ask_requests` | `false` |
-| TypeScript | `supportsAskRequests` | `false` |
-| Python | `supports_ask_requests` | `False` |
+| SDK | `ask` 옵션 | 승인 옵션 | 기본값 |
+| --- | --- | --- | --- |
+| Rust | `ConnectOptions::supports_ask_requests` | `ConnectOptions::supports_permission_requests` | `false` |
+| TypeScript | `supportsAskRequests` | `supportsPermissionRequests` | `false` |
+| Python | `supports_ask_requests` | `supports_permission_requests` | `False` |
 
-Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`), TypeScript는 `options.supportsAskRequests ?? false`를 쓰며, Python은 필드를 그대로 넘긴다. TUI 바이너리 `horon-tui`는 질문을 그리고 답하므로 `connect_options`에서 이 값을 `true`로 둔다(`crates/tui/src/lib.rs`). 턴만 돌리는 클라이언트는 기본값을 그대로 두고, `ask`에 닿은 턴은 아무도 볼 수 없는 질문에 멈춰 서는 대신 정책으로 결론 난다.
+Rust SDK는 두 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`), TypeScript는 둘 다 기본값 `false`(`options.supportsAskRequests ?? false`, `options.supportsPermissionRequests ?? false`)를 쓰며, Python은 두 필드를 그대로 넘긴다. TUI 바이너리 `horon-tui`는 프롬프트를 그리고 답하므로 `connect_options`에서 두 값을 모두 `true`로 둔다(`crates/tui/src/lib.rs`). 턴만 돌리는 클라이언트는 기본값을 그대로 두어 아무도 답할 수 없는 프롬프트에 멈추지 않는다.
 
 ## 하네스 API 요청·이벤트 표면: usage_report, search_sessions, list_artifacts, durable_runtime
 

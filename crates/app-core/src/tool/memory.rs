@@ -190,7 +190,8 @@ impl Tool for MemoryTool {
 
         match input.action.as_str() {
             "remember" => {
-                let content = input.content.ok_or_else(|| anyhow::anyhow!("content required"))?;
+                let raw_content = input.content.ok_or_else(|| anyhow::anyhow!("content required"))?;
+                let content = crate::message::redact_secrets(&raw_content);
                 let category: MemoryCategory = input
                     .category
                     .as_deref()
@@ -204,6 +205,10 @@ impl Tool for MemoryTool {
                 });
                 let mut entry = MemoryEntry::new(category.clone(), &content).with_source(ctx.session_id);
                 if let Some(tags) = input.tags {
+                    let tags: Vec<String> = tags
+                        .into_iter()
+                        .map(|tag| crate::message::redact_secrets(&tag))
+                        .collect();
                     entry = entry.with_tags(tags);
                 }
                 let id = if scope == "global" {
@@ -463,9 +468,11 @@ impl Tool for MemoryTool {
                 let id = input.id.ok_or_else(|| anyhow::anyhow!("id required"))?;
                 let category = input.category.as_deref().map(crate::memory_inspect::parse_category);
                 let update = crate::memory_inspect::MemoryUpdate {
-                    content: input.content,
+                    content: input.content.map(|c| crate::message::redact_secrets(&c)),
                     category,
-                    tags: input.tags,
+                    tags: input
+                        .tags
+                        .map(|ts| ts.into_iter().map(|t| crate::message::redact_secrets(&t)).collect()),
                 };
                 if update.is_empty() {
                     Err(anyhow::anyhow!(

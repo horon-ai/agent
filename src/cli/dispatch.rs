@@ -558,6 +558,17 @@ async fn run_default_command(args: Args) -> Result<()> {
     startup_profile::mark("crash_resume_hint");
 
     startup_profile::mark("client_mode_start");
+    let handoff = super::tui_handoff::decide_for_process();
+    if !matches!(handoff, super::tui_handoff::Handoff::Exec(_)) {
+        return super::tui_handoff::run(
+            handoff,
+            args.resume.as_deref(),
+            args.goal.as_deref().zip(args.goal_budget),
+            &args.add_dir,
+            args.plan,
+        );
+    }
+
     let mut server_running = server_is_running().await;
     startup_profile::mark("server_check");
 
@@ -612,7 +623,7 @@ async fn run_default_command(args: Args) -> Result<()> {
     // a resumed session passed along; every other shape (a pipe, `HORON_NO_TUI`,
     // no sibling) keeps the headless message so scripts and CI still see it.
     super::tui_handoff::run(
-        super::tui_handoff::decide_for_process(),
+        handoff,
         args.resume.as_deref(),
         args.goal.as_deref().zip(args.goal_budget),
         &args.add_dir,
@@ -972,6 +983,10 @@ async fn spawn_server_with_lifetime(
     if awaits_reload_handoff && wait_for_existing_reload_server("server spawn after lock").await {
         startup_profile::mark("server_ready");
         return Ok(());
+    }
+
+    if server::reap_stale_socket_if_dead(&socket_path).await {
+        output::stderr_info("Removed a stale horon-agent socket from a previous server.");
     }
 
     startup_profile::mark("server_spawn_start");

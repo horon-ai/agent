@@ -24,6 +24,7 @@ fn minor_fourteen_requests_are_additive_and_keep_legacy_goldens() {
             client: "legacy/1".into(),
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             event_capabilities: Vec::new(),
             a2ui: None,
         },
@@ -834,6 +835,7 @@ fn request_roundtrip() {
             client: "test/0".into(),
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             event_capabilities: vec![
                 crate::CAPABILITY_BACKGROUND_OUTPUT_V1.into(),
                 crate::CAPABILITY_LIVE_TODO_V1.into(),

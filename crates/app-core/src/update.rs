@@ -618,6 +618,28 @@ fn compile_source(repo_dir: &Path, expected_sha: &str) -> Result<PathBuf> {
     if !output.status.success() {
         anyhow::bail!("cargo build failed: {}", String::from_utf8_lossy(&output.stderr));
     }
+    if release_asset::tui_binary_expected() {
+        // Build `horon-tui` in its own cargo invocation so its feature set never unifies with `horon-agent`.
+        let tui_output = std::process::Command::new("cargo")
+            .args([
+                "build",
+                "--release",
+                "--locked",
+                "-p",
+                "horon-tui",
+                "--bin",
+                "horon-tui",
+            ])
+            .current_dir(repo_dir)
+            .env("HORON_AGENT_RELEASE_BUILD", "1")
+            .output()?;
+        if !tui_output.status.success() {
+            anyhow::bail!(
+                "cargo horon-tui build failed: {}",
+                String::from_utf8_lossy(&tui_output.stderr)
+            );
+        }
+    }
     if source_git(repo_dir, &["rev-parse", "--short=7", "HEAD"])? != expected_sha
         || !source_git(repo_dir, &["status", "--porcelain"])?.is_empty()
     {
@@ -626,6 +648,14 @@ fn compile_source(repo_dir: &Path, expected_sha: &str) -> Result<PathBuf> {
     let binary = build::release_binary_path(repo_dir);
     if !binary.is_file() {
         anyhow::bail!("built binary is missing at {}", binary.display());
+    }
+    if release_asset::tui_binary_expected()
+        && let Some(parent) = binary.parent()
+    {
+        let tui_binary = parent.join(release_asset::tui_binary_name());
+        if !tui_binary.is_file() {
+            anyhow::bail!("built interactive client is missing at {}", tui_binary.display());
+        }
     }
     Ok(binary)
 }

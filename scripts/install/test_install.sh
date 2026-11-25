@@ -869,6 +869,31 @@ test ! -e "$tmp/home-old-installer/.horon/builds"
 test ! -e "$tmp/install-old-installer/horon-agent"
 test ! -e "$tmp/install-old-installer/horon-tui"
 
+# Custom HORON_HOME without HORON_AGENT_INSTALL_DIR uses HORON_HOME/bin and
+# HORON_HOME/builds without touching HOME/.horon or HOME/.local/bin, and
+# refuses unsafe --purge targets such as HOME itself.
+custom_real_home="$tmp/custom-real-home"
+custom_horon="$tmp/custom-horon-home"
+mkdir -p "$custom_real_home/.horon/builds" "$custom_real_home/.local/bin" \
+  "$custom_horon/builds/versions/1.2.3" "$custom_horon/bin"
+printf '#!/bin/sh\nexit 0\n' > "$custom_real_home/.local/bin/horon-agent"
+printf '#!/bin/sh\nexit 0\n' > "$custom_horon/bin/horon-agent"
+printf 'keep=1\n' > "$custom_horon/config.toml"
+chmod +x "$custom_real_home/.local/bin/horon-agent" "$custom_horon/bin/horon-agent"
+HOME="$custom_real_home" HORON_HOME="$custom_horon" \
+  bash "$repo_dir/scripts/install/uninstall.sh" --yes >/dev/null 2>&1
+test ! -e "$custom_horon/builds"
+test ! -e "$custom_horon/bin/horon-agent"
+test -f "$custom_horon/config.toml"
+test -e "$custom_real_home/.horon/builds"
+test -e "$custom_real_home/.local/bin/horon-agent"
+if HOME="$custom_real_home" HORON_HOME="$custom_real_home" \
+  bash "$repo_dir/scripts/install/uninstall.sh" --purge --yes >/dev/null 2>&1; then
+  echo "uninstall.sh allowed --purge when HORON_HOME equals HOME" >&2
+  exit 1
+fi
+test -d "$custom_real_home/.horon"
+
 if grep -q 'api.github.com' "$url_log"; then
   echo "installer must not depend on the rate-limited unauthenticated GitHub API" >&2
   exit 1

@@ -297,16 +297,16 @@ impl Args {
 /// `ensure_runtime` stays on: an app that only works once the user has started
 /// two daemons by hand is indistinguishable from a broken one.
 ///
-/// `supports_ask_requests` is on because this client draws the questions and
-/// answers them: the daemon parks a turn on the `ask` tool only for a
-/// connection that says so, and the shipped default of `false` is why those
-/// prompts never arrived.
+/// `supports_ask_requests` and `supports_permission_requests` are on because
+/// this client draws both prompts and answers them interactively: without them
+/// the daemon refuses/resolves without waiting for a human response.
 pub fn connect_options(socket: Option<std::path::PathBuf>) -> horon_agent_sdk::ConnectOptions {
     horon_agent_sdk::ConnectOptions {
         socket_path: socket,
         client_name: concat!("horon-tui/", env!("CARGO_PKG_VERSION")).to_string(),
         ensure_runtime: true,
         supports_ask_requests: true,
+        supports_permission_requests: true,
         ..horon_agent_sdk::ConnectOptions::default()
     }
 }
@@ -390,6 +390,13 @@ where
     let mut keys = keys::Loader::new();
     for warning in keys.warnings() {
         eprintln!("horon-tui: keys: {warning}");
+    }
+    {
+        use std::io::IsTerminal as _;
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+            eprintln!("horon-tui: cannot open a terminal: stdin and stdout must be terminals");
+            return 1;
+        }
     }
     let working_dir = args.cwd.as_ref().map(|dir| dir.display().to_string());
     let launch_dir = path_completion::launch_directory(args.cwd);
@@ -847,6 +854,12 @@ const MIN_TRANSCRIPT_ROWS: u16 = 3;
 const MAX_INPUT_ROWS: u16 = 8;
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
+    const MIN_WIDTH: u16 = 20;
+    const MIN_HEIGHT: u16 = 6;
+    if frame.area().width < MIN_WIDTH || frame.area().height < MIN_HEIGHT {
+        frame.render_widget(Paragraph::new("terminal too small"), frame.area());
+        return;
+    }
     // The popup and the local suggestion are read from the draft on screen,
     // before anything borrows the app to draw.
     app.sync_slash();

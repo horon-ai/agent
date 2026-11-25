@@ -18,6 +18,7 @@ fn message(role: &str, content: impl Into<String>) -> HistoryMessage {
         tool_calls: None,
         tool_data: None,
         verdict: None,
+        is_error: None,
     }
 }
 

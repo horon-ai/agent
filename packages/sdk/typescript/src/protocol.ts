@@ -738,6 +738,7 @@ export type ApiRequest =
       client: string;
       supports_user_response?: boolean;
       supports_ask_requests?: boolean;
+      supports_permission_requests?: boolean;
       event_capabilities?: readonly string[];
       a2ui?: A2uiSessionCapabilities;
     }

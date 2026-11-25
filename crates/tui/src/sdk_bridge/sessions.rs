@@ -10,9 +10,54 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use horon_agent_sdk::api::ApiEvent;
-use horon_agent_sdk::{ConnectOptions, Error, EventStream, HistoryMessage, HoronAgentClient, SessionInfo};
+use horon_agent_sdk::{ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, SessionInfo};
 
 use super::{AttachedSession, ForkRow, cut, detail, runtime};
+
+type InitialAttach = Option<(AttachedSession, Option<String>)>;
+
+pub(super) struct InitialOpenError(String);
+
+impl From<InitialOpenError> for String {
+    fn from(error: InitialOpenError) -> Self {
+        error.0
+    }
+}
+
+pub(super) fn open_initial(
+    client: &HoronAgentClient,
+    attach: Option<&str>,
+    working_dir: Option<&str>,
+    socket: &str,
+) -> Result<(SessionInfo, InitialAttach), InitialOpenError> {
+    match attach {
+        Some(session_id) => {
+            let session = client
+                .attach_session(session_id)
+                .map_err(|error| InitialOpenError(explain_attach(&error, session_id)))?;
+            let (model, effort) = runtime::identity(client, &session.session_id);
+            let history = peek(client, &session.session_id);
+            let attached_dir = session_directory(&session);
+            let attached = described(session.clone(), history, model, effort, socket);
+            Ok((session, Some((attached, attached_dir))))
+        }
+        None => Ok((
+            client
+                .create_session(working_dir.map(str::to_owned))
+                .map_err(|error| InitialOpenError(format!("the harness refused a new session: {error}")))?,
+            None,
+        )),
+    }
+}
+
+fn explain_attach(error: &Error, session_id: &str) -> String {
+    match &error.kind {
+        ErrorKind::UnknownSession { session_id } => {
+            format!("the harness does not have session {session_id}. Check the id, or start a new session.")
+        }
+        _ => format!("the harness refused to attach to {session_id}: {error}"),
+    }
+}
 
 /// How to reach the harness, kept after the first connection took the options.
 ///
@@ -32,6 +77,7 @@ pub(super) struct Dial {
     ensure_runtime: bool,
     supports_user_response: bool,
     supports_ask_requests: bool,
+    supports_permission_requests: bool,
     a2ui: Option<horon_agent_sdk::A2uiSessionCapabilities>,
 }
 
@@ -45,6 +91,7 @@ impl Dial {
             ensure_runtime: options.ensure_runtime,
             supports_user_response: options.supports_user_response,
             supports_ask_requests: options.supports_ask_requests,
+            supports_permission_requests: options.supports_permission_requests,
             a2ui: options.a2ui.clone(),
         }
     }
@@ -58,6 +105,7 @@ impl Dial {
             ensure_runtime: self.ensure_runtime,
             supports_user_response: self.supports_user_response,
             supports_ask_requests: self.supports_ask_requests,
+            supports_permission_requests: self.supports_permission_requests,
             a2ui: self.a2ui.clone(),
         }
     }

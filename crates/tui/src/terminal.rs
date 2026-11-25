@@ -120,7 +120,12 @@ pub(crate) fn guard_signals(_pop_title: bool) -> std::io::Result<()> {
 /// Draw the connection-failure banner once, when there is a terminal to draw it
 /// on, then restore it.
 pub(crate) fn show_failure(message: &str) {
+    use std::io::IsTerminal as _;
+
     eprintln!("horon-tui: {message}");
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return;
+    }
     let mut app = App::failure(message);
     match ratatui::try_init() {
         Ok(mut terminal) => {

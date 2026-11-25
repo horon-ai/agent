@@ -98,6 +98,7 @@ async fn run_inner(
             "--no-session cannot be combined with --resume, --continue or --goal, which need a stored session"
         );
     }
+    crate::server::hosted_tenant::enforce_at_startup()?;
     register_on_demand_server_spawner_for_run(args.provider.clone(), args.model.clone(), args.provider_profile.clone());
     let provider = provider_init::init_provider_for_run(&args.provider, args.model.as_deref()).await?;
     let registry = crate::tool::Registry::new(provider.clone()).await;
@@ -148,6 +149,10 @@ async fn run_inner(
         Ok(())
     })();
     if let Err(error) = setup {
+        agent.mark_closed();
+        return Err(error);
+    }
+    if let Err(error) = agent.verify_spend_cap_route(max_cost) {
         agent.mark_closed();
         return Err(error);
     }

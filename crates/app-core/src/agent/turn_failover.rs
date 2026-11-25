@@ -54,6 +54,7 @@ impl Agent {
             .downcast_ref::<StreamError>()
             .and_then(|stream_error| stream_error.retry_after_secs)
             .map(Duration::from_secs)
+            .or_else(|| horon_agent_provider_core::retry_after::retry_after_from_error(error))
     }
 
     /// The retry decision for a rate-limit rejection, or `None` when the error
@@ -119,7 +120,11 @@ impl Agent {
                     FailoverAttempt::NotApplicable => Some(Duration::from_secs(provider.retry_backoff_cap_secs)),
                 }
             }
-            crate::network_retry::RetryAfterDecision::Backoff => None,
+            crate::network_retry::RetryAfterDecision::Backoff => Self::retry_after_hint(error).map(|_| {
+                let attempt = self.turn_state.rate_limit_retries().saturating_add(1);
+                let cap = Duration::from_secs(provider.retry_backoff_cap_secs.max(1));
+                horon_agent_provider_core::attempt_tracker::retry_backoff_delay(attempt, 250).min(cap)
+            }),
         };
         match wait {
             Some(_) if self.turn_state.rate_limit_retries() >= provider.max_retries => {

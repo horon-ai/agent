@@ -213,11 +213,11 @@ memory = "essential"
 
 ### 범위 승인
 
-답이 한 번의 호출이 아니라 한 자리를 덮을 수 있다. `allow_path`는 요청이 지목한 파일 하나를, `allow_folder`는 그 폴더와 그 아래 전체를 승인한다. 승인은 `<agent home>/approvals.json`에 저장되고, `approvals/.grants.lock` 잠금 아래 모드 0600으로 쓰이며, 만료 시각을 가진다(`[tools] approval_grant_ttl_days`, 기본 7, `0`이면 범위 승인을 끈다).
+답이 한 번의 호출이 아니라 한 자리나 작업공간 내 한 도구를 덮을 수 있다. `allow_path`는 요청이 지목한 파일 하나를, `allow_folder`는 그 폴더와 그 아래 전체를, `allow_always`는 일반 위험도의 적격 도구 호출(`eval` 제외)에 대해 작업공간 범위 `tool` 승인(`scope = "tool"`, `capability = "all"`)을 저장한다. 승인은 `<agent home>/approvals.json`에 저장되고, `approvals/.grants.lock` 잠금 아래 모드 0600으로 쓰이며, 만료 시각을 가진다(`[tools] approval_grant_ttl_days`, 기본 7, `0`이면 범위 승인을 끈다).
 
-`horon approvals grants list [--json]`는 저장된 모든 승인에 대해 안정적인 id, 권한(`append` 또는 `write`), 범위(`path` 또는 `folder`), 정규화된 경로, 작업공간, 만료 시각을 보여 주고 만료된 것은 표시한다. 아무것도 쓰지 않으며 경로의 제어 문자는 이스케이프해서 출력한다. `horon approvals grants revoke <id>...`는 지정한 승인을 지워 다음에 같은 호출이 오면 다시 묻게 한다. `revoke --all`은 어느 작업공간의 승인 몇 개를 지울지 먼저 출력하고 `--yes`가 있어야 실행한다. 철회는 다른 승인을 건드리지 않고, 읽을 수 없는 `approvals.json`은 고치지 않고 오류로 알리며, 어떤 승인도 덮지 못하는 `[tools] restricted_paths`를 약하게 만들지 않는다.
+`horon approvals grants list [--json]`는 저장된 모든 승인에 대해 안정적인 id, 권한(`append`, `write` 또는 `all`), 범위(`path`, `folder` 또는 `tool`), 정규화된 경로, 작업공간, 만료 시각을 보여 주고 만료된 것은 표시한다. 아무것도 쓰지 않으며 경로의 제어 문자는 이스케이프해서 출력한다. `horon approvals grants revoke <id>...`는 지정한 승인을 지워 다음에 같은 호출이 오면 다시 묻게 한다. `revoke --all`은 어느 작업공간의 승인 몇 개를 지울지 먼저 출력하고 `--yes`가 있어야 실행한다. 철회는 다른 승인을 건드리지 않고, 읽을 수 없는 `approvals.json`은 고치지 않고 오류로 알리며, 어떤 승인도 덮지 못하는 `[tools] restricted_paths`를 약하게 만들지 않는다.
 
-범위 승인은 `evaluate`가 "묻는다"고 판정한 뒤에만 조회되고, 그것도 승인이 답할 수 있는 사유일 때만이다. 이중 확인 등급이 아니고, 제한 경로가 아니고, bash 패턴 판정이 아니고, 효과가 파일 변이일 때다. 맞으면 사유 `grant`의 자동 승인이 되므로 감사 줄에 왜 묻지 않았는지 남는다. 범위 승인이 아닌 것 다섯 가지다.
+범위 승인은 `evaluate`가 "묻는다"고 판정한 뒤에만 조회되고, 그것도 승인이 답할 수 있는 사유일 때만이다. 이중 확인 등급이 아니고, 제한 경로가 아니고, bash 패턴 판정이 아니며, `path`/`folder` 승인은 파일 변이 효과일 때, `tool` 승인은 `(workspace, tool_name)`이 일치하는 일반 위험도 호출일 때다. 맞으면 사유 `grant`의 자동 승인이 되므로 감사 줄에 왜 묻지 않았는지 남는다. 범위 승인이 아닌 것 다섯 가지다.
 
 - **작업 공간을 넘지 않는다.** 작업 공간 루트는 세션 작업 디렉터리의 정규화 경로다. 승인은 그 루트를 기록하고, 루트가 다른 승인은 절대 경로가 같아도 아무것도 덮지 않는다.
 - **효과보다 넓지 않는다.** 덧붙이기용으로 발급한 승인은 덧붙이기만 덮는다. 쓰기 승인은 둘 다 덮는다. 파일을 교체하는 쪽이 덧붙이는 쪽보다 강한 답이기 때문이다.
