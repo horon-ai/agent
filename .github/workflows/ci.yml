@@ -68,8 +68,9 @@ jobs:
   # dispatch, a re-run of a `dev` push, a head already in `origin/main` and every
   # lookup or diff failure run everything: the release gate accepts only a fully
   # successful push run (scripts/release/check_ci.py). A pull request into
-  # `main` whose head that `dev` push run already verified, with only
-  # documentation added on the base side, runs the documentation gates only.
+  # `main` whose head that `dev` push run already verified, and whose merge
+  # commit (GITHUB_SHA) adds only documentation to it, runs the documentation
+  # gates only.
   changes:
     name: Changed Paths
     runs-on: ubuntu-24.04
