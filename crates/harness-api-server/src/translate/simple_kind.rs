@@ -44,7 +44,9 @@ pub(crate) enum SimpleKind {
     EffectiveSettings,
     /// Awaiting `todo_edit_result` for one revision-checked status change.
     TodoEdit,
-    /// Awaiting `control_receipt`.
+    /// Awaiting `control_receipt` from `apply_control` (daemon Error means invalid request).
+    ApplyControl,
+    /// Awaiting `control_receipt` from `get_control_receipt`.
     ControlReceipt,
     /// Awaiting `snapshot_result`.
     Snapshot,
@@ -56,6 +58,9 @@ pub(crate) enum SimpleKind {
 
 impl SimpleKind {
     pub(super) fn error_is_reply_only(&self) -> bool {
-        matches!(self, Self::Tools | Self::ToolControl | Self::ContinueRun)
+        matches!(
+            self,
+            Self::Tools | Self::ToolControl | Self::ContinueRun | Self::ApplyControl | Self::ControlReceipt
+        )
     }
 }

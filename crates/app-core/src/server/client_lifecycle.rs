@@ -64,8 +64,11 @@ type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 const RELOAD_STARTING_GUARD_MAX_AGE: Duration = Duration::from_secs(30);
 const REQUEST_HANDLER_STALL_THRESHOLDS_MS: [u64; 3] = [2_000, 10_000, 60_000];
 
+#[path = "client_fresh_session.rs"]
+mod fresh_session;
 #[path = "client_subscribe_context.rs"]
 mod subscribe_context;
+use fresh_session::{FreshSessionContext, switch_to_fresh_session};
 use subscribe_context::*;
 
 struct ProcessingMessage {
@@ -617,10 +620,10 @@ pub(super) async fn handle_client(
     let mut subscribed_working_dir: Option<std::path::PathBuf> = None;
     let client_start = std::time::Instant::now();
 
-    let provider = provider_template.fork_for_new_session();
+    let mut provider = provider_template.fork_for_new_session();
     let provider_fork_ms = client_start.elapsed().as_millis();
     let t0 = std::time::Instant::now();
-    let registry = Registry::new(provider.clone()).await;
+    let mut registry = Registry::new(provider.clone()).await;
     let registry_ms = t0.elapsed().as_millis();
 
     let mut swarm_enabled = crate::config::config().features.swarm;
@@ -652,7 +655,7 @@ pub(super) async fn handle_client(
         client_start.elapsed().as_millis()
     ));
     let mut client_session_id = new_agent.session_id().to_string();
-    let friendly_name = new_agent.session_short_name().map(|s| s.to_string());
+    let mut friendly_name = new_agent.session_short_name().map(|s| s.to_string());
     let client_connection_id = id::new_id("conn");
     let connected_at = Instant::now();
     let (disconnect_tx, mut disconnect_rx) = mpsc::unbounded_channel::<()>();
@@ -735,7 +738,8 @@ pub(super) async fn handle_client(
     let writer_clone = Arc::clone(&writer);
     let client_connection_id_for_events = client_connection_id.clone();
     let client_connections_for_events = Arc::clone(&client_connections);
-    let client_session_id_for_events = client_session_id.clone();
+    let client_session_id_for_events = Arc::new(std::sync::RwLock::new(client_session_id.clone()));
+    let event_forwarder_session_id = Arc::clone(&client_session_id_for_events);
     let acp_v2_for_events = Arc::clone(&acp_v2);
     let event_handle = tokio::spawn(async move {
         let mut flushed = Vec::new();
@@ -795,7 +799,13 @@ pub(super) async fn handle_client(
                 // sequence number. A client can then prove that everything
                 // after the `seq` in its snapshot is new, without inferring
                 // order from arrival.
-                let seq = super::session_observation::stamp_event_delivery(&client_session_id_for_events);
+                let seq = {
+                    let session_id = event_forwarder_session_id
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
+                    super::session_observation::stamp_event_delivery(&session_id)
+                };
                 encode_event_stamped(&event, seq)
             };
             let mut w = writer_clone.lock().await;
@@ -827,6 +837,7 @@ pub(super) async fn handle_client(
     // subscribe. Under heavy swarm file-activity load, ignored bus frames can
     // otherwise monopolize the select loop before the initial subscribe/read.
     let mut client_subscribed = false;
+    let mut prepared_disconnect = false;
     let mut provisional_session = true;
     let mut pending_request = Some(initial_request);
 
@@ -1314,6 +1325,7 @@ pub(super) async fn handle_client(
                 no_reply,
                 expected_run_id,
             } => {
+                prepared_disconnect = false;
                 if no_reply {
                     append_context_message(
                         id,
@@ -1724,6 +1736,7 @@ pub(super) async fn handle_client(
                 {
                     break;
                 }
+                prepared_disconnect = true;
             }
 
             Request::GetState { id } => {
@@ -1758,7 +1771,9 @@ pub(super) async fn handle_client(
                 acp: acp_options,
                 history_message_ids: requested_history_message_ids,
                 a2ui: requested_a2ui,
+                fresh_session,
             } => {
+                prepared_disconnect = false;
                 if let Err(message) =
                     validated_subscribe_working_dir(
                         subscribe_working_dir.as_deref(), requested_continuation,
@@ -1769,6 +1784,41 @@ pub(super) async fn handle_client(
                         message,
                         retry_after_secs: None,
                     });
+                    continue;
+                }
+                if target_session_id.is_none()
+                    && fresh_session
+                    && client_subscribed
+                    && !switch_to_fresh_session(FreshSessionContext {
+                        id,
+                        client_is_processing,
+                        client_event_tx: &client_event_tx,
+                        prewarm_task: &mut prewarm_task,
+                        client_session_id: &mut client_session_id,
+                        friendly_name: &mut friendly_name,
+                        session_control: &mut session_control,
+                        provisional_session: &mut provisional_session,
+                        agent: &mut agent,
+                        registry: &mut registry,
+                        provider: &mut provider,
+                        subscribe_working_dir: subscribe_working_dir.as_deref(),
+                        initial_working_dir: &initial_working_dir,
+                        terminal_env: &terminal_env,
+                        provider_template: &provider_template,
+                        client_connection_id: &client_connection_id,
+                        client_connections: &client_connections,
+                        client_session_id_for_events: &client_session_id_for_events,
+                        sessions: &sessions,
+                        shutdown_signals: &shutdown_signals,
+                        soft_interrupt_queues: &soft_interrupt_queues,
+                        swarm_members: &swarm_members,
+                        swarms_by_id: &swarms_by_id,
+                        file_touch: &file_touch,
+                        swarm_plans: &swarm_plans,
+                        swarm_coordinators: &swarm_coordinators,
+                    })
+                    .await
+                {
                     continue;
                 }
                 // The editor's servers belong to the previous attachment: stop
@@ -1865,6 +1915,9 @@ pub(super) async fn handle_client(
                         if was_warm && client_session_id == pre_resume_session_id {
                             prewarm_task = Some(spawn_deferred_prewarm(&agent));
                         }
+                        *client_session_id_for_events
+                            .write()
+                            .unwrap_or_else(|e| e.into_inner()) = client_session_id.clone();
                         session_control = refresh_session_control_handle(
                             &client_session_id,
                             &agent,
@@ -2117,6 +2170,7 @@ pub(super) async fn handle_client(
                 client_has_local_history,
                 allow_session_takeover,
             } => {
+                prepared_disconnect = false;
                 let pre_resume_session_id = client_session_id.clone();
                 let resume_working_dir = {
                     let agent_guard = agent.lock().await;
@@ -2173,6 +2227,9 @@ pub(super) async fn handle_client(
                 if client_session_id != pre_resume_session_id {
                     provisional_session = false;
                 }
+                *client_session_id_for_events
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner()) = client_session_id.clone();
                 if acp_v2.load(Ordering::Acquire) {
                     let _ = client_event_tx.send(super::foreground_state::snapshot(&client_session_id));
                 }
@@ -3374,18 +3431,34 @@ pub(super) async fn handle_client(
     settle_prewarm(&mut prewarm_task).await;
     drop(agent);
 
+    // Tear down both halves of the accepted stream and its forwarding tasks
+    // before disconnect cleanup or reconnect grace so `horon-agent.sock` FDs
+    // close synchronously when the client leaves.
+    drop(reader);
+    event_handle.abort();
+    let _ = event_handle.await;
+    drop(writer);
+    ask_forwarder.abort();
+    let _ = ask_forwarder.await;
+    pending_asks.lock().await.clear();
+
+    let effective_idle_reconnect_grace = if prepared_disconnect {
+        Duration::ZERO
+    } else {
+        idle_reconnect_grace
+    };
+
     // Cleanup serializes the successor decision against live attachment claims.
     // A successor must inherit the active owner, including its completion receiver,
     // rather than just an Agent whose processing task was already aborted.
-    let event_handle = if !continue_on_disconnect {
-        let retained = crate::hooks::with_client_terminal_env(
+    let retain_detached_turn = if !continue_on_disconnect {
+        crate::hooks::with_client_terminal_env(
             active_terminal_env.clone(),
             cleanup_client_connection(
                 &sessions,
                 &client_session_id,
                 client_is_processing,
                 &mut processing_task,
-                event_handle,
                 &swarm_members,
                 &swarms_by_id,
                 &swarm_coordinators,
@@ -3399,17 +3472,16 @@ pub(super) async fn handle_client(
                 &event_counter,
                 &swarm_event_tx,
                 &client_event_tx,
-                idle_reconnect_grace,
+                effective_idle_reconnect_grace,
             ),
         )
-        .await?;
-        match retained {
-            Some(handle) => handle,
-            None => return connection_result,
-        }
+        .await?
     } else {
-        event_handle
+        true
     };
+    if !retain_detached_turn {
+        return connection_result;
+    }
 
     {
         // Retain the existing turn owner, not the socket. Its JoinHandle and
@@ -3423,15 +3495,6 @@ pub(super) async fn handle_client(
             &swarm_members,
         )
         .await;
-        event_handle.abort();
-        drop(reader);
-        drop(writer);
-        // Dropping the pending answer channels ends a tool's wait instead of
-        // leaving the turn parked on a client that is gone. The forwarder is
-        // aborted without being awaited: it only relays prompts from a
-        // connection that has already closed.
-        ask_forwarder.abort();
-        pending_asks.lock().await.clear();
         if let Some(handle) = processing_task.take() {
             crate::logging::info(&format!(
                 "Retaining disconnected turn for session {}",
@@ -3476,7 +3539,6 @@ pub(super) async fn handle_client(
             &client_session_id,
             client_is_processing,
             &mut processing_task,
-            event_handle,
             &swarm_members,
             &swarms_by_id,
             &swarm_coordinators,
@@ -3490,7 +3552,7 @@ pub(super) async fn handle_client(
             &event_counter,
             &swarm_event_tx,
             &client_event_tx,
-            idle_reconnect_grace,
+            effective_idle_reconnect_grace,
         ),
     )
     .await?;

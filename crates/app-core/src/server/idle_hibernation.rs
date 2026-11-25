@@ -124,6 +124,7 @@ async fn reclaim_idle_caches(
     drop(sessions);
 
     let mut releases = Vec::new();
+    let mut released_writers = Vec::new();
     let mut before = None;
     for (id, agent, member) in candidates {
         let Some((running, last_status_change)) = member else {
@@ -158,8 +159,14 @@ async fn reclaim_idle_caches(
             state.since = now;
             continue;
         };
+        if let Some(writer) = agent.release_idle_writer() {
+            released_writers.push(writer);
+        }
         state.released = true;
         releases.push((id, released));
+    }
+    if !released_writers.is_empty() {
+        super::client_disconnect_cleanup::blocking_session_io(move || drop(released_writers));
     }
     if !releases.is_empty() {
         // RSS is process-wide, not a per-session metric, so purge the retained

@@ -88,6 +88,26 @@ impl Agent {
         Some(released)
     }
 
+    /// Release any open `.writer.lock` handle on this session if no turn or
+    /// compaction is active and all transcript state is cleanly flushed.
+    pub(crate) fn release_idle_writer(&mut self) -> Option<crate::session::IdleWriter> {
+        if crate::turn_cancel_registry::has_active_turn(self.session_id()) {
+            return None;
+        }
+        if self.pending_resume.is_some() {
+            return None;
+        }
+        let compaction = self.registry.compaction();
+        let Ok(manager) = compaction.try_read() else {
+            return None;
+        };
+        if manager.is_compacting() {
+            return None;
+        }
+        drop(manager);
+        self.session.release_idle_writer()
+    }
+
     /// Seed the tool index from the transcript the way a turn start does.
     #[cfg(test)]
     pub(crate) fn seed_idle_tool_index(&mut self) -> usize {

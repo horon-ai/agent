@@ -274,5 +274,62 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
             .unwrap()
             .unwrap()
             .unwrap();
+
+        // Repeated Subscribe with `fresh_session: true` allocates distinct sessions
+        // on the same connection, while plain `fresh_session: false` keeps the existing one.
+        let (multi_task, multi_stream) = connect();
+        let (multi_reader, mut multi_writer) = multi_stream.into_split();
+        let mut multi_reader = BufReader::new(multi_reader);
+        send(
+            &mut multi_writer,
+            json!({"type":"subscribe","id":201,"working_dir":home._home.path(),"fresh_session":true}),
+        )
+        .await;
+        until(&mut multi_reader, |e| matches!(e, ServerEvent::Done { id: 201 })).await;
+        send(&mut multi_writer, json!({"type":"state","id":202})).await;
+        let ServerEvent::State {
+            session_id: first_id, ..
+        } = until(&mut multi_reader, |e| matches!(e, ServerEvent::State { id: 202, .. })).await
+        else {
+            unreachable!()
+        };
+
+        send(
+            &mut multi_writer,
+            json!({"type":"subscribe","id":203,"working_dir":home._home.path(),"fresh_session":false}),
+        )
+        .await;
+        until(&mut multi_reader, |e| matches!(e, ServerEvent::Done { id: 203 })).await;
+        send(&mut multi_writer, json!({"type":"state","id":204})).await;
+        let ServerEvent::State {
+            session_id: same_id, ..
+        } = until(&mut multi_reader, |e| matches!(e, ServerEvent::State { id: 204, .. })).await
+        else {
+            unreachable!()
+        };
+        assert_eq!(same_id, first_id);
+
+        send(
+            &mut multi_writer,
+            json!({"type":"subscribe","id":205,"working_dir":home._home.path(),"fresh_session":true}),
+        )
+        .await;
+        until(&mut multi_reader, |e| matches!(e, ServerEvent::Done { id: 205 })).await;
+        send(&mut multi_writer, json!({"type":"state","id":206})).await;
+        let ServerEvent::State {
+            session_id: second_id, ..
+        } = until(&mut multi_reader, |e| matches!(e, ServerEvent::State { id: 206, .. })).await
+        else {
+            unreachable!()
+        };
+        assert_ne!(second_id, first_id);
+
+        drop(multi_writer);
+        drop(multi_reader);
+        tokio::time::timeout(Duration::from_secs(5), multi_task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
     }
 }

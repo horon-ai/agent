@@ -138,3 +138,60 @@ fn catalog_sharing_identity_tracks_auth_catalog_home_and_fork_scope() {
         crate::env::set_var("HORON_HOME", old_home);
     });
 }
+
+#[test]
+fn fork_for_new_session_preserves_and_reloads_configured_default_provider() {
+    with_clean_provider_test_env(|| {
+        let rt = enter_test_runtime();
+        let _runtime_guard = rt.enter();
+        write_provider_config(
+            r#"
+[provider]
+default_provider = "mock"
+
+[providers.mock]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:18080/v1"
+auth = "none"
+default_model = "mock-model"
+
+[providers.alt]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:18081/v1"
+auth = "none"
+default_model = "alt-model"
+"#,
+        );
+
+        let template = MultiProvider::from_named_provider_profile("mock").expect("mock profile runtime");
+        let forked = template.fork_for_new_session();
+        assert_eq!(forked.model(), "mock-model");
+        assert_eq!(forked.display_name(), "mock");
+        assert_eq!(forked.session_provider_key().as_deref(), Some("mock"));
+        assert!(forked.unavailable_reason().is_none());
+
+        write_provider_config(
+            r#"
+[provider]
+default_provider = "alt"
+
+[providers.mock]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:18080/v1"
+auth = "none"
+default_model = "mock-model"
+
+[providers.alt]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:18081/v1"
+auth = "none"
+default_model = "alt-model"
+"#,
+        );
+        crate::config::invalidate_config_cache();
+        let reloaded = template.fork_for_new_session();
+        assert_eq!(reloaded.model(), "alt-model");
+        assert_eq!(reloaded.display_name(), "alt");
+        assert_eq!(reloaded.session_provider_key().as_deref(), Some("alt"));
+    });
+}

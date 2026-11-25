@@ -456,3 +456,104 @@ fn bridge_wiring_get_control_receipt_is_forwarded_and_unknown_stays_unknown() {
     );
     assert!(receipt.result.is_none(), "unknown carries no result");
 }
+
+#[test]
+fn concurrent_create_session_and_attach_error_correlate_independently() {
+    let mut state = BridgeState::default();
+    let out1 = state.api_request_to_legacy(&serde_json::json!({
+        "v": 1, "id": 101, "req": "create_session", "working_dir": "/tmp/dir-one"
+    }));
+    let out2 = state.api_request_to_legacy(&serde_json::json!({
+        "v": 1, "id": 102, "req": "create_session", "working_dir": "/tmp/dir-two"
+    }));
+    let out3 = state.api_request_to_legacy(&serde_json::json!({
+        "v": 1, "id": 103, "req": "attach_session", "session_id": "missing-id"
+    }));
+
+    let Outbound::Legacy(sub1) = &out1[0] else {
+        panic!("sub1")
+    };
+    let Outbound::Legacy(state1) = &out1[1] else {
+        panic!("state1")
+    };
+    assert_eq!(sub1["fresh_session"], true);
+
+    let Outbound::Legacy(sub2) = &out2[0] else {
+        panic!("sub2")
+    };
+    let Outbound::Legacy(state2) = &out2[1] else {
+        panic!("state2")
+    };
+    assert_eq!(sub2["fresh_session"], true);
+
+    let Outbound::Legacy(sub3) = &out3[0] else {
+        panic!("sub3")
+    };
+
+    // Fail attach #3 without clobbering concurrent create #1 or #2
+    let err_frames = state.legacy_event_to_api(&serde_json::json!({
+        "type": "error", "id": sub3["id"], "message": "Unknown session"
+    }));
+    assert_eq!(err_frames.len(), 1);
+    assert_eq!(err_frames[0].reply_to, Some(103));
+    assert!(matches!(
+        err_frames[0].event,
+        ApiEvent::Error {
+            code: ErrorCode::UnknownSession,
+            ..
+        }
+    ));
+
+    // Answer state #1 and state #2 independently
+    let reply1 = state.legacy_event_to_api(&serde_json::json!({
+        "type": "state", "id": state1["id"], "session_id": "sess-1", "message_count": 0, "is_processing": false
+    }));
+    assert_eq!(reply1[0].reply_to, Some(101));
+    let ApiEvent::Attached { session: s1 } = &reply1[0].event else {
+        panic!("expected attached for 101: {:?}", reply1);
+    };
+    assert_eq!(s1.session_id, "sess-1");
+    assert_eq!(s1.working_dir.as_deref(), Some("/tmp/dir-one"));
+
+    let reply2 = state.legacy_event_to_api(&serde_json::json!({
+        "type": "state", "id": state2["id"], "session_id": "sess-2", "message_count": 0, "is_processing": false
+    }));
+    assert_eq!(reply2[0].reply_to, Some(102));
+    let ApiEvent::Attached { session: s2 } = &reply2[0].event else {
+        panic!("expected attached for 102: {:?}", reply2);
+    };
+    assert_eq!(s2.session_id, "sess-2");
+    assert_eq!(s2.working_dir.as_deref(), Some("/tmp/dir-two"));
+    assert!(state.pending_attaches.is_empty());
+}
+
+#[test]
+fn apply_control_validation_error_maps_to_invalid_request() {
+    let mut state = attached();
+    let outbound = state.api_request_to_legacy(&serde_json::json!({
+        "v": 1,
+        "id": 77,
+        "req": "apply_control",
+        "session_id": "s1",
+        "operation_id": "op-bad",
+        "action": "bogus_action"
+    }));
+    let [Outbound::Legacy(request)] = &outbound[..] else {
+        panic!("expected legacy request");
+    };
+    let legacy_id = request["id"].as_u64().unwrap();
+    let frames = state.legacy_event_to_api(&serde_json::json!({
+        "type": "error",
+        "id": legacy_id,
+        "message": "unknown control action `bogus_action`"
+    }));
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].reply_to, Some(77));
+    assert!(matches!(
+        frames[0].event,
+        ApiEvent::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+}

@@ -216,6 +216,7 @@ fn subscribe_request(id: u64, cwd: Option<&std::path::Path>, resume: Option<&str
         acp: None,
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     }
 }
 

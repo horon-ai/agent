@@ -1,4 +1,7 @@
-use crate::{RouteCheapnessEstimate, RouteCostConfidence, RouteCostSource};
+use crate::{
+    CHEAPNESS_REFERENCE_INPUT_TOKENS, CHEAPNESS_REFERENCE_OUTPUT_TOKENS, RouteBillingKind, RouteCheapnessEstimate,
+    RouteCostConfidence, RouteCostSource,
+};
 
 fn usd_to_micros(usd: f64) -> u64 {
     (usd * 1_000_000.0).round() as u64
@@ -275,6 +278,88 @@ pub fn openrouter_pricing_from_token_prices(
     Some(RouteCheapnessEstimate::metered(
         source, confidence, input, output, cache, note,
     ))
+}
+
+impl RouteCheapnessEstimate {
+    pub fn metered(
+        source: RouteCostSource,
+        confidence: RouteCostConfidence,
+        input_price_per_mtok_micros: u64,
+        output_price_per_mtok_micros: u64,
+        cache_read_price_per_mtok_micros: Option<u64>,
+        note: impl Into<Option<String>>,
+    ) -> Self {
+        Self {
+            billing_kind: RouteBillingKind::Metered,
+            source,
+            confidence,
+            monthly_price_micros: None,
+            input_price_per_mtok_micros: Some(input_price_per_mtok_micros),
+            output_price_per_mtok_micros: Some(output_price_per_mtok_micros),
+            cache_read_price_per_mtok_micros,
+            included_requests_per_month: None,
+            reference_input_tokens: CHEAPNESS_REFERENCE_INPUT_TOKENS,
+            reference_output_tokens: CHEAPNESS_REFERENCE_OUTPUT_TOKENS,
+            estimated_reference_cost_micros: Some(reference_request_cost_micros(
+                input_price_per_mtok_micros,
+                output_price_per_mtok_micros,
+            )),
+            note: note.into(),
+        }
+    }
+
+    pub fn subscription(
+        source: RouteCostSource,
+        confidence: RouteCostConfidence,
+        monthly_price_micros: u64,
+        included_requests_per_month: Option<u64>,
+        note: impl Into<Option<String>>,
+    ) -> Self {
+        Self {
+            billing_kind: RouteBillingKind::Subscription,
+            source,
+            confidence,
+            monthly_price_micros: Some(monthly_price_micros),
+            input_price_per_mtok_micros: None,
+            output_price_per_mtok_micros: None,
+            cache_read_price_per_mtok_micros: None,
+            included_requests_per_month,
+            reference_input_tokens: CHEAPNESS_REFERENCE_INPUT_TOKENS,
+            reference_output_tokens: CHEAPNESS_REFERENCE_OUTPUT_TOKENS,
+            estimated_reference_cost_micros: included_requests_per_month
+                .map(|count| monthly_price_micros / count.max(1)),
+            note: note.into(),
+        }
+    }
+
+    pub fn included_quota(
+        source: RouteCostSource,
+        confidence: RouteCostConfidence,
+        monthly_price_micros: u64,
+        included_requests_per_month: Option<u64>,
+        estimated_reference_cost_micros: Option<u64>,
+        note: impl Into<Option<String>>,
+    ) -> Self {
+        Self {
+            billing_kind: RouteBillingKind::IncludedQuota,
+            source,
+            confidence,
+            monthly_price_micros: Some(monthly_price_micros),
+            input_price_per_mtok_micros: None,
+            output_price_per_mtok_micros: None,
+            cache_read_price_per_mtok_micros: None,
+            included_requests_per_month,
+            reference_input_tokens: CHEAPNESS_REFERENCE_INPUT_TOKENS,
+            reference_output_tokens: CHEAPNESS_REFERENCE_OUTPUT_TOKENS,
+            estimated_reference_cost_micros,
+            note: note.into(),
+        }
+    }
+}
+
+fn reference_request_cost_micros(input_price_per_mtok_micros: u64, output_price_per_mtok_micros: u64) -> u64 {
+    input_price_per_mtok_micros.saturating_mul(CHEAPNESS_REFERENCE_INPUT_TOKENS) / 1_000_000
+        + output_price_per_mtok_micros.saturating_mul(CHEAPNESS_REFERENCE_OUTPUT_TOKENS) / 1_000_000
 }
 
 #[cfg(test)]

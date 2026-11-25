@@ -403,7 +403,6 @@ async fn cleanup_without_a_removal_publishes_no_gate_and_keeps_other_sessions_in
         "session_already_gone",
         false,
         &mut processing_task,
-        tokio::spawn(std::future::pending()),
         &members,
         &swarms_by_id,
         &swarm_coordinators,

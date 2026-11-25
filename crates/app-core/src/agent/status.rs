@@ -214,7 +214,9 @@ impl Agent {
             );
         }
 
-        crate::session::derive_session_provider_key(self.provider.name())
+        self.provider
+            .session_provider_key()
+            .or_else(|| crate::session::derive_session_provider_key(self.provider.name()))
     }
 
     /// Re-apply the persisted session model on resume (or attach). A stale

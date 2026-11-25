@@ -1418,6 +1418,7 @@ impl RawClient {
             acp: None,
             history_message_ids: false,
             a2ui: None,
+            fresh_session: false,
         })
         .await?;
         self.read_until(

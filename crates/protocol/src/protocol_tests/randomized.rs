@@ -75,6 +75,7 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
             acp: None,
             history_message_ids: false,
             a2ui: None,
+            fresh_session: false,
         };
         let decoded = parse_request_json(&serde_json::to_string(&req)?)?;
         let Request::Subscribe {
@@ -93,6 +94,7 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
             acp: _,
             history_message_ids: _,
             a2ui: _,
+            fresh_session: _,
         } = decoded
         else {
             return Err(anyhow!("expected randomized Subscribe"));

@@ -1,6 +1,17 @@
 use super::*;
 
+enum CompatibleStartupProfile {
+    Named(String),
+    Builtin(crate::provider_catalog::OpenAiCompatibleProfile),
+}
+
 impl MultiProvider {
+    /// Mark this runtime as an explicit CLI/startup selection so
+    /// `fork_for_new_session` preserves its active profile and model across
+    /// new sessions.
+    pub fn mark_initial_selection(&mut self) {
+        self.initial_provider = Some(self.active_provider());
+    }
     pub(super) fn spawn_post_auth_model_refresh(&self, provider: Arc<dyn Provider>, provider_label: &'static str) {
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             crate::logging::auth_event(
@@ -63,23 +74,63 @@ impl MultiProvider {
         let cfg = crate::config::config();
         let provider_state = ProviderState::from_parts(cfg, &auth_status);
         let initial_provider = Self::initial_provider_from_env();
-        if initial_provider.is_none()
-            && std::env::var_os("HORON_AGENT_PROVIDER_PROFILE_ACTIVE").is_none()
-            && std::env::var_os("HORON_AGENT_NAMED_PROVIDER_PROFILE").is_none()
-            && let Some(pref) = provider_state.default_provider_key()
-        {
-            if let Some(profile) = crate::provider_catalog::resolve_openai_compatible_profile_selection(pref) {
-                crate::provider_catalog::apply_openai_compatible_profile_env(Some(profile));
-            } else if cfg.providers.contains_key(pref) {
-                match crate::provider_catalog::apply_named_provider_profile_env_from_config(pref, cfg) {
-                    Ok(profile_name) => {
-                        crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_NAME", &profile_name);
-                        crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
-                    }
-                    Err(err) => {
-                        crate::logging::warn(&format!("Failed to apply default provider profile '{}': {}", pref, err))
-                    }
+        let mut compatible_profile_to_install: Option<CompatibleStartupProfile> = None;
+
+        if initial_provider.is_none() {
+            let explicit_profile_lock = std::env::var_os("HORON_AGENT_PROVIDER_PROFILE_ACTIVE").is_some();
+            let env_profile = [
+                "HORON_AGENT_PROVIDER_PROFILE_NAME",
+                "HORON_AGENT_NAMED_PROVIDER_PROFILE",
+            ]
+            .iter()
+            .find_map(|key| match std::env::var(key) {
+                Ok(value) => {
+                    let trimmed = value.trim().to_string();
+                    if trimmed.is_empty() { None } else { Some(trimmed) }
                 }
+                Err(_) => None,
+            });
+
+            if explicit_profile_lock && let Some(name) = env_profile {
+                if cfg.providers.contains_key(&name) {
+                    compatible_profile_to_install = Some(CompatibleStartupProfile::Named(name));
+                } else if let Some(profile) = crate::provider_catalog::openai_compatible_profile_by_id(&name) {
+                    compatible_profile_to_install = Some(CompatibleStartupProfile::Builtin(profile));
+                }
+            } else if let Some(selection) = provider_state.default_provider_selection() {
+                match &selection {
+                    selection::ConfigProviderSelection::OpenAiCompatibleProfile(profile_id) => {
+                        if let Some(profile) = crate::provider_catalog::openai_compatible_profile_by_id(profile_id) {
+                            crate::provider_catalog::apply_openai_compatible_profile_env(Some(profile));
+                            compatible_profile_to_install = Some(CompatibleStartupProfile::Builtin(profile));
+                        }
+                    }
+                    selection::ConfigProviderSelection::NamedProfile(profile_name, _) => {
+                        match crate::provider_catalog::apply_named_provider_profile_env_from_config(profile_name, cfg) {
+                            Ok(_) => {
+                                compatible_profile_to_install =
+                                    Some(CompatibleStartupProfile::Named(profile_name.clone()));
+                            }
+                            Err(err) => {
+                                crate::logging::warn(&format!(
+                                    "Failed to apply default provider profile '{}': {}",
+                                    profile_name, err
+                                ));
+                            }
+                        }
+                    }
+                    selection::ConfigProviderSelection::BuiltIn(_) => {}
+                }
+            } else if let Some(profile_name) = env_profile {
+                if cfg.providers.contains_key(&profile_name) {
+                    compatible_profile_to_install = Some(CompatibleStartupProfile::Named(profile_name));
+                } else if let Some(profile) = crate::provider_catalog::openai_compatible_profile_by_id(&profile_name) {
+                    compatible_profile_to_install = Some(CompatibleStartupProfile::Builtin(profile));
+                }
+            } else if let Ok(namespace) = std::env::var("HORON_AGENT_OPENROUTER_CACHE_NAMESPACE")
+                && let Some(profile) = crate::provider_catalog::openai_compatible_profile_by_id(namespace.trim())
+            {
+                compatible_profile_to_install = Some(CompatibleStartupProfile::Builtin(profile));
             }
         }
 
@@ -109,14 +160,38 @@ impl MultiProvider {
                     Self::provider_key(initial)
                 ));
             }
-        } else if let Some(pref) = provider_state.default_provider_key() {
+        }
+
+        let result = Self {
+            openai: RwLock::new(openai),
+            openai_compatible_profiles: RwLock::new(HashMap::new()),
+            active_openai_compatible_profile: RwLock::new(None),
+            active: RwLock::new(active),
+            startup_notices: RwLock::new(Vec::new()),
+            initial_provider,
+            catalog_scope: next_catalog_scope(),
+            routes_memo: Mutex::new(None),
+            post_auth_refreshes_pending: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        };
+
+        if let Some(profile) = compatible_profile_to_install {
+            let install_result = match profile {
+                CompatibleStartupProfile::Named(name) => result.install_named_provider_profile(&name),
+                CompatibleStartupProfile::Builtin(profile) => result.install_openai_compatible_profile(profile),
+            };
+            if let Err(err) = install_result {
+                crate::logging::warn(&format!("Failed to initialize compatible provider profile: {err}"));
+            }
+        }
+
+        if result.initial_provider.is_none()
+            && let Some(pref) = provider_state.default_provider_key()
+        {
             if let Some(selection) = provider_state.default_provider_selection() {
                 let preferred = selection.active_provider();
-                let is_configured = provider_state
-                    .preferred_provider_is_configured(availability)
-                    .unwrap_or(false);
+                let is_configured = result.provider_slot_available(preferred);
                 if is_configured {
-                    active = preferred;
+                    result.set_active_provider(preferred);
                     crate::logging::info(&format!(
                         "Using preferred provider '{}' from config via {}",
                         pref,
@@ -138,18 +213,6 @@ impl MultiProvider {
             }
         }
 
-        let result = Self {
-            openai: RwLock::new(openai),
-            openai_compatible_profiles: RwLock::new(HashMap::new()),
-            active_openai_compatible_profile: RwLock::new(None),
-            active: RwLock::new(active),
-            startup_notices: RwLock::new(Vec::new()),
-            initial_provider,
-            catalog_scope: next_catalog_scope(),
-            routes_memo: Mutex::new(None),
-            post_auth_refreshes_pending: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-        };
-
         // An explicit CLI/environment provider selection owns startup routing.
         // Applying the configured default model here can reactivate its configured
         // provider/profile before the caller pins a dual-auth credential mode.
@@ -166,11 +229,7 @@ impl MultiProvider {
         result.spawn_openai_catalog_refresh_if_needed();
         crate::logging::info(&format!(
             "[TIMING] provider_init: openai={}, total={}ms",
-            result
-                .openai
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .is_some(),
+            result.execution_provider().is_some(),
             provider_init_start.elapsed().as_millis()
         ));
         result
@@ -282,5 +341,26 @@ impl MultiProvider {
 
     pub(super) fn active_provider(&self) -> ActiveProvider {
         *self.active.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(super) fn fork_for_new_session_inner(&self) -> Arc<dyn Provider> {
+        let mut provider = Self::new_fast();
+        provider.catalog_scope = self.catalog_scope;
+
+        if self.initial_provider.is_some()
+            || (provider.execution_provider().is_none() && self.execution_provider().is_some())
+        {
+            let active = self.active_provider();
+            let current_model = self.model();
+            let switch_request = self.fork_model_switch_request(active, &current_model);
+            if let Err(error) = provider.set_model(&switch_request) {
+                crate::logging::warn(&format!(
+                    "Failed to preserve initial provider model '{}' for new session: {}",
+                    switch_request, error
+                ));
+            }
+        }
+
+        Arc::new(provider)
     }
 }

@@ -352,6 +352,7 @@ pub(super) fn subscribe_request(
         // independent opt-in is the TUI bridge's, not this one's.
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     }
 }
 
