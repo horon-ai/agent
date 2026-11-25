@@ -462,7 +462,7 @@ impl Agent {
                             super::turn_failover::ProviderErrorAction::Stop(error) => return Err(error),
                             super::turn_failover::ProviderErrorAction::Proceed => {}
                         }
-                        let err_str = e.to_string();
+                        let err_str = format!("{e:#}");
                         if self.try_auto_compact_after_context_limit(&err_str) {
                             log_agent_provider_stream_lifecycle(
                                 logging::LogLevel::Warn,

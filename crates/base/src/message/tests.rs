@@ -842,3 +842,41 @@ fn format_background_task_stalled_markdown_handles_empty_tail() {
     assert!(rendered.contains("**Background task stalled** `stall02` · `bash` · no output or progress for 60s"));
     assert!(rendered.contains("_No output captured yet._"));
 }
+
+#[test]
+fn redact_secrets_masks_inline_and_json_credentials_without_breaking_prose() {
+    let raw = concat!(
+        "inline api_key=my_inline_secret_123456 and quoted password=\"p@ss w0rd\" ",
+        "url=https://example.test/cb?access_token=tok_abc_123&ok=1 ",
+        "json={\"api_key\":\"json_secret_value_999\",\"authorization\":\"Basic dXNlcjpwYXNz\"} ",
+        "escaped={\\\"client_secret\\\":\\\"escaped_secret_456\\\"} ",
+        "safe_config: token_count=5 api_key_env=\"OPENAI_API_KEY\" Error: invalid token: expected string"
+    );
+    let redacted = crate::message::redact_secrets(raw);
+    for secret in [
+        "my_inline_secret_123456",
+        "p@ss w0rd",
+        "tok_abc_123",
+        "json_secret_value_999",
+        "Basic dXNlcjpwYXNz",
+        "escaped_secret_456",
+    ] {
+        assert!(!redacted.contains(secret), "leaked {secret}: {redacted}");
+    }
+    assert!(redacted.contains("&ok=1"), "URL param lost: {redacted}");
+    assert!(redacted.contains("token_count=5"), "{redacted}");
+    assert!(redacted.contains("api_key_env=\"OPENAI_API_KEY\""), "{redacted}");
+    assert!(
+        redacted.contains("Error: invalid token: expected string"),
+        "prose damaged: {redacted}"
+    );
+    let json_slice = redacted
+        .split("json=")
+        .nth(1)
+        .and_then(|rest| rest.split(" escaped=").next())
+        .expect("json slice");
+    let parsed: serde_json::Value = serde_json::from_str(json_slice)
+        .unwrap_or_else(|err| panic!("valid JSON after redaction ({err}): {json_slice} | full={redacted}"));
+    assert_eq!(parsed["api_key"], "[REDACTED_SECRET]");
+    assert_eq!(parsed["authorization"], "[REDACTED_SECRET]");
+}

@@ -765,7 +765,7 @@ impl Agent {
                 let event = match event {
                     Ok(event) => event,
                     Err(e) => {
-                        let err_str = e.to_string();
+                        let err_str = format!("{e:#}");
                         self.record_failed_credential_route(&err_str);
                         let attached_client = crate::server::session_has_attached_client(&self.session.id);
                         match self.handle_provider_error(&e, attached_client).await {

@@ -219,9 +219,8 @@ async fn run_memory_command_for_dir(cmd: MemorySubcommand, project_dir: Option<s
                 all_memories.extend(graph.all_memories().cloned());
             }
 
-            let json = serde_json::to_string_pretty(&all_memories)?;
-            std::fs::write(&output, json)?;
-            println!("Exported {} memories to {}", all_memories.len(), output);
+            let count = write_redacted_memory_export(&mut all_memories, std::path::Path::new(&output))?;
+            println!("Exported {} memories to {}", count, output);
         }
 
         MemorySubcommand::Import {
@@ -872,10 +871,51 @@ Re-run with `--force` if you really want to stop the server.";
 /// a paid third-party aggregator (#804). The session already records the
 /// resolved route identity, so prefer it for that slot and leave every other
 /// provider's established value unchanged.
+fn redact_memory_entry(entry: &mut memory::MemoryEntry) {
+    entry.content = crate::message::redact_secrets(&entry.content);
+    for tag in &mut entry.tags {
+        *tag = crate::message::redact_secrets(tag);
+    }
+    if !entry.search_text.is_empty() {
+        entry.search_text = crate::message::redact_secrets(&entry.search_text);
+    }
+    if let Some(source) = &mut entry.source {
+        *source = crate::message::redact_secrets(source);
+    }
+}
+
+fn write_private_output_file(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write as _;
+
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut options = horon_agent_platform::fs::no_follow_open_options();
+    options.write(true).create(true).truncate(true);
+    horon_agent_platform::fs::request_owner_only_mode(&mut options);
+    let mut file = options.open(path)?;
+    horon_agent_platform::fs::set_permissions_owner_only_file(&file)?;
+    file.write_all(bytes)?;
+    file.flush()?;
+    Ok(())
+}
+
+fn write_redacted_memory_export(entries: &mut [memory::MemoryEntry], output: &std::path::Path) -> Result<usize> {
+    for entry in entries.iter_mut() {
+        redact_memory_entry(entry);
+    }
+    let json = serde_json::to_string_pretty(entries)?;
+    write_private_output_file(output, json.as_bytes())?;
+    Ok(entries.len())
+}
+
 fn run_report_provider_name(provider: &dyn crate::provider::Provider, session_provider_key: Option<&str>) -> String {
     let name = provider.name();
-    if name.eq_ignore_ascii_case("openrouter")
-        && let Some(key) = session_provider_key.map(str::trim).filter(|key| !key.is_empty())
+    if (name.eq_ignore_ascii_case("openrouter") || name.eq_ignore_ascii_case("openai"))
+        && let Some(key) = session_provider_key
+            .map(str::trim)
+            .map(|key| key.strip_prefix("openai-compatible:").unwrap_or(key).trim())
+            .filter(|key| !key.is_empty())
     {
         return key.to_string();
     }

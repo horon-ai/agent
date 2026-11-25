@@ -113,8 +113,11 @@ impl<P: WireParser> Stream for WireSseStream<P> {
                     this.drain_frames();
                 }
                 Poll::Ready(Some(Err(error))) => {
-                    let message =
-                        redact_secret(format!("{} stream error: {error}", this.label), this.api_key.as_deref());
+                    let chain = anyhow::Error::new(error);
+                    let message = redact_secret(
+                        format!("{} stream error: {chain:#}", this.label),
+                        this.api_key.as_deref(),
+                    );
                     return Poll::Ready(Some(Err(anyhow::anyhow!(message))));
                 }
                 Poll::Ready(None) => {
@@ -344,5 +347,47 @@ mod tests {
         // A second drain finds nothing: `drained` keeps the close from repeating.
         let again = drain(&mut stream).await;
         assert!(again.is_empty(), "{again:?}");
+    }
+
+    #[tokio::test]
+    async fn a_chunked_abort_preserves_the_underlying_source_error() {
+        use tokio::io::AsyncWriteExt as _;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let body = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/event-stream\r\n\r\n9\r\ndata: 1\n\n\r\n";
+            socket.write_all(body).await.expect("write partial chunked body");
+            socket.shutdown().await.ok();
+        });
+
+        let response = reqwest::Client::new()
+            .get(format!("http://{addr}/?k={TEST_KEY}"))
+            .send()
+            .await
+            .expect("http headers arrive");
+        let mut stream = WireSseStream::new(
+            response.bytes_stream(),
+            Recorder::new(),
+            "Test wire",
+            Some(Arc::from(TEST_KEY)),
+        );
+        let events = drain(&mut stream).await;
+        server.await.expect("server task finishes");
+
+        let error = events
+            .into_iter()
+            .find_map(Result::err)
+            .expect("truncated chunked body yields transport error");
+        let message = error.to_string();
+        assert!(message.starts_with("Test wire stream error: "), "{message}");
+        assert!(
+            !message.trim_end().ends_with("error decoding response body"),
+            "transport error stripped its .source() cause: {message}"
+        );
+        assert!(!message.contains(TEST_KEY), "{message}");
     }
 }

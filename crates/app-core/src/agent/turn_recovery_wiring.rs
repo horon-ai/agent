@@ -316,8 +316,14 @@ impl Agent {
             || lower.contains("closed before response.completed")
             || lower.contains("stream closed before completion")
             || lower.contains("unexpected eof")
+            || lower.contains("unexpected-eof")
+            || lower.contains("unexpected end of file")
             || lower.contains("early eof")
             || lower.contains("incomplete stream")
+            || lower.contains("incomplete message")
+            || lower.contains("error reading a body from connection")
+            || lower.contains("connection closed before message completed")
+            || lower.contains("close_notify")
     }
 
     /// Whether enabling the judge extends `mode` to the semantic class.
