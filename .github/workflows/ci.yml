@@ -138,6 +138,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Free disk space
         # A hosted ubuntu runner has about 14 GB free on `/`, and a cold

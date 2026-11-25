@@ -373,6 +373,12 @@ impl Session {
         }
     }
 
+    /// Detach any open writer and suppress further disk writes before permanent deletion.
+    pub fn detach_writer_for_delete(&mut self) -> Option<IdleWriter> {
+        self.event_state.memory_only = true;
+        self.event_state.writer.take().map(|writer| IdleWriter { writer })
+    }
+
     pub(super) fn has_unsaved_event_changes(&self) -> Result<bool> {
         let current = self.event_metadata()?;
         Ok(!self.event_state.pending.is_empty()

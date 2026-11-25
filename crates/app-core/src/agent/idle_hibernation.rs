@@ -108,6 +108,12 @@ impl Agent {
         self.session.release_idle_writer()
     }
 
+    /// Detach any open session writer and block future saves before permanent deletion.
+    pub(crate) fn detach_writer_for_delete(&mut self) -> Option<crate::session::IdleWriter> {
+        self.clear_pending_resume();
+        self.session.detach_writer_for_delete()
+    }
+
     /// Seed the tool index from the transcript the way a turn start does.
     #[cfg(test)]
     pub(crate) fn seed_idle_tool_index(&mut self) -> usize {

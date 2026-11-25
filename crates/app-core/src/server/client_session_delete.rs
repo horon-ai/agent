@@ -69,46 +69,55 @@ pub(super) async fn plan_delete(
     sessions: &SessionAgents,
     client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
 ) -> Result<DeletePlan, DeleteRefusal> {
-    if crate::storage::streaming_session_ids()
-        .iter()
-        .any(|id| id == session_id)
-    {
-        return Err(DeleteRefusal::Open);
-    }
-    // Attachment is read before the session map and under its write lock, so a
-    // resume cannot attach between the two reads: `claim_live_target_agent`
-    // takes the same lock first.
-    let connections = client_connections.write().await;
-    if connections.values().any(|info| info.session_id == session_id) {
-        return Err(DeleteRefusal::Open);
-    }
-    // A turn can still append even when the entry is gone from the map, so this
-    // is checked before residency. A resident agent is not open by itself: an
-    // idle session stays in the map between turns, and after its client
-    // detaches it stays for the reconnect grace with nothing writing to it.
-    if crate::turn_cancel_registry::has_active_turn(session_id) {
-        return Err(DeleteRefusal::Open);
-    }
-    if !sessions.read().await.contains_key(session_id) {
+    let _cold_claim = super::client_disconnect_cleanup::claim_cold_resume(session_id).await;
+    loop {
+        if crate::storage::streaming_session_ids()
+            .iter()
+            .any(|id| id == session_id)
+        {
+            return Err(DeleteRefusal::Open);
+        }
+        // Attachment is read before the session map and under its write lock, so a
+        // resume cannot attach between the two reads: `claim_live_target_agent`
+        // takes the same lock first.
+        let connections = client_connections.write().await;
+        if connections.values().any(|info| info.session_id == session_id) {
+            return Err(DeleteRefusal::Open);
+        }
+        // A turn can still append even when the entry is gone from the map, so this
+        // is checked before residency. A resident agent is not open by itself: an
+        // idle session stays in the map between turns, and after its client
+        // detaches it stays for the reconnect grace with nothing writing to it.
+        if crate::turn_cancel_registry::has_active_turn(session_id) {
+            return Err(DeleteRefusal::Open);
+        }
+        // A disconnect cleanup or detached-source transition that just removed
+        // the session from `sessions` can still be running `mark_closed()` or
+        // dropping its writer while publishing a `SessionCloseGuard`. Wait for
+        // that close to finish outside `connections` before validating again.
+        if super::client_disconnect_cleanup::has_pending_close(session_id) {
+            drop(connections);
+            super::client_disconnect_cleanup::await_pending_close(session_id).await;
+            continue;
+        }
+        // Publish the close barrier for both resident eviction and purge-only
+        // paths so a concurrent delete or cold resume waits until the purge finishes.
+        let guard = super::client_disconnect_cleanup::SessionCloseGuard::register(session_id).await;
+        let removed = super::remove_session_entry(sessions, session_id).await;
         drop(connections);
-        return Ok(DeletePlan::Purge);
-    }
-    // Publish the close barrier before the entry leaves the map, so a resumer
-    // that arrives after this point waits for the close instead of attaching to
-    // an entry that is about to be purged.
-    let guard = super::client_disconnect_cleanup::SessionCloseGuard::register(session_id).await;
-    let removed = super::remove_session_entry(sessions, session_id).await;
-    drop(connections);
-    match removed {
-        Some(agent) => Ok(DeletePlan::Evict { agent, guard }),
-        None => Ok(DeletePlan::Purge),
+        return match removed {
+            Some(agent) => Ok(DeletePlan::Evict { agent, guard }),
+            None => Ok(DeletePlan::Purge { guard }),
+        };
     }
 }
 
 /// What a validated delete does next.
 pub(super) enum DeletePlan {
-    /// Nothing is loaded: purge the files.
-    Purge,
+    /// Nothing is loaded: purge the files under the close barrier.
+    Purge {
+        guard: super::client_disconnect_cleanup::SessionCloseGuard,
+    },
     /// This daemon owned the idle entry; close it before purging.
     Evict {
         agent: Arc<tokio::sync::Mutex<crate::agent::Agent>>,
@@ -116,13 +125,14 @@ pub(super) enum DeletePlan {
     },
 }
 
-/// Take an evicted entry's agent lock and drop the entry, so its writer thread
+/// Take an evicted entry's agent lock and drop its writer, so its writer thread
 /// and file handle are gone before the caller purges the files.
 ///
 /// Nothing is saved here: the session is being erased, so a final save would
 /// write a transcript the purge then deletes, and it would fail outright for a
-/// session that was never persisted. Dropping the `Agent` drops its writer,
-/// whose `Drop` flushes and joins the writer thread.
+/// session that was never persisted. Detaching the writer explicitly handles
+/// any background clone (e.g. model prefetch) still holding `Arc<Agent>`, and
+/// dropping the writer joins its pool slot off the async runtime.
 ///
 /// The close barrier stays published for the caller's purge, so a resume of this
 /// id either waits here or, once released, finds no transcript to load. A busy
@@ -132,15 +142,19 @@ pub(super) async fn close_evicted(
     agent: Arc<tokio::sync::Mutex<crate::agent::Agent>>,
     guard: super::client_disconnect_cleanup::SessionCloseGuard,
 ) -> Option<super::client_disconnect_cleanup::SessionCloseGuard> {
-    let Ok(owned) = tokio::time::timeout(std::time::Duration::from_secs(2), Arc::clone(&agent).lock_owned()).await
+    let Ok(mut owned) = tokio::time::timeout(std::time::Duration::from_secs(2), Arc::clone(&agent).lock_owned()).await
     else {
         drop(guard);
         return None;
     };
+    let detached_writer = owned.detach_writer_for_delete();
     drop(owned);
-    // The close owns the last reference, and dropping it joins the writer
-    // thread, so that join runs off the runtime worker.
-    super::client_disconnect_cleanup::blocking_session_io(move || drop(agent));
+    // Dropping the detached writer (and the last Agent reference if held here)
+    // joins the writer thread, so that join runs off the runtime worker.
+    super::client_disconnect_cleanup::blocking_session_io(move || {
+        drop(detached_writer);
+        drop(agent);
+    });
     Some(guard)
 }
 
@@ -216,11 +230,11 @@ pub(super) async fn handle_delete_session(
     };
 
     // An idle entry this daemon owned is closed first, and its close barrier is
-    // held across the purge so a resume cannot reattach to files being removed.
+    // held across the purge so a resume or concurrent close cannot touch files being removed.
     let _close_guard = match plan {
-        DeletePlan::Purge => None,
+        DeletePlan::Purge { guard } => guard,
         DeletePlan::Evict { agent, guard } => match close_evicted(agent, guard).await {
-            Some(guard) => Some(guard),
+            Some(guard) => guard,
             None => {
                 crate::logging::event_warn(
                     "SESSION_LIFECYCLE",
@@ -244,14 +258,11 @@ pub(super) async fn handle_delete_session(
         },
     };
 
-    let purged = crate::session::purge_session_state(&session_id);
-    let result = purged.and_then(|report| {
+    let result = super::client_disconnect_cleanup::blocking_session_io(|| {
+        let report = crate::session::purge_session_state(&session_id)?;
         let mut removed = report.removed_count();
-        match remove_daemon_only_state(&session_id) {
-            Ok(extra) => removed += extra.len(),
-            Err(error) => return Err(error),
-        }
-        Ok(removed)
+        removed += remove_daemon_only_state(&session_id)?.len();
+        anyhow::Ok(removed)
     });
 
     match result {
