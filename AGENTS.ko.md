@@ -194,7 +194,7 @@ python3 scripts/ci/check_headless_graph.py
 
 - **대상.** 변경이 촉발한 모든 워크플로(`CI`, `Structural performance`, `Release Recovery Validation`, ...)의 모든 잡 로그에 나온 모든 경고: rustc/clippy/cargo `warning:`, rustup `warn:`, cargo-audit `Warning:`, 스크립트 `warning:` 줄, `cargo:warning=` 빌드 스크립트 출력, `##[warning]` 또는 `warning` 수준 어노테이션.
 - **확인 방법.** 실행이 끝나면 `python3 scripts/ci/run_warnings.py <run-id>`를 돌린다(로그인된 `gh` 필요; ID는 `gh run list --branch <branch>`로 찾음). 잡·단계별 고유 경고를 모두 출력하고 없을 때만 종료 코드 0을 돌려준다. 단순 체크 표시가 아니라 이 출력 결과를 근거로 붙인다.
-- **원인을 고친다.** `#[allow]`, `-A`, `--ignore`, 로그 수준 하향, 메시지 이름 변경으로 경고를 숨기지 않는다. 저장소가 고칠 수 없는 외부 원인(유지보수 중단 전이 크레이트, Rust 툴체인 결함)은 가장 좁은 범위에 허용하고 그 옆에 이유를 적으며 보고에 이름을 남긴다. `crates/app-core/src/lib.rs`와 `src/main.rs`의 `linker_messages` 허용은 비최적화 macOS 링크를 다룬다. 의존성 감사는 권고 예외를 두지 않는다.
+- **원인을 고친다.** `#[allow]`, `-A`, `--ignore`, 로그 수준 하향, 메시지 이름 변경으로 경고를 숨기지 않는다. 저장소가 고칠 수 없는 외부 원인(유지보수 중단 전이 크레이트, Rust 툴체인 결함)은 가장 좁은 범위에 허용하고 그 옆에 이유를 적으며 보고에 이름을 남긴다. `crates/app-core/src/lib.rs`, `src/lib.rs`, `src/main.rs`의 `linker_messages` 허용은 비최적화 macOS 링크를 다룬다. 의존성 감사는 권고 예외를 두지 않는다.
 - **0을 지키는 게이트.** `ci.yml`은 `CARGO_BUILD_WARNINGS=deny`를 설정해 워크스페이스 크레이트의 rustc나 빌드 스크립트 경고를 실패 처리하고, `scripts/ci/check_security.sh`는 `cargo audit --deny warnings`를 실행한다. 따라서 RustSec 데이터베이스의 새 권고가 코드 변경 없이 CI를 빨갛게 만들 수 있으며, 똑같이 분류·대응한다. `notice` 수준 어노테이션(macOS 러너 용량 안내 등)은 GitHub 안내이며 경고가 아니다.
 
 ## 변경 유형별 CI 게이트

@@ -248,6 +248,10 @@
       "count": 2,
       "reason": "asserts POSIX mode bits (0600) and symlink/hard-link refusal of the credential store; the platform crates assert the same property on their own OS."
     },
+    "crates/base/src/memory/store/store_tests.rs": {
+      "count": 2,
+      "reason": "the memory wiki's file-safety tests: page files and directories are chmod 0600/0700, and a symlinked page file must not be followed. A hosted Windows runner has neither POSIX modes nor the privilege to create a file symlink, so both cases are Unix-only and the rest of the file runs everywhere."
+    },
     "crates/base/src/monitor/tests.rs": {
       "count": 3,
       "reason": "symlink retarget, permission-denied pause and unix-socket refusal: POSIX filesystem entries with no Windows form."
@@ -440,13 +444,13 @@
       "count": 1,
       "reason": "one `#[cfg(unix)]` test that creates a symbolic link out of the generated-images directory to prove it is refused; Windows symlink creation needs privileges the CI runner does not grant."
     },
+    "src/lib.rs": {
+      "count": 1,
+      "reason": "Apple's linker reports the lib-test executable's `__eh_frame` over its 16 MB compact-unwind limit; the message exists only for that test binary on macOS and is not actionable from this crate."
+    },
     "src/main.rs": {
       "count": 1,
       "reason": "Apple's linker reports the unoptimized `horon-agent` binary's `__eh_frame` over its 16 MB compact-unwind limit; the message exists only for debug links on macOS and is not actionable from source."
-    },
-    "crates/base/src/memory/store/store_tests.rs": {
-      "count": 2,
-      "reason": "the memory wiki's file-safety tests: page files and directories are chmod 0600/0700, and a symlinked page file must not be followed. A hosted Windows runner has neither POSIX modes nor the privilege to create a file symlink, so both cases are Unix-only and the rest of the file runs everywhere."
     }
   },
   "version": 1
