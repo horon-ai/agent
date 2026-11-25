@@ -490,10 +490,20 @@ fn mark_accept_large_output(output: &mut ToolOutput) {
 
 /// Aliases are surface-dependent, but policy follows original identities for
 /// the lifetime of the registry, including aliases retired after a reconnect.
-#[derive(Default)]
 struct McpPolicyIndex {
     current: HashMap<String, (String, String)>,
     history: HashMap<(String, String), HashSet<String>>,
+    surface_version: tokio::sync::watch::Sender<u64>,
+}
+
+impl Default for McpPolicyIndex {
+    fn default() -> Self {
+        Self {
+            current: HashMap::new(),
+            history: HashMap::new(),
+            surface_version: tokio::sync::watch::channel(0).0,
+        }
+    }
 }
 
 /// Decides whether a tool that was registered inactive may run now.
@@ -2355,6 +2365,18 @@ impl Registry {
                 names.insert(crate::mcp::dispatch_name(server, raw));
             }
         }
+        index
+            .surface_version
+            .send_modify(|version| *version = version.wrapping_add(1));
+    }
+
+    /// Subscribe to notifications whenever this registry's MCP tool surface changes.
+    pub fn subscribe_mcp_surface(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.mcp_policy
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .surface_version
+            .subscribe()
     }
 
     fn mcp_alias(&self, server: &str, raw: &str) -> Option<String> {

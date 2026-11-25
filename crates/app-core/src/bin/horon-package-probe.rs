@@ -61,6 +61,9 @@ fn main() -> ExitCode {
         }
     };
     append(&state, STARTS, &format!("{package_id}\n"));
+    if std::env::args_os().nth(2).as_deref() == Some(std::ffi::OsStr::new("mcp")) {
+        return run_mcp_probe();
+    }
     let stdin = std::io::stdin();
     let mut input = BufReader::new(stdin.lock());
     let mut output = std::io::stdout().lock();
@@ -302,3 +305,70 @@ fn declaration_file(root: &Path) -> std::io::Result<PathBuf> {
 }
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
+
+/// Serve a minimal newline-delimited JSON-RPC MCP stdio server when invoked
+/// with `mode = "mcp"` by plugin MCP tests.
+fn run_mcp_probe() -> ExitCode {
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout().lock();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else {
+            break;
+        };
+        let Ok(frame) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let Some(method) = frame.get("method").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let id = frame.get("id");
+        if method == "shutdown" {
+            if let Some(id) = id {
+                let reply = json!({ "jsonrpc": "2.0", "id": id, "result": {} });
+                let _ = writeln!(stdout, "{reply}");
+                let _ = stdout.flush();
+            }
+            return ExitCode::SUCCESS;
+        }
+        let result = match method {
+            "initialize" => json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "package-mcp-probe", "version": "0" }
+            }),
+            "tools/list" => json!({
+                "tools": [{
+                    "name": "echo",
+                    "description": "Report the package child and echo the text it was given",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": { "text": { "type": "string", "description": "Text to echo" } }
+                    }
+                }]
+            }),
+            "tools/call" => {
+                let text = frame
+                    .get("params")
+                    .and_then(|params| params.get("arguments"))
+                    .and_then(|arguments| arguments.get("text"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": format!("pid={} text={text}", std::process::id())
+                    }]
+                })
+            }
+            _ => continue,
+        };
+        let Some(id) = id else {
+            continue;
+        };
+        let reply = json!({ "jsonrpc": "2.0", "id": id, "result": result });
+        if writeln!(stdout, "{reply}").is_err() || stdout.flush().is_err() {
+            break;
+        }
+    }
+    ExitCode::SUCCESS
+}

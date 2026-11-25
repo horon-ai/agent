@@ -493,6 +493,9 @@ struct PackagePlan {
 /// One session's package MCP state.
 struct PackageMcpSession {
     registry: WeakRegistry,
+    /// Serializes generation refreshes and teardown so stale unregistrations
+    /// never race a newly spawned replacement connection.
+    refresh_lock: Mutex<()>,
     /// Catalog generation the entries were planned from, `u64::MAX` before the
     /// first refresh.
     generation: AtomicU64,
@@ -542,6 +545,7 @@ pub(crate) async fn refresh_package_mcp(session_id: &str, registry: Registry, se
         let Some(state) = existing_package_state(session_id) else {
             return;
         };
+        let _refresh = state.refresh_lock.lock().await;
         if state.generation.load(Ordering::SeqCst) == snapshot.generation() {
             return;
         }
@@ -557,6 +561,7 @@ pub(crate) async fn refresh_package_mcp(session_id: &str, registry: Registry, se
         return;
     }
     let state = package_state(session_id, &registry);
+    let _refresh = state.refresh_lock.lock().await;
     if state.generation.load(Ordering::SeqCst) == snapshot.generation() {
         return;
     }
@@ -575,8 +580,7 @@ pub(crate) async fn refresh_package_mcp(session_id: &str, registry: Registry, se
         }
     };
 
-    let mut stale = Vec::new();
-    {
+    let stale = {
         let mut packages = state.packages.lock().await;
         let desired: BTreeMap<String, u64> = planned
             .iter()
@@ -587,66 +591,72 @@ pub(crate) async fn refresh_package_mcp(session_id: &str, registry: Registry, se
             .filter(|(id, connection)| desired.get(*id) != Some(&connection.generation))
             .map(|(id, _)| id.clone())
             .collect();
+        let mut stale = Vec::with_capacity(expired.len());
         for id in expired {
             if let Some(connection) = packages.remove(&id) {
                 stale.push(connection);
             }
         }
-        for mut plan in planned {
-            if packages
-                .get(&plan.package_id)
-                .is_some_and(|connection| connection.generation == plan.generation)
-            {
-                // Another turn published this generation while this one planned.
-                continue;
-            }
-            // Check process hosting policy synchronously before returning so Turn 1
-            // observes any `<hosted-policy>` notice via `report_hosted_refusals()`.
-            plan.servers.retain(|registration| {
-                let public_name = &registration.server.public_name;
-                let operation = match &registration.server.kind {
-                    PackageMcpKind::Stdio { .. } => HostedOperation::Stdio,
-                    PackageMcpKind::Remote { .. } => HostedOperation::Remote,
-                };
-                if let Err(refusal) = crate::mcp::hosted::check_current(&HostedRequest::server(operation, public_name))
-                {
-                    crate::logging::warn(&format!(
-                        "MCP: package {} server '{public_name}' was refused: {refusal}",
-                        plan.package_id
-                    ));
-                    report_hosted_refusal(session_id, public_name, &refusal);
-                    return false;
-                }
-                true
-            });
-            let catalog_generation = snapshot.generation();
-            if plan.servers.is_empty() {
-                let id = plan.package_id;
-                packages.insert(
-                    id.clone(),
-                    PackageConnection {
-                        package_id: id,
-                        generation: plan.generation,
-                        servers: Vec::new(),
-                        live: Arc::new(StdMutex::new(Vec::new())),
-                        cancelled: Arc::new(AtomicBool::new(false)),
-                        task: None,
-                        _holder: None,
-                    },
-                );
-                continue;
-            }
-            let Some(holder) = package_revocation_holder(session_id, &plan.package_id, catalog_generation) else {
-                continue;
-            };
-            let connection = start_connection(&registry, store.clone(), session_id, catalog_generation, holder, plan);
-            packages.insert(connection.package_id.clone(), connection);
-        }
-        state.generation.store(snapshot.generation(), Ordering::SeqCst);
-    }
+        stale
+    };
+    // Tear down expired or replaced generations before starting replacements so a
+    // fast replacement cannot have its registered tools removed by the old
+    // connection's `unregister_mcp_server`.
     for connection in stale {
         stop_connection(connection, Some(registry.clone())).await;
     }
+
+    let mut packages = state.packages.lock().await;
+    for mut plan in planned {
+        if packages
+            .get(&plan.package_id)
+            .is_some_and(|connection| connection.generation == plan.generation)
+        {
+            // Another turn published this generation while this one planned.
+            continue;
+        }
+        // Check process hosting policy synchronously before returning so Turn 1
+        // observes any `<hosted-policy>` notice via `report_hosted_refusals()`.
+        plan.servers.retain(|registration| {
+            let public_name = &registration.server.public_name;
+            let operation = match &registration.server.kind {
+                PackageMcpKind::Stdio { .. } => HostedOperation::Stdio,
+                PackageMcpKind::Remote { .. } => HostedOperation::Remote,
+            };
+            if let Err(refusal) = crate::mcp::hosted::check_current(&HostedRequest::server(operation, public_name)) {
+                crate::logging::warn(&format!(
+                    "MCP: package {} server '{public_name}' was refused: {refusal}",
+                    plan.package_id
+                ));
+                report_hosted_refusal(session_id, public_name, &refusal);
+                return false;
+            }
+            true
+        });
+        let catalog_generation = snapshot.generation();
+        if plan.servers.is_empty() {
+            let id = plan.package_id;
+            packages.insert(
+                id.clone(),
+                PackageConnection {
+                    package_id: id,
+                    generation: plan.generation,
+                    servers: Vec::new(),
+                    live: Arc::new(StdMutex::new(Vec::new())),
+                    cancelled: Arc::new(AtomicBool::new(false)),
+                    task: None,
+                    _holder: None,
+                },
+            );
+            continue;
+        }
+        let Some(holder) = package_revocation_holder(session_id, &plan.package_id, catalog_generation) else {
+            continue;
+        };
+        let connection = start_connection(&registry, store.clone(), session_id, catalog_generation, holder, plan);
+        packages.insert(connection.package_id.clone(), connection);
+    }
+    state.generation.store(snapshot.generation(), Ordering::SeqCst);
 }
 
 /// Resolve every package's declared servers, off the async thread: each
@@ -704,6 +714,7 @@ pub(crate) fn revoke_package(session_id: &str, package_id: &str) {
     };
     let package_id = package_id.to_owned();
     handle.spawn(async move {
+        let _refresh = state.refresh_lock.lock().await;
         let connection = state.packages.lock().await.remove(&package_id);
         if let Some(connection) = connection {
             let registry = state.registry.upgrade();
@@ -721,6 +732,7 @@ pub(crate) fn forget_package_mcp(session_id: &str) {
         return;
     };
     handle.spawn(async move {
+        let _refresh = state.refresh_lock.lock().await;
         let connections: Vec<PackageConnection> = std::mem::take(&mut *state.packages.lock().await)
             .into_values()
             .collect();
@@ -742,6 +754,7 @@ fn package_state(session_id: &str, registry: &Registry) -> Arc<PackageMcpSession
     }
     let state = Arc::new(PackageMcpSession {
         registry: registry.downgrade(),
+        refresh_lock: Mutex::new(()),
         generation: AtomicU64::new(u64::MAX),
         packages: Mutex::new(BTreeMap::new()),
     });

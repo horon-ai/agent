@@ -1,23 +1,22 @@
 //! Fixtures for package-declared MCP servers (issue #648).
 //!
-//! Each scenario installs a real plugin into a temporary horon home. The plugin's
-//! executable is this test binary, so the installer validates it and the host
-//! starts a real supervised child; that child is told what to do by the argument
-//! list the plugin declares, and [`package_mcp_child_probe`] returns immediately
-//! in a normal run and becomes the MCP server body when it is started.
+//! Each scenario installs a real plugin into a private horon home. The plugin's
+//! executable is this target's sibling binary `horon-package-probe`, so the
+//! installer validates it and the host starts a real supervised child in `mcp`
+//! mode; every answer carries the child's pid so a scenario can tell a fresh
+//! child from the one it replaced.
 //!
 //! Two servers are covered, because the contract differs:
 //!
-//! - `stdio` runs the package's own executable through package supervision, and
-//!   every answer carries the child's pid so a scenario can tell a fresh child
-//!   from the one it replaced;
+//! - `stdio` runs `horon-package-probe` through package supervision, and every
+//!   answer carries the child's pid so a scenario can tell a fresh child from
+//!   the one it replaced;
 //! - `remote` only refers to a user server, which [`RemoteServer`] stands in for:
 //!   a loopback Streamable-HTTP MCP endpoint the scenario writes into the user's
 //!   own `mcp.json`.
 
 use std::collections::HashSet;
 use std::fs;
-use std::io::{BufRead, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,83 +30,18 @@ use horon_agent_app_core::packages::{InstallRequest, PackageRecord, PackageScope
 use horon_agent_app_core::provider::{EventStream, Provider};
 use horon_agent_app_core::session::Session;
 use horon_agent_app_core::tool::{Registry, ToolOutput, ToolRejected};
-use horon_agent_platform::{is_process_running, set_permissions_executable};
 use serde_json::{Value, json};
 use tempfile::{TempDir, tempdir};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// How long a scenario waits for a package server to appear or answer.
-const CONNECT_DEADLINE: Duration = Duration::from_secs(30);
+/// The executable the fixtures install as the package binary.
+const PROBE: &str = env!("CARGO_BIN_EXE_horon-package-probe");
+/// Outer safety deadline while awaiting a registration or teardown event.
+const CONNECT_DEADLINE: Duration = Duration::from_secs(60);
 /// How long a scenario insists that nothing appears, for a negative case.
 const QUIET_WINDOW: Duration = Duration::from_millis(750);
 /// Definition file of the fixture plugin.
 const DEFINITIONS: &str = "resources/mcp/servers.json";
-
-// ---------------------------------------------------------------------------
-// The package process body
-// ---------------------------------------------------------------------------
-
-/// The package process body.
-///
-/// The host starts the installed copy of this binary with `--exact --ignored
-/// package_mcp::package_mcp_child_probe`, which selects this test and nothing
-/// else, and then speaks MCP over stdin/stdout.
-#[test]
-#[ignore = "run only as the installed package's MCP server"]
-fn package_mcp_child_probe() {
-    // The test harness prints `test <name> ... ` without a newline before the
-    // body runs; end that line so the first JSON frame starts on its own line.
-    println!();
-    let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
-        let Ok(frame) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        let Some(method) = frame.get("method").and_then(Value::as_str) else {
-            continue;
-        };
-        let result = match method {
-            "initialize" => json!({
-                "protocolVersion": "2024-11-05",
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": "package-mcp-probe", "version": "0" }
-            }),
-            "tools/list" => json!({
-                "tools": [{
-                    "name": "echo",
-                    "description": "Report the package child and echo the text it was given",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": { "text": { "type": "string", "description": "Text to echo" } }
-                    }
-                }]
-            }),
-            "tools/call" => {
-                let text = frame
-                    .get("params")
-                    .and_then(|params| params.get("arguments"))
-                    .and_then(|arguments| arguments.get("text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                json!({
-                    "content": [{
-                        "type": "text",
-                        "text": format!("pid={} text={text}", std::process::id())
-                    }]
-                })
-            }
-            _ => continue,
-        };
-        // A frame without an id is a notification: the body answers none.
-        let Some(id) = frame.get("id") else { continue };
-        let reply = json!({ "jsonrpc": "2.0", "id": id, "result": result });
-        if writeln!(stdout, "{reply}").is_err() || stdout.flush().is_err() {
-            break;
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Plugin fixtures
@@ -127,24 +61,17 @@ fn host_target() -> &'static str {
 
 fn binary_name() -> &'static str {
     if std::env::consts::OS == "windows" {
-        "bin/child.exe"
+        "bin/horon-package-probe.exe"
     } else {
-        "bin/child"
+        "bin/horon-package-probe"
     }
 }
 
-/// A `stdio` entry that runs this test binary as the probe.
+/// A `stdio` entry that runs `horon-package-probe` in `mcp` mode.
 fn stdio_definition() -> Value {
     json!({
         "type": "stdio",
-        "mode": "run",
-        "args": [
-            "--exact",
-            "--ignored",
-            "package_mcp::package_mcp_child_probe",
-            "--nocapture",
-            "--test-threads=1"
-        ]
+        "mode": "mcp"
     })
 }
 
@@ -155,7 +82,7 @@ fn remote_definition(user_server: &str) -> Value {
 
 /// Write a plugin fixture whose declared servers are `servers`.
 ///
-/// The executable is this test binary, staged under the extension's target
+/// The executable is `horon-package-probe`, staged under the extension's target
 /// directory exactly like a released package, so `validate_package` checks it as
 /// it checks any other package.
 fn plugin_fixture(id: &str, version: &str, servers: Value) -> TempDir {
@@ -164,12 +91,8 @@ fn plugin_fixture(id: &str, version: &str, servers: Value) -> TempDir {
     let destination = root.path().join("native").join(binary);
     fs::create_dir_all(destination.parent().expect("the fixture binary directory"))
         .expect("create the fixture binary directory");
-    fs::copy(
-        std::env::current_exe().expect("the native test binary path"),
-        &destination,
-    )
-    .expect("stage the native test binary as the package executable");
-    set_permissions_executable(&destination).expect("mark the package executable runnable");
+    fs::copy(PROBE, &destination).expect("stage the probe as the package executable");
+    horon_agent_platform::set_permissions_executable(&destination).expect("mark the package executable runnable");
     fs::write(
         root.path().join("native/extension.toml"),
         format!(
@@ -434,25 +357,28 @@ async fn tool_disappears(registry: &Registry, alias: &str) -> bool {
 }
 
 async fn wait_for_tool(registry: &Registry, alias: &str, limit: Duration, present: bool) -> bool {
-    let deadline = Instant::now() + limit;
+    let deadline = tokio::time::Instant::now() + limit;
+    let mut changes = registry.subscribe_mcp_surface();
     loop {
         let registered = registry.tool_names().await.iter().any(|name| name == alias);
         if registered == present {
             return true;
         }
-        if Instant::now() >= deadline {
-            return false;
+        match tokio::time::timeout_at(deadline, changes.changed()).await {
+            Ok(Ok(())) => continue,
+            Ok(Err(_)) | Err(_) => return registry.tool_names().await.iter().any(|name| name == alias) == present,
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
 /// Call `alias` until it answers with a pid other than `previous`, and return it.
 ///
-/// A replaced package's child connects in the background after the turn, so the
-/// alias answers from the old child until the new handshake finishes.
+/// A replaced package's child connects in the background after the turn, so this
+/// waits on MCP surface registration events until the new child answers.
 async fn pid_after_replace(runner: &Runner, working_dir: &Path, alias: &str, previous: u32) -> u32 {
-    let deadline = Instant::now() + CONNECT_DEADLINE;
+    let registry = runner.agent.registry();
+    let mut changes = registry.subscribe_mcp_surface();
+    let deadline = tokio::time::Instant::now() + CONNECT_DEADLINE;
     loop {
         if let Ok(output) = runner.call(working_dir, alias, json!({ "text": "after" })).await {
             let pid = pid_of(&output.output);
@@ -461,10 +387,9 @@ async fn pid_after_replace(runner: &Runner, working_dir: &Path, alias: &str, pre
             }
         }
         assert!(
-            Instant::now() < deadline,
+            matches!(tokio::time::timeout_at(deadline, changes.changed()).await, Ok(Ok(()))),
             "the alias kept answering from pid {previous}"
         );
-        tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
@@ -472,7 +397,7 @@ async fn pid_after_replace(runner: &Runner, working_dir: &Path, alias: &str, pre
 /// package's teardown is a task on this single-threaded test runtime.
 async fn wait_for_exit(pid: u32) {
     let deadline = Instant::now() + CONNECT_DEADLINE;
-    while is_process_running(pid) {
+    while horon_agent_platform::is_process_running(pid) {
         assert!(Instant::now() < deadline, "package child {pid} kept running");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
