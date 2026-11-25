@@ -511,11 +511,14 @@ workflow (two-dot diff).
   that run produces a full run.
 - **Release pull request already verified on `dev`:** a pull request into
   `main` whose head is the head of the last successful `dev` push run of the
-  same workflow, and whose base added only documentation since the merge base,
-  gets the documentation-only lanes (`docs_only=true`): that push run already
-  ran every gate on the same commit. A `ci:all-os`/`ci:full` label, another
-  head, a base-side code change or any lookup or diff failure classifies it as
-  an ordinary pull request. `package-compat.yml` and `package-windows.yml` do
+  same workflow, and whose merge commit (`GITHUB_SHA`, the checked-out
+  `refs/pull/N/merge`) differs from that head only in documentation, gets the
+  documentation-only lanes (`docs_only=true`): that push run already ran every
+  gate on the same code. A change `main` already received by cherry-pick does
+  not count, because the merge commit is compared, not `main`'s history. A
+  `ci:all-os`/`ci:full` label, another head, code the merge adds, a missing
+  merge commit or any lookup or diff failure classifies it as an ordinary pull
+  request. `package-compat.yml` and `package-windows.yml` do
   not run on pull requests into `main` at all; their `dev` and `main` push runs
   cover the same files.
 - **Rust caches are saved only on `main`.** `main` is the default branch, so

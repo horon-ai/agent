@@ -348,24 +348,40 @@ class ReleasePullRequestTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def verify(self, *, base=None, head=None, base_ref="main", green=None, labels=()):
+    def merge_of(self, head, base):
+        """The commit GitHub checks out for the pull request: head merged with base."""
+        tree = self.repo.git("merge-tree", "--write-tree", head, base)
+        return self.repo.git("commit-tree", tree, "-p", head, "-p", base, "-m", "merge")
+
+    def verify(self, *, base=None, head=None, merge=None, base_ref="main", green=None, labels=()):
+        head = head or self.head
+        merge = self.merge_of(head, base or self.main) if merge is None else merge
         args = parser().parse_args([
             "--event", "pull_request", "--base-ref", base_ref,
-            "--base", base or self.main, "--head", head or self.head,
+            "--base", base or self.main, "--head", head, "--merge", merge,
             "--workflow", "ci.yml", "--repo", "o/r"])
-        sha = green if green is not None else self.head
+        sha = green if green is not None else head
         return verified_release_pull_request(
             args, set(labels), fetch=lambda r, w: runs_json(sha), cwd=self.tmp.name)
 
-    def test_head_verified_on_dev_with_docs_only_base_runs_only_docs_gates(self):
+    def test_head_verified_on_dev_with_a_docs_only_merge_runs_only_docs_gates(self):
         lanes, notice = self.verify()
         self.assertEqual(lanes, DOCS_ONLY)
         self.assertIn("documentation gates only", notice)
-        # `main` already in the head: nothing on the base side, still docs gates.
+        # `main` already in the head: the merge adds nothing, still docs gates.
         self.repo.git("merge", "-q", "--no-edit", self.main)
         merged = self.repo.git("rev-parse", "HEAD")
         lanes, _ = self.verify(head=merged, green=merged)
         self.assertEqual(lanes, dict(DOCS_ONLY, docs_site=False))
+
+    def test_code_main_received_by_cherry_pick_does_not_count(self):
+        # `main` carries the head's own code change (a cherry-picked CI fix) and
+        # documentation; the merge commit equals the head plus that documentation.
+        self.repo.git("checkout", "-q", "released")
+        picked = self.repo.commit("crates/a/src/feature.rs")
+        self.repo.git("checkout", "-q", "-")
+        lanes, _ = self.verify(base=picked)
+        self.assertEqual(lanes, DOCS_ONLY)
 
     def test_anything_short_of_a_verified_head_is_classified_as_usual(self):
         self.repo.git("checkout", "-q", "released")
@@ -374,10 +390,11 @@ class ReleasePullRequestTests(unittest.TestCase):
         cases = {
             "head is not the last green dev push": dict(green="f" * 40),
             "dev push lookup failed": dict(green=""),
-            "base changed code": dict(base=main_code),
+            "merge keeps code the base changed": dict(base=main_code),
             "pull request into dev": dict(base_ref="dev"),
             "ci:full label": dict(labels=("ci:full",)),
-            "unknown base commit": dict(base="e" * 40),
+            "no merge commit": dict(merge=""),
+            "unknown merge commit": dict(merge="e" * 40),
         }
         for name, case in cases.items():
             with self.subTest(name):

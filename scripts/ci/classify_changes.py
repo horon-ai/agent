@@ -19,13 +19,15 @@ costs runner minutes and never skips a gate.
   `platform_windows`, `platform_macos`, and `full_matrix` enabled so every
   mandatory push job required by `scripts/release/check_ci.py` executes.
 * A pull request into `main` whose head is the head of the last successful
-  push run of the same workflow on `dev`, and whose base added only
-  documentation since the two diverged, runs the documentation gates only: the
-  `dev` push run already ran every gate on that exact commit, and the merge
-  ref differs from it by documentation alone. This is the release pull
+  push run of the same workflow on `dev`, and whose merge commit (the
+  `refs/pull/N/merge` checkout, `GITHUB_SHA`) differs from that head by
+  documentation alone, runs the documentation gates only: the `dev` push run
+  already ran every gate on that exact code. The merge commit is compared,
+  not the base branch's own history, so a change `main` received by
+  cherry-pick and `dev` already holds does not count. This is the release pull
   request; the push run on `main` after the merge still runs everything. A
-  `ci:all-os` or `ci:full` label and every lookup or diff failure fall back to
-  the ordinary pull request classification.
+  `ci:all-os` or `ci:full` label, a missing merge commit and every lookup or
+  diff failure fall back to the ordinary pull request classification.
 * Every other push (`main`, a tagged commit), a manual dispatch, a re-run, an
   empty diff and every lookup or diff failure runs everything.
 * `docs` is true when a README, a Markdown file under `docs/` or an asset under
@@ -35,8 +37,9 @@ Usage: classify_changes.py [--event NAME] [--ref REF] [--attempt N]
                            [--workflow FILE] [--repo OWNER/REPO]
                            [--base SHA] [--head SHA] [--files-from FILE]
                            [--labels JSON_OR_CSV] [--base-ref BRANCH]
+                           [--merge SHA]
 Defaults come from GITHUB_EVENT_NAME, GITHUB_REF, GITHUB_RUN_ATTEMPT,
-GITHUB_REPOSITORY, PR_LABELS, and GITHUB_BASE_REF.
+GITHUB_REPOSITORY, PR_LABELS, GITHUB_BASE_REF, and GITHUB_SHA.
 """
 
 from __future__ import annotations
@@ -488,25 +491,25 @@ def verified_release_pull_request(
     """Lanes for a pull request into `main` that `dev` already verified, or None.
 
     The head must be the head of the last successful push run of the same
-    workflow on `dev`, and every file the base changed since the merge base must
-    be documentation, so the merge ref holds exactly the code that run tested.
-    Anything else, a forcing label included, returns None and the pull request
-    is classified as usual.
+    workflow on `dev`, and every file the merge commit changes relative to that
+    head must be documentation, so the merge ref holds exactly the code that
+    run tested. Anything else, a forcing label included, returns None and the
+    pull request is classified as usual.
     """
     if (args.event != "pull_request" or args.base_ref != RELEASE_BASE
-            or not (args.base and args.head) or labels & FORCE_ALL_OS_LABELS):
+            or not (args.merge and args.head) or labels & FORCE_ALL_OS_LABELS):
         return None
     green = last_green_sha(args.repo, args.workflow, fetch=fetch)
     if green is None or green != args.head:
         return None
-    base_side = changed_files(args.head, args.base, cwd=cwd)
-    if base_side is None or any(not matches(path, DOC_PATTERNS) for path in base_side):
+    added = changed_files(args.head, args.merge, three_dot=False, cwd=cwd)
+    if added is None or any(not matches(path, DOC_PATTERNS) for path in added):
         return None
     notice = (f"pull request into {RELEASE_BASE}: head {args.head} is the last "
-              f"successful push run of {args.workflow} on dev, and the base added "
-              f"{len(base_side)} documentation file(s) since the merge base; "
+              f"successful push run of {args.workflow} on dev, and the merge commit "
+              f"{args.merge} adds {len(added)} documentation file(s) to it; "
               "running the documentation gates only")
-    docs_site = any(matches(path, DOCS_SITE_PATTERNS) for path in base_side)
+    docs_site = any(matches(path, DOCS_SITE_PATTERNS) for path in added)
     return docs_only_result(docs_site), notice
 
 
@@ -523,6 +526,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--files-from")
     p.add_argument("--labels", default=env("PR_LABELS", ""))
     p.add_argument("--base-ref", default=env("GITHUB_BASE_REF", ""))
+    # On a pull request event GITHUB_SHA is the merge commit the job checked out.
+    p.add_argument("--merge", default=env("GITHUB_SHA", ""))
     return p
 
 
