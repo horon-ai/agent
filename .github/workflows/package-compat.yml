@@ -108,6 +108,10 @@ jobs:
     name: Check if install claims changed
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # `actions: read` lists this workflow's own runs to find the last green one.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       run_compat: ${{ steps.filter.outputs.run_compat }}
     steps:
@@ -120,17 +124,21 @@ jobs:
         shell: bash
         env:
           EVENT: ${{ github.event_name }}
-          # A push is judged on what it added since the previous tip, exactly as a
-          # pull request is judged against its base. A documentation PR that only
-          # edits install prose already skipped the matrix; its squash push to
-          # `dev` reaches this workflow through the same path filter and would
-          # otherwise rebuild all six native targets. A new branch (all-zero
-          # `before`), a force push whose old tip is gone, and a dispatch run it.
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          # A pull request is judged against its base. A push is judged against
+          # the head of the last successful push run of this workflow on the same
+          # branch, never the previous tip: a push run that a newer push
+          # cancelled, or one that failed, verified nothing, and comparing with
+          # `before` would then skip the code it left unchecked (8b0ea6235 on
+          # `dev`: the matrix was cancelled, the next push saw install prose only).
+          # No green run, a lookup or diff failure, and a dispatch run the matrix.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
-          import os, subprocess, sys, tempfile
+          import json, os, re, subprocess, sys, tempfile
           from pathlib import Path
           sys.path.insert(0, "scripts/ci")
           from package_compat import ClaimsError, advertised_targets
@@ -141,15 +149,32 @@ jobs:
                   with open(out, "a", encoding="utf-8") as handle:
                       handle.write(f"run_compat={val}\n")
 
-          if os.environ.get("EVENT") not in ("pull_request", "push"):
+          def last_green_push(repo: str, branch: str) -> str:
+              url = (f"repos/{repo}/actions/workflows/package-compat.yml/runs"
+                     f"?branch={branch}&event=push&status=success&per_page=1")
+              try:
+                  out = subprocess.run(["gh", "api", url], capture_output=True,
+                                       text=True, timeout=30, check=True).stdout
+                  sha = json.loads(out)["workflow_runs"][0]["head_sha"]
+              except Exception:
+                  return ""
+              return sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) else ""
+
+          event = os.environ.get("EVENT")
+          head = os.environ.get("HEAD_SHA", "")
+          if event == "pull_request":
+              base, spec = os.environ.get("BASE_SHA", ""), "..."
+          elif event == "push":
+              base, spec = last_green_push(os.environ.get("REPO", ""), os.environ.get("BRANCH", "")), ".."
+          else:
               emit("true")
               sys.exit(0)
-          base, head = os.environ.get("BASE_SHA", ""), os.environ.get("HEAD_SHA", "")
           if not base or not head:
               emit("true")
               sys.exit(0)
+          print(f"comparing {base}{spec}{head}")
           diff = subprocess.run(
-              ["git", "diff", "--name-only", "--no-renames", f"{base}...{head}"],
+              ["git", "diff", "--name-only", "--no-renames", f"{base}{spec}{head}"],
               capture_output=True, text=True, check=False,
           )
           if diff.returncode != 0:
