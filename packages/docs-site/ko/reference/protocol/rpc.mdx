@@ -57,16 +57,16 @@ horon-agent rpc --resume <session>   # 기존 세션에 붙기
 | `abort` | `src/cli/rpc/adapter.rs:237` while idle, `src/cli/rpc/adapter.rs:426` mid-turn | "Cancel safely" | 있음 — 턴은 이 응답이 아니라 데몬의 인터럽트로 끝남 |
 | `abort_and_prompt` | `src/cli/rpc/adapter.rs:435` | "Cancel safely" | 부분 — 대체 프롬프트를 예약하지 않고 새 텍스트를 스티어로 보냄 |
 | `get_state` | `src/cli/rpc/state.rs:108` | Commands table, `get_state` | 있음 |
-| `set_model` | `src/cli/rpc/state.rs:237` | Commands table, `set_model` | 있음 — 응답은 선택된 모델이며 `provider`와 `modelId`를 `modelId` 한 필드에서 읽음 |
+| `set_model` | `src/cli/rpc/state.rs:238` | Commands table, `set_model` | 있음 — 응답은 선택된 모델이며 `provider`와 `modelId`를 `modelId` 한 필드에서 읽음 |
 | `get_available_models` | `src/cli/rpc/state.rs:135` | Commands table, `get_available_models` | 있음 — 쓸 수 없는 라우트를 빼서 호스트가 실패할 라우트를 고르지 못함 |
-| `set_thinking_level` | `src/cli/rpc/state.rs:258` | Commands table, `set_thinking_level` | 있음 |
+| `set_thinking_level` | `src/cli/rpc/state.rs:259` | Commands table, `set_thinking_level` | 있음 |
 | `get_available_commands` | `src/cli/rpc/adapter.rs:253` | Commands table, `get_available_commands` | 부분 — `compact`와 `model` 두 항목만 |
-| `set_todos` | `src/cli/rpc/state.rs:294` | Commands table, `set_todos` | 있음 — `blocked`와 `blocker`가 이 빌드에 실재하므로 왕복해도 그대로 남음 |
-| `compact` | `src/cli/rpc/state.rs:309` | Commands table, `compact` | 부분 — `CompactionResult`에 `summary`만 실리고 `customInstructions`는 무시 |
-| `get_session_stats` | `src/cli/rpc/state.rs:328` | Commands table, `get_session_stats` | 있음 |
-| `get_messages` | `src/cli/rpc/state.rs:359` | Commands table, `get_messages` | 있음 |
-| `set_session_name` | `src/cli/rpc/state.rs:278` | Commands table, `set_session_name` | 있음 |
-| `bash` | `src/cli/rpc/state.rs:423` runs the command locally with `sh -c` | Commands table, `bash` | 부분 — 응답 전에 끝까지 돌므로 다른 명령처럼 직렬화됨 |
+| `set_todos` | `src/cli/rpc/state.rs:295` | Commands table, `set_todos` | 있음 — `blocked`와 `blocker`가 이 빌드에 실재하므로 왕복해도 그대로 남음 |
+| `compact` | `src/cli/rpc/state.rs:314` | Commands table, `compact` | 부분 — `CompactionResult`에 `summary`만 실리고 `customInstructions`는 무시 |
+| `get_session_stats` | `src/cli/rpc/state.rs:333` | Commands table, `get_session_stats` | 있음 |
+| `get_messages` | `src/cli/rpc/state.rs:364` | Commands table, `get_messages` | 있음 |
+| `set_session_name` | `src/cli/rpc/state.rs:279` | Commands table, `set_session_name` | 있음 |
+| `bash` | `src/cli/rpc/state.rs:494` runs the command locally with `sh -c` | Commands table, `bash` | 부분 — 응답 전에 끝까지 돌므로 다른 명령처럼 직렬화됨 |
 | `abort_bash` | `src/cli/rpc/adapter.rs:323` | Commands table, `abort_bash` | 부분 — 이 빌드에서 `bash`가 동시 실행되지 않으므로 미지원으로 응답 |
 | `new_session` | `src/cli/rpc/adapter.rs:241` | Commands table, `new_session` | 없음 — 프로세스당 세션 하나이므로 프로세스를 하나 더 띄움 |
 | `switch_session`, `branch`, `get_branch_messages`, `handoff` | Not in `src/cli/rpc/command.rs:93` | Commands table, session rows | 없음 |

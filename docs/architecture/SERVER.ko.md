@@ -6,7 +6,7 @@
 
 horon agent는 **서버 하나, 클라이언트 여럿** 구조를 쓴다. 서버 프로세스 하나가 모든 세션과 상태를 관리한다. 클라이언트는 Unix 소켓으로 서버에 붙고 연결이 끊기거나 서버가 다시 읽힌 뒤에도 투명하게 다시 연결한다. 클라이언트는 TypeScript·Rust SDK, ACP로 붙는 에디터, 그리고 이 저장소의 `crates/tui`로 함께 배포되는 `horon-agent-sdk` 기반 터미널 클라이언트 `horon-tui`다. 터미널 클라이언트는 별도 실행 파일이며 `horon-agent` 패키지(에이전트 바이너리)는 이를 링크하지 않는다.
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              SERVER (🔥 blazing)                              │
 │                                                                             │
@@ -31,7 +31,7 @@ horon agent는 **서버 하나, 클라이언트 여럿** 구조를 쓴다. 서�
 
 ## 이름 짓기
 
-```
+```text
 SERVER = Adjective/Verb modifier          SESSIONS = Animal nouns
 ────────────────────────────              ────────────────────────
 🔥 blazing   ❄️ frozen   ⚡ swift          🦊 fox    🐻 bear   🦉 owl
@@ -49,7 +49,7 @@ Combined: "🔥 blazing 🦊 fox" = server + session
 
 ## 수명 주기
 
-```
+```text
   START                          CONNECT                     RELOAD
   ─────                          ───────                     ──────
   horon (first run)                    horon (subsequent)                /reload
@@ -96,7 +96,7 @@ Combined: "🔥 blazing 🦊 fox" = server + session
 `crate::server_spawn::register_on_demand_server_spawner`)를 걸어 두고, 서버에 닿지 못하는 첫 swarm
 요청이 서버를 하나 띄운다. 공유 소켓에서는 평범한 오래 사는 데몬이 되고, 사용자 지정 `--socket`에서는 그 실행이 소유하는 서버가 된다.
 
-```
+```text
 horon run --socket /tmp/run.sock "spawn a worker that ..."
    │
    ├─▶ agent runs in-process; no server started
@@ -111,7 +111,7 @@ horon run --socket /tmp/run.sock "spawn a worker that ..."
 - **게으르다.** `swarm`을 쓰지 않는 실행은 비용을 치르지 않는다. `horon run` 시작은 그대로다.
 - **소켓을 따른다.** 사용자 지정 `--socket`에만 그 실행이 소유하는 임시 서버가 붙는다. `--socket`이 없으면 실행은 평범한 공유 데몬을 준비한다. 공유 경로에 임시 서버를 두면 뒤에 오는 모든 클라이언트가 쓰는 소켓을 점유했다가 실행이 끝날 때 사라지기 때문이다.
 - **소유한다.** 임시 수명 감시자는 `--owner-pid`가 사라지면 서버를 종료하므로 일회성 실행이 데몬을 남기지 않는다. 소켓, 디버그 소켓, 데몬 잠금, 빌드 해시 곁파일, 메타데이터 파일이 모두 제거된다. 워커는 그것을 띄운 실행이 사는 동안만 산다. 워커를 띄우고 기다리지 않고 끝나는 `run`은 설계상 워커를 잃는다.
-- **현재 바이너리.** 소유 경로는 공유 서버 갱신 후보가 아니라 `std::env::current_exe()`를 띄우므로, 로컬에서 빌드한 바이너리를 `--socket`으로 분리해 확인하면 그 바이너리가 응답한다(AGENTS.md의 "Verifying a change at runtime" 참고).
+- **현재 바이너리.** 소유 경로는 공유 서버 갱신 후보가 아니라 `std::env::current_exe()`를 띄우므로, 로컬에서 빌드한 바이너리를 `--socket`으로 분리해 확인하면 그 바이너리가 응답한다(`AGENTS.ko.md`의 "빌드, 실행, 검증" 참고).
 - **`run` 전용.** TUI 모드와 클라이언트 실행은 요청 시 띄우기 등록기를 걸지 않는다. 이미 자기 시작 경로로 데몬을 준비하며, 도구 깊은 곳에서 촉발한 실행이 그 로직과 경쟁하게 되기 때문이다.
 
 swarm 워커는 `spawn` 요청의 `spawn_mode`와 무관하게 이 프로세스 안에서 도는 무인
@@ -163,7 +163,7 @@ horon --socket /tmp/horon-agent.sock -C /local/checkout --remote-working-dir /re
 
 디렉터리는 `HORON_AGENT_RUNTIME_DIR`, `XDG_RUNTIME_DIR`, 플랫폼의 사용자별 런타임 디렉터리(macOS에서는 사설 `TMPDIR`) 순서로 정하고, 모두 없으면 임시 디렉터리 아래 `horon-agent-<사용자 식별자>`를 쓴다(`crates/storage/src/lib.rs:36-52`, `crates/harness-api/src/sockets.rs:15-27`와 같은 규칙). `XDG_RUNTIME_DIR`이 설정된 Linux에서는 `/run/user/$UID`다.
 
-```
+```text
 <runtime dir>
 ├── horon-agent.sock              # Main communication socket
 ├── horon-agent-debug.sock        # Debug/testing socket

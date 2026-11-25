@@ -195,11 +195,11 @@ aux = "my-small-model"
 
 ### 보조 호출은 활성 프로파일 안에 머문다
 
-모든 보조 작업은 세션이 실행 중인 프로파일 안에서 모델을 정합니다. `advisor`는 세션의 provider를 복제해 모델만 바꾸고, `prewalk`는 그 프로파일의 모델 id나 `role:<name>`만 받으며, `judge`, `aux`, `plan`, `image`는 그 프로파일의 `roles`를 읽습니다. `beta/aux-model`처럼 다른 프로파일의 모델처럼 보이는 역할 값도 모델 id로서 활성 프로파일 자신의 엔드포인트에 그 프로파일의 자격 증명으로 전송됩니다. 두 번째 프로파일을 고르는 보조 호출은 없으므로 어느 것도 다른 프로파일의 엔드포인트에 접속하지 않으며 `[ambient] provider`는 provider를 고르는 데 읽히지 않습니다. 이는 모델 제공자 라우팅에 한정된 설명이며 셸 명령, MCP 서버, 그 밖의 네트워크 접근은 다루지 않습니다. `crates/base/src/provider/aux_boundary_tests.rs`가 로컬 서버 두 개로 이를 확인합니다.
+모든 보조 작업은 세션이 실행 중인 프로파일 안에서 모델을 정한다. `advisor`는 세션의 provider를 복제해 모델만 바꾸고, `prewalk`는 그 프로파일의 모델 id나 `role:<name>`만 받으며, `judge`, `aux`, `plan`, `image`는 그 프로파일의 `roles`를 읽는다. `beta/aux-model`처럼 다른 프로파일의 모델처럼 보이는 역할 값도 모델 id로서 활성 프로파일 자신의 엔드포인트에 그 프로파일의 자격 증명으로 전송된다. 두 번째 프로파일을 고르는 보조 호출은 없으므로 어느 것도 다른 프로파일의 엔드포인트에 접속하지 않으며 `[ambient] provider`는 provider를 고르는 데 읽히지 않는다. 이는 모델 제공자 라우팅에 한정된 설명이며 셸 명령, MCP 서버, 그 밖의 네트워크 접근은 다루지 않는다. `crates/base/src/provider/aux_boundary_tests.rs`가 로컬 서버 두 개로 이를 확인한다.
 
 ### 폴백과 페일오버 순서
 
-#73이 추가하는 순서 목록은 `[providers.<name>]`의 `fallback_models = ["m2", "m3"]`이고 역할이 아니라 프로파일에 붙으며, 역할이 해석한 모델에 적용한다. 복구는 아래 고정 순서로 들어가고, 앞 단계가 소진된 뒤에만 다음 단계로 간다.
+`fallback_models = ["m2", "m3"]`는 `[providers.<name>]` 프로파일에 붙어 역할이 해석한 모델에 적용한다. 복구는 아래 고정 순서로 들어가고, 앞 단계가 소진된 뒤에만 다음 단계로 간다.
 
 1. 모델 폴백: 재시도 가능한 오류의 재시도 예산을 다 쓴 뒤 `fallback_models`의 다음 항목으로, 항목마다 한 번씩.
 2. 같은 프로바이더 계정 페일오버(`same_provider_account_failover`, 기본 `true`).
@@ -211,13 +211,13 @@ aux = "my-small-model"
 
 `horon provider failover [--json]`은 현재 설정이 만드는 순서를 출력한다. 재시도 예산, 같은 프로바이더 계정 페일오버, 다른 프로바이더 페일오버, 무인 전환 순이다. 실행할 수 없는 단계에는 그 단계를 제외한 설정을 표시한다. 이 명령은 설정만 읽는다. 모델 요청을 보내지 않고 계정, 쿼터, 프로바이더 선택을 바꾸지 않으며 자격 증명을 출력하지 않는다.
 
-이 빌드에는 입력 집합에 계정을 배정하는 기능이 없어 미리 볼 분포가 없다. 대신 실제 페일오버 순서를 보여 준다. 쿼터 쿨다운과 지금 쓸 수 있는 저장 계정은 실행 중인 데몬이 메모리에 갖고 있어 이 미리보기에는 나오지 않는다. `fallback_models`는 이 빌드에 아직 없는 설정이라 목록에 넣지 않는다.
+이 빌드에는 입력 집합에 계정을 배정하는 기능이 없어 미리 볼 분포가 없다. 대신 실제 페일오버 순서를 보여 준다. 쿼터 쿨다운과 지금 쓸 수 있는 저장 계정은 실행 중인 데몬이 메모리에 갖고 있어 이 미리보기에는 나오지 않는다. 프로파일별 `fallback_models`(`crates/config-types/src/model_roles.rs`)는 프로파일 내부 모델 단계로 `get_runtime_info`에서 확인할 수 있으며 `provider failover` 미리보기에는 포함되지 않는다.
 
-### 구현 주체
+### 구현
 
-#73이 공유 타입을 쓴다. `crates/config-types/src/named_provider.rs`에서 `NamedProviderConfig`로 평면화되는 `roles` 표를 넣고, 모든 호출자가 쓰는 해석 함수 하나를 만든다. #70은 자기 `[prewalk]` 절만 더하고 `into`와 `from`에 그 함수를 부르며 역할을 `role:<name>`으로 적는다(`into = "role:aux"`). 이유: #73은 어차피 `NamedProviderConfig`를 바꾸고 #70의 선언된 의존성이다(`depends_on: [73, 112]`). 구현이 둘이면 서로 어긋나고, `role:` 접두사는 기존 `openai:`와 `<profile>:` 접두사처럼 역할 참조를 모델 id와 구분한다.
+공유 타입은 `crates/config-types/src/model_roles.rs`에 있고 `crates/config-types/src/named_provider.rs`에서 `NamedProviderConfig`로 평면화되는 `roles` 표와 `fallback_models`를 두며 모든 호출자가 같은 해석 함수를 쓴다. `[prewalk]`도 `into`와 `from`에서 그 함수를 불러 `role:<name>`(`into = "role:aux"`)을 해석한다. `role:` 접두사는 기존 `openai:` 및 `<profile>:` 접두사처럼 역할 참조를 모델 id와 구분한다.
 
-역할 설정이 없으면 이 빌드와 정확히 같게 동작한다. `roles` 표도, 새 키도 없고, 기존 사슬이 모델을 고르며, 추가 시도도 없다.
+역할 설정이 없으면 `roles` 표나 별도 키 없이 기존 사슬이 모델을 고르고 추가 시도도 없다.
 
 ### `image` 역할과 단일 모델 경로
 
@@ -225,11 +225,11 @@ aux = "my-small-model"
 
 - **같은** 프로파일의 `POST {base_url}/images/generations`에 JSON 본문으로, 또는 `POST {base_url}/images/edits`에 멀티파트 본문으로 보낸다. base URL, 자격 증명, `auth`, `extra_body`가 모두 같다.
 - `openai-compatible` 또는 `openai-responses` 종류의 프로파일만 이 경로를 받는다. Anthropic이나 Gemini 방식의 프로파일은 두 방식 모두 Images 엔드포인트를 두지 않으므로 이 경로를 처리할 수 없다. `roles.image`가 모델을 가리키면 도구는 등록되지만, 호출할 때마다 답할 수 없는 URL로 요청을 보내는 대신 프로파일과 그 종류를 이름으로 밝힌 오류로 끝난다(`crates/base/src/provider/external.rs`의 `image_endpoint`).
-- 공급자 런타임 하나가 요청을 직접 보낸다. `crates/provider-openai/src/images.rs`는 `chat/` 옆에서 이미지 요청을 만든다. 계획 중인 사용자 설치 Rust 패키지는 모델 경로 밖에 둔다.
+- 공급자 런타임 하나가 요청을 직접 보낸다. `crates/provider-openai/src/images.rs`는 `chat/` 옆에서 이미지 요청을 만든다. 사용자 설치 Rust 패키지(`docs/runtime/PACKAGES.ko.md`)는 모델 경로 밖에 둔다.
 - 모델은 `roles.image`에서 온다. 도구는 그 항목이 있고 `[tools] generate_image = true`일 때만 등록된다. 둘 다 필요하다. 스위치만 있으면 모든 호출이 실패하는 도구를 광고하고, 역할만 있으면 요청하지도 않은 세션에 등록된다.
 - 호출은 `WRITE | NETWORK`를 선언한다. 그래서 `approval_mode = "write"`는 먼저 확인하고, 승인 없는 무인 실행은 돈을 쓰지 않는다.
 - 모델은 이미지 바이트를 받지 않는다. 파일은 `~/.horon/generated-images/`에 놓이고 결과는 경로, 크기, MIME 타입을 알린다. 한 호출이 컨텍스트와 저장 이벤트 로그에 메가바이트를 넣지 않고 수백 토큰으로 끝나는 이유다.
-- 출력은 OpenAI Images 형태로 한정한다. 그 형태를 말하는 게이트웨이는 그대로 동작하고 Horon AI Gateway도 포함된다. Gemini 자체 이미지 API와 Responses API의 `image_generation` 도구는 범위 밖이고, 이 경로가 다루지 못하는 것은 `docs/provider/INTEGRATIONS.md`의 MCP 레시피가 맡는다.
+- 출력은 OpenAI Images 형태로 한정한다. 그 형태를 말하는 게이트웨이는 그대로 동작하고 Horon AI Gateway도 포함된다. Gemini 자체 이미지 API와 Responses API의 `image_generation` 도구는 범위 밖이고, 이 경로가 다루지 못하는 것은 `docs/provider/INTEGRATIONS.ko.md`의 MCP 레시피가 맡는다.
 
 ### 실제로 쓰이는 `judge` 역할
 
@@ -314,7 +314,7 @@ from = "plan-model"
 
 `provider add`가 같은 표를 `config.toml`에 쓰고, `--api-key-stdin`으로 받은 키를 키 파일에 저장한다.
 
-`horon provider diagnose`는 모델 호출 없이 모든 `[providers.<name>]` 프로필을 점검합니다. `no_providers`, `invalid_base_url`, `missing_credential`(`api_key_env`가 없거나 변수가 설정되지 않음), `configured` 중 하나로 표시하고, 확인할 항목이 있으면 종료 코드 1을 돌려줍니다. `--check`를 주면 설정한 자격 증명으로 각 엔드포인트의 모델 목록을 요청해 `reachable` 또는 `unreachable`을 표시합니다. 출력에는 키와 상대 서버의 응답 본문이 들어가지 않습니다. `--json`으로 구조화된 결과를 받습니다.
+`horon provider diagnose`는 모델 호출 없이 모든 `[providers.<name>]` 프로파일을 점검한다. `no_providers`, `invalid_base_url`, `missing_credential`(`api_key_env`가 없거나 변수가 설정되지 않음), `configured` 중 하나로 보고하고, 확인할 항목이 있으면 종료 코드 1을 돌려준다. `--check`를 주면 설정한 자격 증명으로 각 엔드포인트의 모델 목록을 요청해 `reachable`, `unreachable`, 또는 `connectivity_unsupported`(모델 목록 확인이 없는 프로토콜)를 보고한다. 출력에는 키와 상대 서버의 응답 본문이 들어가지 않는다. `--json`으로 구조화된 결과를 받는다.
 
 ```bash
 printf '%s' "$MY_GW_KEY" | horon provider add my-gw \

@@ -6,6 +6,14 @@ This document covers the credential setup and the request and event surfaces of 
 
 A client may read and write at the same time: the SDK client parks one thread in a read for the next frame while another writes a request, and the Windows pipe is opened for overlapped I/O so the pending read never holds the write behind it.
 
+## Contents
+
+- [Credential setup](#credential-setup) · [Serving beyond the local socket](#serving-the-api-beyond-the-local-socket) · [Durable runtime API (1.14)](#durable-runtime-api-protocol-114)
+- [Package catalog control (1.26)](#package-catalog-control-protocol-126) · [Package commands (1.27)](#package-commands-protocol-127) · [Handoff compaction](#handoff-compaction) · [Rewind branch summary](#rewind-branch-summary)
+- [Tool argument repair (1.16)](#tool-argument-repair-protocol-116) · [Degradation receipts (1.17)](#degradation-receipts-protocol-117) · [Message delivery modes (1.18)](#message-delivery-modes-protocol-118) · [Tool verdict (1.19)](#tool-verdict-protocol-119)
+- [Permanent session delete (1.20)](#permanent-session-delete-protocol-120) · [Swarm chat surface removal (1.21)](#swarm-chat-surface-removal-protocol-121) · [Live background output (1.23)](#live-background-output-protocol-123) · [Cancellable work (1.22)](#cancellable-work-protocol-122)
+- [Live todo updates (1.24)](#live-todo-updates-protocol-124) · [Daemon effective settings (1.25)](#daemon-effective-settings-protocol-125) · [A2UI v1.0 surfaces (1.32)](#a2ui-v10-surfaces-protocol-132) · [Session event store and replication (1.12)](#session-event-store-and-replication-protocol-112) · [Request and event surfaces](#harness-api-request-and-event-surfaces-usage_report-search_sessions-list_artifacts-durable_runtime)
+
 ## Credential setup
 
 This build has no interactive login flow. The SDK exposes two things about credentials.
@@ -13,7 +21,7 @@ This build has no interactive login flow. The SDK exposes two things about crede
 - `HoronAgentClient::set_api_key(provider, key)` (TypeScript `setApiKey`) writes the key into horon-agent's owner-only credential store (a `SetApiKey` request with a `credential_updated` response) and re-reads the provider credentials. The key never appears in a response or a log.
 - `notify_auth_changed(provider)` (TypeScript `notifyAuthChanged`) is the notice to re-read the credential files after the user logged in to OAuth with another tool. It sends no credentials itself, and the bridge advertises this through `auth_changed_notification`.
 
-The SDK neither issues nor refreshes OAuth tokens. The launch option `inherit_logins` (on by default) links the user's existing CLI credential files into the instance, and model requests use those files as they are (`crates/agent-sdk/src/launch.rs`). Model calls go only through the OpenAI-compatible profile in `[providers.<name>]`, so this build has no model runtime that authenticates with OAuth. The `openai-oauth:` prefix still exists, but with that runtime gone it fails before the call (`docs/provider/MODEL.md`).
+The SDK neither issues nor refreshes OAuth tokens. The launch option `inherit_logins` (on by default) links the user's existing CLI credential files into the instance, and model requests use those files as they are (`crates/agent-sdk/src/launch.rs`). Model calls go directly to the configured `[providers.<name>]` endpoint over the wire its `type` selects (`openai-compatible`, `openai-responses`, `anthropic-compatible`, or `gemini-compatible`), so this build has no model runtime that authenticates with OAuth. The `openai-oauth:` prefix still exists, but with that runtime gone it fails before the call (`docs/provider/MODEL.md`).
 
 ## Serving the API beyond the local socket
 

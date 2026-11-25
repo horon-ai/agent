@@ -8,7 +8,7 @@ description: Where each part of horon-agent lives in the repository and which do
 | Path | What it holds |
 | --- | --- |
 | `src/` | The CLI: `serve`, `run`, `repl`, `api-bridge`, `acp`, and their dispatch |
-| `crates/` | The workspace: `base`, `app-core`, `session-store`, `harness-api`, `agent-sdk`, `tui` (the TUI binary `horon-tui`), provider and platform crates |
+| `crates/` | The workspace crates: `base`, `app-core`, `agent-runtime`, `session-store`, `harness-api`, `harness-api-server`, `agent-sdk`, `extension-types`, `extension-sdk` (author SDK kept out of `horon-agent`), `tui` (the `horon-tui` binary), plus provider and `platform*` crates |
 | `docs/` | Behaviour documentation, compiled into the binary and served by `horon_agent_docs` |
 | `packages/sdk/typescript` | `@horon-ai/agent-sdk` |
 | `packages/sdk/python` | `horon-agent-sdk` |
@@ -23,19 +23,32 @@ description: Where each part of horon-agent lives in the repository and which do
 | --- | --- |
 | Server, sessions, sockets | `docs/architecture/SERVER.md` |
 | Crate ownership, platform adapters, TLS trust | `docs/architecture/CRATES.md` |
+| Hosted tenant deployment modes and gates | `docs/architecture/HOSTING.md` |
+| Architecture and flow diagrams | `docs/diagram/README.md` |
 | ACP v1 and v2 | `docs/protocol/ACP.md` |
 | Harness API credential setup and surface | `docs/protocol/HARNESS_API.md` |
+| Collaborative shared sessions | `docs/protocol/COLLABORATION.md` |
+| Stdio JSONL RPC adapter | `docs/protocol/RPC.md` |
+| Session sharing | `docs/protocol/SHARING.md` |
 | Session event storage | `docs/protocol/SESSION_STORE.md` |
 | Tool loading, effect tiers, edit safety | `docs/runtime/TOOLS.md` |
 | Tool scheduling and loop prevention | `docs/runtime/TOOL_SCHEDULING.md` |
 | Turn recovery, mid-run insert, `--resume` | `docs/runtime/TURNS.md` |
 | Inter-agent IRC mailbox | `docs/runtime/IRC.md` |
+| Persistent markdown wiki memory | `docs/runtime/MEMORY.md` |
+| User-installed Rust extensions and plugins | `docs/runtime/PACKAGES.md` |
+| Hook lifecycle events | `docs/runtime/HOOKS.md` |
+| Pre-edit diagnostics | `docs/runtime/EDIT_DIAGNOSTICS.md` |
+| Swarm dependency task graph | `docs/runtime/SWARM_TASK_GRAPH.md` |
 | TUI mode (`horon-tui`) | `docs/runtime/TUI.md` |
 | System prompt composition | `docs/runtime/PROMPT.md` |
 | Provider profiles and model roles | `docs/provider/MODEL.md` |
+| Remote MCP, custom websearch, image route | `docs/provider/INTEGRATIONS.md` |
+| Provider diagnostics, local helpers, sampling, quota, vision | `docs/provider/DIAGNOSTICS.md`, `LOCAL_HELPERS.md`, `SAMPLING.md`, `QUOTA_FALLBACK.md`, `VISION_POLICY.md` |
 | Safety, approvals, unattended runs | `docs/safety/SAFETY.md` |
 | Workspace trust, crash bundles | `docs/safety/SECURITY.md` |
 | Benchmarks and the measurement standard | `docs/performance/BENCHMARK.md` |
+| Eval and memory limits | `docs/performance/EVAL.md`, `MEMORY.md` |
 | Measured results | `docs/performance/RESULTS.md` |
 | Release assets and installation | `docs/release/INSTALL.md` |
 | npm packages | `docs/release/NPM.md` |
@@ -46,15 +59,18 @@ English file is canonical; `.ko.md` files are not bundled into the binary.
 
 ## Checks
 
+GitHub Actions owns workspace-wide builds, `clippy`, `cargo test --workspace`,
+and `compare` benchmarks (`AGENTS.md`); run scoped single-crate checks and
+non-Cargo gates locally:
+
 | Area | Command |
 | --- | --- |
-| Build | `cargo build -p horon-agent` |
-| Format | `cargo fmt --all -- --check` |
-| Lints | `cargo clippy --locked --all-targets --all-features -- -D warnings` |
-| Tests | `cargo test --workspace` |
+| Single-crate check | `cargo check --locked -p <crate>` |
+| Docs corpus test | `cargo test --locked -p horon-agent-app-core --lib horon_agent_docs` |
 | Agent graph (no terminal crates) | `python3 scripts/ci/check_headless_graph.py` |
-| ACP adapter | `cargo test -p horon-agent --lib acp` |
-| Docs pairs | `python3 scripts/ci/check_docs_pairs.py` |
+| Dependency boundaries | `python3 scripts/ci/check_dependency_boundaries.py` |
+| Docs links & pairs | `python3 scripts/ci/check_docs_links.py` / `check_docs_pairs.py` |
+| Docs site sync | `python3 scripts/ci/sync_docs_site.py --check` |
 
 Performance measurement runs only in GitHub Actions; the comparison suite builds
 the baseline and the candidate on one runner, so a before/after difference is not

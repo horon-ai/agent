@@ -331,3 +331,4 @@ behind one trait so the control plane can replace the transport.
 - No git history inside a user volume, by design: a deletion request must not leave old versions in a repository.
 - Physical erasure stops at what SQLite itself allocated; see the deletion section.
 - Export, import and whole-volume deletion rebuild the index from the markdown; a version history in the source volume is lost, because versions are index data.
+- Migration reads only version-2 graphs. A directory whose path cannot be canonicalised (one that does not exist right now) falls back to its absolute form, which is the only case where two spellings of a directory can produce different keys.

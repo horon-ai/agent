@@ -6,46 +6,46 @@
 
 ## 워크스페이스 신뢰
 
-프로젝트 저장소는 에이전트가 실행할 MCP 서버를 지정할 수 있습니다. 그래서 horon agent는 워크스페이스의 프로젝트 로컬 설정을 그 내용에 대한 동의 없이는 읽지 않습니다. 이 문서는 현재 트리의 게이트 범위, 다이제스트 규칙, 클라이언트가 없으면 거부하는 규칙, 재정의를 설명합니다.
+프로젝트 저장소는 에이전트가 실행할 MCP 서버를 지정할 수 있다. 그래서 horon agent는 워크스페이스의 프로젝트 로컬 설정을 그 내용에 대한 동의 없이는 읽지 않는다. 이 문서는 현재 트리의 게이트 범위, 다이제스트 규칙, 클라이언트가 없으면 거부하는 규칙, 재정의를 설명한다.
 
 ### 무엇을 게이트하는가
 
-게이트 대상은 워크스페이스에 있는 세 파일입니다 (`crates/base/src/workspace_trust.rs:22` `PROJECT_CONFIG_SURFACES`).
+게이트 대상은 워크스페이스에 있는 세 파일이다(`crates/base/src/workspace_trust.rs:22` `PROJECT_CONFIG_SURFACES`).
 
 - `.horon/mcp.json`
 - `.mcp.json`
 - `.claude/mcp.json`
 
-사용자 수준 설정은 게이트하지 않습니다. `~/.horon/mcp.json`, `~/.claude.json`, `~/.claude/mcp.json`은 사용자 자신의 설정이지 저장소가 정한 것이 아닙니다. 이 가운데 Claude Code 파일은 `[mcp] claude_user`가 켜져 있을 때만 읽고, `~/.codex/config.toml`은 `[mcp] codex_user`가 켜져 있을 때만 읽습니다. `~/.claude.json`의 프로젝트별 항목은 세션의 프로젝트 디렉터리와 맞춰 고르므로 한 저장소의 항목이 다른 저장소로 새지 않습니다 (`crates/base/src/mcp/sources.rs:1-14`).
+사용자 수준 설정은 게이트하지 않는다. `~/.horon/mcp.json`, `~/.claude.json`, `~/.claude/mcp.json`은 사용자 자신의 설정이지 저장소가 정한 것이 아니다. 이 가운데 Claude Code 파일은 `[mcp] claude_user`가 켜져 있을 때만 읽고, `~/.codex/config.toml`은 `[mcp] codex_user`가 켜져 있을 때만 읽는다. `~/.claude.json`의 프로젝트별 항목은 세션의 프로젝트 디렉터리와 맞춰 고르므로 한 저장소의 항목이 다른 저장소로 새지 않는다(`crates/base/src/mcp/sources.rs:1-14`).
 
-강제 지점은 하나입니다. `McpConfig`가 프로젝트 로컬 설정을 읽을 때 `load_authorized_project_locals`가 `authorize_project_config`를 부르고, 허용된 스냅샷의 바이트만 파싱합니다 (`crates/base/src/mcp/protocol.rs:706`, `workspace_trust.rs:258`). 세 파일이 모두 없으면 게이트할 것이 없으므로 `Absent`이고, 거부되면 경고 한 줄을 남기고 프로젝트 설정을 싣지 않습니다.
+강제 지점은 하나다. `McpConfig`가 프로젝트 로컬 설정을 읽을 때 `load_authorized_project_locals`가 `authorize_project_config`를 부르고, 허용된 스냅샷의 바이트만 파싱한다(`crates/base/src/mcp/protocol.rs:706`, `workspace_trust.rs:267`). 세 파일이 모두 없으면 게이트할 것이 없으므로 `Absent`이고, 거부되면 경고 한 줄을 남기고 프로젝트 설정을 싣지 않는다.
 
 ### 다이제스트 규칙
 
-스냅샷은 고정 순서로 세 표면을 읽고 SHA-256을 계산합니다 (`workspace_trust.rs:162` `snapshot`).
+스냅샷은 고정 순서로 세 표면을 읽고 SHA-256을 계산한다(`workspace_trust.rs:162` `snapshot`).
 
-1. 도메인 구분자 `horon-agent/workspace-trust/v1`로 시작합니다.
-2. 표면마다 `경로`, 상태, 내용 지문을 넣습니다.
-3. 상태는 `absent`, `present`, `unreadable` 셋입니다. `present`는 바이트 길이와 그 파일의 SHA-256을 함께 넣습니다.
+1. 도메인 구분자 `horon-agent/workspace-trust/v1`로 시작한다.
+2. 표면마다 `경로`, 상태, 내용 지문을 넣는다.
+3. 상태는 `absent`, `present`, `unreadable` 셋이다. `present`는 바이트 길이와 그 파일의 SHA-256을 함께 넣는다.
 
-동의는 정규화한 워크스페이스 경로와 이 다이제스트의 쌍으로 기록합니다. 기록 파일은 에이전트 디렉터리의 `workspace-trust.json`이고 (`workspace_trust.rs:408` `trust_file_path`), 워크스페이스에는 아무것도 쓰지 않습니다. 항목은 버전 1, 다이제스트, 결정, 기록 시각, 표면별 SHA-256과 길이를 담습니다.
+동의는 정규화한 워크스페이스 경로와 이 다이제스트의 쌍으로 기록한다. 기록 파일은 에이전트 디렉터리의 `workspace-trust.json`이고(`workspace_trust.rs:439` `trust_file_path`), 워크스페이스에는 아무것도 쓰지 않는다. 항목은 버전 1, 다이제스트, 결정, 기록 시각, 표면별 SHA-256과 길이를 담는다.
 
-- 세 파일 중 하나라도 바이트가 바뀌면 다이제스트가 달라지고 그 워크스페이스는 다시 신뢰를 묻습니다. 파일을 새로 만들거나 지워도 마찬가지입니다.
-- 거부 이유는 바뀐 표면의 이름을 최대한 짚어 줍니다 (`workspace_trust.rs:304` `untrusted_reason`).
-- 기록은 파일 전체를 읽고 고쳐 쓰는 방식이라 두 프로세스가 같은 순간에 쓰면 한쪽 결정이 사라질 수 있습니다. 잃는 것은 결정 하나이고, 없던 허용이 생기지는 않습니다 (`workspace_trust.rs:222` `record`).
-- 다이제스트는 저장소를 신뢰할 수 있게 만드는 장치가 아닙니다. 사용자가 본 내용에 동의를 묶는 장치입니다.
+- 세 파일 중 하나라도 바이트가 바뀌면 다이제스트가 달라지고 그 워크스페이스는 다시 신뢰를 묻는다. 파일을 새로 만들거나 지워도 마찬가지다.
+- 거부 이유는 바뀐 표면의 이름을 최대한 짚어 준다(`workspace_trust.rs:313` `untrusted_reason`).
+- 기록은 파일 전체를 읽고 고쳐 쓰는 방식이라 두 프로세스가 같은 순간에 쓰면 한쪽 결정이 사라질 수 있다. 잃는 것은 결정 하나이고, 없던 허용이 생기지는 않는다(`workspace_trust.rs:231` `record`).
+- 다이제스트는 저장소를 신뢰할 수 있게 만드는 장치가 아니다. 사용자가 본 내용에 동의를 묶는 장치다.
 
 ### 클라이언트가 없으면 거부
 
-붙어 있는 클라이언트가 없으면 물어볼 상대가 없습니다. 그래서 모르는 상태는 허용이 아니라 거부입니다.
+붙어 있는 클라이언트가 없으면 물어볼 상대가 없다. 그래서 모르는 상태는 허용이 아니라 거부다.
 
-- 현재 다이제스트에 대한 기록이 없으면 `Skipped`입니다. 경고를 남기고 프로젝트 로컬 설정을 싣지 않으며, 아무 결정도 기록하지 않습니다. 다음 실행에서 다시 묻습니다.
-- 기록은 있지만 다이제스트가 다르면 `Skipped`입니다. 바뀐 표면을 경고에 적습니다.
-- 표면이 일반 파일로 읽히지 않으면 재정의와 무관하게 `Skipped`입니다 (`workspace_trust.rs:258`).
-- 기록된 결정이 거부이면 `Skipped`입니다.
-- 세 파일이 모두 없으면 `Absent`이고 게이트가 작동하지 않습니다.
+- 현재 다이제스트에 대한 기록이 없으면 `Skipped`다. 경고를 남기고 프로젝트 로컬 설정을 싣지 않으며, 아무 결정도 기록하지 않는다. 다음 실행에서 다시 묻는다.
+- 기록은 있지만 다이제스트가 다르면 `Skipped`다. 바뀐 표면을 경고에 적는다.
+- 표면이 일반 파일로 읽히지 않으면 재정의와 무관하게 `Skipped`다(`workspace_trust.rs:267`).
+- 기록된 결정이 거부이면 `Skipped`다.
+- 세 파일이 모두 없으면 `Absent`이고 게이트가 작동하지 않는다.
 
-거부는 실패가 아니라 폐쇄입니다. 세션은 계속 돌고, 프로젝트가 지정한 MCP 서버만 빠집니다.
+거부는 실패가 아니라 폐쇄다. 세션은 계속 돌고, 프로젝트가 지정한 MCP 서버만 빠진다.
 
 `[tools] bash_direnv`를 켜면 세션 작업 폴더 안의 direnv 파일을 불러오기 전에 Horon이 신뢰 결정을 확인한다. 현재 상태에 맞는 저장 결정, `--trust-workspace` 또는 `HORON_AGENT_WORKSPACE_TRUST=trust`로 direnv 검사를 허용한다. `HORON_AGENT_WORKSPACE_TRUST=deny`가 우선하며 direnv도 실행 전에 파일을 별도로 승인해야 한다. Horon은 direnv의 출력과 환경 변수 값을 진단 메시지에 넣지 않는다.
 
@@ -53,16 +53,16 @@
 
 | 수단 | 범위 | 기록 |
 | --- | --- | --- |
-| `--trust-workspace` | 이 실행 | 현재 다이제스트에 신뢰를 기록합니다. |
-| `HORON_AGENT_WORKSPACE_TRUST=trust` | 이 프로세스 | 기록하지 않습니다. |
-| `HORON_AGENT_WORKSPACE_TRUST=deny` | 이 프로세스 | 기록하지 않고, 저장된 신뢰가 있어도 거부합니다. |
-| `mcp test`, `mcp list` 같은 명시적 명령 | 그 명령 | 기록하지 않습니다. 명령 자체가 동의입니다. |
+| `--trust-workspace` | 이 실행 | 현재 다이제스트에 신뢰를 기록한다. |
+| `HORON_AGENT_WORKSPACE_TRUST=trust` | 이 프로세스 | 기록하지 않는다. |
+| `HORON_AGENT_WORKSPACE_TRUST=deny` | 이 프로세스 | 기록하지 않고, 저장된 신뢰가 있어도 거부한다. |
+| `mcp test`, `mcp list` 같은 명시적 명령 | 그 명령 | 기록하지 않는다. 명령 자체가 동의다. |
 
-환경 변수는 대소문자를 가리지 않고 `trust`와 `deny`만 알아봅니다. 다른 값은 무시되고 저장된 결정으로 돌아갑니다 (`workspace_trust.rs:363` `env_decision`). 환경 변수의 거부는 `--trust-workspace`보다 먼저 적용되므로, 둘을 함께 주면 거부가 이깁니다.
+환경 변수는 대소문자를 가리지 않고 `trust`와 `deny`만 알아본다. 다른 값은 무시되고 저장된 결정으로 돌아간다(`workspace_trust.rs:372` `env_decision`). 환경 변수의 거부는 `--trust-workspace`보다 먼저 적용되므로, 둘을 함께 주면 거부가 이긴다.
 
 ## 호스팅 모드의 MCP·확장 격리
 
-호스팅 배포는 고객 한 명에게 프로세스 하나를 줍니다. 컨테이너이거나 그 고객의 볼륨을 홈으로 마운트한 Fly Machine입니다. 데몬은 [호스팅](../architecture/HOSTING.ko.md) 문서의 모드 중 하나로 실행됩니다. 모드는 그 고객을 위해 어떤 MCP 서버와 자식 프로세스를 실행할 수 있는지 정하며, 판단은 한 모듈(`crates/base/src/mcp/hosted.rs`)이 합니다.
+호스팅 배포는 고객 한 명에게 프로세스 하나를 준다. 컨테이너이거나 그 고객의 볼륨을 홈으로 마운트한 Fly Machine이다. 데몬은 [호스팅](../architecture/HOSTING.ko.md) 문서의 모드 중 하나로 실행된다. 모드는 그 고객을 위해 어떤 MCP 서버와 자식 프로세스를 실행할 수 있는지 정하며, 판단은 한 모듈(`crates/base/src/mcp/hosted.rs`)이 한다.
 
 | 모드 | MCP stdio 자식 | 패키지·확장 자식 | 편집기가 준 stdio 서버 | 공유 풀 stdio 연결 | 원격 MCP 연결 |
 | --- | --- | --- | --- | --- | --- |
@@ -71,50 +71,50 @@
 | `per-user-container`에 `[hosting] allow_shared_children = false` | 거부 | 거부 | 거부 | 거부 | 허용 |
 | `shared-worker` | 거부 | 거부 | 거부 | 거부 | 거부 |
 
-- 공유 워커는 다섯 가지를 모두 거부합니다. 자식 프로세스와 원격 자격 증명 저장소가 한 고객의 것이 되는데 프로세스는 모든 고객을 상대하므로, 사용자별 환경·프로세스 트리·토큰을 증명할 방법이 없습니다.
-- 사용자별 컨테이너 또는 Fly Machine은 자기 서버를 그대로 씁니다. 홈 볼륨, 그 안의 OAuth 저장소, `${VAR}` 확장이 읽는 프로세스 환경이 그 고객의 것입니다. `allow_shared_children = false`는 자식 프로세스만 닫고 원격 연결은 그대로 두는데, 원격 연결은 자식을 만들지 않기 때문입니다.
-- `[hosting] allowed_mcp_servers`는 호스팅 프로세스가 연결할 수 있는 MCP 서버를 좁힙니다. 값이 없으면 모두 허용하고, 빈 목록이면 하나도 허용하지 않으며, 이름은 소스나 편집기가 등록한 이름과 정확히 일치해야 합니다. 모드를 넓히지 못하고, 호스팅이 아닌 프로세스는 그대로이므로 재사용한 볼륨에 남은 키가 운영자의 서버를 막지 않습니다.
-- 패키지 자식은 하나의 게이트(`crates/base/src/packages/child_gate.rs`, `PackageExecutable::start_with_arguments`에서 호출)를 지납니다. 따라서 패키지의 MCP stdio 서버, 확장 자식, 선언한 명령, 옵서버가 모두 같은 판단을 받습니다.
+- 공유 워커는 다섯 가지를 모두 거부한다. 자식 프로세스와 원격 자격 증명 저장소가 한 고객의 것이 되는데 프로세스는 모든 고객을 상대하므로, 사용자별 환경·프로세스 트리·토큰을 증명할 방법이 없다.
+- 사용자별 컨테이너 또는 Fly Machine은 자기 서버를 그대로 쓴다. 홈 볼륨, 그 안의 OAuth 저장소, `${VAR}` 확장이 읽는 프로세스 환경이 그 고객의 것이다. `allow_shared_children = false`는 자식 프로세스만 닫고 원격 연결은 그대로 두는데, 원격 연결은 자식을 만들지 않기 때문이다.
+- `[hosting] allowed_mcp_servers`는 호스팅 프로세스가 연결할 수 있는 MCP 서버를 좁힌다. 값이 없으면 모두 허용하고, 빈 목록이면 하나도 허용하지 않으며, 이름은 소스나 편집기가 등록한 이름과 정확히 일치해야 한다. 모드를 넓히지 못하고, 호스팅이 아닌 프로세스는 그대로이므로 재사용한 볼륨에 남은 키가 운영자의 서버를 막지 않는다.
+- 패키지 자식은 하나의 게이트(`crates/base/src/packages/child_gate.rs`, `PackageExecutable::start_with_arguments`에서 호출)를 지난다. 따라서 패키지의 MCP stdio 서버, 확장 자식, 선언한 명령, 옵서버가 모두 같은 판단을 받는다.
 
-거부는 명시적이고 한 번 기록됩니다. 호출자는 정책과 동작 이름이 담긴 타입 오류를 받고, 데몬은 감사 이벤트를 한 줄 남깁니다.
+거부는 명시적이고 한 번 기록된다. 호출자는 정책과 동작 이름이 담긴 타입 오류를 받고, 데몬은 감사 이벤트를 한 줄 남긴다.
 
-**`HOSTED_POLICY`** 필드는 `policy`(`shared-worker`, `per-user-container`, 또는 `unresolved`), `operation`(`mcp-stdio`, `session-mcp-stdio`, `pooled-mcp-stdio`, `mcp-remote`, `package-child`), `subject`(서버 또는 패키지 이름, 게이트가 모르면 `-`), `reason`(`shared-worker`, `children-disabled`, `not-allowed`, `unresolved-policy`), `tenant`(감사 라벨, 호스팅 밖이면 `-`)입니다. 명령 인자, 환경 값, 헤더, URL, 토큰은 절대 담지 않습니다.
+**`HOSTED_POLICY`** 필드는 `policy`(`shared-worker`, `per-user-container`, 또는 `unresolved`), `operation`(`mcp-stdio`, `session-mcp-stdio`, `pooled-mcp-stdio`, `mcp-remote`, `package-child`), `subject`(서버 또는 패키지 이름, 게이트가 모르면 `-`), `reason`(`shared-worker`, `children-disabled`, `not-allowed`, `unresolved-policy`), `tenant`(감사 라벨, 호스팅 밖이면 `-`)다. 명령 인자, 환경 값, 헤더, URL, 토큰은 절대 담지 않는다.
 
-거부된 패키지 MCP 서버는 세션의 다음 턴에도 전달되므로, 모델이 도구가 왜 없는지 사용자에게 알릴 수 있습니다. 편집기가 준 서버 목록이 거부되면 목록 전체를 조용히 줄이지 않고 요청 오류 자체를 돌려줍니다.
+거부된 패키지 MCP 서버는 세션의 다음 턴에도 전달되므로, 모델이 도구가 왜 없는지 사용자에게 알릴 수 있다. 편집기가 준 서버 목록이 거부되면 목록 전체를 조용히 줄이지 않고 요청 오류 자체를 돌려준다.
 
-한계: 이 게이트는 MCP 서버와 패키지 자식만 다룹니다. `bash`, `eval`, 훅 명령은 대상이 아니며, 호스팅 배포에서는 이 게이트가 아니라 [호스팅](../architecture/HOSTING.ko.md) 문서의 사용자별 경계(컨테이너 또는 Fly Machine, 전용 `HORON_HOME`, 분리한 런타임 디렉터리, TCP 게이트웨이 없음)가 이들을 막습니다.
+한계: 이 게이트는 MCP 서버와 패키지 자식만 다룬다. `bash`, `eval`, 훅 명령은 대상이 아니며, 호스팅 배포에서는 이 게이트가 아니라 [호스팅](../architecture/HOSTING.ko.md) 문서의 사용자별 경계(컨테이너 또는 Fly Machine, 전용 `HORON_HOME`, 분리한 런타임 디렉터리, TCP 게이트웨이 없음)가 이들을 막는다.
 
 ## Python eval
 
-Python 셀은 코드와 작업 폴더를 기준으로 명시 승인을 받습니다. 폴더에 준 권한으로 셀을 승인할 수 없습니다. 커널은 선택한 환경 변수만 물려받습니다. 승인된 Python은 사용자에게 허용된 파일, 네트워크와 프로세스에 접근하므로 사용자가 읽을 수 있는 자격 증명 파일도 열 수 있습니다. 기능 설정과 셀 승인이 실행 시작 여부를 정합니다.
+Python 셀은 코드와 작업 폴더를 기준으로 명시 승인을 받는다. 폴더에 준 권한으로 셀을 승인할 수 없다. 커널은 선택한 환경 변수만 물려받는다. 승인된 Python은 사용자에게 허용된 파일, 네트워크와 프로세스에 접근하므로 사용자가 읽을 수 있는 자격 증명 파일도 열 수 있다. 기능 설정과 셀 승인이 실행 시작 여부를 정한다.
 
-`tool.<name>`은 자식 프로세스의 파이프로 현재 세션의 도구 레지스트리에 요청을 보냅니다. 호론은 활성 셀과 요청 번호를 검증하고 세션 허용 목록, 로드 단계, 개별 도구 승인과 훅을 적용합니다. 이 정책은 도구 브리지에 적용됩니다. Python이 파일이나 프로세스에 직접 접근할 때는 호론을 실행한 사용자의 운영체제 권한을 따릅니다.
+`tool.<name>`은 자식 프로세스의 파이프로 현재 세션의 도구 레지스트리에 요청을 보낸다. 호론은 활성 셀과 요청 번호를 검증하고 세션 허용 목록, 로드 단계, 개별 도구 승인과 훅을 적용한다. 이 정책은 도구 브리지에 적용된다. Python이 파일이나 프로세스에 직접 접근할 때는 호론을 실행한 사용자의 운영체제 권한을 따릅니다.
 
 ## 크래시 번들
 
-프로세스가 패닉하면 horon agent는 로컬 진단 번들을 남깁니다. 번들은 디스크에만 쓰고 어디로도 보내지 않습니다. 이 문서는 현재 트리의 위치, 내용, 리댁션, 전송하지 않는다는 보장을 설명합니다.
+프로세스가 패닉하면 horon agent는 로컬 진단 번들을 남긴다. 번들은 디스크에만 쓰고 어디로도 보내지 않는다. 이 문서는 현재 트리의 위치, 내용, 리댁션, 전송하지 않는다는 보장을 설명한다.
 
 ### 위치
 
-번들은 에이전트 디렉터리 아래 `crashes/`에 씁니다 (`crates/base/src/crash.rs:180` `crash_root`). 에이전트 디렉터리는 기본값이 `~/.horon`이고 `HORON_HOME`으로 바꿀 수 있습니다.
+번들은 에이전트 디렉터리 아래 `crashes/`에 쓴다(`crates/base/src/crash.rs:180` `crash_root`). 에이전트 디렉터리는 기본값이 `~/.horon`이고 `HORON_HOME`으로 바꿀 수 있다.
 
-한 번들은 디렉터리 하나입니다.
+한 번들은 디렉터리 하나다.
 
-```
+```text
 <agent dir>/crashes/<UTC 시각>-p<pid>/
   bundle.json
   report.txt
 ```
 
-시각 형식은 `YYYYMMDDTHHMMSS.mmmZ`이고 PID가 붙습니다 (`crash.rs:158` `bundle_stamp`). 같은 이름이 이미 있으면 `-1`, `-2`처럼 번호를 붙여 새 디렉터리를 잡습니다 (`crash.rs:166` `create_bundle_dir`).
+시각 형식은 `YYYYMMDDTHHMMSS.mmmZ`이고 PID가 붙는다(`crash.rs:217` `bundle_stamp`). 같은 이름이 이미 있으면 `-1`, `-2`처럼 번호를 붙여 새 디렉터리를 잡는다(`crash.rs:225` `create_bundle_dir`).
 
 ### 내용
 
-`bundle.json`은 스키마 1 문서입니다.
+`bundle.json`은 스키마 1 문서다.
 
 | 필드 | 내용 |
 | --- | --- |
-| `schema` | 번들 형식 버전. 현재 1입니다. |
+| `schema` | 번들 형식 버전. 현재 1이다. |
 | `captured_at` | 번들을 만든 UTC 시각과 PID. |
 | `pid` | 프로세스 ID. |
 | `panic.message` | 패닉 페이로드 문자열. |
@@ -122,35 +122,35 @@ Python 셀은 코드와 작업 폴더를 기준으로 명시 승인을 받습니
 | `panic.thread` | 패닉이 난 스레드 이름 또는 ID. |
 | `operations` | 마지막 도구 디스패치 최대 64건. 오래된 것부터. |
 
-`operations`는 프로세스 전역 링 버퍼입니다 (`crash.rs:25` `OPERATION_RING_CAPACITY`). 각 항목은 증가하는 `seq`, 도구 이름, 리댁션과 자르기를 거친 입력 텍스트를 담습니다 (`crash.rs:42-46` `OperationRecord`). 기능이 꺼져 있으면 디스패치 기록 자체를 하지 않습니다.
+`operations`는 프로세스 전역 링 버퍼다(`crash.rs:26` `OPERATION_RING_CAPACITY`). 각 항목은 증가하는 `seq`, 도구 이름, 리댁션과 자르기를 거친 입력 텍스트를 담는다(`crash.rs:61` `OperationRecord`). 기능이 꺼져 있으면 디스패치 기록 자체를 하지 않는다.
 
-`report.txt`는 같은 내용을 사람이 읽기 좋게 편다. 첫 줄은 `horon-agent crash bundle (local only; nothing was transmitted)`입니다 (`crash.rs:205` `render_report`).
+`report.txt`는 같은 내용을 사람이 읽기 좋게 편다. 첫 줄은 `horon-agent crash bundle (local only; nothing was transmitted)`다(`crash.rs:264` `render_report`).
 
 ### 리댁션
 
-번들에 들어가는 모든 문자열은 기존 비밀 값 제거 패스인 `redact_secrets`를 거칩니다 (`crates/base/src/message.rs:45`).
+번들에 들어가는 모든 문자열은 기존 비밀 값 제거 패스인 `redact_secrets`를 거친다(`crates/base/src/message.rs:45`).
 
-- 패닉 메시지, 위치, 스레드 이름, 도구 이름, 도구 입력 JSON에 같은 패스를 적용합니다.
-- 필드마다 2048자에서 자르고 `[truncated]`를 붙입니다. 도구 이름은 128자입니다 (`crash.rs:241` `truncate_chars`).
-- 도구 입력은 공격자가 영향을 줄 수 있는 텍스트로 취급합니다. 번들에는 불활성 데이터로만 쓰고, 다시 읽어 실행하거나 해석하지 않습니다.
+- 패닉 메시지, 위치, 스레드 이름, 도구 이름, 도구 입력 JSON에 같은 패스를 적용한다.
+- 필드마다 2048자에서 자르고 `[truncated]`를 붙인다. 도구 이름은 128자다(`crash.rs:318` `truncate_chars`).
+- 도구 입력은 공격자가 영향을 줄 수 있는 텍스트로 취급한다. 번들에는 불활성 데이터로만 쓰고, 다시 읽어 실행하거나 해석하지 않는다.
 
-리댁션은 알려진 비밀 모양을 지우는 방어이고 완전한 보장이 아닙니다. 번들은 민감한 자료로 다루는 편이 맞습니다.
+리댁션은 알려진 비밀 모양을 지우는 방어이고 완전한 보장이 아니다. 번들은 민감한 자료로 다루는 편이 맞다.
 
 ### 전송하지 않음
 
-번들은 `std::fs::write`로 로컬 디렉터리에만 씁니다. 네트워크 호출, 업로드, 텔레메트리 전송이 없습니다. `report.txt` 첫 줄도 그 사실을 적습니다.
+번들은 `std::fs::write`로 로컬 디렉터리에만 쓴다. 네트워크 호출, 업로드, 텔레메트리 전송이 없다. `report.txt` 첫 줄도 그 사실을 적는다.
 
 ### 켜고 끄기
 
-`[features] crash_bundles`의 기본값은 `true`입니다 (`crates/config-types/src/feature.rs:54`). `false`로 두면 패닉 훅이 번들을 쓰지 않고 도구 디스패치도 기록하지 않습니다.
+`[features] crash_bundles`의 기본값은 `true`다(`crates/config-types/src/feature.rs:54`). `false`로 두면 패닉 훅이 번들을 쓰지 않고 도구 디스패치도 기록하지 않는다.
 
-훅은 시작할 때 한 번 설치됩니다 (`src/cli/startup.rs:38`). 이후 호출은 활성 플래그만 갱신합니다 (`crash.rs:67` `install_panic_hook`). 그래서 설정을 다시 읽어 기능을 켜거나 꺼도 이미 설치된 훅은 그 플래그를 따릅니다.
+훅은 시작할 때 한 번 설치된다(`src/cli/startup.rs:143`). 이후 호출은 활성 플래그만 갱신한다(`crash.rs:86` `install_panic_hook`). 그래서 설정을 다시 읽어 기능을 켜거나 꺼도 이미 설치된 훅은 그 플래그를 따릅니다.
 
 ### 한계
 
-- 쓰기는 최선 노력입니다. 디렉터리 생성이나 파일 쓰기가 실패해도 패닉 처리 자체는 계속됩니다.
-- 스택 트레이스, 환경 변수 전체, 세션 트랜스크립트는 담지 않습니다. 패닉 위치와 최근 도구 호출만 담습니다.
-- 번들은 로컬에 남으므로 사용자가 직접 정리해야 합니다.
+- 쓰기는 최선 노력이다. 디렉터리 생성이나 파일 쓰기가 실패해도 패닉 처리 자체는 계속된다.
+- 스택 트레이스, 환경 변수 전체, 세션 트랜스크립트는 담지 않는다. 패닉 위치와 최근 도구 호출만 담는다.
+- 번들은 로컬에 남으므로 사용자가 직접 정리해야 한다.
 
 ## API 노출과 자격 증명
 
@@ -290,8 +290,8 @@ Python 셀은 코드와 작업 폴더를 기준으로 명시 승인을 받습니
 
 2026-10-29: `crates/provider-openai-runtime`와 8317 기본 base는 이후 제거되었다.
 
-2026-11-04: 네이티브 플러그인 모델 경로도 제거되어 모델 요청은 `[providers.<name>]`의 OpenAI 호환 엔드포인트로 직접 나간다.
+2026-11-04: 네이티브 플러그인 모델 경로도 제거되어 이제 모델 요청은 `[providers.<name>]` 프로파일의 `type`이 고른 방식(`openai-compatible`, `openai-responses`, `anthropic-compatible`, `gemini-compatible`)으로 해당 엔드포인트에 직접 나간다.
 
-확장은 Rust 실행파일을 선언하고 플러그인은 그 확장에 부속 파일을 더한다. `horon package install <directory>`는 두 패키지 유형을 검증해 사용자 카탈로그에 등록한다. `--project <root>`를 명시하면 정규화한 프로젝트 루트 하나로 설치 범위를 제한한다. 설치는 동의로 간주한다. 데몬은 사용자가 관리하는 `$HORON_HOME/packages/inbox/<id>/`의 완성 폴더를 같은 설치 경로로 처리한다. 원본 폴더는 그대로 두고 제거 이력을 포함해 카탈로그에 이미 기록된 ID는 건너뛴다. 데몬이 실행 중이면 CLI는 데몬에 변경을 요청한다. 요청을 보낸 뒤 응답이 끊기면 오류를 반환한다. 세션 반영은 별도 단계에서 연결한다.
+확장은 Rust 실행파일을 선언하고 플러그인은 그 확장에 부속 파일을 더한다. `horon package install <directory>`는 두 패키지 유형을 검증해 사용자 카탈로그에 등록한다. `--project <root>`를 명시하면 정규화한 프로젝트 루트 하나로 설치 범위를 제한한다. 설치는 동의로 간주한다. 데몬은 사용자가 관리하는 `$HORON_HOME/packages/inbox/<id>/`의 완성 폴더를 같은 설치 경로로 처리한다. 원본 폴더는 그대로 두고 제거 이력을 포함해 카탈로그에 이미 기록된 ID는 건너뛴다. 데몬이 실행 중이면 CLI는 데몬에 변경을 요청한다. 요청을 보낸 뒤 응답이 끊기면 오류를 반환한다. 열려 있는 세션은 다음 턴 경계에서 갱신된 카탈로그 세대를 가져온다.
 
-SHA-256은 내부 무결성 검사에 쓴다. 버전을 교섭하는 JSON-RPC 초기화에서 호출 전에 자식이 보고한 선언 해시를 대조한다. 도구 호출과 실행형 명령은 기존 도구 정책을 따른다. 자식 프로세스에는 사용자 OS 권한이 있다. 호스트 검사는 자식의 직접 파일 및 네트워크 접근을 제한할 수 없으므로 신뢰하는 패키지만 설치한다.
+SHA-256은 내부 무결성 검사에 쓴다. 버전을 교섭하는 JSON-RPC 초기화에서 호출 전에 자식이 보고한 선언 해시를 대조한다. 도구 호출과 실행형 명령은 기존 도구 및 호스팅 정책 게이트(`crates/base/src/packages/child_gate.rs`)를 따른다. 자식 프로세스에는 사용자 OS 권한이 있다. 호스트 검사는 자식의 직접 파일 및 네트워크 접근을 제한할 수 없으므로 신뢰하는 패키지만 설치한다.

@@ -27,7 +27,7 @@ shasum -a 256 tests/fixtures/acp/schema-v1.32.0.json
 shasum -a 256 tests/fixtures/acp/meta-v1.32.0.json
 ```
 
-# The scripted provider the turns reach
+## The scripted provider the turns reach
 
 The isolated test homes run every model turn against a loopback scripted
 provider. Each home writes a `[providers.scripted]` profile of

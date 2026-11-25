@@ -76,7 +76,7 @@
 
 ### 자동 계속은 턴당 두 번까지다
 
-합성 계속은 `MAX_AUTO_CONTINUATIONS = 2`로 제한된다(`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState`는 이 값을 넘기지 않고(`crates/agent-runtime/src/turn_state.rs:633-636` `record_auto_continuation`이 상한으로 자른다), 새 턴은 `TurnState::new()`가 0에서 시작하므로 예산이 초기화된다(`crates/agent-runtime/src/turn_state.rs:489-491`, 테스트 `crates/agent-runtime/src/turn_state_tests.rs:200-208`). 한도를 다 쓰면 복구를 멈추고 사용자에게 알린다(`crates/app-core/src/agent/turn_recovery_wiring.rs:167-179`).
+합성 계속은 `MAX_AUTO_CONTINUATIONS = 2`로 제한된다(`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState`는 이 값을 넘기지 않고(`crates/agent-runtime/src/turn_state.rs:713-716` `record_auto_continuation`이 상한으로 자른다), 새 턴은 `TurnState::new()`가 0에서 시작하므로 예산이 초기화된다(`crates/agent-runtime/src/turn_state.rs:489-491`, 테스트 `crates/agent-runtime/src/turn_state_tests.rs:200-208`). 한도를 다 쓰면 복구를 멈추고 사용자에게 알린다(`crates/app-core/src/agent/turn_recovery_wiring.rs:167-179`).
 
 ### 텍스트로 작성된 도구 호출
 
@@ -110,45 +110,45 @@ cargo test -p horon-agent-base soft_interrupt_store
 
 ### 끝난 턴은 다음 프롬프트를 읽기 전에 닫힌다
 
-요청 루프는 끝난 턴의 보고를 클라이언트 입력보다 먼저 읽습니다
-(`crates/app-core/src/server/client_lifecycle.rs:829-833`, `biased`가 붙은
+요청 루프는 끝난 턴의 보고를 클라이언트 입력보다 먼저 읽는다
+(`crates/app-core/src/server/client_lifecycle.rs:844-848`, `biased`가 붙은
 `processing_done_rx.recv()` 갈래). 턴 태스크는 그 보고를 종료 이벤트보다 먼저
 보내므로, `Done`을 받고 곧바로 다음 프롬프트를 보낸 클라이언트는 `Already
-processing a message`를 만나지 않고 이미 닫힌 턴을 봅니다
-(`crates/app-core/src/server/client_lifecycle.rs:3827-3835`). 거부된 턴도 오류
-이벤트보다 보고를 먼저 보냅니다
-(`crates/app-core/src/server/client_lifecycle.rs:3761-3763`). 다음 턴의 태스크는
+processing a message`를 만나지 않고 이미 닫힌 턴을 본다
+(`crates/app-core/src/server/client_lifecycle.rs:3911-3913`). 거부된 턴도 오류
+이벤트보다 보고를 먼저 보낸다
+(`crates/app-core/src/server/client_lifecycle.rs:3838-3845`). 다음 턴의 태스크는
 이번 턴의 idle 상태가 나갈 때까지 에이전트를 계속 쥐므로, 다음 턴의 `running`이
-이번 턴의 idle보다 앞설 수 없습니다.
+이번 턴의 idle보다 앞설 수 없다.
 
-종료 이벤트에 `no_reply` 메시지를 쓰면 그것은 문맥 메시지입니다. 턴을 시작하지
-않으므로 그 꼬리 구간에서 세션이 바쁘다는 답을 받으면 안 됩니다. 먼저 턴 상태를
-봅니다. 이 연결의 턴이거나 어느 클라이언트든 등록한 턴
+종료 이벤트에 `no_reply` 메시지를 쓰면 그것은 문맥 메시지다. 턴을 시작하지
+않으므로 그 꼬리 구간에서 세션이 바쁘다는 답을 받으면 안 된다. 먼저 턴 상태를
+본다. 이 연결의 턴이거나 어느 클라이언트든 등록한 턴
 (`turn_cancel_registry::has_active_turn`)이면 곧바로 바쁨 오류로 답하고, 그래서
-실행 중인 턴이 순차 요청 루프를 잡아 두지 않습니다. 등록된 턴이 없으면 잠금을
+실행 중인 턴이 순차 요청 루프를 잡아 두지 않는다. 등록된 턴이 없으면 잠금을
 한 번만 잡는데, 잠금이 풀릴 때까지 `AGENT_LOCK_BACKGROUND_WAIT`(500밀리초)까지만
-기다립니다. 완료 꼬리는 보통 수 마이크로초에 끝나고, 한도를 넘긴 잠금은 루프를
-잡아 두지 않고 바쁨 오류로 답합니다
-(`crates/app-core/src/server/client_lifecycle.rs:3502-3549`). 저장은 그 하나의
+기다린다. 완료 꼬리는 보통 수 마이크로초에 끝나고, 한도를 넘긴 잠금은 루프를
+잡아 두지 않고 바쁨 오류로 답한다
+(`crates/app-core/src/server/client_lifecycle.rs:3588-3638`). 저장은 그 하나의
 잠금 안에서 하므로 메시지는 정확히 한 번 저장되고 `ContextMessageAdded`로
-승인됩니다.
+승인된다.
 
-취소 응답만은 요청 루프가 턴의 포워더를 거치지 않고 클라이언트로 바로 씁니다.
-그래서 세션의 포워더가 밀린 이벤트를 다 내보낼 때까지 먼저 기다립니다.
+취소 응답만은 요청 루프가 턴의 포워더를 거치지 않고 클라이언트로 바로 쓴다.
+그래서 세션의 포워더가 밀린 이벤트를 다 내보낼 때까지 먼저 기다린다.
 `fanout_flush::flush`를 500밀리초 한도로 부른 뒤 `Interrupted`와 `Done`을
-보냅니다(`crates/app-core/src/server/client_lifecycle.rs:4032-4034`). 이 대기가
+보낸다(`crates/app-core/src/server/client_lifecycle.rs:4109-4111`). 이 대기가
 없으면 취소된 턴의 마지막 도구 프레임이 그 턴의 `Done` 뒤, 다음 프롬프트 안에
-들어갑니다. 포워더는 생성될 때 플러시 채널을 등록하고, 요청이 도착한 시점에
-이벤트 대기열이 비어 있었을 때만 응답하며, 종료할 때 채널을 버립니다. 살아 있는
+들어간다. 포워더는 생성될 때 플러시 채널을 등록하고, 요청이 도착한 시점에
+이벤트 대기열이 비어 있었을 때만 응답하며, 종료할 때 채널을 버린다. 살아 있는
 포워더가 없는 세션은 곧바로 돌아오고, 한도를 다 쓴 플러시는 경고를 남기고 응답을
-그대로 보냅니다(`crates/app-core/src/server/fanout_flush.rs`,
+그대로 보낸다(`crates/app-core/src/server/fanout_flush.rs`,
 `crates/app-core/src/server/state.rs:996`).
 
 ## 소프트 인터럽트: 끊김 없는 메시지 주입
 
 ### 개요
 
-소프트 인터럽트는 이 빌드에 구현되어 있다. 진행 중인 턴에 메시지를 넣어도 현재 생성은 취소되지 않는다. 흐름을 끊고 다시 시작하는 대신 메시지를 대기열에 넣고, 에이전트 루프가 도구 실행을 마친 안전 지점에서 대화 이력에 붙인다. 구현은 세 조각으로 나뉜다. 프로토콜 요청 두 개(`crates/protocol/src/wire.rs:175-197`), 세션별 대기열(`crates/agent-runtime/src/lib.rs:18-175`), 그리고 턴 루프의 주입 지점(`crates/app-core/src/agent/interrupts.rs:536-669`)이다.
+소프트 인터럽트는 이 빌드에 구현되어 있다. 진행 중인 턴에 메시지를 넣어도 현재 생성은 취소되지 않는다. 흐름을 끊고 다시 시작하는 대신 메시지를 대기열에 넣고, 에이전트 루프가 도구 실행을 마친 안전 지점에서 대화 이력에 붙인다. 구현은 세 조각으로 나뉜다. 프로토콜 요청 두 개(`crates/protocol/src/wire.rs:175-197`), 세션별 대기열(`crates/agent-runtime/src/lib.rs:18-175`), 그리고 턴 루프의 주입 지점(`crates/app-core/src/agent/interrupts.rs:695-908`)이다.
 
 ### 하드 인터럽트와의 차이
 
@@ -248,21 +248,21 @@ CancelSoftInterrupts {
 
 대기열은 세션별 파일에 남는다. 경로는 `<에이전트 데이터 디렉터리>/pending-soft-interrupts/<session-id>.json`이다(`crates/base/src/soft_interrupt_store.rs:69-75`).
 
-- 서버가 메시지를 대기열에 넣을 때 디스크에도 덧붙인다(`crates/app-core/src/server/state.rs:1288-1298`).
-- 취소 요청은 `client_ids`에 해당하는 항목만 디스크에서 지운다(`crates/app-core/src/server/client_lifecycle.rs:3821`). 전체 취소는 파일을 비운다(`:3851`).
-- 에이전트는 상태를 바꿀 때마다 스냅숏을 다시 쓴다(`crates/app-core/src/agent.rs:1369`, `:1401` → `crates/app-core/src/agent/interrupts.rs:181-200`).
+- 서버가 메시지를 대기열에 넣을 때 디스크에도 덧붙인다(`crates/app-core/src/server/state.rs:1377-1434`).
+- 취소 요청은 `client_ids`에 해당하는 항목만 디스크에서 지운다(`crates/app-core/src/server/client_lifecycle.rs:4292`). 전체 취소는 파일을 비운다(`:4328`).
+- 에이전트는 상태를 바꿀 때마다 스냅숏을 다시 쓴다(`crates/app-core/src/agent.rs:1642`, `:1648` → `crates/app-core/src/agent/interrupts.rs:264-287`).
 
-세션을 복원하면 디스크의 대기열을 메모리로 읽어 들인다(`crates/app-core/src/agent/turn_execution.rs:1170` → `crates/app-core/src/agent/interrupts.rs:143-175`). 이 읽기는 파괴적이지 않다. 첫 턴이 성공적으로 커밋되기 전에는 디스크 사본을 지우지 않으므로, 재시작과 재시도에서도 메시지가 한 번만 주입된다.
+세션을 복원하면 디스크의 대기열을 메모리로 읽어 들인다(`crates/app-core/src/agent/turn_execution.rs:1393` → `crates/app-core/src/agent/interrupts.rs:192-262`). 이 읽기는 파괴적이지 않다. 첫 턴이 성공적으로 커밋되기 전에는 디스크 사본을 지우지 않으므로, 재시작과 재시도에서도 메시지가 한 번만 주입된다.
 
 ### 취소된 턴
 
-사용자가 턴을 취소하면 주입을 하지 않는다. `inject_soft_interrupts`는 정상 종료 신호가 선 경우 빈 목록을 돌려주고 메시지를 대기열에 그대로 둔다(`crates/app-core/src/agent/interrupts.rs:536-554`). 그래야 사용자가 이어서 친 다음 프롬프트가 답 없는 메시지로 이력에 남지 않고, 클라이언트가 그것을 다음 턴으로 보낼 수 있다.
+사용자가 턴을 취소하면 주입을 하지 않는다. `inject_soft_interrupts`는 정상 종료 신호가 선 경우 빈 목록을 돌려주고 메시지를 대기열에 그대로 둔다(`crates/app-core/src/agent/interrupts.rs:695-713`). 그래야 사용자가 이어서 친 다음 프롬프트가 답 없는 메시지로 이력에 남지 않고, 클라이언트가 그것을 다음 턴으로 보낼 수 있다.
 
 ### 스트림 규칙 주입과의 관계
 
 `[features] stream_rules`가 켜져 있으면 스트리밍 중간에 규칙 위반을 잡아 같은 이벤트 채널로 메시지를 넣는다. 이 경로는 지점 이름 `S`를 쓴다(`crates/app-core/src/agent/stream_rules.rs:42`, `crates/app-core/src/agent/turn_streaming_mpsc.rs:738-780`). 사용자 입력 대기열과 별개이며, 켜지 않으면 매처 자체가 만들어지지 않는다(`crates/app-core/src/agent/stream_rules.rs:83-90`).
 
-`horon stream-rules`는 설정에 적힌 규칙 ID, 정규식, 적용 범위와 경로 패턴을 오프라인에서 검사합니다. `horon stream-rules '답변 예시'`는 예시에 맞는 텍스트 규칙과 적용 방식을 표시합니다. `-`를 지정하면 표준 입력에서 UTF-8 텍스트를 최대 64 KiB까지 읽습니다. 실제 실행과 같은 최근 텍스트 범위를 빈 턴 기록에 적용합니다. `[features] stream_rules`가 꺼져 있어도 검사할 수 있으며 규칙을 실행하거나 세션을 바꾸지 않습니다.
+`horon stream-rules`는 설정에 적힌 규칙 ID, 정규식, 적용 범위와 경로 패턴을 오프라인에서 검사한다. `horon stream-rules '답변 예시'`는 예시에 맞는 텍스트 규칙과 적용 방식을 표시한다. `-`를 지정하면 표준 입력에서 UTF-8 텍스트를 최대 64 KiB까지 읽는다. 실제 실행과 같은 최근 텍스트 범위를 빈 턴 기록에 적용한다. `[features] stream_rules`가 꺼져 있어도 검사할 수 있으며 규칙을 실행하거나 세션을 바꾸지 않는다.
 
 ### 사용자 경험
 
@@ -287,7 +287,7 @@ CancelSoftInterrupts {
 
 1. **소프트 인터럽트가 여러 개인 경우**: 출처별로 묶고 `\n\n` 구분자로 이어 하나의 메시지로 만든다.
 2. **텍스트만 응답하는 중의 소프트 인터럽트**: 지점 B에서 주입하고 루프를 계속한다.
-3. **턴이 취소된 경우**: 주입하지 않고 메시지를 대기열에 남긴다. 클라이언트가 다음 턴으로 보낸다(`crates/app-core/src/agent/interrupts.rs:536-554`).
+3. **턴이 취소된 경우**: 주입하지 않고 메시지를 대기열에 남긴다. 클라이언트가 다음 턴으로 보낸다(`crates/app-core/src/agent/interrupts.rs:695-713`).
 4. **턴이 실패하거나 패닉한 경우**: `InFlightGuard`가 주입한 메시지를 대기열 앞으로 되돌린다(`crates/app-core/src/agent/interrupts.rs:58-70`).
 5. **대기열 잠금이 깨진 경우**: 주입을 건너뛰고 경고만 남긴다(`crates/app-core/src/agent/interrupts.rs:556-565`).
 
@@ -302,8 +302,8 @@ CancelSoftInterrupts {
 
 하네스 API는 연결된 데몬의 안전 기능 프로브가 `runtime_commands`를 알릴 때만 그 기능을 알린다.
 구형 데몬은 명시적인 미지원 오류를 돌려준다.
-이것은 추가형 API이며 현재 마이너 버전은 27이고 세 SDK 모두에서 쓸 수 있다
-(`crates/harness-api/src/lib.rs:88-91`).
+이것은 추가형 API이며 현재 마이너 버전은 32이고 세 SDK 모두에서 쓸 수 있다
+(`crates/harness-api/src/lib.rs:102`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -632,32 +632,32 @@ method_order = ["handoff", "structured"]
 ### horon이 이미 구현한 세 가지 개념
 
 이 저장소 밖에서는 압축에 재작성 방지, 다중 신호 트리거, 최신 관측 규칙이 필요하다고
-설명하기도 합니다. 셋 다 새 코드 없이 여기에 있습니다.
+설명하기도 한다. 셋 다 새 코드 없이 여기에 있다.
 
-- **한 번 바꾼 바이트는 다시 바꾸지 않습니다.** 축약된 결과는 `AGED_MARKER_PREFIX`를
-  달고 다음 차례에 건너뜁니다(`crates/app-core/src/agent/tool_result_aging.rs`). 가지치기한
-  도구 호출은 원장에 남겨 두 번 계획하지 않습니다(`crates/compaction-core/src/pruning.rs`).
-- **축약에는 질량, 이득, 주기가 모두 필요합니다.** 압박 비율(`AGING_PRESSURE_RATIO`,
+- **한 번 바꾼 바이트는 다시 바꾸지 않는다.** 축약된 결과는 `AGED_MARKER_PREFIX`를
+  달고 다음 차례에 건너뛴다(`crates/app-core/src/agent/tool_result_aging.rs`). 가지치기한
+  도구 호출은 원장에 남겨 두 번 계획하지 않는다(`crates/compaction-core/src/pruning.rs`).
+- **축약에는 질량, 이득, 주기가 모두 필요하다.** 압박 비율(`AGING_PRESSURE_RATIO`,
   임계의 0.75)과 최소 묶음 크기(`AGING_MIN_PRESSURE_BATCH_BYTES`, 64 KiB)를 넘고, 같은
-  구간을 지날 때 한 번만 실행합니다.
-- **대상마다 최신 관측만 남습니다.** 가지치기는 `newest_by_key`와
+  구간을 지날 때 한 번만 실행한다.
+- **대상마다 최신 관측만 남는다.** 가지치기는 `newest_by_key`와
   `newest_complete_by_path`를 유지하므로, 같은 경로의 부분 읽기·실패 호출·나중 전체 읽기는
-  지금도 유효한 한 항목으로 정리됩니다.
+  지금도 유효한 한 항목으로 정리된다.
 
 시험: `crates/app-core/src/agent/tool_result_aging/tests.rs`가 접두어 방지와 묶음 게이트를,
-`crates/compaction-core/src/pruning.rs`가 최신 선택을 다룹니다.
+`crates/compaction-core/src/pruning.rs`가 최신 선택을 다룬다.
 
 ## 실행 시간 제한
 
-`horon run --max-time 30 "..."`는 턴 처리 시간을 30초로 제한합니다. 초기화가 끝나면 시간을 재기 시작하며 양수 초를 소수로도 지정할 수 있습니다. 제한 시간이 지나면 턴을 취소하고 최대 1초 동안 정리를 기다립니다. 프로세스는 종료 상태 `124`를 반환합니다.
+`horon run --max-time 30 "..."`는 턴 처리 시간을 30초로 제한한다. 초기화가 끝나면 시간을 재기 시작하며 양수 초를 소수로도 지정할 수 있다. 제한 시간이 지나면 턴을 취소하고 최대 1초 동안 정리를 기다린다. 프로세스는 종료 상태 `124`를 반환한다.
 
-텍스트 모드는 시간 초과를 표준 오류에 표시합니다. `--json`은 오류 객체 하나를 쓰고 `--ndjson`은 오류 레코드로 끝납니다. 두 형식은 `"code":"deadline_exceeded"`와 함께 `max_time_seconds` 및 세션 ID를 포함합니다.
+텍스트 모드는 시간 초과를 표준 오류에 표시한다. `--json`은 오류 객체 하나를 쓰고 `--ndjson`은 오류 레코드로 끝난다. 두 형식은 `"code":"deadline_exceeded"`와 함께 `max_time_seconds` 및 세션 ID를 포함한다.
 
-`--wait-async`를 쓰면 현재 실행과 세션이 시작한 백그라운드 작업을 기다리는 시간도 제한에 포함합니다. 텍스트 모드는 표준 오류에 작업마다 상태를 한 번씩 표시합니다. `--json`이 성공하면 `background_jobs` 배열을 포함하고, `--ndjson`은 `done` 전에 작업마다 `background_job` 레코드를 보냅니다. 시간이 초과되면 확인한 상태를 표준 오류에 쓰고 선택한 형식으로 기존 시간 초과 오류를 보냅니다.
+`--wait-async`를 쓰면 현재 실행과 세션이 시작한 백그라운드 작업을 기다리는 시간도 제한에 포함한다. 텍스트 모드는 표준 오류에 작업마다 상태를 한 번씩 표시한다. `--json`이 성공하면 `background_jobs` 배열을 포함하고, `--ndjson`은 `done` 전에 작업마다 `background_job` 레코드를 보낸다. 시간이 초과되면 확인한 상태를 표준 오류에 쓰고 선택한 형식으로 기존 시간 초과 오류를 보낸다.
 
 ## 텍스트 모드의 추론 표시
 
-`horon run --print-thoughts "..."`는 제공자가 보이는 텍스트로 돌려주는 추론을 답변보다 먼저 표준 오류에 `[thinking]` 표시와 함께 출력합니다. 답변은 표준 출력에 그대로 남으므로 파이프로 받은 출력은 달라지지 않습니다. 옵션을 주지 않으면 텍스트 출력은 바이트 단위로 같습니다. 제공자가 보이는 텍스트로 돌려주지 않는 추론은 표시하지 않으며, 이 옵션은 형식이 바뀌지 않는 `--json`, `--ndjson`과 함께 쓸 수 없습니다.
+`horon run --print-thoughts "..."`는 제공자가 보이는 텍스트로 돌려주는 추론을 답변보다 먼저 표준 오류에 `[thinking]` 표시와 함께 출력한다. 답변은 표준 출력에 그대로 남으므로 파이프로 받은 출력은 달라지지 않는다. 옵션을 주지 않으면 텍스트 출력은 바이트 단위로 같다. 제공자가 보이는 텍스트로 돌려주지 않는 추론은 표시하지 않으며, 이 옵션은 형식이 바뀌지 않는 `--json`, `--ndjson`과 함께 쓸 수 없다.
 
 ## `--resume` 동작
 
@@ -700,4 +700,4 @@ method_order = ["handoff", "structured"]
 
 `/save`, `/unsave`는 클라이언트의 슬래시 명령이며, 함께 배포되는 클라이언트에는 이 명령이 없다. 세션에 붙는
 저장 레이블은 하네스 API 응답의 `save_label` 필드로 남아 있다
-(`crates/harness-api-server/src/translate.rs:255`, `:883` 참고).
+(`crates/harness-api-server/src/translate.rs:299`, `:911` 참고).

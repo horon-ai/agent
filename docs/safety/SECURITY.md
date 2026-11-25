@@ -18,7 +18,7 @@ Three files in the workspace are gated (`crates/base/src/workspace_trust.rs:22` 
 
 User-level configuration is not gated. `~/.horon/mcp.json`, `~/.claude.json`, and `~/.claude/mcp.json` are the user's own configuration, not something a repository decides. Those Claude Code files are read only when `[mcp] claude_user` is on, `~/.codex/config.toml` only when `[mcp] codex_user` is on, and the per-project entries in `~/.claude.json` are matched to the session's project directory, so one repository's entry never reaches another (`crates/base/src/mcp/sources.rs:1-14`).
 
-There is a single enforcement point. When `McpConfig` reads project-local configuration, `load_authorized_project_locals` calls `authorize_project_config` and parses only the bytes of the authorized snapshot (`crates/base/src/mcp/protocol.rs:706`, `workspace_trust.rs:258`). If all three files are absent there is nothing to gate, so the result is `Absent`; if the decision is denial, it logs one warning line and does not load project configuration.
+There is a single enforcement point. When `McpConfig` reads project-local configuration, `load_authorized_project_locals` calls `authorize_project_config` and parses only the bytes of the authorized snapshot (`crates/base/src/mcp/protocol.rs:706`, `workspace_trust.rs:267`). If all three files are absent there is nothing to gate, so the result is `Absent`; if the decision is denial, it logs one warning line and does not load project configuration.
 
 ### Digest rules
 
@@ -28,11 +28,11 @@ The snapshot reads the three surfaces in a fixed order and computes SHA-256 (`wo
 2. For each surface it adds the path, the state, and a content fingerprint.
 3. The state is one of `absent`, `present`, `unreadable`. `present` includes the byte length together with that file's SHA-256.
 
-Consent is recorded as the pair of the normalized workspace path and this digest. The record file is `workspace-trust.json` in the agent directory (`workspace_trust.rs:408` `trust_file_path`), and nothing is written into the workspace. An entry carries version 1, the digest, the decision, the recording time, and the per-surface SHA-256 and length.
+Consent is recorded as the pair of the normalized workspace path and this digest. The record file is `workspace-trust.json` in the agent directory (`workspace_trust.rs:439` `trust_file_path`), and nothing is written into the workspace. An entry carries version 1, the digest, the decision, the recording time, and the per-surface SHA-256 and length.
 
 - If any of the three files changes even one byte, the digest differs and that workspace is asked for trust again. Creating or deleting a file has the same effect.
-- The denial reason names the changed surface as precisely as it can (`workspace_trust.rs:304` `untrusted_reason`).
-- The record is read and rewritten as a whole file, so if two processes write at the same moment one decision can be lost. What is lost is one decision; an allowance that did not exist never appears (`workspace_trust.rs:222` `record`).
+- The denial reason names the changed surface as precisely as it can (`workspace_trust.rs:313` `untrusted_reason`).
+- The record is read and rewritten as a whole file, so if two processes write at the same moment one decision can be lost. What is lost is one decision; an allowance that did not exist never appears (`workspace_trust.rs:231` `record`).
 - The digest is not a mechanism that makes a repository trustworthy. It binds consent to the contents the user saw.
 
 ### Fail closed without a client
@@ -41,7 +41,7 @@ When no client is attached there is nobody to ask. So an unknown state is denial
 
 - With no record for the current digest the result is `Skipped`. It logs a warning, does not load project-local configuration, and records no decision. The next run asks again.
 - With a record but a different digest the result is `Skipped`. The warning names the changed surface.
-- If a surface cannot be read as a regular file, the result is `Skipped` regardless of overrides (`workspace_trust.rs:258`).
+- If a surface cannot be read as a regular file, the result is `Skipped` regardless of overrides (`workspace_trust.rs:267`).
 - If the recorded decision is denial, the result is `Skipped`.
 - If all three files are absent the result is `Absent` and the gate does not engage.
 
@@ -58,7 +58,7 @@ When `[tools] bash_direnv` is enabled, local shells also require an explicit Hor
 | `HORON_AGENT_WORKSPACE_TRUST=deny` | This process | Records nothing, and denies even when a stored trust exists. |
 | Explicit commands such as `mcp test` and `mcp list` | That command | Records nothing. The command itself is the consent. |
 
-The environment variable is case-insensitive and recognizes only `trust` and `deny`. Any other value is ignored and the stored decision applies (`workspace_trust.rs:363` `env_decision`). An environment denial is applied before `--trust-workspace`, so if you pass both, the denial wins.
+The environment variable is case-insensitive and recognizes only `trust` and `deny`. Any other value is ignored and the stored decision applies (`workspace_trust.rs:372` `env_decision`). An environment denial is applied before `--trust-workspace`, so if you pass both, the denial wins.
 
 ## Hosted MCP and extension isolation
 
@@ -118,13 +118,13 @@ The bundle is written under `crashes/` below the agent directory (`crates/base/s
 
 One bundle is one directory.
 
-```
+```text
 <agent dir>/crashes/<UTC time>-p<pid>/
   bundle.json
   report.txt
 ```
 
-The time format is `YYYYMMDDTHHMMSS.mmmZ` with the PID appended (`crash.rs:158` `bundle_stamp`). If the same name already exists, a new directory gets a suffix such as `-1` or `-2` (`crash.rs:166` `create_bundle_dir`).
+The time format is `YYYYMMDDTHHMMSS.mmmZ` with the PID appended (`crash.rs:217` `bundle_stamp`). If the same name already exists, a new directory gets a suffix such as `-1` or `-2` (`crash.rs:225` `create_bundle_dir`).
 
 ### Contents
 
@@ -140,16 +140,16 @@ The time format is `YYYYMMDDTHHMMSS.mmmZ` with the PID appended (`crash.rs:158` 
 | `panic.thread` | The name or ID of the thread that panicked. |
 | `operations` | Up to the last 64 tool dispatches, oldest first. |
 
-`operations` is a process-wide ring buffer (`crash.rs:25` `OPERATION_RING_CAPACITY`). Each entry carries an increasing `seq`, the tool name, and the input text after redaction and truncation (`crash.rs:42-46` `OperationRecord`). When the feature is off, dispatches are not recorded at all.
+`operations` is a process-wide ring buffer (`crash.rs:26` `OPERATION_RING_CAPACITY`). Each entry carries an increasing `seq`, the tool name, and the input text after redaction and truncation (`crash.rs:61` `OperationRecord`). When the feature is off, dispatches are not recorded at all.
 
-`report.txt` lays out the same contents for humans. Its first line is `horon-agent crash bundle (local only; nothing was transmitted)` (`crash.rs:205` `render_report`).
+`report.txt` lays out the same contents for humans. Its first line is `horon-agent crash bundle (local only; nothing was transmitted)` (`crash.rs:264` `render_report`).
 
 ### Redaction
 
 Every string that goes into a bundle passes through `redact_secrets`, the existing secret-removal pass (`crates/base/src/message.rs:45`).
 
 - The same pass applies to the panic message, location, thread name, tool names, and tool input JSON.
-- Fields are truncated at 2048 characters with `[truncated]` appended. Tool names are truncated at 128 characters (`crash.rs:241` `truncate_chars`).
+- Fields are truncated at 2048 characters with `[truncated]` appended. Tool names are truncated at 128 characters (`crash.rs:318` `truncate_chars`).
 - Tool input is treated as text an attacker can influence. It is written into the bundle as inert data only and is never read back to be executed or interpreted.
 
 Redaction is a defense that removes known secret shapes, not a complete guarantee. Bundles are better treated as sensitive material.
@@ -162,7 +162,7 @@ The bundle is written to a local directory with `std::fs::write` only. There are
 
 `[features] crash_bundles` defaults to `true` (`crates/config-types/src/feature.rs:54`). Setting it to `false` means the panic hook writes no bundle and tool dispatches are not recorded either.
 
-The hook is installed once at startup (`src/cli/startup.rs:38`). Later calls only update the enabled flag (`crash.rs:67` `install_panic_hook`). So re-reading configuration and turning the feature on or off still leaves the already installed hook following that flag.
+The hook is installed once at startup (`src/cli/startup.rs:143`). Later calls only update the enabled flag (`crash.rs:86` `install_panic_hook`). So re-reading configuration and turning the feature on or off still leaves the already installed hook following that flag.
 
 ### Limits
 
@@ -316,7 +316,7 @@ This section is not a re-measurement of the table above; it only counts whether 
 
 2026-10-29: `crates/provider-openai-runtime` and the 8317 default base were removed later.
 
-2026-11-04: the native plugin model path was removed too, so model requests now go directly to an OpenAI-compatible endpoint from `[providers.<name>]`.
+2026-11-04: the native plugin model path was removed too, so model requests now go directly to the configured `[providers.<name>]` endpoint over the wire its `type` selects (`openai-compatible`, `openai-responses`, `anthropic-compatible`, or `gemini-compatible`).
 
 An extension declares a Rust executable and a plugin adds resources to that
 extension. `horon package install <directory>` validates and registers either
@@ -326,12 +326,12 @@ The daemon reconciles completed folders under the user-owned
 `$HORON_HOME/packages/inbox/<id>/` through the same installer. It leaves the
 source in place and skips IDs already recorded, including removed packages.
 The CLI sends mutations to the daemon when it is running. If a reply is lost
-after sending the request, the CLI returns an error. Session refresh is a
-separate step.
+after sending the request, the CLI returns an error. An open session captures
+each updated catalog generation at its next turn boundary.
 
 SHA-256 is an internal integrity check. The versioned JSON-RPC handshake
 compares the declaration digest the child reports before any call is dispatched.
-Tool calls and executable commands will use the existing tool
-policy. Child processes run with the user's OS permissions. The host checks
+Tool calls and executable commands use the existing tool and hosting policy
+gates (`crates/base/src/packages/child_gate.rs`). Child processes run with the user's OS permissions. The host checks
 cannot restrict direct file or network access inside the child, so install only
 trusted packages.

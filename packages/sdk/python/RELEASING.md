@@ -134,7 +134,7 @@ version line.
 - `uv run pytest` — includes `tests/test_protocol_parity.py`, which reads
   `packages/sdk/typescript/src/protocol.ts` and fails if the request/event tag sets or
   protocol versions diverge.
-- `cargo test -p harness-api` — fails if a Rust event or request variant, a
+- `cargo test -p horon-agent-harness-api` — fails if a Rust event or request variant, a
   payload field, or an external credential location is missing from the SDK.
 
 ## Platform support

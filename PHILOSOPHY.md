@@ -19,7 +19,7 @@ One agent with two equal modes. In headless mode a program drives a session: a o
 | 5 | Two modes, one engine | Headless mode and TUI mode drive the same daemon and sessions. The agent binary has no terminal stack in its dependency graph; TUI mode is a separate package on the SDK, released from the same tag | `AGENTS.md` (Modes, binaries and release units; Fixed requirement 1), `scripts/ci/check_headless_graph.py`, `docs/release/INSTALL.md` |
 | 6 | SDK-first | The harness API is the contract between the engine and any client, including the TUI and server code | `docs/protocol/HARNESS_API.md`, `crates/agent-sdk` |
 | 7 | Tools cost tokens | The `core` profile sends 7 of its 18 tools every request and reaches the rest through `toolbox`; schema bytes are a budget, not free | `AGENTS.md` (What this build is), `docs/runtime/TOOLS.md` |
-| 8 | One model path | `[providers.<name>] type` picks Chat Completions, OpenAI Responses, Anthropic Messages, or Gemini generateContent. One provider runtime posts directly to the endpoint. MCP provides external tools today. Planned user-installed Rust packages run in separate processes outside the model path | `AGENTS.md` (What this build is) |
+| 8 | One model path | `[providers.<name>] type` picks Chat Completions, OpenAI Responses, Anthropic Messages, or Gemini generateContent. One provider runtime posts directly to the endpoint. MCP and user-installed Rust packages (`docs/runtime/PACKAGES.md`) provide external tools, with packages running in separate processes outside the model path | `AGENTS.md` (What this build is) |
 | 9 | Clean cutover | Surface that stopped earning its place is deleted with every caller migrated, not kept behind an alias. The home directory moved to `~/.horon` with no compatibility path | commits `738712a2` (#7), `d6a0f81b` (#9), `a3a70db7` (#88) |
 | 10 | Zero CI warnings | A run with warnings is not finished; the cause is fixed, not silenced | `AGENTS.md` (CI warnings), `scripts/ci/run_warnings.py` |
 
@@ -35,12 +35,15 @@ A proposal fits when the answer to all five is yes. Section "Design principles" 
 4. It does not break ACP v1/v2, the SDKs, or stored sessions.
 5. It does not bring back removed surface under another name.
 
-The user-installed Rust package design may add one internal data-contract crate,
-`extension-types`, using existing workspace dependencies only. The exception
-covers the dependency graph. Keep the no-package performance and binary size
-baselines. Extend the structural performance gate with a binary-size check.
-Preserve ACP v1/v2, SDK and stored-session compatibility, and the TUI
-dependency boundary.
+The user-installed Rust package implementation uses one exception to item 3's
+dependency-graph rule: the internal data-contract crate `extension-types`
+(`crates/extension-types`, package `horon-agent-extension-types`) draws only
+from existing workspace dependencies, while `horon-agent-extension-sdk` and
+`horon-package-example` stay outside the `horon-agent` binary graph. Keep the
+no-package performance and binary size baselines, enforce the zero-overhead
+`packages` bounds in the structural performance gate alongside a binary-size
+check when extending the surface, and preserve ACP v1/v2, SDK and stored-session
+compatibility, and the TUI dependency boundary.
 
 ## Adopted from omp2
 
@@ -66,7 +69,7 @@ omp2 is a much larger product (about 1.17 million lines of Rust and 1,361 locked
 | Streaming dry-run of arguments | Adds CPU per turn and `compare` cannot show a gain |
 | A `report_issue` tool | One more tool slot is paid on every request, and nothing on the receiving side reads the report; repair records (#151) cover the same need |
 | KDL model catalog | A parser and about 123 data files in omp2 would grow install size; model names stay in config |
-| In-process shell, `dyn` device bus, embedded Python extensions | These load in the agent process. The approved Rust package design calls for separate child processes (principle 8) |
+| In-process shell, `dyn` device bus, embedded Python extensions | These load in the agent process. User-installed Rust packages run in separate child processes (principle 8) |
 | Wholesale `anyhow` or `SmallVec` replacement | About 2,000 call sites for no measured gain; memory work targets allocations the profile names |
 | Clean cutover of external contracts | Released versions exist; ACP v1, harness API v1, and stored sessions are kept |
 

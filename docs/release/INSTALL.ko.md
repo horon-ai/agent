@@ -139,7 +139,7 @@ npm 설치본은 에이전트 자체 업데이터가 아니라 npm으로 갱신�
 
 ### 준비
 
-TTY, 화면, `XDG_RUNTIME_DIR`이 필요 없다. 소켓 디렉터리는 `HORON_AGENT_RUNTIME_DIR`, `XDG_RUNTIME_DIR`, 플랫폼별 사용자 런타임 디렉터리 순으로 정하고, 셋 다 없으면 임시 디렉터리 아래 `horon-agent-<사용자 구분자>`를 쓴다 (`crates/harness-api/src/sockets.rs:16-31`). 사용자 구분자는 `UID`, `USER` 순으로 읽어 영숫자와 `-`, `_`만 남기고 64자로 자른다. 남는 글자가 없으면 `user`다.
+TTY, 화면, `XDG_RUNTIME_DIR`이 필요 없다. 소켓 디렉터리는 `HORON_AGENT_RUNTIME_DIR`, `XDG_RUNTIME_DIR`, 플랫폼별 사용자 런타임 디렉터리 순으로 정하고, 셋 다 없으면 임시 디렉터리 아래 `horon-agent-<사용자 구분자>`를 쓴다 (`crates/harness-api/src/sockets.rs:16-36`). 사용자 구분자는 `UID`, `USER` 순으로 읽어 영숫자와 `-`, `_`만 남기고 64자로 자른다. 남는 글자가 없으면 `user`다.
 
 provider 프로파일을 `config.toml`에 둔다. 위치는 `HORON_HOME`이 있으면 `$HORON_HOME/config.toml`, 없으면 `~/.horon/config.toml`이다. 키와 파일 위치는 [`../provider/MODEL.ko.md`](../provider/MODEL.ko.md)에 있다.
 
