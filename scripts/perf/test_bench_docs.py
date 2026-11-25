@@ -934,21 +934,60 @@ class CommittedBenchmarkDocsTests(unittest.TestCase):
                 for label in self.TOOL_LABELS:
                     self.assertIn(label, block)
                 self.assertNotIn("horon-base", block)
+                self.assertNotIn("v0.1.0-dev", block)
                 self.assertNotIn("| — | — | — |", block)
                 self.assertIn("actions/runs/", block)
 
     def test_results_versions_and_summary_charts_cover_all_eight_tools(self) -> None:
-        for name, missing_marker in (("docs/performance/RESULTS.md", "not recorded"),
-                                     ("docs/performance/RESULTS.ko.md", "기록 없음")):
+        commits: dict[str, str | None] = {}
+        for name, missing_marker, npm_marker in (
+            ("docs/performance/RESULTS.md", "not recorded", "npm dist-tag latest"),
+            ("docs/performance/RESULTS.ko.md", "기록 없음", "npm dist-tag latest"),
+        ):
             with self.subTest(doc=name):
                 text = (self.REPO / name).read_text(encoding="utf-8")
+                commit = bench_docs.last_commit(text)
+                self.assertIsNotNone(commit)
+                assert commit is not None
+                self.assertEqual(len(commit), 40)
+                commits[name] = commit
                 versions = self._between(text, bench_docs.VERSIONS_START, bench_docs.VERSIONS_END)
                 for label in self.TOOL_LABELS:
                     self.assertIn(f"| {label} |", versions)
+                self.assertIn(f"({commit[:7]})", versions)
+                self.assertNotIn("v0.1.0-dev", versions)
                 self.assertNotIn("horon-base", versions)
+                self.assertIn(npm_marker, versions)
                 for os_row in ("| Linux | `v", "| macOS | `v", "| Windows | `v"):
                     self.assertIn(os_row, versions)
                 self.assertNotIn(missing_marker, versions)
+
+        self.assertEqual(
+            commits["docs/performance/RESULTS.md"],
+            commits["docs/performance/RESULTS.ko.md"],
+        )
+        measured_commit = commits["docs/performance/RESULTS.md"]
+        assert measured_commit is not None
+        has_origin_main = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "origin/main"],
+            cwd=self.REPO,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).returncode == 0
+        if has_origin_main:
+            ancestry = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", measured_commit, "origin/main"],
+                cwd=self.REPO,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                ancestry.returncode,
+                0,
+                f"measured RESULTS commit {measured_commit} must be an ancestor of origin/main",
+            )
 
         charts_dir = self.REPO / "docs" / "performance" / "charts"
         en_svg = (charts_dir / "00-summary.svg").read_text(encoding="utf-8")

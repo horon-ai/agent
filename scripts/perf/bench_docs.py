@@ -626,6 +626,11 @@ def versions_body(dirs: dict[str, Path], commit: str, lang: str = "en") -> str:
         if not prov:
             continue
         for tool_key, entry in prov.items():
+            status = entry.get("status")
+            if status is not None and status != "installed":
+                continue
+            if not (entry.get("installed_version") or entry.get("version")):
+                continue
             label = str(entry.get("label") or tool_key)
             package = str(entry.get("package") or "—")
             ver = str(entry.get("installed_version") or entry.get("version") or "—")

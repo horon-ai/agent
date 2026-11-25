@@ -19,11 +19,11 @@
 <line x1="798.0" y1="158.0" x2="798.0" y2="248.0" stroke="#eaeef2"/>
 <text x="798.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">12.5</text>
 <text x="120.0" y="177.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">유휴 RSS</text>
-<rect x="130.0" y="164.0" width="412.1" height="18" rx="3" fill="#d3d9e1"/>
-<text x="550.1" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.71</text>
+<rect x="130.0" y="164.0" width="412.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="550.5" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.72</text>
 <text x="120.0" y="207.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">턴 후 RSS</text>
-<rect x="130.0" y="194.0" width="419.2" height="18" rx="3" fill="#d3d9e1"/>
-<text x="557.2" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.84</text>
+<rect x="130.0" y="194.0" width="421.3" height="18" rx="3" fill="#d3d9e1"/>
+<text x="559.3" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.88</text>
 <text x="120.0" y="237.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">설치 크기</text>
 <rect x="130.0" y="224.0" width="540.0" height="18" rx="3" fill="#d3d9e1"/>
 <text x="678.0" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.1</text>
@@ -42,11 +42,11 @@
 <line x1="798.0" y1="318.0" x2="798.0" y2="408.0" stroke="#eaeef2"/>
 <text x="798.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">12.5</text>
 <text x="120.0" y="337.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">유휴 RSS</text>
-<rect x="130.0" y="324.0" width="555.3" height="18" rx="3" fill="#d3d9e1"/>
-<text x="693.3" y="337.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.4</text>
+<rect x="130.0" y="324.0" width="550.3" height="18" rx="3" fill="#d3d9e1"/>
+<text x="688.3" y="337.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.3</text>
 <text x="120.0" y="367.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">턴 후 RSS</text>
-<rect x="130.0" y="354.0" width="568.6" height="18" rx="3" fill="#d3d9e1"/>
-<text x="706.6" y="367.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.6</text>
+<rect x="130.0" y="354.0" width="566.1" height="18" rx="3" fill="#d3d9e1"/>
+<text x="704.1" y="367.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">10.6</text>
 <text x="120.0" y="397.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">설치 크기</text>
 <rect x="130.0" y="384.0" width="394.6" height="18" rx="3" fill="#d3d9e1"/>
 <text x="532.6" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">7.38</text>
@@ -73,6 +73,6 @@
 <text x="120.0" y="557.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">설치 크기</text>
 <rect x="130.0" y="544.0" width="599.2" height="18" rx="3" fill="#d3d9e1"/>
 <text x="737.2" y="557.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">8.97</text>
-<text x="32.0" y="604.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent 8aa9a85 · 측정 2026-11-24 20:44 UTC · 실행 45481956833</text>
+<text x="32.0" y="604.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent 882db5d · 측정 2026-11-24 23:11 UTC · 실행 45506107561</text>
 <text x="32.0" y="622.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">OS마다 다른 GitHub 호스티드 러너와 모의 모델로 쟀습니다. 같은 OS 안에서만 비교하고 OS끼리는 비교하지 않습니다.</text>
 </svg>
