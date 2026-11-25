@@ -15,12 +15,13 @@ pub(super) fn resolve(args: &mut Args) -> Result<()> {
         args.resume = Some(session_id);
         return Ok(());
     }
-    // The standalone picker is the entire command. Its absence must be
-    // reported before a daemon starts or an empty resume ID is resolved.
     if args.resume.as_deref() == Some("") {
-        anyhow::bail!(
-            "the interactive session picker is unavailable in this headless build; pass an explicit session id to --resume"
-        );
+        if args.command.is_some() {
+            anyhow::bail!(
+                "--resume requires a session id when combined with a subcommand; run `horon-agent --resume` to list available sessions"
+            );
+        }
+        return Ok(());
     }
     resolve_resume_arg(args)
 }

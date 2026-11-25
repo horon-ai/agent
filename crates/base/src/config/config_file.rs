@@ -38,6 +38,52 @@ impl Config {
         Ok(config)
     }
 
+    /// Strict operator validation (`horon-agent config check`): parses the file,
+    /// rejects unknown TOML keys across `Config`, `[hosting]`, `[harness_api]`,
+    /// and `[providers.*]`, and verifies `[provider] default_provider` names a
+    /// configured or built-in provider.
+    pub fn check_strict() -> anyhow::Result<Self> {
+        let path_display = Self::path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "config.toml".to_string());
+        let Some((mut config, document)) = Self::load_file_layer()? else {
+            let mut config = Self::default();
+            config.apply_env_overrides();
+            Self::validate_default_provider(&config)?;
+            return Ok(config);
+        };
+        let unknown = collect_unknown_config_keys(&document)?;
+        if !unknown.is_empty() {
+            anyhow::bail!("Unknown configuration key(s) in {path_display}: {}", unknown.join(", "));
+        }
+        config.apply_env_overrides();
+        Self::validate_default_provider(&config)?;
+        Ok(config)
+    }
+
+    fn validate_default_provider(config: &Self) -> anyhow::Result<()> {
+        let Some(name) = config
+            .provider
+            .default_provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(());
+        };
+        let normalized = name.to_ascii_lowercase();
+        let known = config.providers.contains_key(name)
+            || config.providers.contains_key(&normalized)
+            || crate::provider_catalog::openai_compatible_profile_by_id(&normalized).is_some()
+            || matches!(normalized.as_str(), "openai-compatible" | "compat" | "custom");
+        if !known {
+            anyhow::bail!(
+                "Unknown [provider] default_provider '{name}': configure [providers.{name}] or use a built-in OpenAI-compatible provider id"
+            );
+        }
+        Ok(())
+    }
+
     /// Load the on-disk config for a read-modify-write operation.
     ///
     /// Unlike [`Self::load`], this never converts a parse error into defaults.
@@ -509,6 +555,440 @@ impl Config {
     }
 }
 
+const NAMED_PROVIDER_KNOWN_KEYS: &[&str] = &[
+    "type",
+    "base_url",
+    "api",
+    "auth",
+    "auth_header",
+    "headers",
+    "api_key_env",
+    "api_key",
+    "env_file",
+    "default_model",
+    "requires_api_key",
+    "provider_routing",
+    "model_catalog",
+    "allow_provider_pinning",
+    "models",
+    "extra_body",
+    "extra-body",
+    "prompt_cache_key",
+    "prompt-cache-key",
+    "stream_first_event_timeout_secs",
+    "stream_idle_timeout_secs",
+    "max_in_flight_requests",
+    "supports_reasoning_effort",
+    "supports-reasoning-effort",
+    "reasoning_effort",
+    "disable_reasoning_heuristics",
+    "disable-reasoning-heuristics",
+    "fallback_models",
+    "fallback-models",
+    "roles",
+];
+
+fn collect_unknown_config_keys(document: &toml::Value) -> anyhow::Result<Vec<String>> {
+    use serde::Deserialize;
+    use std::cell::RefCell;
+
+    let Some(mut root_table) = document.as_table().cloned() else {
+        anyhow::bail!("Configuration root must be a TOML table");
+    };
+    let unknown = RefCell::new(Vec::new());
+
+    if let Some(hosting_val) = root_table.remove("hosting") {
+        let de = StrictTomlDeserializer {
+            inner: hosting_val,
+            path: vec!["hosting".to_string()],
+            unknown: &unknown,
+        };
+        horon_agent_config_types::HostingSection::deserialize(de)?;
+    }
+    if let Some(harness_val) = root_table.remove("harness_api") {
+        let de = StrictTomlDeserializer {
+            inner: harness_val,
+            path: vec!["harness_api".to_string()],
+            unknown: &unknown,
+        };
+        horon_agent_config_types::HarnessApiConfig::deserialize(de)?;
+    }
+
+    if let Some(providers_table) = root_table.get("providers").and_then(toml::Value::as_table) {
+        for (provider_name, provider_val) in providers_table {
+            if let Some(table) = provider_val.as_table() {
+                for key in table.keys() {
+                    if !NAMED_PROVIDER_KNOWN_KEYS.contains(&key.as_str()) {
+                        unknown.borrow_mut().push(format!("providers.{provider_name}.{key}"));
+                    }
+                }
+                if let Some(roles_val) = table.get("roles") {
+                    let de = StrictTomlDeserializer {
+                        inner: roles_val.clone(),
+                        path: vec!["providers".to_string(), provider_name.clone(), "roles".to_string()],
+                        unknown: &unknown,
+                    };
+                    horon_agent_config_types::model_roles::ModelRoles::deserialize(de)?;
+                }
+                if let Some(models_val) = table.get("models") {
+                    let de = StrictTomlDeserializer {
+                        inner: models_val.clone(),
+                        path: vec!["providers".to_string(), provider_name.clone(), "models".to_string()],
+                        unknown: &unknown,
+                    };
+                    Vec::<NamedProviderModelConfig>::deserialize(de)?;
+                }
+            }
+        }
+    }
+
+    let de = StrictTomlDeserializer {
+        inner: toml::Value::Table(root_table),
+        path: Vec::new(),
+        unknown: &unknown,
+    };
+    Config::deserialize(de)?;
+
+    let mut keys = unknown.into_inner();
+    keys.sort();
+    keys.dedup();
+    Ok(keys)
+}
+
+struct StrictTomlDeserializer<'a> {
+    inner: toml::Value,
+    path: Vec<String>,
+    unknown: &'a std::cell::RefCell<Vec<String>>,
+}
+
+struct StrictMapAccess<'a> {
+    iter: toml::map::IntoIter,
+    pending: Option<(String, toml::Value)>,
+    path: Vec<String>,
+    unknown: &'a std::cell::RefCell<Vec<String>>,
+}
+
+impl<'de, 'a> serde::de::MapAccess<'de> for StrictMapAccess<'a> {
+    type Error = toml::de::Error;
+
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
+    where
+        K: serde::de::DeserializeSeed<'de>,
+    {
+        match self.iter.next() {
+            Some((key, val)) => {
+                let decoded = seed.deserialize(toml::Value::String(key.clone()))?;
+                self.pending = Some((key, val));
+                Ok(Some(decoded))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::DeserializeSeed<'de>,
+    {
+        let (key, val) = self
+            .pending
+            .take()
+            .ok_or_else(|| serde::de::Error::custom("next_value_seed called without key"))?;
+        let mut path = self.path.clone();
+        path.push(key);
+        seed.deserialize(StrictTomlDeserializer {
+            inner: val,
+            path,
+            unknown: self.unknown,
+        })
+    }
+}
+
+struct StrictSeqAccess<'a> {
+    iter: std::iter::Enumerate<std::vec::IntoIter<toml::Value>>,
+    path: Vec<String>,
+    unknown: &'a std::cell::RefCell<Vec<String>>,
+}
+
+impl<'de, 'a> serde::de::SeqAccess<'de> for StrictSeqAccess<'a> {
+    type Error = toml::de::Error;
+
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
+    where
+        T: serde::de::DeserializeSeed<'de>,
+    {
+        match self.iter.next() {
+            Some((idx, val)) => {
+                let mut path = self.path.clone();
+                path.push(format!("[{idx}]"));
+                seed.deserialize(StrictTomlDeserializer {
+                    inner: val,
+                    path,
+                    unknown: self.unknown,
+                })
+                .map(Some)
+            }
+            None => Ok(None),
+        }
+    }
+}
+
+impl<'de, 'a> serde::Deserializer<'de> for StrictTomlDeserializer<'a> {
+    type Error = toml::de::Error;
+
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_any(visitor)
+    }
+
+    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        if !self.path.is_empty() {
+            self.unknown.borrow_mut().push(self.path.join("."));
+        }
+        visitor.visit_unit()
+    }
+
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_bool(visitor)
+    }
+
+    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_i8(visitor)
+    }
+
+    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_i16(visitor)
+    }
+
+    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_i32(visitor)
+    }
+
+    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_i64(visitor)
+    }
+
+    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_u8(visitor)
+    }
+
+    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_u16(visitor)
+    }
+
+    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_u32(visitor)
+    }
+
+    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_u64(visitor)
+    }
+
+    fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_f32(visitor)
+    }
+
+    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_f64(visitor)
+    }
+
+    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_char(visitor)
+    }
+
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_str(visitor)
+    }
+
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_string(visitor)
+    }
+
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_bytes(visitor)
+    }
+
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_byte_buf(visitor)
+    }
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_some(self)
+    }
+
+    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_unit(visitor)
+    }
+
+    fn deserialize_unit_struct<V>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_unit_struct(name, visitor)
+    }
+
+    fn deserialize_newtype_struct<V>(self, _name: &'static str, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_newtype_struct(self)
+    }
+
+    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self.inner {
+            toml::Value::Array(items) => visitor.visit_seq(StrictSeqAccess {
+                iter: items.into_iter().enumerate(),
+                path: self.path,
+                unknown: self.unknown,
+            }),
+            other => other.deserialize_seq(visitor),
+        }
+    }
+
+    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self.inner {
+            toml::Value::Array(items) => visitor.visit_seq(StrictSeqAccess {
+                iter: items.into_iter().enumerate(),
+                path: self.path,
+                unknown: self.unknown,
+            }),
+            other => other.deserialize_tuple(len, visitor),
+        }
+    }
+
+    fn deserialize_tuple_struct<V>(self, name: &'static str, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self.inner {
+            toml::Value::Array(items) => visitor.visit_seq(StrictSeqAccess {
+                iter: items.into_iter().enumerate(),
+                path: self.path,
+                unknown: self.unknown,
+            }),
+            other => other.deserialize_tuple_struct(name, len, visitor),
+        }
+    }
+
+    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self.inner {
+            toml::Value::Table(table) => visitor.visit_map(StrictMapAccess {
+                iter: table.into_iter(),
+                pending: None,
+                path: self.path,
+                unknown: self.unknown,
+            }),
+            other => other.deserialize_map(visitor),
+        }
+    }
+
+    fn deserialize_struct<V>(
+        self,
+        name: &'static str,
+        fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self.inner {
+            toml::Value::Table(table) => visitor.visit_map(StrictMapAccess {
+                iter: table.into_iter(),
+                pending: None,
+                path: self.path,
+                unknown: self.unknown,
+            }),
+            other => other.deserialize_struct(name, fields, visitor),
+        }
+    }
+
+    fn deserialize_enum<V>(
+        self,
+        name: &'static str,
+        variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_enum(name, variants, visitor)
+    }
+
+    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.inner.deserialize_identifier(visitor)
+    }
+}
+
 #[cfg(test)]
 mod issue_1056_tests {
     use super::Config;
@@ -589,3 +1069,7 @@ reasoning_effort = "max"
         assert_eq!(std::fs::read_to_string(path).unwrap(), original);
     }
 }
+
+#[cfg(test)]
+#[path = "strict_tests.rs"]
+mod strict_tests;

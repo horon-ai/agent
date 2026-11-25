@@ -686,7 +686,7 @@ newest selection.
 
 Use `horon run --max-time 30 "..."` to limit turn processing to 30 seconds. The timer starts after setup and accepts positive seconds, including fractions. At expiry, Horon cancels the turn and gives it up to one second to settle. The process exits with status `124`.
 
-Text mode reports the deadline on stderr. `--json` writes a single error object, and `--ndjson` finishes with an error record. Both structured formats use `"code":"deadline_exceeded"` and include `max_time_seconds` and the session ID.
+Text mode reports the deadline on stderr and suppresses buffered response stdout after expiry. `--json` writes a single error object, and `--ndjson` finishes with an error record. Both structured formats use `"code":"deadline_exceeded"` and include `max_time_seconds` and the session ID. Non-deadline validation and turn failures under `--json` or `--ndjson` also emit a structured error object on stdout instead of failing silently before stdout output.
 
 With `--wait-async`, the deadline also covers waiting for background jobs owned by the current invocation and session. Text mode prints one status per job to stderr. A successful `--json` run includes a `background_jobs` array, and `--ndjson` sends a `background_job` record for each job before `done`. On timeout, observed job statuses are printed to stderr and the normal deadline error is emitted in the selected format.
 
@@ -696,12 +696,12 @@ With `--wait-async`, the deadline also covers waiting for background jobs owned 
 
 ## `--resume` behaviour
 
-Passing `--resume` with no value exits with a session picker error before the daemon starts.
+Passing `--resume` with no value on a bare launch (`horon-agent --resume`) lists saved non-archived sessions on stdout and exits cleanly. Passing `--resume` with no value alongside a subcommand exits with an error directing callers to `horon-agent --resume`.
 
 ### Default behaviour
 
 - `--resume <id>` takes a session id and starts with that session. When the value is not a
-  full id, it is first resolved from the local store (`src/cli/dispatch.rs:696-736`).
+  full id, it is first resolved from the local store (`src/cli/dispatch.rs`).
 - If resolution fails, the raw id is passed to the server so the server can resolve it again
   (`src/cli/dispatch.rs:721`).
 - `--resume` can be combined with other global flags. The session resumes in this process, and

@@ -212,6 +212,55 @@ fn layout_name(layout: store::reader::SourceLayout) -> &'static str {
     }
 }
 
+pub(crate) fn list_sessions_for_resume() -> Result<()> {
+    let paths = store_paths(&home()?);
+    if !paths.root().try_exists()? {
+        println!("No saved sessions.");
+        return Ok(());
+    }
+    let probe = store::ReadProbe::default();
+    let mut rows = match store::catalog::list(&paths, probe.clone()) {
+        Ok(rows) => rows,
+        Err(error) if error.code == store::StoreErrorCode::Busy => {
+            let mut rows = Vec::new();
+            for source in store::reader::sources(&paths)? {
+                if source.layout != store::reader::SourceLayout::Canonical {
+                    continue;
+                }
+                match store::catalog::row(&paths, &source.session_id, probe.clone()) {
+                    Ok(row) => rows.push(row),
+                    Err(error) if error.code == store::StoreErrorCode::Busy => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            rows
+        }
+        Err(error) => return Err(error.into()),
+    };
+    rows.retain(|row| !row.archived);
+    rows.sort_by(|a, b| {
+        b.last_active_at_ms
+            .unwrap_or_else(|| b.updated_at.timestamp_millis())
+            .cmp(&a.last_active_at_ms.unwrap_or_else(|| a.updated_at.timestamp_millis()))
+            .then_with(|| a.session_id.cmp(&b.session_id))
+    });
+    if rows.is_empty() {
+        println!("No saved sessions.");
+        return Ok(());
+    }
+    for row in rows {
+        let title = row
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("(untitled)");
+        let dir = row.working_dir.as_deref().unwrap_or("-");
+        println!("{}\t{}\t{}\t{}", row.session_id.as_str(), title, dir, row.updated_at);
+    }
+    Ok(())
+}
+
 /// Write a session's transcript to stdout or a file, as Markdown or as a
 /// standalone HTML report.
 ///
@@ -227,15 +276,16 @@ pub(crate) fn export_transcript(session: &str, out: Option<&Path>, json_output: 
         crate::session_export::export_session_markdown(&loaded)?
     };
 
-    if json_output {
+    let json_payload = if json_output {
         let value = if html {
             json!({ "session_id": id, "html": document })
         } else {
             json!({ "session_id": id, "markdown": document })
         };
-        println!("{}", serde_json::to_string_pretty(&value)?);
-        return Ok(());
-    }
+        Some(serde_json::to_string_pretty(&value)?)
+    } else {
+        None
+    };
 
     match out {
         Some(path) => {
@@ -248,12 +298,30 @@ pub(crate) fn export_transcript(session: &str, out: Option<&Path>, json_output: 
             if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
                 std::fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
             }
-            std::fs::write(path, document.as_bytes()).with_context(|| format!("failed to write {}", path.display()))?;
+            let payload_bytes = match &json_payload {
+                Some(rendered) => format!("{rendered}\n"),
+                None => document,
+            };
+            std::fs::write(path, payload_bytes.as_bytes())
+                .with_context(|| format!("failed to write {}", path.display()))?;
+            if json_output {
+                let summary = json!({
+                    "session_id": id,
+                    "out": path.display().to_string(),
+                    "format": if html { "html" } else { "markdown" },
+                    "bytes": payload_bytes.len(),
+                });
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            }
         }
         None => {
-            let mut stdout = std::io::stdout().lock();
-            stdout.write_all(document.as_bytes())?;
-            stdout.flush()?;
+            if let Some(rendered) = json_payload {
+                println!("{rendered}");
+            } else {
+                let mut stdout = std::io::stdout().lock();
+                stdout.write_all(document.as_bytes())?;
+                stdout.flush()?;
+            }
         }
     }
     Ok(())

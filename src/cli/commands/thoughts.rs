@@ -2,6 +2,7 @@
 //! to stderr under a label, the answer stays on stdout.
 
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
 
@@ -10,7 +11,12 @@ use crate::protocol::ServerEvent;
 
 /// Run one plain-text turn. Without `print_thoughts` this is exactly
 /// `Agent::run_once`, so default output is unchanged.
-pub(super) async fn run_plain_turn(agent: &mut Agent, message: &str, print_thoughts: bool) -> Result<()> {
+pub(super) async fn run_plain_turn(
+    agent: &mut Agent,
+    message: &str,
+    print_thoughts: bool,
+    deadline_elapsed: &AtomicBool,
+) -> Result<()> {
     if !print_thoughts {
         return agent.run_once(message).await;
     }
@@ -20,13 +26,21 @@ pub(super) async fn run_plain_turn(agent: &mut Agent, message: &str, print_thoug
     let result = loop {
         tokio::select! {
             result = &mut run => break result,
-            Some(event) = event_rx.recv() => printer.event(event)?,
+            Some(event) = event_rx.recv() => {
+                if !deadline_elapsed.load(Ordering::Relaxed) {
+                    printer.event(event)?;
+                }
+            }
         }
     };
     while let Ok(event) = event_rx.try_recv() {
-        printer.event(event)?;
+        if !deadline_elapsed.load(Ordering::Relaxed) {
+            printer.event(event)?;
+        }
     }
-    printer.finish()?;
+    if !deadline_elapsed.load(Ordering::Relaxed) {
+        printer.finish()?;
+    }
     result
 }
 
