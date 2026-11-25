@@ -470,15 +470,25 @@ fn concurrent_create_session_and_attach_error_correlate_independently() {
         "v": 1, "id": 103, "req": "attach_session", "session_id": "missing-id"
     }));
 
-    let Outbound::Legacy(sub1) = &out1[0] else { panic!("sub1") };
-    let Outbound::Legacy(state1) = &out1[1] else { panic!("state1") };
+    let Outbound::Legacy(sub1) = &out1[0] else {
+        panic!("sub1")
+    };
+    let Outbound::Legacy(state1) = &out1[1] else {
+        panic!("state1")
+    };
     assert_eq!(sub1["fresh_session"], true);
 
-    let Outbound::Legacy(sub2) = &out2[0] else { panic!("sub2") };
-    let Outbound::Legacy(state2) = &out2[1] else { panic!("state2") };
+    let Outbound::Legacy(sub2) = &out2[0] else {
+        panic!("sub2")
+    };
+    let Outbound::Legacy(state2) = &out2[1] else {
+        panic!("state2")
+    };
     assert_eq!(sub2["fresh_session"], true);
 
-    let Outbound::Legacy(sub3) = &out3[0] else { panic!("sub3") };
+    let Outbound::Legacy(sub3) = &out3[0] else {
+        panic!("sub3")
+    };
 
     // Fail attach #3 without clobbering concurrent create #1 or #2
     let err_frames = state.legacy_event_to_api(&serde_json::json!({
@@ -488,7 +498,10 @@ fn concurrent_create_session_and_attach_error_correlate_independently() {
     assert_eq!(err_frames[0].reply_to, Some(103));
     assert!(matches!(
         err_frames[0].event,
-        ApiEvent::Error { code: ErrorCode::UnknownSession, .. }
+        ApiEvent::Error {
+            code: ErrorCode::UnknownSession,
+            ..
+        }
     ));
 
     // Answer state #1 and state #2 independently
@@ -538,6 +551,9 @@ fn apply_control_validation_error_maps_to_invalid_request() {
     assert_eq!(frames[0].reply_to, Some(77));
     assert!(matches!(
         frames[0].event,
-        ApiEvent::Error { code: ErrorCode::InvalidRequest, .. }
+        ApiEvent::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
     ));
 }

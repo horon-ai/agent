@@ -1223,7 +1223,8 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 
 - A `SnapshotMarker` and a `Snapshot` never go to different connections. Only the connection that received the marker receives the snapshot.
 - Live events after a snapshot carry a `seq` issued by the observation owner. A client can prove "everything after N is newer" itself instead of guessing order.
-- `apply_control` has the server build the fingerprint. The same id with the same fingerprint replays the stored result, the same id with a different fingerprint is `conflict`, and a concurrent `applying` is `pending` without a second execution. Anything still applying at restart is sealed as `indeterminate` and never executed again.
+- `apply_control` has the server build the fingerprint. The same id with the same fingerprint replays the stored result, the same id with a different fingerprint is `conflict`, and a concurrent `applying` is `pending` without a second execution. Anything still applying at restart is sealed as `indeterminate` and never executed again. Invalid `apply_control` arguments (empty `operation_id`, empty `expected_run_id`, or empty `input_ids`) fail with `invalid_request`.
+- Concurrent `create_session` and `attach_session` calls on one bridge connection keep separate wire correlation ids instead of overwriting an earlier in-flight attach.
 - An operation id outside the retention window is `unknown`. The SDK never retries automatically in that case.
 - The only supported actions are `abort_run(expected_run_id)` and `cancel_inputs(input_ids)`. Model changes, files, shells and arbitrary commands are not on this surface.
 - A request against a capability the bridge does not advertise is unreachable. That is why all four strings are in `BRIDGE_CAPABILITIES`.

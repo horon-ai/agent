@@ -87,7 +87,10 @@ pub(super) fn sync_local_state(paths: &store::SessionPaths, id: &store::SessionI
 /// Detached handle to an idle session writer whose OS `.writer.lock` closes on drop.
 #[derive(Debug)]
 pub struct IdleWriter {
-    #[expect(dead_code, reason = "keeps the session writer alive only until dropped on blocking I/O")]
+    #[expect(
+        dead_code,
+        reason = "keeps the session writer alive only until dropped on blocking I/O"
+    )]
     writer: Arc<Writer>,
 }
 
@@ -364,10 +367,7 @@ impl Session {
             && self.event_state.pending.is_empty()
             && self.has_unsaved_event_changes().is_ok_and(|dirty| !dirty)
         {
-            self.event_state
-                .writer
-                .take()
-                .map(|writer| IdleWriter { writer })
+            self.event_state.writer.take().map(|writer| IdleWriter { writer })
         } else {
             None
         }

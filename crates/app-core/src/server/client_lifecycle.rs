@@ -64,8 +64,11 @@ type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 const RELOAD_STARTING_GUARD_MAX_AGE: Duration = Duration::from_secs(30);
 const REQUEST_HANDLER_STALL_THRESHOLDS_MS: [u64; 3] = [2_000, 10_000, 60_000];
 
+#[path = "client_fresh_session.rs"]
+mod fresh_session;
 #[path = "client_subscribe_context.rs"]
 mod subscribe_context;
+use fresh_session::{FreshSessionContext, switch_to_fresh_session};
 use subscribe_context::*;
 
 struct ProcessingMessage {
@@ -1783,108 +1786,40 @@ pub(super) async fn handle_client(
                     });
                     continue;
                 }
-                if target_session_id.is_none() && fresh_session && client_subscribed {
-                    if client_is_processing {
-                        let _ = client_event_tx.send(ServerEvent::Error {
-                            id,
-                            message: "Cannot create a new session while a turn is active on this connection"
-                                .to_string(),
-                            retry_after_secs: None,
-                        });
-                        continue;
-                    }
-                    if let Some(handle) = prewarm_task.take() {
-                        handle.abort();
-                    }
-                    let old_session_id = client_session_id.clone();
-                    super::state::unregister_session_event_sender(
-                        &swarm_members,
-                        &old_session_id,
-                        &client_connection_id,
-                    )
-                    .await;
-                    let working_dir_for_agent = subscribe_working_dir
-                        .as_deref()
-                        .unwrap_or(&initial_working_dir);
-                    let new_provider = provider_template.fork_for_new_session();
-                    let new_registry = Registry::new(new_provider.clone()).await;
-                    let mut new_agent = crate::hooks::with_client_terminal_env(terminal_env.clone(), async {
-                        Agent::new_provisional_with_initial_working_dir(
-                            Arc::clone(&new_provider),
-                            new_registry.clone(),
-                            Some(working_dir_for_agent),
-                        )
+                if target_session_id.is_none()
+                    && fresh_session
+                    && client_subscribed
+                    && !switch_to_fresh_session(FreshSessionContext {
+                        id,
+                        client_is_processing,
+                        client_event_tx: &client_event_tx,
+                        prewarm_task: &mut prewarm_task,
+                        client_session_id: &mut client_session_id,
+                        friendly_name: &mut friendly_name,
+                        session_control: &mut session_control,
+                        provisional_session: &mut provisional_session,
+                        agent: &mut agent,
+                        registry: &mut registry,
+                        provider: &mut provider,
+                        subscribe_working_dir: subscribe_working_dir.as_deref(),
+                        initial_working_dir: &initial_working_dir,
+                        terminal_env: &terminal_env,
+                        provider_template: &provider_template,
+                        client_connection_id: &client_connection_id,
+                        client_connections: &client_connections,
+                        client_session_id_for_events: &client_session_id_for_events,
+                        sessions: &sessions,
+                        shutdown_signals: &shutdown_signals,
+                        soft_interrupt_queues: &soft_interrupt_queues,
+                        swarm_members: &swarm_members,
+                        swarms_by_id: &swarms_by_id,
+                        file_touch: &file_touch,
+                        swarm_plans: &swarm_plans,
+                        swarm_coordinators: &swarm_coordinators,
                     })
-                    .await;
-                    new_agent.set_memory_enabled(crate::config::config().features.memory);
-                    new_agent.set_persistent_runtime(true);
-                    let new_session_id = new_agent.session_id().to_string();
-                    friendly_name = new_agent.session_short_name().map(str::to_string);
-                    session_control = SessionControlHandle::new(
-                        new_session_id.clone(),
-                        new_agent.soft_interrupt_queue(),
-                        new_agent.background_tool_signal(),
-                        new_agent.graceful_shutdown_signal(),
-                    );
-                    {
-                        let mut signals = shutdown_signals.write().await;
-                        signals.insert(new_session_id.clone(), session_control.stop_current_turn_signal());
-                    }
-                    register_session_interrupt_queue(
-                        &soft_interrupt_queues,
-                        &new_session_id,
-                        new_agent.soft_interrupt_queue(),
-                    )
-                    .await;
-                    let new_agent_arc = Arc::new(Mutex::new(new_agent));
-                    {
-                        let mut sessions_guard = sessions.write().await;
-                        sessions_guard.insert(new_session_id.clone(), Arc::clone(&new_agent_arc));
-                    }
-                    {
-                        let mut connections = client_connections.write().await;
-                        if let Some(info) = connections.get_mut(&client_connection_id) {
-                            info.session_id = new_session_id.clone();
-                            info.is_processing = false;
-                            info.current_tool_name = None;
-                        }
-                    }
-                    *client_session_id_for_events
-                        .write()
-                        .unwrap_or_else(|e| e.into_inner()) = new_session_id.clone();
-                    client_session_id = new_session_id;
-                    let old_agent = std::mem::replace(&mut agent, new_agent_arc);
-                    let detached = super::client_session::cleanup_detached_source_session_if_unused(
-                        &old_session_id,
-                        &client_connection_id,
-                        old_agent,
-                        &sessions,
-                        &shutdown_signals,
-                        &soft_interrupt_queues,
-                        &client_connections,
-                        &swarm_members,
-                        &swarms_by_id,
-                        &file_touch,
-                        &swarm_plans,
-                        &swarm_coordinators,
-                    )
-                    .await;
-                    super::client_disconnect_cleanup::blocking_session_io(move || drop(detached));
-                    crate::process_memory::release_retained_heap_debounced(
-                        "server_session_switched",
-                        Duration::from_secs(5),
-                    );
-                    registry = new_registry;
-                    provider = new_provider;
-                    provisional_session = true;
-                    crate::runtime_memory_log::emit_event(
-                        crate::runtime_memory_log::RuntimeMemoryLogEvent::new(
-                            "session_created",
-                            "new_live_session_attached",
-                        )
-                        .with_session_id(client_session_id.clone())
-                        .force_attribution(),
-                    );
+                    .await
+                {
+                    continue;
                 }
                 // The editor's servers belong to the previous attachment: stop
                 // them before the Subscribe reply, so a client that saw the

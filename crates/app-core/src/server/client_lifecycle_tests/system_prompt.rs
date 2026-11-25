@@ -287,8 +287,9 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
         .await;
         until(&mut multi_reader, |e| matches!(e, ServerEvent::Done { id: 201 })).await;
         send(&mut multi_writer, json!({"type":"state","id":202})).await;
-        let ServerEvent::State { session_id: first_id, .. } =
-            until(&mut multi_reader, |e| matches!(e, ServerEvent::State { id: 202, .. })).await
+        let ServerEvent::State {
+            session_id: first_id, ..
+        } = until(&mut multi_reader, |e| matches!(e, ServerEvent::State { id: 202, .. })).await
         else {
             unreachable!()
         };
@@ -300,8 +301,9 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
         .await;
         until(&mut multi_reader, |e| matches!(e, ServerEvent::Done { id: 203 })).await;
         send(&mut multi_writer, json!({"type":"state","id":204})).await;
-        let ServerEvent::State { session_id: same_id, .. } =
-            until(&mut multi_reader, |e| matches!(e, ServerEvent::State { id: 204, .. })).await
+        let ServerEvent::State {
+            session_id: same_id, ..
+        } = until(&mut multi_reader, |e| matches!(e, ServerEvent::State { id: 204, .. })).await
         else {
             unreachable!()
         };
@@ -314,8 +316,9 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
         .await;
         until(&mut multi_reader, |e| matches!(e, ServerEvent::Done { id: 205 })).await;
         send(&mut multi_writer, json!({"type":"state","id":206})).await;
-        let ServerEvent::State { session_id: second_id, .. } =
-            until(&mut multi_reader, |e| matches!(e, ServerEvent::State { id: 206, .. })).await
+        let ServerEvent::State {
+            session_id: second_id, ..
+        } = until(&mut multi_reader, |e| matches!(e, ServerEvent::State { id: 206, .. })).await
         else {
             unreachable!()
         };

@@ -1205,7 +1205,8 @@ Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`)
   스스로 증명할 수 있고, 순서를 추측하지 않는다.
 - `apply_control`은 지문을 서버가 만든다. 같은 id·같은 지문은 저장된 결과 재생, 같은 id·다른 지문은
   `conflict`, 동시 applying은 `pending`이며 두 번째 실행은 하지 않는다. 재시작에서 applying으로
-  남은 것은 `indeterminate`로 봉인하고 다시 실행하지 않는다.
+  남은 것은 `indeterminate`로 봉인하고 다시 실행하지 않는다. 잘못된 `apply_control` 인자(빈 `operation_id`, 빈 `expected_run_id`, 빈 `input_ids`)는 `invalid_request` 오류를 반환한다.
+- 한 브리지 연결에서 동시에 보낸 `create_session`과 `attach_session` 요청은 각자 고유한 wire id로 상관관계를 유지하므로 앞선 attach 상태를 덮어쓰지 않는다.
 - 보존 범위를 벗어난 operation id는 `unknown`이다. SDK는 그 경우 자동 재시도하지 않는다.
 - 지원 동작은 `abort_run(expected_run_id)`와 `cancel_inputs(input_ids)` 둘뿐이다. 모델 변경·파일·셸·
   임의 명령은 이 표면에 없다.

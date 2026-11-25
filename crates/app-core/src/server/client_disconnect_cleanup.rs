@@ -380,7 +380,12 @@ pub(super) async fn cleanup_client_connection(
             && let Some(agent_arc) = sessions.read().await.get(client_session_id).cloned()
         {
             let released_writer = if let Ok(mut agent) = agent_arc.try_lock() {
-                let _ = agent.hibernate_idle_caches();
+                if let Some(release) = agent.hibernate_idle_caches() {
+                    crate::logging::info(&format!(
+                        "Released idle caches before reconnect grace for {} (provider_cache_bytes={}, tool_index_entries={})",
+                        client_session_id, release.provider_cache_bytes, release.tool_index_entries
+                    ));
+                }
                 agent.release_idle_writer()
             } else {
                 None
@@ -544,10 +549,7 @@ pub(super) async fn cleanup_client_connection(
             // its writer arc, whose `Drop` joins the writer thread. Run that in
             // blocking work so the join never occupies a runtime worker.
             blocking_session_io(move || drop(agent_arc));
-            crate::process_memory::release_retained_heap_debounced(
-                "server_session_closed",
-                Duration::from_secs(5),
-            );
+            crate::process_memory::release_retained_heap_debounced("server_session_closed", Duration::from_secs(5));
         }
     }
 

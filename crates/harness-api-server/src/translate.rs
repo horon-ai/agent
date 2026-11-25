@@ -23,6 +23,7 @@ mod usage_report;
 pub(crate) use turn_retry::refuse_unsupported as refuse_unsupported_retry;
 pub use usage_report::local::{LocalUsage, local_usage};
 
+use support::PendingAttach;
 #[cfg(test)]
 pub(crate) use support::horon_agent_home_test_lock;
 pub use support::legacy_event_may_block;
@@ -246,16 +247,6 @@ pub struct BridgeState {
     /// to 16 MiB per request. `None` in tests and any direct caller: the cap
     /// then measures the serialized request, which is what it always did.
     pub request_envelope_bytes: Option<usize>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PendingAttach {
-    subscribe_id: u64,
-    state_id: u64,
-    catalog_id: u64,
-    api_id: u64,
-    requested_session: Option<String>,
-    create_dir: Option<String>,
 }
 
 impl BridgeState {
@@ -2127,12 +2118,16 @@ impl BridgeState {
                 // which is the only place it appears: remember it so
                 // `list_sessions` can answer with more than this connection.
                 self.note_sessions(event);
-                if let Some(index) = self.pending_recovery_histories.iter().position(|(subscribe_id, target)| {
-                    *subscribe_id == id
-                        && event["session_id"].as_str().is_some_and(|sid| {
-                            !sid.is_empty() && target.as_deref().is_none_or(|target| target == sid)
-                        })
-                }) {
+                if let Some(index) = self
+                    .pending_recovery_histories
+                    .iter()
+                    .position(|(subscribe_id, target)| {
+                        *subscribe_id == id
+                            && event["session_id"].as_str().is_some_and(|sid| {
+                                !sid.is_empty() && target.as_deref().is_none_or(|target| target == sid)
+                            })
+                    })
+                {
                     self.pending_recovery_histories.remove(index);
                     let frames: Vec<_> = Self::attachment_recovery(event).into_iter().collect();
                     return frames;

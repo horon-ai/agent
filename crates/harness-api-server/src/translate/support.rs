@@ -20,3 +20,13 @@ pub(crate) fn horon_agent_home_test_lock() -> std::sync::MutexGuard<'static, ()>
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+#[derive(Debug, Clone)]
+pub(crate) struct PendingAttach {
+    pub(crate) subscribe_id: u64,
+    pub(crate) state_id: u64,
+    pub(crate) catalog_id: u64,
+    pub(crate) api_id: u64,
+    pub(crate) requested_session: Option<String>,
+    pub(crate) create_dir: Option<String>,
+}

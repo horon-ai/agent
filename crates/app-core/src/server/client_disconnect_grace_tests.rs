@@ -379,7 +379,10 @@ async fn idle_reconnect_grace_releases_writer_lock_immediately() {
 
     // Before disconnect cleanup, the saved live session keeps its writer lock open.
     let busy = crate::session::event_store_api::BlockingWriter::open(paths.clone(), sid.clone());
-    assert!(busy.is_err(), "live session should hold its writer lock before disconnect");
+    assert!(
+        busy.is_err(),
+        "live session should hold its writer lock before disconnect"
+    );
 
     let ((), ()) = tokio::join!(fixture.cleanup(false, Duration::from_secs(2)), async {
         fixture.wait_for_detach().await;
@@ -538,7 +541,9 @@ async fn disconnected_socket_closes_immediately_during_grace_and_prepare_disconn
         }
     }
     // Switching sessions via fresh_session must also evict the old idle session.
-    let sub11 = serde_json::json!({"type":"subscribe","id":11,"working_dir":working_dir,"fresh_session":true}).to_string() + "\n";
+    let sub11 = serde_json::json!({"type":"subscribe","id":11,"working_dir":working_dir,"fresh_session":true})
+        .to_string()
+        + "\n";
     writer2.write_all(sub11.as_bytes()).await.unwrap();
     loop {
         buf.clear();
