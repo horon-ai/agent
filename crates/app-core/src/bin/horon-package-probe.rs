@@ -325,8 +325,9 @@ fn run_mcp_probe() -> ExitCode {
         if method == "shutdown" {
             if let Some(id) = id {
                 let reply = json!({ "jsonrpc": "2.0", "id": id, "result": {} });
-                let _ = writeln!(stdout, "{reply}");
-                let _ = stdout.flush();
+                if let Err(error) = writeln!(stdout, "{reply}").and_then(|()| stdout.flush()) {
+                    eprintln!("horon-package-probe: could not write shutdown answer: {error}");
+                }
             }
             return ExitCode::SUCCESS;
         }
@@ -352,7 +353,7 @@ fn run_mcp_probe() -> ExitCode {
                     .and_then(|params| params.get("arguments"))
                     .and_then(|arguments| arguments.get("text"))
                     .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
+                    .unwrap_or("");
                 json!({
                     "content": [{
                         "type": "text",
