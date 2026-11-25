@@ -1093,7 +1093,7 @@ impl Stream for OpenAIResponsesStream {
                     this.framer.push_str(&text);
                 }
                 Poll::Ready(Some(Err(e))) => {
-                    return Poll::Ready(Some(Err(anyhow::anyhow!("Stream error: {}", e))));
+                    return Poll::Ready(Some(Err(anyhow::anyhow!("Stream error: {:#}", anyhow::Error::new(e)))));
                 }
                 Poll::Ready(None) => {
                     if this.drained {

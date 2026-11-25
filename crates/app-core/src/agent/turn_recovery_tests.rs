@@ -40,6 +40,11 @@ enum ScriptedStop {
     Stop(String, String),
     ToolCall(String, String, String),
     Error(String),
+    WrappedStreamErr {
+        partial: String,
+        outer: String,
+        inner: String,
+    },
 }
 
 impl ScriptedStopProvider {
@@ -145,6 +150,12 @@ impl Provider for ScriptedStopProvider {
                             retry_after_secs: None,
                         }))
                         .await;
+                }
+                ScriptedStop::WrappedStreamErr { partial, outer, inner } => {
+                    if !partial.is_empty() {
+                        let _ = tx.send(Ok(StreamEvent::TextDelta(partial))).await;
+                    }
+                    let _ = tx.send(Err(anyhow::anyhow!(inner).context(outer))).await;
                 }
             }
         });
@@ -1097,4 +1108,22 @@ async fn a_judge_that_cannot_be_reached_costs_no_turn_in_conservative_mode() {
     assert_eq!(provider.judge_calls(), 0, "an unresolved role spends no request");
     assert_eq!(calls, 1, "conservative alone never continues a semantic stop");
     assert!(nudges(&agent).is_empty());
+}
+
+#[tokio::test]
+async fn turn_recovery_continues_on_truncated_transport_stream_errors() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_turn_recovery(sandbox.root(), "conservative");
+
+    let provider = ScriptedStopProvider::new(vec![
+        ScriptedStop::WrappedStreamErr {
+            partial: "Hel".into(),
+            outer: "OpenAI-compatible stream error: error decoding response body".into(),
+            inner: "incomplete message".into(),
+        },
+        ScriptedStop::Stop("end_turn".into(), "lo".into()),
+    ]);
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+    assert_eq!(calls, 2, "wrapped hyper incomplete-message error must recover");
+    assert_eq!(nudges(&agent).len(), 1);
 }
