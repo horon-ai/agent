@@ -1140,6 +1140,7 @@ async fn run_single_message_command_plain_with_auto_poke(
     agent: &mut crate::agent::Agent,
     message: &str,
     print_thoughts: bool,
+    deadline_elapsed: &AtomicBool,
 ) -> Result<()> {
     let mut next_message = message.to_string();
     let max_turns = run_command_auto_poke_max_turns();
@@ -1147,7 +1148,10 @@ async fn run_single_message_command_plain_with_auto_poke(
     let mut confidence_spike_challenged = false;
     let mut gate_digest_delivered = false;
     loop {
-        thoughts::run_plain_turn(agent, &next_message, print_thoughts).await?;
+        thoughts::run_plain_turn(agent, &next_message, print_thoughts, deadline_elapsed).await?;
+        if deadline_elapsed.load(Ordering::Relaxed) {
+            break;
+        }
         turns_completed += 1;
         if !run_command_auto_poke_enabled() {
             break;
@@ -1336,14 +1340,20 @@ async fn run_single_message_command_ndjson(
                     }
                     event = event_rx.recv() => {
                         match event {
-                            Some(event) => emit_ndjson_event(&mut stdout, &mut state, event)?,
+                            Some(event) => {
+                                if !deadline_elapsed.load(Ordering::Relaxed) {
+                                    emit_ndjson_event(&mut stdout, &mut state, event)?;
+                                }
+                            }
                             None => break,
                         }
                     }
                 }
                 if run_result.is_some() {
                     while let Ok(event) = event_rx.try_recv() {
-                        emit_ndjson_event(&mut stdout, &mut state, event)?;
+                        if !deadline_elapsed.load(Ordering::Relaxed) {
+                            emit_ndjson_event(&mut stdout, &mut state, event)?;
+                        }
                     }
                     break;
                 }

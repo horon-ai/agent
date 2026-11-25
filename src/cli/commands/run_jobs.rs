@@ -116,6 +116,7 @@ pub(in crate::cli) async fn run_single_message_with_agent(
         .max_time
         .map(|duration| (duration, agent.graceful_shutdown_signal()));
     let mut jobs = limits.wait_async.then(run_jobs::OwnedJobs::new);
+    let run_provider = provider.clone();
     let run = async {
         if emit_json {
             let msg_start = agent.messages().len();
@@ -145,7 +146,7 @@ pub(in crate::cli) async fn run_single_message_with_agent(
             run_single_message_command_ndjson(agent, provider, message, &elapsed, jobs.as_mut()).await?;
         } else {
             let msg_start = agent.messages().len();
-            run_single_message_command_plain_with_auto_poke(agent, message, limits.print_thoughts).await?;
+            run_single_message_command_plain_with_auto_poke(agent, message, limits.print_thoughts, &elapsed).await?;
             if !elapsed.load(Ordering::Relaxed) && limits.a2ui {
                 super::a2ui_run::print_a2ui_text_cards(&agent.messages()[msg_start..])?;
             }
@@ -183,6 +184,15 @@ pub(in crate::cli) async fn run_single_message_with_agent(
             run_jobs::print_statuses(jobs.statuses());
         }
         error.report(agent.session_id(), emit_json, emit_ndjson)?;
+    } else if emit_json && let Err(ref error) = result {
+        let report = serde_json::json!({
+            "type": "error",
+            "session_id": agent.session_id(),
+            "provider": run_report_provider_name(run_provider.as_ref(), agent.session_provider_key().as_deref()),
+            "model": run_provider.model(),
+            "message": format!("{error:#}"),
+        });
+        println!("{}", serde_json::to_string_pretty(&report)?);
     }
     result
 }

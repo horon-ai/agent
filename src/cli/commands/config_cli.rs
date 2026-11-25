@@ -46,11 +46,12 @@ pub(crate) fn run(command: &ConfigCommand) -> Result<()> {
     }
 }
 
-/// The config file, parsed and validated by the loader startup uses, with a
-/// failure reported as the loader words it (file path, TOML position and key).
+/// The config file, parsed and validated by the strict startup check (including
+/// unknown TOML keys and `[provider] default_provider`), with any failure
+/// reported as the loader words it (file path, TOML position and key).
 fn check(json: bool) -> Result<()> {
     let path = Config::path().map(|path| path.display().to_string());
-    let failure = Config::load_strict().err().map(|error| format!("{error:#}"));
+    let failure = Config::check_strict().err().map(|error| format!("{error:#}"));
     if json {
         let report = serde_json::json!({ "ok": failure.is_none(), "path": path, "error": failure });
         println!("{}", serde_json::to_string_pretty(&report)?);
