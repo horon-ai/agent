@@ -66,6 +66,8 @@ class WorkflowGuardTests(unittest.TestCase):
     def test_quality_gates_report_failures_without_weakening_them(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         quality = workflow.split('  quality:\n', 1)[1].split('\n  release-automation:', 1)[0]
+        checkout_block = quality.split('\n      - name: Free disk space', 1)[0]
+        self.assertIn('fetch-depth: 0', checkout_block)
         steps = re.split(r'^      - name: ', quality, flags=re.MULTILINE)[1:]
         self.assertGreaterEqual(len(steps), 15)
         for step in steps:
