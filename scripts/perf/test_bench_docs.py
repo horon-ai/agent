@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -674,6 +676,326 @@ class PartialRuns(unittest.TestCase):
                                     "--commit", "abc1234", "--require-complete"])
             self.assertEqual(code, 0)
             self.assertEqual(bench_docs.last_commit(doc.read_text(encoding="utf-8")), "abc1234")
+
+
+def eight_tool_results() -> list[dict]:
+    specs = [
+        ("horon", "horon", "horon-agent v0.1.0-dev (abc1234)", 45.0, 41e6, 37.0, 64.0, 380e3, 117e6),
+        ("horon-base", "horon-base", "horon-agent v0.1.0-dev (0001111)", 48.0, 42e6, 39.0, 66.0, 390e3, 118e6),
+        ("jcode", "jcode", "jcode v1.0.1 (10114429c)", 148.0, 80e6, 54.0, 165.0, 173e3, 191e6),
+        ("claude_code", "Claude Code", "2.1.317 (Claude Code)", 500.0, 200e6, 520.0, 650.0, 50e6, 230e6),
+        ("codex", "Codex CLI", "codex-cli 0.166.0", 290.0, 90e6, 310.0, 410.0, 45e6, 98e6),
+        ("opencode", "OpenCode", "1.19.5", 450.0, 150e6, 470.0, 580.0, 800e3, 165e6),
+        ("pi", "pi", "1.5.0", 510.0, 130e6, 530.0, 610.0, 95e6, 35e6),
+        ("omp", "oh-my-pi (omp)", "18.18.0", 620.0, 160e6, 650.0, 740.0, 110e6, 120e6),
+        ("omo", "oh-my-openagent (omo)", "5.1.64", 710.0, 220e6, 730.0, 820.0, 150e6, 250e6),
+    ]
+    rows = []
+    for name, label, version, oneshot, rss, skill, mcp, slope, install in specs:
+        entry = summary_result(name, version, oneshot, rss, skill, mcp, slope, install)
+        entry["label"] = label
+        rows.append(entry)
+    return rows
+
+
+class AllCompetitorGuardAndSummary(unittest.TestCase):
+    """Summaries, versions, charts and guards cover all 7 competitors and omit A/B rows."""
+
+    def test_summary_and_versions_include_all_competitors_without_horon_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            job_dir(results, "benchmark-linux-1", "linux", files={
+                "runner.txt": "ubuntu-24.04\n",
+                "compare.json": compare_json(*eight_tool_results()),
+                "jcode-release.json": json.dumps(RELEASE),
+            })
+            dirs = bench_docs.find_platform_dirs(results)
+            summary = bench_docs.summary_body(dirs, "abc1234", "en")
+            versions = bench_docs.versions_body(dirs, "abc1234", "en")
+            charts = bench_charts.render_charts(dirs, "abc1234", "en")
+
+        expected_header = (
+            "| Linux (`ubuntu-24.04`) | horon | jcode | Claude Code | Codex CLI | "
+            "OpenCode | pi | oh-my-pi (omp) | oh-my-openagent (omo) |"
+        )
+        self.assertIn(expected_header, summary)
+        self.assertNotIn("horon-base", summary)
+        for label in ("horon", "jcode", "Claude Code", "Codex CLI", "OpenCode", "pi", "oh-my-pi (omp)", "oh-my-openagent (omo)"):
+            self.assertIn(f"| {label} |", versions)
+        self.assertNotIn("horon-base", versions)
+        self.assertIn("horon against 7 tools", charts["00-summary.svg"])
+
+    def test_require_all_competitors_rejects_partial_run_and_accepts_full_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            partial_dir = root / "partial"
+            partial_dir.mkdir()
+            summary_results(partial_dir)
+            doc = root / "README.md"
+            doc.write_text(README_DOC, encoding="utf-8")
+
+            code = bench_docs.main([
+                "render", "--doc", str(doc), "--results", str(partial_dir),
+                "--commit", "abc1234", "--require-all-competitors",
+            ])
+            self.assertEqual(code, 1)
+            self.assertEqual(doc.read_text(encoding="utf-8"), README_DOC)
+
+            full_dir = root / "full"
+            full_dir.mkdir()
+            for idx, key in enumerate(("linux", "macos", "windows"), start=1):
+                runner = {"linux": "ubuntu-24.04\n", "macos": "macos-latest\n", "windows": "windows-latest\n"}[key]
+                asset = {
+                    "linux": "jcode-linux-x86_64.tar.gz",
+                    "macos": "jcode-macos-aarch64.tar.gz",
+                    "windows": "jcode-windows-x86_64.exe",
+                }[key]
+                job_dir(full_dir, f"benchmark-{key}-{idx}", key, files={
+                    "runner.txt": runner,
+                    "compare.json": compare_json(*eight_tool_results()),
+                    "jcode-release.json": json.dumps({**RELEASE, "asset": asset}),
+                })
+            code = bench_docs.main([
+                "render", "--doc", str(doc), "--results", str(full_dir),
+                "--commit", "abc1234", "--require-all-competitors",
+            ])
+            self.assertEqual(code, 0)
+            self.assertIn("oh-my-openagent (omo)", doc.read_text(encoding="utf-8"))
+
+    def test_require_all_competitors_rejects_missing_or_failed_os_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            partial_os = root / "partial-os"
+            partial_os.mkdir()
+            job_dir(partial_os, "benchmark-linux-1", "linux", files={
+                "runner.txt": "ubuntu-24.04\n",
+                "compare.json": compare_json(*eight_tool_results()),
+                "jcode-release.json": json.dumps(RELEASE),
+            })
+            job_dir(partial_os, "benchmark-macos-2", "macos", status="failure", files={
+                "runner.txt": "macos-latest\n",
+            })
+            readme = root / "README.md"
+            readme.write_text(README_DOC, encoding="utf-8")
+            results_doc = root / "RESULTS.md"
+            results_doc.write_text(CHART_DOC, encoding="utf-8")
+
+            for doc in (readme, results_doc):
+                original = doc.read_text(encoding="utf-8")
+                code = bench_docs.main([
+                    "render", "--doc", str(doc), "--results", str(partial_os),
+                    "--commit", "abc1234", "--require-all-competitors",
+                ])
+                self.assertEqual(code, 1)
+                self.assertEqual(doc.read_text(encoding="utf-8"), original)
+
+
+class PerOsReleaseAndMainCommitGuardTests(unittest.TestCase):
+    """Per-OS jcode releases, npm provenance tables, and --require-main-commit guard."""
+
+    def test_per_os_jcode_and_npm_provenance_render_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            npm_prov = {
+                "tools": {
+                    "claude_code": {
+                        "label": "Claude Code",
+                        "package": "@anthropic-ai/claude-code",
+                        "installed_version": "2.1.331",
+                        "selection": "npm dist-tag latest",
+                        "git_head": None,
+                        "integrity": "sha512-claude331==",
+                    },
+                    "omo": {
+                        "label": "oh-my-openagent (omo)",
+                        "package": "omo-ai",
+                        "installed_version": "5.1.83",
+                        "selection": "npm dist-tag latest",
+                        "git_head": "69a1863a457da06fb64ae788e335bf272f1df406",
+                        "integrity": "sha512-omo5183==",
+                    },
+                }
+            }
+            linux_rows = [
+                summary_result("horon", "horon-agent v0.1.23-dev (4100da7)", 45.0, 41e6, 37.0, 64.0, 380e3, 117e6),
+                summary_result("jcode", "jcode v1.1.2 (3090ca4)", 140.0, 75e6, 52.0, 160.0, 170e3, 190e6),
+            ]
+            other_rows = [
+                summary_result("horon", "horon-agent v0.1.23-dev (4100da7)", 90.0, 38e6, 70.0, 95.0, 400e3, 105e6),
+                summary_result("jcode", "jcode v1.0.3 (a0ae514c4)", 180.0, 32e6, 80.0, 200.0, 250e3, 110e6),
+            ]
+            job_dir(results, "benchmark-linux-1", "linux", files={
+                "runner.txt": "ubuntu-24.04\n",
+                "compare.json": compare_json(*linux_rows),
+                "jcode-release.json": json.dumps({**RELEASE, "tag": "v1.1.2", "version": "1.1.2", "commit": "b" * 40}),
+                "competitor-provenance.json": json.dumps(npm_prov),
+            })
+            for key, runner, asset in (("macos", "macos-latest", "jcode-macos-aarch64.tar.gz"),
+                                       ("windows", "windows-latest", "jcode-windows-x86_64.exe")):
+                job_dir(results, f"benchmark-{key}-1", key, files={
+                    "runner.txt": f"{runner}\n",
+                    "compare.json": compare_json(*other_rows),
+                    "jcode-release.json": json.dumps({
+                        **RELEASE, "tag": "v1.0.3", "version": "1.0.3", "commit": "c" * 40, "asset": asset
+                    }),
+                    "competitor-provenance.json": json.dumps(npm_prov),
+                })
+            dirs = bench_docs.find_platform_dirs(results)
+            summary = bench_docs.summary_body(dirs, "4100da7", "en")
+            versions_en = bench_docs.versions_body(dirs, "4100da7", "en")
+            versions_ko = bench_docs.versions_body(dirs, "4100da7", "ko")
+
+        self.assertIn("v1.1.2 (Linux: release `v1.1.2`", summary)
+        self.assertIn("v1.0.3 (macOS, Windows: release `v1.0.3`", summary)
+        self.assertEqual(versions_en.count("| jcode |"), 1)
+        self.assertIn("`jcode v1.1.2 (3090ca4)` (Linux), `jcode v1.0.3 (a0ae514c4)` (macOS, Windows)", versions_en)
+        self.assertIn("| Claude Code | `@anthropic-ai/claude-code` | `2.1.331` | npm dist-tag latest |", versions_en)
+        self.assertIn("`sha512-omo5183==`", versions_ko)
+        self.assertIn("`69a1863a457da06fb64ae788e335bf272f1df406`", versions_ko)
+
+    def test_require_main_commit_rejects_dev_commit_and_v010_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "t@example.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "t@example.com",
+            }
+            def git(*args: str) -> str:
+                return subprocess.check_output(["git", *args], cwd=repo, env=env, text=True).strip()
+
+            git("init", "-b", "main")
+            doc = repo / "RESULTS.md"
+            doc.write_text(DOC, encoding="utf-8")
+            git("add", "RESULTS.md")
+            git("commit", "-m", "main commit")
+            main_sha = git("rev-parse", "HEAD")
+            git("checkout", "-q", "-b", "dev")
+            (repo / "extra.txt").write_text("dev\n", encoding="utf-8")
+            git("add", "extra.txt")
+            git("commit", "-m", "dev commit")
+            dev_sha = git("rev-parse", "HEAD")
+
+            results = repo / "results"
+            results.mkdir()
+            linux_dir = job_dir(results, "benchmark-linux-1", "linux", files={
+                "commit.txt": f"{dev_sha}\n",
+                "horon-version.txt": f"horon-agent v0.1.23-dev ({dev_sha[:7]})\n",
+                "startup.txt": "ok\n",
+            })
+
+            # Commit outside `main` must fail and leave DOC intact.
+            code_dev = bench_docs.main([
+                "render", "--doc", str(doc), "--results", str(results),
+                "--commit", dev_sha, "--require-main-commit", "--main-ref", "main",
+            ])
+            self.assertEqual(code_dev, 1)
+            self.assertEqual(doc.read_text(encoding="utf-8"), DOC)
+
+            # A `main` commit carrying fallback v0.1.0-dev must fail.
+            (linux_dir / "commit.txt").write_text(f"{main_sha}\n", encoding="utf-8")
+            (linux_dir / "horon-version.txt").write_text(f"horon-agent v0.1.0-dev ({main_sha[:7]})\n", encoding="utf-8")
+            code_v010 = bench_docs.main([
+                "render", "--doc", str(doc), "--results", str(results),
+                "--commit", main_sha, "--require-main-commit", "--main-ref", "main",
+            ])
+            self.assertEqual(code_v010, 1)
+
+            # A genuine `main` commit with real semver passes.
+            (linux_dir / "horon-version.txt").write_text(f"horon-agent v0.1.23-dev ({main_sha[:7]})\n", encoding="utf-8")
+            code_ok = bench_docs.main([
+                "render", "--doc", str(doc), "--results", str(results),
+                "--commit", main_sha, "--require-main-commit", "--main-ref", "main",
+            ])
+            self.assertEqual(code_ok, 0)
+            self.assertEqual(bench_docs.last_commit(doc.read_text(encoding="utf-8")), main_sha)
+
+
+class CommittedBenchmarkDocsTests(unittest.TestCase):
+    """Checked-in summary, versions and summary charts must cover all 3 OSes and 8 tools."""
+
+    REPO = SCRIPTS.parents[1]
+    TOOL_LABELS = ("horon", "jcode", "Claude Code", "Codex CLI", "OpenCode", "pi",
+                   "oh-my-pi (omp)", "oh-my-openagent (omo)")
+
+    @staticmethod
+    def _between(text: str, start: str, end: str) -> str:
+        return text.split(start, 1)[1].split(end, 1)[0]
+
+    def test_readme_summaries_cover_all_three_oses_and_eight_tools(self) -> None:
+        for name in ("README.md", "README.ko.md"):
+            with self.subTest(doc=name):
+                text = (self.REPO / name).read_text(encoding="utf-8")
+                block = self._between(text, bench_docs.SUMMARY_START, bench_docs.SUMMARY_END)
+                for os_heading in ("| Linux (`", "| macOS (`", "| Windows (`"):
+                    self.assertIn(os_heading, block)
+                for label in self.TOOL_LABELS:
+                    self.assertIn(label, block)
+                self.assertNotIn("horon-base", block)
+                self.assertNotIn("v0.1.0-dev", block)
+                self.assertNotIn("| — | — | — |", block)
+                self.assertIn("actions/runs/", block)
+
+    def test_results_versions_and_summary_charts_cover_all_eight_tools(self) -> None:
+        commits: dict[str, str | None] = {}
+        for name, missing_marker, npm_marker in (
+            ("docs/performance/RESULTS.md", "not recorded", "npm dist-tag latest"),
+            ("docs/performance/RESULTS.ko.md", "기록 없음", "npm dist-tag latest"),
+        ):
+            with self.subTest(doc=name):
+                text = (self.REPO / name).read_text(encoding="utf-8")
+                commit = bench_docs.last_commit(text)
+                self.assertIsNotNone(commit)
+                assert commit is not None
+                self.assertEqual(len(commit), 40)
+                commits[name] = commit
+                versions = self._between(text, bench_docs.VERSIONS_START, bench_docs.VERSIONS_END)
+                for label in self.TOOL_LABELS:
+                    self.assertIn(f"| {label} |", versions)
+                self.assertIn(f"({commit[:7]})", versions)
+                self.assertNotIn("v0.1.0-dev", versions)
+                self.assertNotIn("horon-base", versions)
+                self.assertIn(npm_marker, versions)
+                for os_row in ("| Linux | `v", "| macOS | `v", "| Windows | `v"):
+                    self.assertIn(os_row, versions)
+                self.assertNotIn(missing_marker, versions)
+
+        self.assertEqual(
+            commits["docs/performance/RESULTS.md"],
+            commits["docs/performance/RESULTS.ko.md"],
+        )
+        measured_commit = commits["docs/performance/RESULTS.md"]
+        assert measured_commit is not None
+        has_origin_main = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "origin/main"],
+            cwd=self.REPO,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).returncode == 0
+        if has_origin_main:
+            ancestry = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", measured_commit, "origin/main"],
+                cwd=self.REPO,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                ancestry.returncode,
+                0,
+                f"measured RESULTS commit {measured_commit} must be an ancestor of origin/main",
+            )
+
+        charts_dir = self.REPO / "docs" / "performance" / "charts"
+        en_svg = (charts_dir / "00-summary.svg").read_text(encoding="utf-8")
+        ko_svg = (charts_dir / "00-summary.ko.svg").read_text(encoding="utf-8")
+        self.assertIn("horon against 7 tools", en_svg)
+        self.assertIn("horon 대 도구 7개", ko_svg)
+        self.assertNotIn("not measured", en_svg.replace("not measured", "", 2))
+        self.assertNotIn("측정 불가", ko_svg.replace("측정 불가", "", 2))
 
 
 if __name__ == "__main__":

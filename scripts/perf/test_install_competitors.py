@@ -68,9 +68,13 @@ STUB_CURL = textwrap.dedent(
       https://api.github.com/repos/1jehuang/jcode/releases/latest)
         [ "$STUB_LATEST" = ok ] || fail 503
         src="$STUB_ROOT/latest.json" ;;
+      https://api.github.com/repos/1jehuang/jcode/releases\\?per_page=*)
+        [ "$STUB_LATEST" = ok ] || fail 503
+        src="$STUB_ROOT/releases.json" ;;
       https://api.github.com/repos/1jehuang/jcode/releases/tags/*)
         [ "$STUB_LATEST" = ok ] || fail 503
-        src="$STUB_ROOT/latest.json" ;;
+        tag_file="$STUB_ROOT/tags/${url##*/}.json"
+        if [ -f "$tag_file" ]; then src="$tag_file"; else src="$STUB_ROOT/latest.json"; fi ;;
       https://api.github.com/repos/1jehuang/jcode/git/ref/tags/*)
         [ "$STUB_LATEST" = ok ] || fail 503
         src="$STUB_ROOT/ref.json" ;;
@@ -83,6 +87,15 @@ STUB_CURL = textwrap.dedent(
       https://api.github.com/repos/1jehuang/jcode/releases/assets/*)
         [ "$STUB_API" = ok ] || fail 504
         src="$STUB_ROOT/assets/${url##*/}" ;;
+      https://registry.npmjs.org/*)
+        [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] && echo "LEAKED_TOKEN:$url" >>"$STUB_ROOT/leaked.log"
+        npm_rel="${url#https://registry.npmjs.org/}"
+        npm_safe="${npm_rel//\\//__}"
+        src="$STUB_ROOT/npm/${npm_safe}.json"
+        if [ ! -f "$src" ]; then
+          [ "$STUB_NPM_FAIL" = 1 ] && fail 503
+          fail 404
+        fi ;;
       *) fail 404 ;;
     esac
     [ -f "$src" ] || fail 404
@@ -170,6 +183,7 @@ class JcodeReleaseInstallTests(unittest.TestCase):
             "STUB_DOWNLOAD": download,
             "STUB_API": api,
             "STUB_LATEST": latest,
+            "NPM_INSTALL_RETRY_DELAY": "0",
         })
         env.pop("JCODE_VERSION", None)
         env.pop("JCODE_RELEASE_COMMIT", None)
@@ -348,6 +362,237 @@ class JcodeReleaseInstallTests(unittest.TestCase):
         self.bin_path(result)
         self.assertIn("codex\tnpm install failed", self.failures())
         self.assertEqual((self.stub / "npm-env").read_text().splitlines(), ["unset", "unset"])
+
+    def test_transient_npm_install_failure_retries_and_succeeds(self) -> None:
+        npm = self.stub / "bin" / "npm"
+        npm.write_text(textwrap.dedent("""\
+            #!/usr/bin/env bash
+            count_file="$STUB_ROOT/npm-calls"
+            calls=0
+            [ -f "$count_file" ] && calls="$(cat "$count_file")"
+            calls=$((calls + 1))
+            echo "$calls" >"$count_file"
+            prefix=""
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --prefix) prefix="$2"; shift 2 ;;
+                *) shift ;;
+              esac
+            done
+            if [ "$calls" -eq 1 ]; then
+              mkdir -p "$prefix/node_modules"
+              touch "$prefix/node_modules/stale.txt"
+              exit 1
+            fi
+            mkdir -p "$prefix/node_modules/.bin"
+            printf '#!/bin/sh\\necho "codex 0.166.0"\\n' >"$prefix/node_modules/.bin/codex"
+            chmod +x "$prefix/node_modules/.bin/codex"
+            exit 0
+            """))
+        npm.chmod(0o755)
+        result = self.run_installer(tools="jcode,codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--bin codex=", result.stdout)
+        self.assertEqual(self.failures(), "")
+        self.assertFalse((self.dest / "codex" / "node_modules" / "stale.txt").exists())
+        self.assertEqual((self.stub / "npm-calls").read_text().strip(), "2")
+
+    def test_resolve_platforms_skips_single_os_latest_when_other_oses_requested(self) -> None:
+        def rel(tag: str, asset_names: list[str], *, prerelease: bool = False) -> dict:
+            return {
+                "tag_name": tag,
+                "draft": False,
+                "prerelease": prerelease,
+                "assets": [{"id": idx + 1, "name": name} for idx, name in enumerate(asset_names)],
+            }
+
+        linux_only = rel("v1.1.2", ["jcode-linux-x86_64.tar.gz", "SHA256SUMS"])
+        rc = rel("v1.1.0-rc1", ["jcode-linux-x86_64.tar.gz", "jcode-macos-aarch64.tar.gz", "jcode-windows-x86_64.exe", "SHA256SUMS"], prerelease=True)
+        full = rel("v1.0.3", ["jcode-linux-x86_64.tar.gz", "jcode-macos-aarch64.tar.gz", "jcode-windows-x86_64.exe", "SHA256SUMS"])
+
+        (self.stub / "latest.json").write_text(json.dumps(linux_only))
+        (self.stub / "releases.json").write_text(json.dumps([linux_only, rc, full]))
+        (self.stub / "tags").mkdir(exist_ok=True)
+        (self.stub / "tags" / "v1.1.2.json").write_text(json.dumps(linux_only))
+        (self.stub / "tags" / "v1.0.3.json").write_text(json.dumps(full))
+
+        env = dict(os.environ)
+        env["PATH"] = f"{self.stub / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+        env["STUB_ROOT"] = str(self.stub)
+        env["STUB_LATEST"] = "ok"
+        env["STUB_DOWNLOAD"] = "ok"
+        env["STUB_API"] = "ok"
+        env.pop("JCODE_VERSION", None)
+
+        # Single Linux request keeps latest v1.1.2 without fetching the list endpoint.
+        meta_linux = self.tmp / "meta-linux.json"
+        res_linux = subprocess.run(
+            [sys.executable, str(HERE / "jcode_release.py"), "resolve", "--platforms", "linux", "--metadata", str(meta_linux)],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+        self.assertEqual(res_linux.returncode, 0, res_linux.stderr)
+        self.assertEqual(json.loads(meta_linux.read_text())["tag"], "v1.1.2")
+
+        # Multi-OS request skips Linux-only v1.1.2 and prerelease v1.1.0-rc1, choosing v1.0.3.
+        meta_all = self.tmp / "meta-all.json"
+        res_all = subprocess.run(
+            [sys.executable, str(HERE / "jcode_release.py"), "resolve", "--platforms", "all", "--metadata", str(meta_all)],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+        self.assertEqual(res_all.returncode, 0, res_all.stderr)
+        rec_all = json.loads(meta_all.read_text())
+        self.assertEqual(rec_all["tag"], "v1.0.3")
+        self.assertEqual(rec_all["selection"], "latest")
+
+        # Explicit pin refuses to fall back when requested platform assets are absent.
+        res_pin = subprocess.run(
+            [sys.executable, str(HERE / "jcode_release.py"), "resolve", "--tag", "v1.1.2", "--platforms", "all"],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+        self.assertNotEqual(res_pin.returncode, 0)
+        self.assertIn("pinned release v1.1.2 has no asset(s)", res_pin.stderr)
+
+        # Per-platform resolution selects newest release per OS in one pass.
+        meta_per_os = self.tmp / "meta-per-os.json"
+        res_per_os = subprocess.run(
+            [
+                sys.executable,
+                str(HERE / "jcode_release.py"),
+                "resolve",
+                "--per-platform",
+                "--platforms",
+                "all",
+                "--metadata",
+                str(meta_per_os),
+            ],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+        self.assertEqual(res_per_os.returncode, 0, res_per_os.stderr)
+        per_os = json.loads(meta_per_os.read_text())["platforms"]
+        self.assertEqual(per_os["linux"]["tag"], "v1.1.2")
+        self.assertEqual(per_os["macos"]["tag"], "v1.0.3")
+        self.assertEqual(per_os["windows"]["tag"], "v1.0.3")
+
+    def test_npm_latest_skips_prereleases_strips_tokens_and_records_provenance(self) -> None:
+        npm_dir = self.stub / "npm"
+        npm_dir.mkdir(exist_ok=True)
+        (npm_dir / "@oh-my-pi__pi-coding-agent__latest.json").write_text(json.dumps({
+            "version": "19.2.0-beta.1",
+            "dist": {"shasum": "deadbeef", "integrity": "sha512-beta"},
+        }))
+        (npm_dir / "@oh-my-pi__pi-coding-agent.json").write_text(json.dumps({
+            "versions": {
+                "19.2.0-beta.1": {"version": "19.2.0-beta.1"},
+                "19.1.1": {
+                    "version": "19.1.1",
+                    "gitHead": "abc123def456",
+                    "dist": {
+                        "tarball": "https://registry.npmjs.org/@oh-my-pi/pi-coding-agent/-/pi-coding-agent-19.1.1.tgz",
+                        "shasum": "111122223333",
+                        "integrity": "sha512-stable1911==",
+                    },
+                },
+                "19.0.0": {"version": "19.0.0"},
+            },
+        }))
+        (npm_dir / "@oh-my-pi__pi-coding-agent__19.1.1.json").write_text(json.dumps({
+            "version": "19.1.1",
+            "gitHead": "abc123def456",
+            "dist": {
+                "tarball": "https://registry.npmjs.org/@oh-my-pi/pi-coding-agent/-/pi-coding-agent-19.1.1.tgz",
+                "shasum": "111122223333",
+                "integrity": "sha512-stable1911==",
+            },
+        }))
+        npm_stub = self.stub / "bin" / "npm"
+        npm_stub.write_text(textwrap.dedent("""\
+            #!/usr/bin/env bash
+            prefix="" spec=""
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --prefix) prefix="$2"; shift 2 ;;
+                -*) shift ;;
+                *) spec="$1"; shift ;;
+              esac
+            done
+            echo "$spec" >>"$STUB_ROOT/npm-specs.log"
+            ver="${spec##*@}"
+            mkdir -p "$prefix/node_modules/@oh-my-pi/pi-coding-agent" "$prefix/node_modules/.bin"
+            printf '{"name":"@oh-my-pi/pi-coding-agent","version":"%s"}\\n' "$ver" \
+              >"$prefix/node_modules/@oh-my-pi/pi-coding-agent/package.json"
+            printf '#!/bin/sh\\necho "omp/%s"\\n' "$ver" >"$prefix/node_modules/.bin/omp"
+            chmod +x "$prefix/node_modules/.bin/omp"
+            """))
+        npm_stub.chmod(0o755)
+        bun_stub = self.stub / "bin" / "bun"
+        bun_stub.write_text("#!/bin/sh\necho 1.4.5\n")
+        bun_stub.chmod(0o755)
+
+        result = self.run_installer(
+            tools="omp",
+            extra_env={"GH_TOKEN": "secret-token", "GITHUB_TOKEN": "other-secret", "OMP_VERSION": ""},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.stub / "leaked.log").exists())
+        specs = (self.stub / "npm-specs.log").read_text().splitlines()
+        self.assertEqual(specs, ["@oh-my-pi/pi-coding-agent@19.1.1"])
+        prov = json.loads((self.dest / "competitor-provenance.json").read_text())["tools"]["omp"]
+        self.assertEqual(prov["version"], "19.1.1")
+        self.assertEqual(prov["installed_version"], "19.1.1")
+        self.assertEqual(prov["selection"], "npm highest-stable")
+        self.assertEqual(prov["git_head"], "abc123def456")
+        self.assertEqual(prov["integrity"], "sha512-stable1911==")
+
+
+class HoronTargetResolutionTests(unittest.TestCase):
+    def test_resolve_horon_defaults_to_main_and_stamps_next_patch_semver(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "t@example.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "t@example.com",
+            }
+            def git(*args: str) -> str:
+                return subprocess.check_output(["git", *args], cwd=repo, env=env, text=True).strip()
+
+            git("init", "-b", "main")
+            (repo / "Cargo.toml").write_text('[package]\nname = "horon-agent"\nversion = "0.1.0"\n')
+            git("add", "Cargo.toml")
+            git("commit", "-m", "base")
+            git("tag", "v0.1.22")
+            (repo / "Cargo.toml").write_text('[package]\nname = "horon-agent"\nversion = "0.1.0"\n# m\n')
+            git("add", "Cargo.toml")
+            git("commit", "-m", "main tip")
+            main_sha = git("rev-parse", "HEAD")
+            git("branch", "dev")
+            git("checkout", "-q", "dev")
+            (repo / "Cargo.toml").write_text('[package]\nname = "horon-agent"\nversion = "0.1.0"\n# d\n')
+            git("add", "Cargo.toml")
+            git("commit", "-m", "dev tip")
+            dev_sha = git("rev-parse", "HEAD")
+
+            res_main = subprocess.run(
+                [sys.executable, str(HERE / "competitor_versions.py"), "resolve-horon",
+                 "--repo", str(repo), "--main-ref", "main", "--release-tag", "v0.1.22"],
+                capture_output=True, text=True, check=True,
+            )
+            info = json.loads(res_main.stdout)
+            self.assertEqual(info["sha"], main_sha)
+            self.assertEqual(info["semver"], "0.1.23")
+            self.assertFalse(info["release_build"])
+            self.assertTrue(info["on_main"])
+
+            res_dev = subprocess.run(
+                [sys.executable, str(HERE / "competitor_versions.py"), "resolve-horon",
+                 "--repo", str(repo), "--ref", dev_sha, "--main-ref", "main",
+                 "--release-tag", "v0.1.22", "--require-main"],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(res_dev.returncode, 0)
+            self.assertIn("not an ancestor of main", res_dev.stderr)
 
 
 class ReleaseHelpers(unittest.TestCase):

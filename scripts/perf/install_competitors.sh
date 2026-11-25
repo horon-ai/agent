@@ -35,10 +35,14 @@
 # by their `.cmd` shim, and every path is written in `C:/...` form so the Python
 # benchmark can open it.
 #
-# The npm tools stay pinned so a workflow rerun measures the same packages:
+# Instead of hardcoding stale npm versions, live latest stable releases are
+# resolved via `scripts/perf/competitor_versions.py` (or reused from a single
+# round-wide `COMPETITOR_VERSIONS_JSON` resolved by benchmark.yml). Explicit env
+# overrides still pin one package when desired:
 #   CLAUDE_VERSION, CODEX_VERSION, OPENCODE_VERSION, PI_VERSION,
 #   OMP_VERSION, OMO_VERSION, BUN_VERSION
-# Override any of them, or JCODE_VERSION to pin jcode, through the environment.
+# Set `NPM_STRICT_RESOLVE=1` to fail if npm registry metadata cannot be queried
+# for an unpinned tool. Override JCODE_VERSION to pin jcode;
 # JCODE_RELEASE_COMMIT refuses a release whose tag moved; JCODE_RELEASE_SOURCE
 # records whether the tag came from the newest-release lookup or a manual pin;
 # JCODE_VERIFY_VERSION=0 skips the `--version` execution so the install suite's
@@ -73,20 +77,15 @@ JCODE_RELEASE_SOURCE="${JCODE_RELEASE_SOURCE:-}"
 JCODE_VERIFY_VERSION="${JCODE_VERIFY_VERSION:-1}"
 JCODE_METADATA="${JCODE_METADATA:-$DEST/jcode-release.json}"
 JCODE_LOG="$DEST/jcode-release.log"
-CLAUDE_VERSION="${CLAUDE_VERSION:-2.1.317}"
-CODEX_VERSION="${CODEX_VERSION:-0.166.0}"
-OPENCODE_VERSION="${OPENCODE_VERSION:-1.19.5}"
-# pi moved to the @earendil-works scope at 1.x; 1.x ships a built-in MCP client
-# (@earendil-works/pi-mcp) and needs Node 22.19 or later.
-PI_VERSION="${PI_VERSION:-1.5.0}"
-# @oh-my-pi/pi-coding-agent ships its CLI as a Bun script (engines bun>=1.4.4),
-# so the compare job installs Bun before running it.
-OMP_VERSION="${OMP_VERSION:-18.18.0}"
-# omo-ai runs on Node 24+ (or Bun); the job has both.
-OMO_VERSION="${OMO_VERSION:-5.1.64}"
-# Bun delivered by the npm registry when the runner has none; `bun@1.4.4`
-# satisfies the engines constraint @oh-my-pi/pi-coding-agent declares.
-BUN_VERSION="${BUN_VERSION:-1.4.4}"
+COMPETITOR_VERSIONS_JSON="${COMPETITOR_VERSIONS_JSON:-}"
+NPM_STRICT_RESOLVE="${NPM_STRICT_RESOLVE:-0}"
+CLAUDE_VERSION="${CLAUDE_VERSION:-}"
+CODEX_VERSION="${CODEX_VERSION:-}"
+OPENCODE_VERSION="${OPENCODE_VERSION:-}"
+PI_VERSION="${PI_VERSION:-}"
+OMP_VERSION="${OMP_VERSION:-}"
+OMO_VERSION="${OMO_VERSION:-}"
+BUN_VERSION="${BUN_VERSION:-}"
 
 OS="$(uname -s)"
 case "$OS" in
@@ -106,10 +105,25 @@ have() {
 npm_install_into() {
   # npm_install_into <package@version> <prefix>
   local spec="$1" prefix="$2"
+  local attempts="${NPM_INSTALL_RETRIES:-3}" delay="${NPM_INSTALL_RETRY_DELAY:-3}" attempt=1
   if ! have npm; then
     return 1
   fi
-  env -u GH_TOKEN -u GITHUB_TOKEN npm install --prefix "$prefix" --no-audit --no-fund --loglevel=error "$spec" >&2
+  while [ "$attempt" -le "$attempts" ]; do
+    if env -u GH_TOKEN -u GITHUB_TOKEN npm install --prefix "$prefix" \
+        --no-audit --no-fund --loglevel=error \
+        --fetch-retries=4 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000 \
+        "$spec" >&2; then
+      return 0
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      echo "install_competitors: npm install $spec attempt $attempt/$attempts failed; retrying in ${delay}s" >&2
+      rm -rf "$prefix/node_modules" "$prefix/package-lock.json"
+      [ "$delay" = "0" ] || sleep "$delay"
+    fi
+    attempt=$((attempt + 1))
+  done
+  return 1
 }
 
 record_bin() {
@@ -139,6 +153,47 @@ jcode_python() {
     return 1
   fi
 }
+
+prepare_npm_versions() {
+  local py="" args resolved_out line key val
+  if ! py="$(jcode_python)"; then
+    return 0
+  fi
+  args=(prepare-install --dest "$DEST" --tools "$TOOLS")
+  [ -z "$COMPETITOR_VERSIONS_JSON" ] || args+=(--resolved "$COMPETITOR_VERSIONS_JSON")
+  [ "$NPM_STRICT_RESOLVE" = "1" ] && args+=(--strict)
+  if ! resolved_out="$("$py" "$SCRIPT_DIR/competitor_versions.py" "${args[@]}")"; then
+    if [ "$NPM_STRICT_RESOLVE" = "1" ]; then
+      echo "install_competitors: failed to resolve npm competitor versions" >&2
+      return 1
+    fi
+    return 0
+  fi
+  while IFS='=' read -r key val; do
+    case "$key" in
+      CLAUDE_VERSION) CLAUDE_VERSION="$val" ;;
+      CODEX_VERSION) CODEX_VERSION="$val" ;;
+      OPENCODE_VERSION) OPENCODE_VERSION="$val" ;;
+      PI_VERSION) PI_VERSION="$val" ;;
+      OMP_VERSION) OMP_VERSION="$val" ;;
+      OMO_VERSION) OMO_VERSION="$val" ;;
+      BUN_VERSION) BUN_VERSION="$val" ;;
+    esac
+  done <<<"$resolved_out"
+  return 0
+}
+
+if ! prepare_npm_versions; then
+  exit 1
+fi
+
+: "${CLAUDE_VERSION:=latest}"
+: "${CODEX_VERSION:=latest}"
+: "${OPENCODE_VERSION:=latest}"
+: "${PI_VERSION:=latest}"
+: "${OMP_VERSION:=latest}"
+: "${OMO_VERSION:=latest}"
+: "${BUN_VERSION:=latest}"
 
 BUN_BIN_DIR=""
 BUN_ATTEMPTED=0
@@ -313,6 +368,10 @@ if [ "$JCODE_REQUESTED" = 1 ] && [ "$JCODE_FAILED" = 1 ]; then
   # comparison claims, so the run fails and the reason stays in failures.txt.
   echo "install_competitors: jcode release verification failed; see $FAILURES and $JCODE_LOG" >&2
   exit 1
+fi
+
+if py="$(jcode_python)"; then
+  "$py" "$SCRIPT_DIR/competitor_versions.py" finalize-provenance --dest "$DEST" || true
 fi
 
 echo "install_competitors: wrote $BINS_ARGS" >&2

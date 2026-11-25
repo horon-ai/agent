@@ -2976,6 +2976,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       - name: Check relative links and UTF-8
         run: python3 scripts/ci/check_docs_links.py
@@ -3000,7 +3002,9 @@ jobs:
 
       - name: Documentation benchmark block contract
         if: ${{ !cancelled() }}
-        run: python3 -m unittest -v scripts/perf/test_bench_docs.py
+        run: |
+          git fetch --no-tags --quiet origin main:refs/remotes/origin/main || true
+          python3 -m unittest -v scripts/perf/test_bench_docs.py
 
       # The record charts above the generated block are committed files, so
       # nothing else would notice a table edit that left its chart behind.
