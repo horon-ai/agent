@@ -110,12 +110,177 @@ pub(crate) fn catastrophic_delete_refusal(path: &Path, display: &str, ctx: &Tool
 /// Called by each tool before it reads or writes anything, so a refusal costs
 /// nothing and leaves the filesystem untouched.
 pub(crate) fn enforce(tool: &str, input: &Value, ctx: &ToolContext) -> anyhow::Result<()> {
-    let Some(deny) = session_path_policy(&ctx.session_id) else {
-        return Ok(());
+    if let Some(deny) = session_path_policy(&ctx.session_id) {
+        for path in resolved_paths(tool, input, ctx) {
+            if let Some(reason) = deny(&path) {
+                return Err(anyhow::anyhow!("Tool call blocked by path policy: {reason}"));
+            }
+        }
+    }
+    if is_mutating_file_tool(tool)
+        && let Some(working_dir) = ctx.working_dir.as_deref()
+    {
+        enforce_workspace_write_boundary(tool, input, ctx, working_dir)?;
+    }
+    Ok(())
+}
+
+fn is_mutating_file_tool(tool: &str) -> bool {
+    matches!(
+        tool,
+        "write" | "edit" | "apply_patch" | "replace" | "hashline_edit" | "patch"
+    )
+}
+
+fn canonical_or_normalized(path: &Path) -> PathBuf {
+    resolve_target_realpath(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn resolve_target_realpath(path: &Path) -> std::io::Result<PathBuf> {
+    use std::collections::VecDeque;
+    use std::path::Component;
+
+    let mut queue: VecDeque<std::ffi::OsString> = VecDeque::new();
+    let mut resolved = if path.is_absolute() {
+        PathBuf::new()
+    } else {
+        std::env::current_dir()?
     };
-    for path in resolved_paths(tool, input, ctx) {
-        if let Some(reason) = deny(&path) {
-            return Err(anyhow::anyhow!("Tool call blocked by path policy: {reason}"));
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(Component::RootDir.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => queue.push_back(std::ffi::OsString::from("..")),
+            Component::Normal(part) => queue.push_back(part.to_os_string()),
+        }
+    }
+    let mut symlinks = 0usize;
+    while let Some(part) = queue.pop_front() {
+        if part == "." || part.is_empty() {
+            continue;
+        }
+        if part == ".." {
+            resolved.pop();
+            continue;
+        }
+        resolved.push(&part);
+        match std::fs::symlink_metadata(&resolved) {
+            Ok(meta) if horon_agent_platform::fs::is_path_link(&meta) => {
+                symlinks += 1;
+                if symlinks > 40 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "too many levels of symbolic links",
+                    ));
+                }
+                let target = std::fs::read_link(&resolved)?;
+                if target.is_absolute() {
+                    resolved = PathBuf::new();
+                } else {
+                    resolved.pop();
+                }
+                let mut next = VecDeque::new();
+                for c in target.components() {
+                    match c {
+                        Component::Prefix(p) => resolved.push(p.as_os_str()),
+                        Component::RootDir => resolved.push(Component::RootDir.as_os_str()),
+                        Component::CurDir => {}
+                        Component::ParentDir => next.push_back(std::ffi::OsString::from("..")),
+                        Component::Normal(seg) => next.push_back(seg.to_os_string()),
+                    }
+                }
+                while let Some(seg) = queue.pop_front() {
+                    next.push_back(seg);
+                }
+                queue = next;
+            }
+            Ok(_) => {}
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => {}
+            Err(err) => return Err(err),
+        }
+    }
+    let mut existing = resolved.as_path();
+    let mut suffix: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        match std::fs::canonicalize(existing) {
+            Ok(mut canon) => {
+                for part in suffix.into_iter().rev() {
+                    canon.push(part);
+                }
+                return Ok(canon);
+            }
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                let Some(parent) = existing.parent() else {
+                    return Ok(resolved);
+                };
+                if let Some(name) = existing.file_name() {
+                    suffix.push(name.to_os_string());
+                }
+                existing = parent;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn delete_patch_paths(patch: &str) -> Vec<&str> {
+    patch
+        .lines()
+        .filter_map(|line| line.strip_prefix("*** Delete File: ").map(str::trim))
+        .filter(|path| !path.is_empty())
+        .collect()
+}
+
+fn enforce_workspace_write_boundary(
+    tool: &str,
+    input: &Value,
+    ctx: &ToolContext,
+    working_dir: &Path,
+) -> anyhow::Result<()> {
+    let mut allowed_roots = vec![canonical_or_normalized(working_dir)];
+    for extra in super::session_additional_dirs(&ctx.session_id) {
+        allowed_roots.push(canonical_or_normalized(&extra));
+    }
+    let protected_deletes: Vec<PathBuf> = if tool == "apply_patch"
+        && let Some(patch) = input.get("patch_text").and_then(Value::as_str)
+    {
+        delete_patch_paths(patch)
+            .into_iter()
+            .filter_map(|raw| {
+                let resolved = ctx.resolve_path(Path::new(raw));
+                catastrophic_delete_refusal(&resolved, raw, ctx).map(|_| resolved)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    for candidate in resolved_paths(tool, input, ctx) {
+        if protected_deletes.iter().any(|protected| protected == &candidate) {
+            continue;
+        }
+        let real_target = resolve_target_realpath(&candidate).map_err(|err| {
+            anyhow::anyhow!(
+                "Refusing {tool} for {} (cannot resolve path safely: {err})",
+                candidate.display()
+            )
+        })?;
+        if !allowed_roots.iter().any(|root| real_target.starts_with(root)) {
+            return Err(anyhow::anyhow!(
+                "Tool call blocked by workspace boundary: {} resolves outside the workspace ({})",
+                candidate.display(),
+                real_target.display()
+            ));
         }
     }
     Ok(())
@@ -166,7 +331,7 @@ pub(crate) fn named_path_texts<'a>(tool: &str, input: &'a Value) -> Vec<&'a str>
             named.push(path);
         }
     }
-    if tool == "apply_patch"
+    if matches!(tool, "apply_patch" | "patch")
         && let Some(patch) = object.get("patch_text").and_then(Value::as_str)
     {
         named.extend(patch_paths(patch));
@@ -470,5 +635,87 @@ mod path_policy_tests {
 
         assert!(output.output.contains("allowed.txt"));
         assert!(target.exists(), "an unregistered session still writes");
+    }
+
+    #[tokio::test]
+    async fn normal_mode_blocks_dotdot_symlink_and_outside_writes_but_allows_add_dir() {
+        let (temp, workspace) = workspace();
+        let outside = temp.path().join("outside_secret");
+        std::fs::create_dir_all(&outside).expect("create outside dir");
+        let outside_file = outside.join("secret.txt");
+        std::fs::write(&outside_file, "ORIG").expect("seed outside secret");
+        let symlink_target = workspace.join("escape_link.txt");
+        if horon_agent_platform::fs::symlink_file(&outside_file, &symlink_target).is_ok() {
+            let err = WriteTool::new()
+                .execute(
+                    json!({"file_path": "escape_link.txt", "content": "PWNED"}),
+                    context("normal-ws-symlink", &workspace),
+                )
+                .await
+                .expect_err("symlink pointing outside workspace must be blocked");
+            assert!(err.to_string().contains("outside the workspace"), "{err}");
+            assert_eq!(std::fs::read_to_string(&outside_file).unwrap(), "ORIG");
+
+            let dangling = workspace.join("dangling_escape.txt");
+            let outside_new = outside.join("dangling_target.txt");
+            if horon_agent_platform::fs::symlink_file(&outside_new, &dangling).is_ok() {
+                let err = WriteTool::new()
+                    .execute(
+                        json!({"file_path": "dangling_escape.txt", "content": "PWNED"}),
+                        context("normal-ws-dangling", &workspace),
+                    )
+                    .await
+                    .expect_err("dangling symlink outside workspace must be blocked");
+                assert!(err.to_string().contains("outside the workspace"), "{err}");
+                assert!(!outside_new.exists());
+            }
+        }
+
+        // `../` relative escape from workspace must fail cleanly across write/apply_patch/edit.
+        let dotdot_err = WriteTool::new()
+            .execute(
+                json!({"file_path": "../outside_secret/pwned_rel.txt", "content": "PWNED"}),
+                context("normal-ws-dotdot", &workspace),
+            )
+            .await
+            .expect_err("../ escape write must be blocked");
+        assert!(dotdot_err.to_string().contains("outside the workspace"), "{dotdot_err}");
+        assert!(!outside.join("pwned_rel.txt").exists());
+
+        let patch_err = ApplyPatchTool::new()
+            .execute(
+                json!({"patch_text": "*** Begin Patch\n*** Add File: ../outside_secret/patch_rel.txt\n+bad\n*** End Patch"}),
+                context("normal-ws-patch", &workspace),
+            )
+            .await
+            .expect_err("../ escape apply_patch must be blocked");
+        assert!(patch_err.to_string().contains("outside the workspace"), "{patch_err}");
+        assert!(!outside.join("patch_rel.txt").exists());
+
+        let edit_err = EditTool::new()
+            .execute(
+                json!({"file_path": "../outside_secret/secret.txt", "old_string": "ORIG", "new_string": "PWNED"}),
+                context("normal-ws-edit", &workspace),
+            )
+            .await
+            .expect_err("../ escape edit must be blocked");
+        assert!(edit_err.to_string().contains("outside the workspace"), "{edit_err}");
+        assert_eq!(std::fs::read_to_string(&outside_file).unwrap(), "ORIG");
+
+        // Writing inside an explicitly granted `--add-dir` root works cleanly.
+        let extra = temp.path().join("extra_dir");
+        std::fs::create_dir_all(&extra).expect("create extra dir");
+        let add_session = "normal-ws-add-dir";
+        let _reg = crate::tool::register_session_tool_policy(add_session, None, Default::default());
+        crate::tool::register_session_additional_dirs(add_session, &[extra.to_string_lossy().into_owned()]);
+        let allowed_extra = extra.join("allowed.txt");
+        WriteTool::new()
+            .execute(
+                json!({"file_path": allowed_extra, "content": "OK"}),
+                context(add_session, &workspace),
+            )
+            .await
+            .expect("explicitly granted additional_dir must allow writes");
+        assert_eq!(std::fs::read_to_string(&allowed_extra).unwrap(), "OK");
     }
 }

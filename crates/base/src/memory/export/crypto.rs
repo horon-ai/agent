@@ -108,7 +108,12 @@ pub fn resolve_key_material(key_id: &str, env_var: Option<&str>, file: Option<&P
         return Ok(KeyMaterial::new(key_id, decoded));
     }
     if let Some(path) = file {
-        let raw = std::fs::read(path).with_context(|| format!("cannot read encryption key file {}", path.display()))?;
+        use std::io::Read as _;
+        let mut handle = horon_agent_platform::fs::open_verified_owner_only_secret_file(path)?;
+        let mut raw = Vec::new();
+        handle
+            .read_to_end(&mut raw)
+            .with_context(|| format!("cannot read encryption key file {}", path.display()))?;
         let decoded = parse_key_material_bytes(&raw)
             .with_context(|| format!("invalid AES-256-GCM key in file {}", path.display()))?;
         return Ok(KeyMaterial::new(key_id, decoded));

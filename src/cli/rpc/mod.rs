@@ -48,6 +48,7 @@ pub(crate) async fn run_rpc_command(args: &crate::cli::args::Args, session_dir: 
         provider_profile: provider_profile.as_deref(),
         cwd: cwd.as_deref(),
         resume: resume.as_deref(),
+        plan_mode: args.plan,
         connector: None,
         out: Box::new(tokio::io::stdout()),
         input: Box::new(tokio::io::BufReader::new(tokio::io::stdin())),

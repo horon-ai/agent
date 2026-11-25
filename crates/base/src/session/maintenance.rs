@@ -64,7 +64,7 @@ fn claim_prune_slot(base: &Path) -> bool {
         return false;
     }
     // Touch (create or refresh) the marker to claim the slot.
-    std::fs::write(&marker, b"").is_ok()
+    horon_agent_platform::fs::write_owner_only(&marker, b"").is_ok()
 }
 
 /// Core of [`prune_old_session_backups`], parameterized on the directory and

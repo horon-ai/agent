@@ -92,6 +92,7 @@ impl TestSession {
                 provider_profile: None,
                 cwd: None,
                 resume: None,
+                plan_mode: false,
                 connector: Some(connector),
                 out: Box::new(adapter_out),
                 input: Box::new(BufReader::new(adapter_in)),

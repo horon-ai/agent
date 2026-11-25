@@ -156,7 +156,7 @@ pub(super) async fn connect_with_a2ui(
     daemon.request(&subscribe).await?;
 
     let history_request = Request::GetHistory { id: daemon.next_id() };
-    let history_reply = daemon.request(&history_request).await?;
+    let history_reply = daemon.request_settled(&history_request).await?;
     if !matches!(history_reply, ServerEvent::History { .. }) {
         anyhow::bail!("unexpected reply to get_history: {history_reply:?}");
     }

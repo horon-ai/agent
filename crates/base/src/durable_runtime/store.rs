@@ -336,13 +336,14 @@ impl DurableRuntimeStore {
         let _process_guard = process_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         ensure_private_dir(&self.dir, &mut self.hooks)?;
         let lock_path = self.lock_path.clone();
-        let lock = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
+        let mut lock_options = OpenOptions::new();
+        lock_options.create(true).read(true).write(true).truncate(false);
+        horon_agent_platform::fs::request_owner_only_mode(&mut lock_options);
+        let lock = lock_options
             .open(&lock_path)
             .map_err(|error| JournalError::io_context("open the writer lock", &lock_path, error))?;
+        horon_agent_platform::fs::set_permissions_owner_only_file(&lock)
+            .map_err(|error| JournalError::io_context("restrict the writer lock permissions", &lock_path, error))?;
         self.hit(JournalIoPoint::WriterLockAcquire)?;
         lock.lock().map_err(|error| {
             JournalError::lock(format!("cannot take the writer lock {}: {error}", lock_path.display()))

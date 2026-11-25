@@ -79,7 +79,7 @@ fn load_store() -> ProviderActivityStore {
 }
 
 fn save_store(store: &ProviderActivityStore) {
-    let _ = crate::storage::write_json(&ledger_path(), store);
+    let _ = crate::storage::write_json_secret(&ledger_path(), store);
 }
 
 fn now_unix_secs() -> u64 {

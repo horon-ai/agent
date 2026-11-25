@@ -507,6 +507,7 @@ impl Agent {
         if !self.session.set_additional_dirs(directories) {
             return;
         }
+        crate::tool::register_session_additional_dirs(self.session.id.as_str(), &self.session.additional_dirs());
         self.persist_session_best_effort("additional directories");
     }
 
@@ -522,6 +523,7 @@ impl Agent {
     pub fn add_additional_dir(&mut self, raw: &str) -> Result<bool> {
         let added = self.session.add_additional_dir(raw)?;
         if added {
+            crate::tool::register_session_additional_dirs(self.session.id.as_str(), &self.session.additional_dirs());
             self.persist_session_best_effort("additional directories");
         }
         Ok(added)
@@ -533,6 +535,7 @@ impl Agent {
     pub fn remove_additional_dir(&mut self, raw: &str) -> Result<bool> {
         let removed = self.session.remove_additional_dir(raw);
         if removed {
+            crate::tool::register_session_additional_dirs(self.session.id.as_str(), &self.session.additional_dirs());
             self.persist_session_best_effort("additional directories");
         }
         Ok(removed)

@@ -257,9 +257,9 @@ fn resolve_key_material_rejects_dual_sources_and_trims_key_id_consistently() {
     let layout = source.layout();
     seed(&layout, "mem_trim", "Trim", "trimmed-key-secret", 1_700_000_000);
     let key_file = source.path.join("key.txt");
-    std::fs::write(
+    horon_agent_platform::fs::write_owner_only(
         &key_file,
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     )
     .expect("write key");
 
@@ -279,4 +279,33 @@ fn resolve_key_material_rejects_dual_sources_and_trims_key_id_consistently() {
     let dst = TempVolume::new("crypto-trim-dst");
     let imported = archive::import_with_key(&dst.layout(), &archive_path, &provider).expect("import");
     assert_eq!(imported.pages, 1);
+}
+
+#[test]
+fn resolve_key_material_refuses_permissive_and_symlink_key_files() {
+    let source = TempVolume::new("crypto-perms");
+    let key_file = source.path.join("key.txt");
+    std::fs::write(
+        &key_file,
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    )
+    .expect("write key");
+
+    if horon_agent_platform::fs::mode_bits(&std::fs::metadata(&key_file).unwrap()).is_some_and(|bits| bits & 0o077 != 0)
+    {
+        let err = super::crypto::resolve_key_material("k1", None, Some(&key_file))
+            .expect_err("group/world-readable key file must be refused");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("permissive mode"), "{msg}");
+    }
+
+    horon_agent_platform::fs::set_file_permissions_owner_only(&key_file).expect("chmod 0600");
+    assert!(super::crypto::resolve_key_material("k1", None, Some(&key_file)).is_ok());
+
+    let symlink_key = source.path.join("key-link.txt");
+    if horon_agent_platform::fs::symlink_file(&key_file, &symlink_key).is_ok() {
+        let err = super::crypto::resolve_key_material("k1", None, Some(&symlink_key))
+            .expect_err("symlink key file must be refused");
+        assert!(err.to_string().contains("symbolic link"), "{err}");
+    }
 }

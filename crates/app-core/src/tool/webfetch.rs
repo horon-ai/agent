@@ -1,9 +1,11 @@
 use super::{Tool, ToolContext, ToolEffects, ToolOutput, artifacts};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 const MAX_SIZE: usize = 5 * 1024 * 1024; // 5MB
@@ -25,6 +27,223 @@ const MAX_TIMEOUT: u64 = 120;
 /// real fetch needs. `provider::shared_http_client()` is already a process-wide
 /// `OnceLock`, so asking for it at the call site builds it on first request and
 /// shares it with every other tool.
+const MAX_REDIRECTS: usize = 10;
+
+fn is_disallowed_ipv4(ip: Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 0 // 0.0.0.0/8 ("this network")
+        || o[0] == 10 // 10.0.0.0/8 (RFC 1918)
+        || (o[0] == 100 && (o[1] & 0b1100_0000) == 64) // 100.64.0.0/10 (CGNAT / cloud metadata)
+        || o[0] == 127 // 127.0.0.0/8 (loopback)
+        || (o[0] == 169 && o[1] == 254) // 169.254.0.0/16 (link-local / IMDS)
+        || (o[0] == 172 && (16..=31).contains(&o[1])) // 172.16.0.0/12 (RFC 1918)
+        || (o[0] == 192 && o[1] == 0 && o[2] == 0) // 192.0.0.0/24 (IETF protocol assignments)
+        || (o[0] == 192 && o[1] == 0 && o[2] == 2) // 192.0.2.0/24 (TEST-NET-1)
+        || (o[0] == 192 && o[1] == 88 && o[2] == 99) // 192.88.99.0/24 (retired 6to4)
+        || (o[0] == 192 && o[1] == 168) // 192.168.0.0/16 (RFC 1918)
+        || (o[0] == 198 && (18..=19).contains(&o[1])) // 198.18.0.0/15 (benchmarking)
+        || (o[0] == 198 && o[1] == 51 && o[2] == 100) // 198.51.100.0/24 (TEST-NET-2)
+        || (o[0] == 203 && o[1] == 0 && o[2] == 113) // 203.0.113.0/24 (TEST-NET-3)
+        || o[0] >= 224 // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved + 255.255.255.255 broadcast
+}
+
+fn is_disallowed_ipv6(ip: Ipv6Addr) -> bool {
+    if let Some(mapped) = ip.to_ipv4_mapped() {
+        return is_disallowed_ipv4(mapped);
+    }
+    let s = ip.segments();
+    // IPv4-compatible retired ::/96 (also covers :: and ::1).
+    if s[..6] == [0; 6] {
+        return true;
+    }
+    // NAT64 (64:ff9b::/96 and 64:ff9b:1::/48) embedding an internal IPv4 address.
+    if s[0] == 0x0064 && s[1] == 0xff9b {
+        let embedded = Ipv4Addr::from(((s[6] as u32) << 16) | (s[7] as u32));
+        if is_disallowed_ipv4(embedded) {
+            return true;
+        }
+    }
+    // 6to4 (2002::/16) embedding an internal IPv4 address.
+    if s[0] == 0x2002 {
+        let embedded = Ipv4Addr::from(((s[1] as u32) << 16) | (s[2] as u32));
+        if is_disallowed_ipv4(embedded) {
+            return true;
+        }
+    }
+    ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        || ip.is_unique_local() // fc00::/7
+        || ip.is_unicast_link_local() // fe80::/10
+        || (s[0] & 0xffc0) == 0xfec0 // fec0::/10 retired site-local
+        || (s[0] == 0x2001 && s[1] == 0x0db8) // 2001:db8::/32 documentation
+        || (s[0] == 0x0100 && s[1] == 0 && s[2] == 0 && s[3] == 0) // 100::/64 discard
+}
+
+pub(crate) fn is_disallowed_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_disallowed_ipv4(v4),
+        IpAddr::V6(v6) => is_disallowed_ipv6(v6),
+    }
+}
+
+fn is_blocked_hostname(host: &str) -> bool {
+    let normalized = host.trim_end_matches('.').to_ascii_lowercase();
+    normalized.is_empty()
+        || normalized == "localhost"
+        || normalized.ends_with(".localhost")
+        || normalized.ends_with(".local")
+        || normalized.ends_with(".internal")
+        || normalized == "ip6-localhost"
+        || normalized == "ip6-loopback"
+}
+
+fn validate_url_syntax(raw: &str) -> Result<reqwest::Url> {
+    if !raw.starts_with("http://") && !raw.starts_with("https://") {
+        return Err(anyhow::anyhow!("URL must start with http:// or https://"));
+    }
+    let parsed = reqwest::Url::parse(raw).context("Invalid URL")?;
+    anyhow::ensure!(
+        matches!(parsed.scheme(), "http" | "https") && parsed.host().is_some(),
+        "URL must be an absolute http:// or https:// URL"
+    );
+    Ok(parsed)
+}
+
+async fn validate_public_target(url: &reqwest::Url) -> Result<()> {
+    match url.host() {
+        Some(url::Host::Ipv4(v4)) => {
+            if is_disallowed_ipv4(v4) {
+                return Err(anyhow::anyhow!(
+                    "Blocked non-public IPv4 target `{v4}` (loopback, private, link-local, or reserved)"
+                ));
+            }
+            Ok(())
+        }
+        Some(url::Host::Ipv6(v6)) => {
+            if is_disallowed_ipv6(v6) {
+                return Err(anyhow::anyhow!(
+                    "Blocked non-public IPv6 target `{v6}` (loopback, private, link-local, or reserved)"
+                ));
+            }
+            Ok(())
+        }
+        Some(url::Host::Domain(domain)) => {
+            if is_blocked_hostname(domain) {
+                return Err(anyhow::anyhow!("Blocked local or internal hostname `{domain}`"));
+            }
+            if let Ok(ip) = domain.parse::<IpAddr>() {
+                if is_disallowed_ip(ip) {
+                    return Err(anyhow::anyhow!("Blocked non-public IP target `{ip}`"));
+                }
+                return Ok(());
+            }
+            let port = url.port_or_known_default().unwrap_or(80);
+            if let Ok(resolved) = tokio::net::lookup_host((domain, port)).await {
+                let addrs: Vec<SocketAddr> = resolved.collect();
+                if let Some(disallowed) = addrs.iter().find(|addr| is_disallowed_ip(addr.ip())) {
+                    return Err(anyhow::anyhow!(
+                        "Blocked target `{domain}` resolving to non-public address {}",
+                        disallowed.ip()
+                    ));
+                }
+            }
+            Ok(())
+        }
+        None => Err(anyhow::anyhow!("URL must include a host")),
+    }
+}
+
+struct PublicOnlyDnsResolver;
+
+impl reqwest::dns::Resolve for PublicOnlyDnsResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            if is_blocked_hostname(&host) {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("Blocked local or internal hostname `{host}`"),
+                )) as Box<dyn std::error::Error + Send + Sync>);
+            }
+            let resolved = tokio::net::lookup_host((host.as_str(), 0)).await?;
+            let addrs: Vec<SocketAddr> = resolved.collect();
+            if addrs.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Host `{host}` resolved to no addresses"),
+                )) as Box<dyn std::error::Error + Send + Sync>);
+            }
+            if let Some(disallowed) = addrs.iter().find(|addr| is_disallowed_ip(addr.ip())) {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "Blocked target `{host}` resolving to non-public address {}",
+                        disallowed.ip()
+                    ),
+                )) as Box<dyn std::error::Error + Send + Sync>);
+            }
+            let iter: reqwest::dns::Addrs = Box::new(addrs.into_iter());
+            Ok(iter)
+        })
+    }
+}
+
+struct WebFetchClientInitError(String);
+
+fn webfetch_http_client() -> Result<&'static reqwest::Client> {
+    static CLIENT: OnceLock<std::result::Result<reqwest::Client, WebFetchClientInitError>> = OnceLock::new();
+    match CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
+            .redirect(reqwest::redirect::Policy::none())
+            .dns_resolver(Arc::new(PublicOnlyDnsResolver))
+            .connect_timeout(Duration::from_secs(15))
+            .build()
+            .map_err(|err| WebFetchClientInitError(format!("Failed to initialize webfetch HTTP client: {err}")))
+    }) {
+        Ok(client) => Ok(client),
+        Err(err) => Err(anyhow::anyhow!(err.0.clone())),
+    }
+}
+
+async fn send_validated_get(
+    client: &reqwest::Client,
+    initial: reqwest::Url,
+    timeout: u64,
+    validate: impl Fn(&reqwest::Url) -> futures::future::BoxFuture<'static, Result<()>>,
+) -> Result<(reqwest::Url, reqwest::Response)> {
+    let mut current = initial;
+    for _hop in 0..=MAX_REDIRECTS {
+        validate(&current).await?;
+        let response = client
+            .get(current.clone())
+            .header(reqwest::header::USER_AGENT, "Mozilla/5.0 (compatible; HoronAgent/1.0)")
+            .timeout(Duration::from_secs(timeout))
+            .send()
+            .await?;
+
+        if response.status().is_redirection() {
+            let Some(location) = response.headers().get(reqwest::header::LOCATION) else {
+                return Ok((current, response));
+            };
+            let location = location
+                .to_str()
+                .context("Redirect Location header is not valid UTF-8")?;
+            let next = current.join(location).context("Invalid redirect Location URL")?;
+            anyhow::ensure!(
+                matches!(next.scheme(), "http" | "https"),
+                "Blocked redirect to unsupported URL scheme `{}`",
+                next.scheme()
+            );
+            current = next;
+            continue;
+        }
+        return Ok((current, response));
+    }
+    Err(anyhow::anyhow!("Too many redirects (max {MAX_REDIRECTS})"))
+}
+
 pub struct WebFetchTool;
 
 impl WebFetchTool {
@@ -88,20 +307,18 @@ impl Tool for WebFetchTool {
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
         let params: WebFetchInput = serde_json::from_value(input)?;
 
-        // Validate URL
-        if !params.url.starts_with("http://") && !params.url.starts_with("https://") {
-            return Err(anyhow::anyhow!("URL must start with http:// or https://"));
-        }
+        // Validate URL and SSRF target before opening any socket.
+        let initial_url = validate_url_syntax(&params.url)?;
 
         let timeout = params.timeout.unwrap_or(DEFAULT_TIMEOUT).min(MAX_TIMEOUT);
         let format = params.format.as_deref().unwrap_or("markdown");
 
-        let response = crate::provider::shared_http_client()
-            .get(&params.url)
-            .header(reqwest::header::USER_AGENT, "Mozilla/5.0 (compatible; HoronAgent/1.0)")
-            .timeout(Duration::from_secs(timeout))
-            .send()
-            .await?;
+        let client = webfetch_http_client()?;
+        let (_final_url, response) = send_validated_get(client, initial_url, timeout, |url| {
+            let url = url.clone();
+            Box::pin(async move { validate_public_target(&url).await })
+        })
+        .await?;
 
         let status = response.status();
         if !status.is_success() {
@@ -479,5 +696,139 @@ mod tests {
         let html = r#"<span data-mw='{"wt":"[[a]] > [[b]]"}'>Visible</span>"#;
         let text = html_to_text(html);
         assert_eq!(text, "Visible");
+    }
+
+    #[tokio::test]
+    async fn blocks_loopback_private_metadata_and_obfuscated_ssrf_targets() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::AsyncWriteExt as _;
+
+        // Bind a local listener so we can prove zero HTTP requests leave the tool.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_bg = Arc::clone(&hits);
+        let accept_task = tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                hits_bg.fetch_add(1, Ordering::SeqCst);
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nSECRET")
+                    .await;
+            }
+        });
+
+        let tool = WebFetchTool::new();
+        let ctx = ToolContext {
+            session_id: "ssrf-test".into(),
+            message_id: "m".into(),
+            tool_call_id: "c".into(),
+            working_dir: None,
+            stdin_request_tx: None,
+            graceful_shutdown_signal: None,
+            execution_mode: super::super::ToolExecutionMode::Direct,
+        };
+
+        let blocked_urls = [
+            format!("http://127.0.0.1:{port}/control/requests"),
+            format!("http://localhost:{port}/control/requests"),
+            format!("http://sub.localhost:{port}/"),
+            format!("http://[::1]:{port}/"),
+            format!("http://[::ffff:127.0.0.1]:{port}/"),
+            format!("http://2130706433:{port}/"), // decimal 127.0.0.1
+            format!("http://0x7f000001:{port}/"), // hex 127.0.0.1
+            "http://169.254.169.254/latest/meta-data/".to_string(),
+            "http://metadata.google.internal/computeMetadata/v1/".to_string(),
+            "http://10.0.0.1/".to_string(),
+            "http://172.16.0.1/".to_string(),
+            "http://192.168.1.1/".to_string(),
+            "http://100.100.100.200/latest/meta-data/".to_string(),
+            "http://[fe80::1]/".to_string(),
+            "http://[fd00::1]/".to_string(),
+            "http://[64:ff9b::127.0.0.1]/".to_string(),
+            "http://0.0.0.0:8080/".to_string(),
+        ];
+
+        for target in &blocked_urls {
+            let err = tool
+                .execute(json!({"url": target}), ctx.clone())
+                .await
+                .expect_err(&format!("expected SSRF block for {target}"));
+            let msg = err.to_string();
+            assert!(
+                msg.contains("Blocked") || msg.contains("private") || msg.contains("local"),
+                "unexpected error for {target}: {msg}"
+            );
+        }
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "local listener received unexpected SSRF traffic"
+        );
+        accept_task.abort();
+    }
+
+    #[tokio::test]
+    async fn blocks_redirect_from_allowed_origin_to_private_target() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let redirector = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let redirect_port = redirector.local_addr().unwrap().port();
+        let secret = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let secret_port = secret.local_addr().unwrap().port();
+        let secret_hits = Arc::new(AtomicUsize::new(0));
+        let secret_hits_bg = Arc::clone(&secret_hits);
+
+        let redirect_task = tokio::spawn(async move {
+            if let Ok((mut sock, _)) = redirector.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254:{secret_port}/meta\r\nContent-Length: 0\r\n\r\n"
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            }
+        });
+        let secret_task = tokio::spawn(async move {
+            while let Ok((mut sock, _)) = secret.accept().await {
+                secret_hits_bg.fetch_add(1, Ordering::SeqCst);
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nSECRET")
+                    .await;
+            }
+        });
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let initial = validate_url_syntax(&format!("http://127.0.0.1:{redirect_port}/start")).unwrap();
+        let start_url = initial.clone();
+        // Allow ONLY the simulated initial external server hop so the redirect hop exercises validate_public_target.
+        let err = send_validated_get(&client, initial, 5, move |url| {
+            let url = url.clone();
+            let allowed = start_url.clone();
+            Box::pin(async move {
+                if url == allowed {
+                    Ok(())
+                } else {
+                    validate_public_target(&url).await
+                }
+            })
+        })
+        .await
+        .expect_err("redirect to metadata IP must be blocked");
+        assert!(err.to_string().contains("169.254.169.254"), "{err}");
+        assert_eq!(secret_hits.load(Ordering::SeqCst), 0);
+        redirect_task.abort();
+        secret_task.abort();
+    }
+
+    #[test]
+    fn allows_public_ip_addresses() {
+        assert!(!is_disallowed_ip("93.184.216.34".parse().unwrap()));
+        assert!(!is_disallowed_ip("1.1.1.1".parse().unwrap()));
+        assert!(!is_disallowed_ip("8.8.8.8".parse().unwrap()));
+        assert!(!is_disallowed_ip("2606:4700:4700::1111".parse().unwrap()));
     }
 }

@@ -39,8 +39,16 @@ fn arm_debug_client_parent_death_signal() {
 
 pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     arm_debug_client_parent_death_signal();
-    if (args.goal.is_some() || args.plan) && !matches!(args.command, None | Some(Command::Run { .. })) {
-        anyhow::bail!("--goal and --plan only apply when opening the terminal client or running one message");
+    if args.goal.is_some() && !matches!(args.command, None | Some(Command::Run { .. })) {
+        anyhow::bail!("--goal only applies when opening the terminal client or running one message");
+    }
+    if args.plan
+        && !matches!(
+            args.command,
+            None | Some(Command::Run { .. }) | Some(Command::Rpc { .. })
+        )
+    {
+        anyhow::bail!("--plan only applies when opening the terminal client, running one message, or running rpc");
     }
     super::add_dir::canonical_add_dirs(&mut args)?;
     if args.ssh.is_some() {
@@ -106,7 +114,10 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     // profile` in config.toml all still override it, so the set can be widened.
     let launches_agent = matches!(
         &args.command,
-        None | Some(Command::Serve { .. }) | Some(Command::Run { .. }) | Some(Command::ApiBridge { .. })
+        None | Some(Command::Serve { .. })
+            | Some(Command::Run { .. })
+            | Some(Command::ApiBridge { .. })
+            | Some(Command::Rpc { .. })
     );
     if launches_agent {
         apply_default_tool_profile(args.tool_profile.as_deref());

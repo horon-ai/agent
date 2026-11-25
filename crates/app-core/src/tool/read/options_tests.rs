@@ -136,3 +136,25 @@ async fn seen_line_guard_checks_every_replacement_and_tracks_batch_shifts() {
         "first\ndone\nseparator\nfirst\ndone\n"
     );
 }
+
+#[tokio::test]
+async fn read_rejects_limit_zero() {
+    let _lock = crate::storage::lock_test_env();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("sample.txt");
+    std::fs::write(&file, "a\nb\nc\n").unwrap();
+    let reader = ReadTool::new();
+    let ctx = make_ctx(dir.path().to_path_buf());
+
+    for input in [
+        json!({"file_path": "sample.txt", "limit": 0}),
+        json!({"file_path": "sample.txt", "offset": 0, "limit": 0}),
+        json!({"file_path": "sample.txt", "start_line": 1, "limit": 0}),
+    ] {
+        let err = reader
+            .execute(input.clone(), ctx.clone())
+            .await
+            .expect_err(&format!("limit=0 must be rejected for {input}"));
+        assert!(err.to_string().contains("limit must be 1 or greater"), "{err}");
+    }
+}
