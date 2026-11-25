@@ -10,7 +10,7 @@ TypeScript SDK for the **horon-agent harness API** (protocol v1) — the stable,
 versioned boundary between the horon-agent agent runtime and any client.
 
 It mirrors `crates/harness-api` and talks NDJSON over the harness API
-Unix socket. Schema drift is guarded from both sides: a Rust test fails if a
+Unix socket (or a named pipe on Windows). Schema drift is guarded from both sides: a Rust test fails if a
 variant is added without mirroring it here, and a Node test fails if the tag
 sets diverge.
 
@@ -116,7 +116,7 @@ console.log(
   turn.toolCalls.map((call) => call.name),
 );
 console.log("tokens:", turn.usage);
-client.close();
+await client.close();
 ```
 
 Each entry of `turn.toolCalls` has `callId`, `name`, `output`, an optional

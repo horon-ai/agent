@@ -20,7 +20,7 @@ id를 다시 검증하고 루트 아래에서 심볼릭 링크, 디렉터리가 
 
 ### 배치
 
-```
+```text
 sessions/
   <id>/                      canonical session directory
     events.jsonl             append-only canonical event log (the original)
@@ -93,7 +93,7 @@ flush하지 않으므로, 크래시는 재생성 비용만 낸다. 스탬프나 
 [`../architecture/CRATES.ko.md`](../architecture/CRATES.ko.md)의 "저장 내구성은 core 정책이고 flush 호출만 OS에 맡긴다"에
 있다. `doctor`는 원본의 손상을 보고하며 고치지는 않는다.
 
-`horon session cache`는 쓰기 락을 기다리지 않고 잡을 수 있는 모든 정식 세션의 파생 파일(`checkpoint.json`, `sparse-index.jsonl`, `summary.json`, `facade-cache.json`)을 크기와 합계와 함께 나열합니다. 아무것도 쓰지 않으며 `--apply`를 주면 나열한 파일을 지웁니다. 실행 중인 에이전트가 소유한 세션은 건너뛰고 이름을 알리며, 세션의 파일을 재고 지우는 동안 락을 계속 잡고 있습니다. `events.jsonl`, `blobs/`, `local-*` 원본, 런타임 저널, 레거시 스냅숏, `.catalog.index.jsonl`은 건드리지 않고 심볼릭 링크는 따라가지 않습니다. 지운 파생 파일은 그 세션을 다음에 읽을 때 원본 로그에서 다시 만들어지므로 보관한 세션도 그대로 열리고 `session doctor`는 원본만 계속 점검합니다(`crates/session-store/src/cache_reclaim.rs`).
+`horon session cache`는 쓰기 락을 기다리지 않고 잡을 수 있는 모든 정식 세션의 파생 파일(`checkpoint.json`, `sparse-index.jsonl`, `summary.json`, `facade-cache.json`)을 크기와 합계와 함께 나열한다. 아무것도 쓰지 않으며 `--apply`를 주면 나열한 파일을 지운다. 실행 중인 에이전트가 소유한 세션은 건너뛰고 이름을 알리며, 세션의 파일을 재고 지우는 동안 락을 계속 잡고 있다. `events.jsonl`, `blobs/`, `local-*` 원본, 런타임 저널, 레거시 스냅숏, `.catalog.index.jsonl`은 건드리지 않고 심볼릭 링크는 따라가지 않는다. 지운 파생 파일은 그 세션을 다음에 읽을 때 원본 로그에서 다시 만들어지므로 보관한 세션도 그대로 열리고 `session doctor`는 원본만 계속 점검한다(`crates/session-store/src/cache_reclaim.rs`).
 
 새로 만든 폴더는 그 항목을 부모 폴더에 확정해야 정전 뒤에도 남는다. 세션 writer는 `sessions/`
 루트를 열 때 루트를 새로 만든 경우에만 부모를 flush한다(`writer.rs`의 `ensure_dir`). 이미 있는
@@ -117,7 +117,7 @@ flush하지 않으므로, 크래시는 재생성 비용만 낸다. 스탬프나 
 전원이 나가 표식이나 표식 디렉터리가 사라져도 남는 것은 "늘어난 로그 + 낡은 스탬프의 파생물"이고,
 그 조합은 언제나 재생성으로 이어진다. 비용은 다음 조회의 재생성 한 번이다.
 
-이 근거는 테스트가 고정한다(`tests/dirty_batches.rs`).
+이 근거는 테스트가 고정한다(`crates/session-store/tests/dirty_batches.rs`).
 
 | 테스트 | 흉내 내는 상황 | 확인하는 것 |
 | --- | --- | --- |
@@ -284,7 +284,7 @@ fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식�
 
 ### 세션 작업 루트 옮기기
 
-`horon sessions move <세션> <경로>`는 저장된 세션을 다른 작업 루트로 옮기면 무엇이 달라지는지 미리 보여 주고, `--apply`를 주면 저장합니다. 대상은 존재하는 디렉터리여야 하며 정규화됩니다. 미리보기는 저장된 루트, 정규화된 대상, 대상에 있는 프로젝트 파일(`AGENTS.md`, `.horon/prompt-overlay.md`, `.horon/preferred-tools.md`, 프로젝트 스킬 폴더)을 알려 줍니다. 이 파일들은 매 요청마다 작업 루트에서 읽으므로 새 루트의 지침은 다음 요청부터 적용되며 손으로 새로 고칠 것이 없습니다. 범위 승인은 옛 작업공간 루트에 묶여 있어서 새 루트에서는 아무것도 덮지 않으므로 그 호출은 다시 묻습니다. 미리보기는 다른 목록 조회처럼 세션을 읽으므로 파생 캐시를 다시 만들 수는 있어도 원본은 쓰지 않습니다. `--apply`는 저장된 작업 루트만 다시 쓰고, `.writer.lock`이 잡힌 세션은 거부하며, 이미 대상과 같으면 아무것도 바꾸지 않습니다.
+`horon sessions move <세션> <경로>`는 저장된 세션을 다른 작업 루트로 옮기면 무엇이 달라지는지 미리 보여 주고, `--apply`를 주면 저장한다. 대상은 존재하는 디렉터리여야 하며 정규화된다. 미리보기는 저장된 루트, 정규화된 대상, 대상에 있는 프로젝트 파일(`AGENTS.md`, `.horon/prompt-overlay.md`, `.horon/preferred-tools.md`, 프로젝트 스킬 폴더)을 알려 준다. 이 파일들은 매 요청마다 작업 루트에서 읽으므로 새 루트의 지침은 다음 요청부터 적용되며 손으로 새로 고칠 것이 없다. 범위 승인은 옛 작업공간 루트에 묶여 있어서 새 루트에서는 아무것도 덮지 않으므로 그 호출은 다시 묻는다. 미리보기는 다른 목록 조회처럼 세션을 읽으므로 파생 캐시를 다시 만들 수는 있어도 원본은 쓰지 않는다. `--apply`는 저장된 작업 루트만 다시 쓰고, `.writer.lock`이 잡힌 세션은 거부하며, 이미 대상과 같으면 아무것도 바꾸지 않는다.
 
 ### 락과 writer 풀
 
@@ -355,7 +355,7 @@ fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식�
 ### 하네스 API 표면(프로토콜 1.12)
 
 저장소는 하네스 API로 접근한다. 주 버전은 `1`에 머문다. 이 표면은 부 버전이 11에서 12로 오를 때 들어왔고
-현재 부 버전은 29이다(`crates/harness-api/src/lib.rs:93-95`). 클라이언트는 핸드셰이크를 협상한 뒤 무엇이든
+현재 부 버전은 32다(`crates/harness-api/src/lib.rs:102`). 클라이언트는 핸드셰이크를 협상한 뒤 무엇이든
 보내기 전에 필요한 능력을 확인한다.
 
 | 능력 | 게이트하는 것 |
@@ -445,16 +445,11 @@ HOME의 레거시 배치로 다시 쓴다. `recover-to`는 검증된 접두부�
 않는다. `archive` / `restore`는 `ArchiveChanged` 레코드를 덧붙인다. 보존 정책은 세션을 숨기고
 삭제하지 않는다. 하위 명령 묶음은 `session`이고 `sessions`가 별칭이다.
 
-`session delete`는 파괴적인 동작이고 아카이브와 다르다. 대화 기록 디렉터리, 레거시 JSON과 저널,
+`session delete`는 파괴적인 동작이고 아카이브와 다르다. 대화 기록 디렉터리, 레거시 JSON과 저널, 아티팩트, 그리고 세션 아이디로 이름 붙은 모든 파일을 지운다. 할 일 파일 5종, `goals/sessions/` 아래 목표 첨부, `pending-soft-interrupts/`, `session_leases/`, PID 표시 3종, `context-notes/`, `durable-runtime/`, `failover-budget/`, 편집 통계 파일 2종, 카탈로그 dirty 표시가 그 대상이다. 실행 중인 데몬은 자기 리로드 컨텍스트와 리로드 복구 레코드도 함께 지운다. 프로세스 전역 상태는 세션의 것이 아니므로 남는다. `managed-skills`, `models`, `bin`, `logs`, `cache`, `memory`,
 
 `session anonymize <세션>`은 진단용으로 구조를 보존한 익명화 내보내기를 만든다. `--output` 없이 실행하면 미리보기만 하며, 제거하는 데이터 종류와 남기는 데이터 종류를 나열하고 아무것도 쓰지 않는다. `--output <새 디렉터리>`를 주면 `anonymized.json`을 쓴다. 이 파일에서 모든 세션 ID와 메시지 ID는 순번(`s1`, `s1.m3`)으로 바뀌고, 메시지 순서와 역할, 콘텐츠 블록의 종류와 크기는 유지되며, 도구 결과는 자신이 답한 도구 호출을 계속 가리킨다. `--with-children`을 주면 하위 세션의 부모·자식 연결도 유지한다. 제목, 경로, 시스템 프롬프트, 도구 입력과 결과, 추론, 첨부 파일 바이트는 항상 제거한다. 메시지 텍스트, 도구 이름, 타임스탬프는 `--keep-text`, `--keep-tool-names`, `--keep-timestamps`를 주지 않으면 제거한다. 남긴 텍스트는 알아볼 수 있는 비밀값과 알려진 작업 디렉터리만 가리므로 자유 텍스트의 비식별은 보장하지 않는다. 이 명령은 저장소를 읽기만 하고 바꾸지 않는다.
 
 `session worktrees`는 현재 디렉터리가 속한 저장소의 Git 워크트리를 나열하며, 메인 워크트리, 세션이 쓰는 것, 커밋하지 않은 변경이 있는 것, 잠긴 것을 표시한다. `session move-to-worktree <세션> --branch <이름>`은 세션을 새 관리 워크트리로 옮기는 일을 미리 보여 주고, `--apply`를 주면 실제로 옮긴다. 기존 워크트리 수명 코드로 세션의 현재 HEAD에서 브랜치와 워크트리를 `<저장소>-worktrees/<브랜치>`에 만들고, 원래 디렉터리의 커밋하지 않은 변경은 복사하지도 건드리지도 않으며(미리보기가 그 수를 센다), 저장된 이력은 바꾸지 않고, 이전 작업 디렉터리를 `$HORON_HOME/worktree-moves/`에 기록해 `--undo --apply`로 세션을 되돌릴 수 있게 한다. `session remove-worktree <경로>`는 별도 동작이며 `--apply`가 필요하다. 이동 명령이 만들어 기록한 워크트리만 받고, 세션이 아직 쓰는 워크트리는 거절하며, 커밋하지 않은 변경이 있는 워크트리는 지우지 않는다. 다른 사람의 워크트리는 지우지 않고 브랜치는 항상 남긴다.
-아티팩트, 그리고 세션 아이디로 이름 붙은 모든 파일을 지운다. 할 일 파일 5종, `goals/sessions/`
-아래 목표 첨부, `pending-soft-interrupts/`, `session_leases/`, PID 표시 3종, `context-notes/`,
-`durable-runtime/`, `failover-budget/`, 편집 통계 파일 2종, 카탈로그 dirty 표시가 그 대상이다.
-실행 중인 데몬은 자기 리로드 컨텍스트와 리로드 복구 레코드도 함께 지운다. 프로세스 전역 상태는
-세션의 것이 아니므로 남는다. `managed-skills`, `models`, `bin`, `logs`, `cache`, `memory`,
 승인 상태, `generated-images`, `safety`, `devices.json`, `servers.json`, `config.toml`, 사용량
 데이터베이스가 여기 해당한다.
 
@@ -477,28 +472,28 @@ HOME의 레거시 배치로 다시 쓴다. `recover-to`는 검증된 접두부�
 | blob 청크 | 1 MiB | `blob_exchange.rs::BLOB_CHUNK_BYTES` |
 | 이력 페이지 | 기본 50, 최대 200 | `GetHistoryPage` |
 | 카탈로그 인덱스 재작성 | 죽은 바이트가 살아 있는 바이트의 2배 초과, 또는 64 MiB 초과 | `catalog.rs::needs_compaction` |
-| 새 세션의 표식-로그 창 | 표식은 첫 로그 줄보다 먼저 내구해진다. 그 사이에 프로세스가 죽으면 표식만 남고, 다음 목록 조회는 그 세션을 `busy`로 본다. 세션을 다시 열어 저장하면 풀린다. 로그를 먼저 내구하게 하려면 append마다 순서를 뒤집어야 하므로 이 창은 현재 구조의 한계로 남긴다 | `writer.rs::dirty`, `catalog.rs::list` |
+| 새 세션의 표식-로그 창 | 표식은 첫 로그 줄보다 먼저 내구화된다. 그 사이에 프로세스가 죽으면 표식만 남고, 다음 목록 조회는 그 세션을 `busy`로 본다. 세션을 다시 열어 저장하면 풀린다. 로그를 먼저 내구하게 하려면 append마다 순서를 뒤집어야 하므로 이 창은 현재 구조의 한계로 남긴다 | `writer.rs::dirty`, `catalog.rs::list` |
 
 ## 영속 런타임 상태 저널
 
-이 문서는 현재 트리에 구현된 세션별 내구 상태 저널을 설명합니다. 대화 원본(세션 로그)은
-건드리지 않고, 재시작 뒤에도 살아남아야 하는 **실행 상태**만 따로 기록합니다.
+이 문서는 현재 트리에 구현된 세션별 내구 상태 저널을 설명한다. 대화 원본(세션 로그)은
+건드리지 않고, 재시작 뒤에도 살아남아야 하는 **실행 상태**만 따로 기록한다.
 
 ### 왜 따로 기록하는가
 
-대화 로그는 "무슨 말이 오갔는가"를 담습니다. 재시작 복구에 필요한 것은 다른 질문입니다.
+대화 로그는 "무슨 말이 오갔는가"를 담는다. 재시작 복구에 필요한 것은 다른 질문이다.
 그 입력을 접수했다고 클라이언트에 답했는가, 실제로 실행을 시작했는가, 끝났는가, 결과를
 모르는가. 이 구분이 없으면 재시작 뒤에 같은 입력을 다시 보내거나, 이미 실행된 입력을
-조용히 잃습니다.
+조용히 잃는다.
 
 ### 위치
 
-`crates/base/src/durable_runtime/`가 소유합니다. `mod.rs`, `record.rs`(레코드와 상태),
-`replay.rs`(스캔·적용·정리), `store.rs`(파일·fsync·압축), `tests.rs`입니다.
+`crates/base/src/durable_runtime/`가 소유한다. `mod.rs`, `record.rs`(레코드와 상태),
+`replay.rs`(스캔·적용·정리), `store.rs`(파일·fsync·압축), `tests.rs`다.
 
 ### 레코드 종류
 
-`RecordKind`는 열여섯 가지입니다. 각 전이는 `Payload` 하나로 표현됩니다.
+`RecordKind`는 열여섯 가지다. 각 전이는 `Payload` 하나로 표현된다.
 
 | 묶음 | 종류 |
 | --- | --- |
@@ -509,27 +504,27 @@ HOME의 레거시 배치로 다시 쓴다. `recover-to`는 검증된 접두부�
 | 깨우기 | `wake.pending`, `wake.acked` |
 | 기타 | `checkpoint` |
 
-`input.accepted`가 입력 본문을 한 번 보관하고, 이후 전이는 id만 참조합니다.
+`input.accepted`가 입력 본문을 한 번 보관하고, 이후 전이는 id만 참조한다.
 
 ### 불변식
 
-- 한 전이는 순번(seq) 하나를 갖습니다. sync가 끝나기 전에는 어떤 상태도 공개되지 않습니다.
-- 두 프로세스가 같은 세션에 동시에 append해도 순번이 유실되거나 충돌하지 않습니다.
-- 압축(compact) 전후의 `RuntimeState`는 같습니다. 보존 대상 항목은 하나도 잃지 않습니다.
-- 대화 그래프의 정규 바이트는 이 저널 때문에 바뀌지 않습니다.
-- 저널을 열 때 새로 만든 폴더 단계마다 그 부모 폴더를 flush합니다(`store.rs::ensure_private_dir`).
+- 한 전이는 순번(seq) 하나를 갖는다. sync가 끝나기 전에는 어떤 상태도 공개되지 않는다.
+- 두 프로세스가 같은 세션에 동시에 append해도 순번이 유실되거나 충돌하지 않는다.
+- 압축(compact) 전후의 `RuntimeState`는 같다. 보존 대상 항목은 하나도 잃지 않는다.
+- 대화 그래프의 정규 바이트는 이 저널 때문에 바뀌지 않는다.
+- 저널을 열 때 새로 만든 폴더 단계마다 그 부모 폴더를 flush한다(`store.rs::ensure_private_dir`).
   첫 레코드는 저널 폴더를 flush해 `runtime.jsonl` 항목을 확정하지만, 폴더 자신의 항목이 부모에
-  확정되지 않으면 정전 뒤 폴더와 함께 확정된 저널을 잃기 때문입니다. 이미 있는 폴더는 flush하지
-  않으므로 append마다 비용이 늘지 않습니다. 시험은 `durable_runtime/directory_tests.rs`에 있습니다.
+  확정되지 않으면 정전 뒤 폴더와 함께 확정된 저널을 잃기 때문이다. 이미 있는 폴더는 flush하지
+  않으므로 append마다 비용이 늘지 않는다. 시험은 `crates/base/src/durable_runtime/directory_tests.rs`에 있다.
 
 ### 한도
 
-`JournalLimits`의 기본값입니다(`store.rs`).
+`JournalLimits`의 기본값이다(`store.rs`).
 
 | 상수 | 값 | 의미 |
 | --- | --- | --- |
 | `MAX_JOURNAL_BYTES` | 32 MiB | 저널 파일 상한 |
-| `LIFECYCLE_RESERVE_BYTES` | 1 MiB | 접수(admission)가 들어갈 수 없는 예비 영역. 수명주기 행은 들어갈 수 있습니다 |
+| `LIFECYCLE_RESERVE_BYTES` | 1 MiB | 접수(admission)가 들어갈 수 없는 예비 영역. 수명주기 행은 들어갈 수 있다 |
 | `COMPACT_AFTER_BYTES` | 4 MiB | 이 크기를 넘으면 압축 |
 | `COMPACT_AFTER_RECORDS` | 4,096 | 이 레코드 수를 넘으면 압축 |
 | `MAX_LIVE_INPUTS` | 1,000 | 살아 있는 입력 상한 |
@@ -540,32 +535,32 @@ HOME의 레거시 배치로 다시 쓴다. `recover-to`는 검증된 접두부�
 
 ### 복구
 
-`RuntimeState`는 입력·입력 영수증·실행·제어·감시·깨우기 여섯 표를 들고 있습니다.
-저널 계층이 **표현**하는 것과, 그 표를 큐에 반영하는 **집행**은 나뉩니다. 아래 규칙 중
+`RuntimeState`는 입력·입력 영수증·실행·제어·감시·깨우기 여섯 표를 들고 있다.
+저널 계층이 **표현**하는 것과, 그 표를 큐에 반영하는 **집행**은 나뉜다. 아래 규칙 중
 앞의 셋은 저널 계층(`crates/base/src/durable_runtime/`)이 검사하고,
-큐 반영은 `crates/app-core`가 맡으며 `durable_input` 테스트가 그것을 검증합니다.
+큐 반영은 `crates/app-core`가 맡으며 `durable_input` 테스트가 그것을 검증한다.
 
-- `accepted`로만 남은 입력은 **대기(pending)** 로 복원합니다. 같은 입력 id를 두 번 복원해도
-  큐에는 하나만 들어갑니다.
-- `started`인데 종료 행이 없는 입력은 **불확실(in_doubt)** 로 봉인합니다. 자동으로 다시
-  주입하지 않습니다. 실행 여부를 모르는 일을 성공으로도 실패로도 적지 않습니다.
-- `started`만 남은 실행은 `interrupted_unknown`입니다. 완료도 panic도 아닙니다
+- `accepted`로만 남은 입력은 **대기(pending)** 로 복원한다. 같은 입력 id를 두 번 복원해도
+  큐에는 하나만 들어간다.
+- `started`인데 종료 행이 없는 입력은 **불확실(in_doubt)** 로 봉인한다. 자동으로 다시
+  주입하지 않는다. 실행 여부를 모르는 일을 성공으로도 실패로도 적지 않는다.
+- `started`만 남은 실행은 `interrupted_unknown`이다. 완료도 panic도 아니다
   (`crates/agent-runtime/src/turn_state.rs`의 `StopCause::InterruptedUnknown`).
-- `input.in_doubt`는 `started` 상태에서만 봉인할 수 있습니다. 다른 단계에서 오면 전이
-  위반으로 거절합니다.
-- 손상된 꼬리(torn tail)는 구분해서 보고합니다(`RecoveryReport`). 레코드가 아예 없는 파일과
-  손상된 파일은 다른 사건입니다.
+- `input.in_doubt`는 `started` 상태에서만 봉인할 수 있다. 다른 단계에서 오면 전이
+  위반으로 거절한다.
+- 손상된 꼬리(torn tail)는 구분해서 보고한다(`RecoveryReport`). 레코드가 아예 없는 파일과
+  손상된 파일은 다른 사건이다.
 
 ### 저널이 없던 세션
 
-기존 `<session>.json` 큐는 한 번만 가져옵니다. 결정적인 input id 매핑을 기록하고 두 번째
-기동에서는 다시 가져오지 않습니다. 정상 전이 뒤에는 legacy JSON을 fsync로 미러링합니다.
-미러 실패는 새 저널의 접수를 되돌리지 않습니다. 대신 복구 경고로 드러나고
-`export-legacy`의 거절 사유가 됩니다.
+기존 `<session>.json` 큐는 한 번만 가져온다. 결정적인 input id 매핑을 기록하고 두 번째
+기동에서는 다시 가져오지 않는다. 정상 전이 뒤에는 legacy JSON을 fsync로 미러링한다.
+미러 실패는 새 저널의 접수를 되돌리지 않는다. 대신 복구 경고로 드러나고
+`export-legacy`의 거절 사유가 된다.
 
 ### 이 저널이 보장하지 않는 것
 
-- 외부 부수 효과의 exactly-once. 도구가 두 번 실행되는 것을 막지 않습니다.
+- 외부 부수 효과의 exactly-once. 도구가 두 번 실행되는 것을 막지 않는다.
 - 다중 기기 사이의 감시 공유.
 - 운영 규모의 처리량.
 - provider 호출의 속도.

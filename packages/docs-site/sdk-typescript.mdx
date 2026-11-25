@@ -44,9 +44,10 @@ horon api-bridge
 ```
 
 That starts the server if needed and exposes `horon-agent-api.sock` in the runtime
-directory: `HORON_AGENT_RUNTIME_DIR` when set, else `XDG_RUNTIME_DIR`, else the
-platform's per-user runtime directory.
-The socket is owner-only. Use `--api-socket <path>` to listen elsewhere and set
+directory (`HORON_AGENT_RUNTIME_DIR` when set, else `XDG_RUNTIME_DIR`, else the
+platform's per-user runtime directory), or a named pipe derived from that runtime
+directory on Windows.
+The endpoint is owner-only. Use `--api-socket <path>` to listen elsewhere and set
 `HORON_AGENT_API_SOCKET` to the same path in the client.
 
 ## First run
@@ -73,7 +74,7 @@ const turn = await client.run(session.session_id, "What files are in src/?", {
 
 console.log("\ntools:", turn.toolCalls.map((call) => call.name));
 console.log("tokens:", turn.usage);
-client.close();
+await client.close();
 ```
 
 ## Logins and state

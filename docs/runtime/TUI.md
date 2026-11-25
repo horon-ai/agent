@@ -112,6 +112,13 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.work_notes` | boolean | `false` | `HORON_TUI_TRANSCRIPT_WORK_NOTES` |
 | `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 | `models.shortlist` | array of model IDs | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
+| `voice.live_enabled` | boolean | `false` | `HORON_TUI_VOICE_LIVE_ENABLED` |
+| `voice.live_adapter` | text | `""` | `HORON_TUI_VOICE_LIVE_ADAPTER` |
+| `voice.live_endpoint` | text | `""` | `HORON_TUI_VOICE_LIVE_ENDPOINT` |
+| `voice.live_api_key_env` | text | `""` | `HORON_TUI_VOICE_LIVE_API_KEY_ENV` |
+| `voice.live_model` | text | `""` | `HORON_TUI_VOICE_LIVE_MODEL` |
+| `voice.live_command` | array of strings | `[]` | `HORON_TUI_VOICE_LIVE_COMMAND` |
+| `voice.live_fallback_to_text` | boolean | `true` | `HORON_TUI_VOICE_LIVE_FALLBACK` |
 
 The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen. The opt-in `usage` and `cost` segments are chosen with `statusline.left` and `statusline.right` rather than by a key of their own, so the registry gains no key for them.
 
@@ -252,6 +259,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.repaint` | `ctrl+l` | Clear and redraw the terminal while keeping the draft, selection and scroll position |
 | `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
 | `app.plan_mode` | `alt+m` | Put this session in read-only plan mode, like `/plan on` |
+| `app.voice` | `ctrl+space` | Start or stop on-device voice dictation into the draft |
+| `app.live_voice` | `alt+v` | Toggle opt-in live audio mode or capture, leaving `ctrl+l` on `app.repaint` |
 | `editor.backspace` | `backspace` | Delete the grapheme cluster before the cursor |
 | `editor.delete` | `delete` | Delete the grapheme cluster at the cursor |
 | `editor.left` | `left`, `ctrl+b` | Move the cursor one grapheme cluster left |

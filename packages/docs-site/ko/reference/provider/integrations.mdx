@@ -118,9 +118,9 @@ MCP 관리 도구는 `url`, `transport`, `headers`로 즉석 원격 연결을 �
 
 `roots`는 연결에 내줄 루트 목록이 있을 때만 선언하고, 기본값은 꺼짐이다. `[mcp] expose_roots` 설정이 이 선언을 여는데,
 답하면 모든 서버에 이 세션이 어느 디렉터리에서 일하는지 알려 주기 때문이다
-(`crates/base/src/config/default_file.rs:392-395`). 켜면 루트 하나가 세션 프로젝트 폴더이고, 프로젝트 폴더가 없으면
-프로세스 작업 디렉터리다(`crates/base/src/mcp/client.rs:112-137`). 루트 목록이 없으면 기능 선언을 빼고 `roots/list`도
-거부한다(`crates/base/src/mcp/protocol.rs:76-99`). 목록은 `initialize` 뒤에 바뀌지 않으므로 서버는
+(`crates/base/src/config/default_file.rs:400-403`). 켜면 루트 하나가 세션 프로젝트 폴더이고, 프로젝트 폴더가 없으면
+프로세스 작업 디렉터리다(`crates/base/src/mcp/client.rs:113-138`). 루트 목록이 없으면 기능 선언을 빼고 `roots/list`도
+거부한다(`crates/base/src/mcp/protocol.rs:76-102`). 목록은 `initialize` 뒤에 바뀌지 않으므로 서버는
 `notifications/roots/list_changed`를 듣지 못한다고 통보받는다.
 
 ### 시작, 연결 대기, 프롬프트 캐싱
@@ -243,7 +243,7 @@ MCP 관리 도구는 `url`, `transport`, `headers`로 즉석 원격 연결을 �
 ### 구현 경계
 
 1. 외부 연결 도구의 로컬 표준 입출력 계약을 정하고 기존 MCP 신뢰 모델 아래에서 설치를 확인한다. 브라우저 의존성과 프로세스, 프로필 정리는 외부 연결 도구가 맡는다.
-2. 이 가이드와 `docs/runtime/TOOLS.md`에 설정을 문서화한다. `crates/app-core/src/tool/mcp.rs`를 거쳐 도구 검색과 호출을 검사한다. 문제가 재현돼 좁은 수정이 필요한 경우를 제외하고 기존 MCP 관리자와 수명 주기를 사용한다.
+2. 이 가이드와 `docs/runtime/TOOLS.ko.md`에 설정을 문서화한다. `crates/app-core/src/tool/mcp.rs`를 거쳐 도구 검색과 호출을 검사한다. 문제가 재현돼 좁은 수정이 필요한 경우를 제외하고 기존 MCP 관리자와 수명 주기를 사용한다.
 3. GitHub Actions에서 사용자가 고른 로컬 시험 페이지와 연결 해제를 확인한다. 응답 제한 정보와 프로세스·프로필 제거 결과를 기록한다. 연결 도구를 제공하기 전에 동의, 출처 격리와 결과물 처리 방식을 검토한다.
 
 | 검증 동작 | 기대 결과 |

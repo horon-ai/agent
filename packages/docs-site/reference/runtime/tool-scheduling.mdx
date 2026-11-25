@@ -36,9 +36,9 @@ same name.
 
 Both turn loops call the same splitter. The non-streaming path uses
 `plan_tool_round_groups`
-(`crates/app-core/src/agent/turn_loops.rs:154` `plan_tool_round_groups`), and the
+(`crates/app-core/src/agent/turn_loops.rs:70` `plan_tool_round_groups`), and the
 streaming daemon path calls the same helper
-(`crates/app-core/src/agent/turn_streaming_mpsc.rs:1651` `plan_tool_round_groups`), so
+(`crates/app-core/src/agent/turn_streaming_mpsc.rs:1582` `plan_tool_round_groups`), so
 grouping rules, caps, and ordering cannot drift between the two.
 
 ## Which tools may overlap
@@ -56,25 +56,25 @@ The tools that declare effects are below.
 
 | Tool | Source |
 | --- | --- |
-| `read` | `crates/app-core/src/tool/read.rs:130` `effects` |
-| `read` (remote path) | `crates/app-core/src/tool/read.rs:134` `effects_for_input` |
+| `read` | `crates/app-core/src/tool/read.rs:131` `effects` |
+| `read` (remote path) | `crates/app-core/src/tool/read.rs:135` `effects_for_input` |
 | `ls` | `crates/app-core/src/tool/ls.rs:56` `effects` |
-| `agentgrep` | `crates/app-core/src/tool/agentgrep.rs:190` `effects` |
+| `agentgrep` | `crates/app-core/src/tool/agentgrep.rs:193` `effects` |
 | `webfetch` | `crates/app-core/src/tool/webfetch.rs:61` `effects` |
 | `websearch` | `crates/app-core/src/tool/websearch.rs:64` `effects` |
-| `bash` | `crates/app-core/src/tool/bash.rs:1589` `effects` |
-| `eval` | `crates/app-core/src/tool/eval.rs` `effects` |
-| Package tools (`ext__<id>__<name>`) | `crates/app-core/src/tool/package_tool.rs:89` `effects` (`ToolEffects::process()`) |
+| `bash` | `crates/app-core/src/tool/bash.rs:1480` `effects` |
+| `eval` | `crates/app-core/src/tool/eval.rs:159` `effects` |
+| Package tools (`ext__<id>__<name>`) | `crates/app-core/src/tool/package_tool.rs:92` `effects` (`ToolEffects::process()`) |
 
 The rest stay at the barrier default, namely `write`, `edit`, `replace`,
 `apply_patch`, `batch`, `mcp`, and `skill_manage`. Registry lookup resolves provider
 aliases and answers `ToolEffects::write()` for a name it does not know
-(`crates/app-core/src/tool/mod.rs:1332` `Registry::effects_for_call`).
+(`crates/app-core/src/tool/mod.rs:1354` `Registry::effects_for_call`).
 
 ## Two caps per group
 
 A group stops at either cap, and the two caps are independent
-(`crates/app-core/src/agent/tool_round.rs ~:12-18`).
+(`crates/app-core/src/agent/tool_round.rs ~:12-23`).
 
 | Cap | Value | Source |
 | --- | --- | --- |
@@ -95,8 +95,8 @@ Group members run at the same time and finish in completion order, but results a
 applied by their index within the round. `run_group` sorts the collected results by
 index before returning (`tool_round.rs:378` `results.sort_by_key`), and both loops
 apply group members in request order, so terminal events, stored durations, and
-history messages follow the model's order (`turn_loops.rs:1969` `results.remove`,
-`turn_streaming_mpsc.rs:2567` `results.insert`). A provider pairs each `tool_use` with
+history messages follow the model's order (`turn_loops.rs:1907` `results.remove`,
+`turn_streaming_mpsc.rs:2505` `results.insert`). A provider pairs each `tool_use` with
 its `tool_result` by id, so a reordered round corrupts the transcript.
 
 Two failure rules hold inside a group.
@@ -111,19 +111,19 @@ Two failure rules hold inside a group.
 ## Context budget
 
 A tool that ran passes its output through the tool layer's overflow guard
-(`crates/app-core/src/tool/mod.rs:2260` `self.guard_context_overflow`, the checks
-inside `guard_context_overflow`, `tool/mod.rs:2298` `guard_context_overflow`). That
+(`crates/app-core/src/tool/mod.rs:2286` `self.guard_context_overflow`, the checks
+inside `guard_context_overflow`, `tool/mod.rs:2324` `guard_context_overflow`). That
 guard compares the output with `token_budget()` times `CONTEXT_GUARD_THRESHOLD` (0.90,
-`tool/mod.rs:1716` `CONTEXT_GUARD_THRESHOLD`, the comparison is `tool/mod.rs:2319`
+`tool/mod.rs:1738` `CONTEXT_GUARD_THRESHOLD`, the comparison is `tool/mod.rs:2346`
 `needs_truncation`).
 
 The guard reads the compaction manager it holds. `Registry::clone` swaps that manager
 for a new one, while `clone_sharing_compaction` shares the parent's manager
-(`tool/mod.rs:792` `CompactionManager::new`, `tool/mod.rs:813`
+(`tool/mod.rs:807` `CompactionManager::new`, `tool/mod.rs:828`
 `clone_sharing_compaction`). So the guard sees the real session budget and token count
 rather than the floor a fresh manager would report. Both loops pass the sharing clone
-into the round that executes tools (`turn_loops.rs:1818` `run_group`,
-`turn_streaming_mpsc.rs:1895` `clone_sharing_compaction`, `turn_streaming_mpsc.rs:2562`
+into the round that executes tools (`turn_loops.rs:1756` `run_group`,
+`turn_streaming_mpsc.rs:1828` `clone_sharing_compaction`, `turn_streaming_mpsc.rs:2500`
 `run_group`).
 
 The round also keeps a counter of its own, because the tool-layer guard cannot see the
@@ -143,7 +143,7 @@ it by the tokens of what goes back to the model. Admitted output, the refusal pu
 its place, and truncated text are all charged (`round_budget.rs:165`
 `RoundTokenBudget::admit`). Both loops build it once per round and pass it to every
 group, so later groups are charged for what earlier groups already spent
-(`turn_loops.rs:1635` `RoundTokenBudget::seed`, `turn_streaming_mpsc.rs:1660`
+(`turn_loops.rs:1573` `RoundTokenBudget::seed`, `turn_streaming_mpsc.rs:1591`
 `RoundTokenBudget::seed`). The round applies the tool layer's rules to its own running
 total (`round_budget.rs:181` `projected_tokens`). Output that fits is admitted, and
 output that does not is withheld when the caller did not ask to pay and truncated when
@@ -151,8 +151,8 @@ it did (`round_budget.rs:182` `single_output_max_tokens`).
 
 Caps, truncation notices, window-exhaustion refusals, and oversized refusals come from
 the tool layer rather than copies. `Registry::context_guard_threshold_tokens`
-(`tool/mod.rs:1721` `context_guard_threshold_tokens`) turns the budget into the 0.90
-ceiling, and `Registry::truncated_output_notice` (`tool/mod.rs:1754`
+(`tool/mod.rs:1743` `context_guard_threshold_tokens`) turns the budget into the 0.90
+ceiling, and `Registry::truncated_output_notice` (`tool/mod.rs:1776`
 `truncated_output_notice`) writes the sentence appended after a truncated head. The
 round enforces both caps itself instead of leaving the per-output cap to the tool
 layer. `admit` returns output only when the projected total fits and this output is
@@ -162,13 +162,13 @@ added on top: every member passed on its own, but the sum does not fit.
 
 The round refuses with three different sentences because it handles three different
 cases. When the window is already spent (`current >= threshold`) there is no room, so
-the round rewrites `Registry::exhausted_context_refusal` (`tool/mod.rs:1775`
+the round rewrites `Registry::exhausted_context_refusal` (`tool/mod.rs:1759`
 `exhausted_context_refusal`) with the round's running total. That sentence says
 `accept_large_output` cannot help, which is true in that situation. When room is left
 but this output does not fit whole, `ceiling_bound` (`round_budget.rs:221`
 `ceiling_bound`) chooses which sentence states the real reason. When the single-output
 cap is the stricter of the two (`single_max_tokens < remaining_tokens`), the round
-prints the tool layer's `Registry::oversized_output_refusal` (`tool/mod.rs:1904`
+prints the tool layer's `Registry::oversized_output_refusal` (`tool/mod.rs:1922`
 `oversized_output_refusal`), so the caller cannot tell which layer refused. Otherwise
 the round writes its own `withheld_output_refusal` (`round_budget.rs:298`
 `withheld_output_refusal`): the same "CONTEXT LIMIT REACHED" prefix and `/compact`
@@ -271,16 +271,16 @@ cycle containing a non-polling call can be refused as part of that cycle, which 
 ordinary ladder working.) The stopped call is not executed, and its tool result carries
 the stop notice. Every later call in the round is written as a
 `[Skipped: the loop guard ended the turn]` result marked as an error, so the transcript
-stays balanced (`turn_streaming_mpsc.rs:2356` `LOOP_GUARD_SKIP`). A non-polling call
+stays balanced (`turn_streaming_mpsc.rs:2294` `LOOP_GUARD_SKIP`). A non-polling call
 that actually ran finishes, and the turn boundary clears the count
 (`loop_guard.rs:301` `consecutive_polls`), so the next turn starts with the full
 allowance. Invalid calls and SDK-answered calls never reach the guard, because both
-loops remove them from the dispatch set before consulting it (`turn_loops.rs:1707`
-`RoundMember::Execute`, `turn_streaming_mpsc.rs:2469` `consult_loop_guard`), and
+loops remove them from the dispatch set before consulting it (`turn_loops.rs:1639`
+`RoundMember::Execute`, `turn_streaming_mpsc.rs:2407` `consult_loop_guard`), and
 neither breaks the run.
 
 On the streaming daemon path the stop is reported as
-`TurnStopReason::LimitReached` (`turn_streaming_mpsc.rs:2360`
+`TurnStopReason::LimitReached` (`turn_streaming_mpsc.rs:2298`
 `TurnStopReason::LimitReached`). That is the reason the wire protocol already carries
 for "some limit ended this turn" (the non-streaming path records the same notice and
 returns without a stop reason). Nothing in the harness restarts that turn. The stop
@@ -294,8 +294,8 @@ resume. What a new turn gets is a new allowance, because the guard is initialize
 every turn entry. The `/overnight` supervisor (`overnight.rs:353` `run_turn_monitored`)
 treats a stopped turn as a completed turn and starts the next one from the continuation
 prompt (`overnight.rs:347` `build_continuation_prompt`); that turn reaches `run_turn`
-through `run_once_capture` (`turn_execution.rs:97` `run_turn`) and resets the guard on
-entry (`turn_loops.rs:527` `loop_guard.reset`). The cap therefore bounds turns, not the
+through `run_once_capture` (`turn_execution.rs:103` `run_turn`) and resets the guard on
+entry (`turn_loops.rs:443` `loop_guard.reset`). The cap therefore bounds turns, not the
 run. On an unattended daemon with no such supervisor, the wait is orphaned until an
 operator starts one. That is the intended trade: a finite stop an operator can see
 beats an infinite loop nobody sees.
@@ -316,24 +316,24 @@ State lives in memory for the current turn (`loop_guard.rs:256` `LoopGuard`) and
 `reset` clears it (`loop_guard.rs:297` `LoopGuard::reset`). It drops the window, the
 identical-run refusal counts, and the cycle ladder at once. Both turn entry points call
 it, so a loop the model broke in the previous turn starts clean in this one
-(`turn_loops.rs:527` `loop_guard.reset`, `turn_streaming_mpsc.rs:44` `loop_guard.reset`).
+(`turn_loops.rs:443` `loop_guard.reset`, `turn_streaming_mpsc/run.rs:28` `loop_guard.reset`).
 Nothing is written to disk, and the guard never changes the tool input it receives.
 
-The guard is wired into both loops through `consult_loop_guard` (`turn_loops.rs:183`
+The guard is wired into both loops through `consult_loop_guard` (`turn_loops.rs:99`
 `consult_loop_guard`). That function records every call of one dispatch decision and
 returns one verdict per call. The `[features]` toggle is checked here too. With
 `loop_guard = false` no call is recorded and every verdict is `Allow`
-(`turn_loops.rs:190` `features.loop_guard`). The non-streaming loop produces one
-decision per group before dispatch (`turn_loops.rs:1720` `consult_loop_guard`). The
+(`turn_loops.rs:106` `features.loop_guard`). The non-streaming loop produces one
+decision per group before dispatch (`turn_loops.rs:1658` `consult_loop_guard`). The
 streaming loop produces one decision before execution for a one-member group and before
-any member starts for a multi-member group (`turn_streaming_mpsc.rs:1816`
-`consult_loop_guard`, `turn_streaming_mpsc.rs:2469` `consult_loop_guard`).
+any member starts for a multi-member group (`turn_streaming_mpsc.rs:1747`
+`consult_loop_guard`, `turn_streaming_mpsc.rs:2407` `consult_loop_guard`).
 
 A refused call leaves the dispatch set but still leaves one terminal event and one tool
-result at its index (`turn_loops.rs:1736` `RoundMember::Blocked`,
-`turn_streaming_mpsc.rs:1821` `write_loop_guard_result`). A stop writes the remaining
-results, records the notice, and ends the turn (`turn_loops.rs:508`
-`record_loop_guard_stop`, `turn_streaming_mpsc.rs:2348` `finish_loop_guard_stop`).
+result at its index (`turn_loops.rs:1664` `RoundMember::Blocked`,
+`turn_streaming_mpsc.rs:1752` `write_loop_guard_result`). A stop writes the remaining
+results, records the notice, and ends the turn (`turn_loops.rs:424`
+`record_loop_guard_stop`, `turn_streaming_mpsc.rs:2286` `finish_loop_guard_stop`).
 
 ### What the guard does not flag
 
@@ -385,10 +385,10 @@ does not move the two defaults, and a parsing test pins that
 `parallel_tools_and_loop_guard_feature_defaults_and_parse`).
 
 With `parallel_tools = false` every group has exactly one member, so a round runs the
-same way it did before concurrency existed (`turn_loops.rs:154` `plan_tool_round_groups`).
-Both loops read the flag from the loaded config (`turn_loops.rs:1623`
-`features.parallel_tools`, `turn_streaming_mpsc.rs:1650` `features.parallel_tools`).
-`loop_guard` is read in `consult_loop_guard`, which both loops call (`turn_loops.rs:190`
+same way it did before concurrency existed (`turn_loops.rs:70` `plan_tool_round_groups`).
+Both loops read the flag from the loaded config (`turn_loops.rs:1561`
+`features.parallel_tools`, `turn_streaming_mpsc.rs:1581` `features.parallel_tools`).
+`loop_guard` is read in `consult_loop_guard`, which both loops call (`turn_loops.rs:106`
 `features.loop_guard`).
 
 ## Limits
@@ -398,20 +398,20 @@ Both loops read the flag from the loaded config (`turn_loops.rs:1623`
 A background tool request (the signal is named Alt+B/Ctrl+B in its own comment,
 `crates/app-core/src/server/state.rs:15` `background-tool`) carries no target identity,
 and the running tool registry holds one entry per session, so it can point at only one
-waiting call. A multi-member group registers no entry (`turn_streaming_mpsc.rs:1913`
+waiting call. A multi-member group registers no entry (`turn_streaming_mpsc.rs:1846`
 `running_tool_registry`), so a request raised while the group runs reports
-`moved: false` instead of moving a call (`turn_streaming_mpsc.rs:2562` `run_group`).
+`moved: false` instead of moving a call (`turn_streaming_mpsc.rs:2500` `run_group`).
 The response is computed from the registry entry and the signal
-(`crates/app-core/src/server/client_lifecycle.rs:1525` `move_tool_to_background`), and
+(`crates/app-core/src/server/client_lifecycle.rs:1537` `move_tool_to_background`), and
 the event shape carries `moved` without `tool_call_id` or `tool_name`
-(`crates/protocol/src/wire/events.rs:320` `BackgroundToolResult`).
+(`crates/protocol/src/wire/events.rs:327` `BackgroundToolResult`).
 
 The signal is cleared behind the group, so a signal that arrives during a group cannot
-move the next one-member call (`turn_streaming_mpsc.rs:2579`
+move the next one-member call (`turn_streaming_mpsc.rs:2517`
 `background_tool_signal.reset`).
 
 A one-member group takes the inline path, and that path registers the waiting call, so
-it can still move to the background (`turn_streaming_mpsc.rs:1913`
+it can still move to the background (`turn_streaming_mpsc.rs:1846`
 `running_tool_registry::register`). That covers every `Ordered` call and every call
 while `parallel_tools` is off, as long as the call reaches a tool. Invalid calls and
 SDK-answered calls resolve without registering.
@@ -421,16 +421,16 @@ SDK-answered calls resolve without registering.
 The two loops do not respond to a stop the same way, and the difference is deliberate.
 
 `run_turn` has no mid-round interrupt. Its only soft interrupt point runs after the
-whole round (`turn_loops.rs:2162` `inject_soft_interrupts`), and the scheduler is called
-without a cancel signal: `turn_loops.rs:1818` `run_group` is passed `None`, and the loop
-reads `parallel_tools` just above (`turn_loops.rs:1623` `features.parallel_tools`). A
+whole round (`turn_loops.rs:2105` `inject_soft_interrupts`), and the scheduler is called
+without a cancel signal: `turn_loops.rs:1756` `run_group` is passed `None`, and the loop
+reads `parallel_tools` just above (`turn_loops.rs:1561` `features.parallel_tools`). A
 stop that arrives while a group runs is applied after the group finishes, not during it.
 
 The streaming loop responds in two places inside a round. It reads the queue directly
-before each group after the first (`turn_streaming_mpsc.rs:1663`
+before each group after the first (`turn_streaming_mpsc.rs:1594`
 `has_urgent_interrupt`). While a multi-member group runs, it passes a cancel that
 watches both the shutdown signal and the interrupt queue to `run_group`
-(`turn_streaming_mpsc.rs:2558` `watching_interrupt`, `tool_round.rs:84`
+(`turn_streaming_mpsc.rs:2496` `watching_interrupt`, `tool_round.rs:84`
 `GroupCancel::new`). That watch is a predicate over the queue, and while members are
 executing the group re-reads it every `INTERRUPT_POLL_INTERVAL` (`tool_round.rs:68`
 `INTERRUPT_POLL_INTERVAL`, `tool_round.rs:424` `poll_for_interrupt`), so a stop aborts
@@ -447,7 +447,7 @@ shares in `horon-agent-agent-runtime`, all for a wait only running tool groups n
 Polling leaves that shared type alone.
 
 Both entry points end the same way. The group boundary check and the mid-group interrupt
-both finish through `finish_streamed_round_interrupt` (`turn_streaming_mpsc.rs:1665`
+both finish through `finish_streamed_round_interrupt` (`turn_streaming_mpsc.rs:2240`
 `finish_streamed_round_interrupt`), so the transcript, client events, and stored session
 are the same whichever one noticed the stop.
 
@@ -455,11 +455,11 @@ are the same whichever one noticed the stop.
 
 Three waiting hooks live inside `Registry::execute`, and one process-wide async mutex
 serializes them. The input transformer can change a tool input before anything reads it
-(`tool/mod.rs:2066` `transform_tool_input`), the `pre_tool` gate can block a call
-(`tool/mod.rs:389` `run_pre_tool_gate`), and `post_tool_feedback` puts text back into a
-result (`tool/mod.rs:1899` `apply_post_tool_feedback`). The transformer is the worst one
+(`tool/mod.rs:2049` `transform_tool_input`), the `pre_tool` gate can block a call
+(`tool/mod.rs:406` `run_pre_tool_gate`), and `post_tool_feedback` puts text back into a
+result (`tool/mod.rs:1878` `apply_post_tool_feedback`). The transformer is the worst one
 to overlap, because changing the same input twice races and the surviving input depends
-on scheduling. The lock is described at `tool/mod.rs:257` `HOOK_SERIAL`.
+on scheduling. The lock is described at `tool/mod.rs:271` `HOOK_SERIAL`.
 
 Three results matter.
 
@@ -470,9 +470,9 @@ Three results matter.
 - The lock is process-wide. Two sessions in one daemon queue while one hook call runs.
 
 A detached observer does not lock and may run at the same time. `post_tool`
-(`tool/mod.rs:1826` `post_tool_event`) and the turn and session observers go through
+(`tool/mod.rs:1810` `post_tool_event`) and the turn and session observers go through
 `hooks::dispatch_observer`, which spawns a detached child and returns immediately
-(`crates/base/src/hooks.rs:326` `dispatch_observer`). Their script body runs after the
+(`crates/base/src/hooks.rs:344` `dispatch_observer`). Their script body runs after the
 call has returned, so no lock in this process can order them.
 
 ## Where the behavior is tested

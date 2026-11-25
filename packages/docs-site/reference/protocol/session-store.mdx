@@ -15,7 +15,7 @@ There is exactly one store root: `$HORON_HOME/sessions` (normally `~/.horon/sess
 
 ### Layout
 
-```
+```text
 sessions/
   <id>/                      canonical session directory
     events.jsonl             append-only canonical event log (the original)
@@ -68,7 +68,7 @@ A `.catalog.dirty/<id>` marker is an empty file with no content. Readers check p
 
 **Why dropping the fsync is safe.** Without a marker there is no path that trusts a stale derived file. Every derived file also stores the `Stamp` of the original event log (device, inode, length, mtime, ctime) and compares it against the current log on every read. `checkpoint.rs::load` checks the stamps of the log, index and summary for a checkpoint, and `catalog.rs::list` checks the row's stamp and `summary.json` for a listing row. An original append grows the log, so the stamp necessarily changes, and a mismatched derived file is rebuilt from the originals under the writer lock. The log is flushed before the save finishes, so when power is lost and the marker or its directory disappears, what remains is "a grown log plus derived files with stale stamps", and that combination always leads to regeneration. The cost is one regeneration at the next read.
 
-Tests pin this reasoning (`tests/dirty_batches.rs`).
+Tests pin this reasoning (`crates/session-store/tests/dirty_batches.rs`).
 
 | Test | Situation it imitates | What it checks |
 | --- | --- | --- |
@@ -203,7 +203,7 @@ Two instances exchange **originals only**: canonical event records and original 
 
 ### Harness API surface (protocol 1.12)
 
-The store is reached through the harness API. The major version stays at `1`; this surface arrived when the minor version moved from 11 to 12, and the current minor version is 29 (`crates/harness-api/src/lib.rs:93-95`). A client negotiates the handshake and then checks the capabilities it needs before sending anything.
+The store is reached through the harness API. The major version stays at `1`; this surface arrived when the minor version moved from 11 to 12, and the current minor version is 32 (`crates/harness-api/src/lib.rs:102`). A client negotiates the handshake and then checks the capabilities it needs before sending anything.
 
 | Capability | What it gates |
 | --- | --- |
@@ -300,7 +300,7 @@ The conversation log holds "what was said". Restart recovery needs a different q
 - Two processes appending to the same session concurrently lose no sequence number and do not collide.
 - `RuntimeState` is the same before and after compaction. No retained entry is lost.
 - The canonical bytes of the conversation graph do not change because of this journal.
-- Opening the journal flushes the parent of every directory level it creates (`store.rs::ensure_private_dir`). The first record flushes the journal directory to commit the `runtime.jsonl` entry, because a journal committed together with a directory whose own entry never reached the parent is lost after a power cut. An existing directory is not flushed, so appends do not add cost. The tests are in `durable_runtime/directory_tests.rs`.
+- Opening the journal flushes the parent of every directory level it creates (`store.rs::ensure_private_dir`). The first record flushes the journal directory to commit the `runtime.jsonl` entry, because a journal committed together with a directory whose own entry never reached the parent is lost after a power cut. An existing directory is not flushed, so appends do not add cost. The tests are in `crates/base/src/durable_runtime/directory_tests.rs`.
 
 ### Limits
 

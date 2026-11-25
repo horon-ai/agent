@@ -23,7 +23,7 @@ description: "이 문서는 horon agent가 무엇을 위한 것인지, 코드가
 | 5 | 모드는 둘, 엔진은 하나 | 헤드리스 모드와 TUI 모드는 같은 데몬과 세션을 움직입니다. 에이전트 바이너리의 의존성 그래프에는 터미널 스택이 없고, TUI 모드는 SDK 위의 별도 패키지로 같은 태그에서 릴리스됩니다 | `AGENTS.md`(Modes, binaries and release units, 고정 요구사항 1), `scripts/ci/check_headless_graph.py`, `docs/release/INSTALL.md` |
 | 6 | SDK가 먼저다 | harness API가 엔진과 모든 클라이언트(TUI와 서버 코드 포함) 사이의 계약입니다 | `docs/protocol/HARNESS_API.md`, `crates/agent-sdk` |
 | 7 | 도구는 토큰을 쓴다 | `core` 프로필은 도구 18개 중 7개만 매 요청에 싣고 나머지는 `toolbox`로 꺼냅니다. 스키마 바이트는 공짜가 아니라 예산입니다 | `AGENTS.md`(이 빌드가 무엇인가), `docs/runtime/TOOLS.md` |
-| 8 | 모델 경로는 하나 | `[providers.<name>] type`이 Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent 중 하나를 고릅니다. 공급자 런타임 하나가 엔드포인트로 직접 요청합니다. 현재 외부 도구는 MCP로 받습니다. 사용자 설치 Rust 패키지는 모델 경로 밖의 별도 프로세스에서 실행할 계획입니다 | `AGENTS.md`(이 빌드가 무엇인가) |
+| 8 | 모델 경로는 하나 | `[providers.<name>] type`이 Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent 중 하나를 고릅니다. 공급자 런타임 하나가 엔드포인트로 직접 요청합니다. 외부 도구는 MCP와 사용자 설치 Rust 패키지(`docs/runtime/PACKAGES.ko.md`)로 받으며, 패키지는 모델 경로 밖의 별도 프로세스에서 실행합니다 | `AGENTS.ko.md`(이 빌드가 무엇인가) |
 | 9 | 깨끗한 컷오버 | 자리를 잃은 표면은 별칭 뒤에 남기지 않고 모든 호출부를 옮긴 뒤 지웁니다. 홈 디렉터리는 호환 경로 없이 `~/.horon`으로 옮겼습니다 | 커밋 `738712a2`(#7), `d6a0f81b`(#9), `a3a70db7`(#88) |
 | 10 | CI 경고 0 | 경고가 있는 실행은 끝난 것이 아닙니다. 원인을 고치고 숨기지 않습니다 | `AGENTS.md`(CI 경고), `scripts/ci/run_warnings.py` |
 
@@ -39,7 +39,7 @@ description: "이 문서는 horon agent가 무엇을 위한 것인지, 코드가
 4. ACP v1/v2, SDK, 저장된 세션을 깨지 않습니다.
 5. 지운 표면을 다른 이름으로 되살리지 않습니다.
 
-사용자 설치 Rust 패키지 설계에는 공용 데이터 계약을 담는 내부 크레이트 `extension-types` 하나를 추가할 수 있습니다. 기존 워크스페이스 의존성만 씁니다. 예외는 의존성 그래프에 적용합니다. 패키지를 설치하지 않았을 때의 실행 성능과 바이너리 크기는 기존 기준을 유지합니다. 구조 성능 게이트에 바이너리 크기 검사를 추가합니다. ACP v1/v2, SDK, 저장 세션 호환성과 TUI 의존성 경계를 지킵니다.
+사용자 설치 Rust 패키지 구현은 3번 의존성 그래프 규칙에 한 가지 예외를 둡니다. 공용 데이터 계약 크레이트 `extension-types`(`crates/extension-types`, 패키지 `horon-agent-extension-types`)는 기존 워크스페이스 의존성만 쓰며, 작성자용 `horon-agent-extension-sdk`와 `horon-package-example`은 `horon-agent` 바이너리 그래프 밖에 남습니다. 패키지를 쓰지 않을 때의 성능과 바이너리 크기 기준선을 유지하고, 구조 성능 게이트의 `packages` 카운터(표면을 확장할 때는 바이너리 크기 검사 포함)를 지키며, ACP v1/v2, SDK, 저장 세션 호환성과 TUI 의존성 경계를 보존합니다.
 
 ## omp2에서 가져온 것
 
@@ -65,7 +65,7 @@ omp2는 훨씬 큰 제품입니다(도입 계획서 작성 시점에 Rust 약 11
 | 인자 스트리밍 중 dry-run | 턴당 CPU가 늘고 `compare`로 이득을 보일 수 없습니다 |
 | `report_issue` 도구 | 도구 자리 하나가 매 요청의 비용이 되고, 받는 쪽에 그 보고를 읽는 곳이 없습니다. 같은 필요는 수리 기록(#151)이 채웁니다 |
 | KDL 모델 카탈로그 | omp2의 파서와 데이터 파일 약 123개는 설치 크기를 키웁니다. 모델 이름은 설정에 둡니다 |
-| 프로세스 내 셸, `dyn` 장치 버스, 내장 Python 확장 | 에이전트 프로세스 안에서 코드를 불러옵니다. 승인된 Rust 패키지 설계는 별도 자식 프로세스를 사용합니다(원칙 8) |
+| 프로세스 내 셸, `dyn` 장치 버스, 내장 Python 확장 | 에이전트 프로세스 안에서 코드를 불러옵니다. 사용자 설치 Rust 패키지는 별도 자식 프로세스에서 실행합니다(원칙 8) |
 | `anyhow`·`SmallVec` 전면 교체 | 약 2,000곳을 고쳐도 측정되는 이득이 없습니다. 메모리 작업은 프로파일이 지목한 할당만 고칩니다 |
 | 외부 계약의 컷오버 | 릴리스된 버전이 있습니다. ACP v1, harness API v1, 저장된 세션은 유지합니다 |
 
