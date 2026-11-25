@@ -23,20 +23,86 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         anyhow::bail!("Expected a run command");
     };
     let (emit_json, emit_ndjson) = (*emit_json, *emit_ndjson);
+    let mut emitted_structured_error = false;
+    let outcome = run_inner(
+        args,
+        message,
+        emit_json,
+        emit_ndjson,
+        *no_pty,
+        *no_session,
+        overrides,
+        *max_time,
+        *wait_async,
+        *warn_cost,
+        *max_cost,
+        system_template.as_deref(),
+        *print_thoughts,
+        &mut emitted_structured_error,
+    )
+    .await;
+    if let Err(ref error) = outcome
+        && (emit_json || emit_ndjson)
+        && !emitted_structured_error
+        && !error.is::<commands::RunDeadlineExceeded>()
+    {
+        let payload = serde_json::json!({
+            "type": "error",
+            "message": format!("{error:#}"),
+        });
+        if emit_json {
+            if let Ok(text) = serde_json::to_string_pretty(&payload) {
+                println!("{text}");
+            }
+        } else if let Ok(text) = serde_json::to_string(&payload) {
+            println!("{text}");
+        }
+    }
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_inner(
+    args: &Args,
+    message: &str,
+    emit_json: bool,
+    emit_ndjson: bool,
+    no_pty: bool,
+    no_session: bool,
+    overrides: &RunModelOverrides,
+    max_time: Option<std::time::Duration>,
+    wait_async: bool,
+    warn_cost: Option<f64>,
+    max_cost: Option<f64>,
+    system_template: Option<&std::path::Path>,
+    print_thoughts: bool,
+    emitted_structured_error: &mut bool,
+) -> Result<()> {
     let a2ui_caps = commands::a2ui_run::build_a2ui_capabilities(overrides.a2ui, &overrides.a2ui_catalog)?;
     let limits = commands::RunLimits {
-        max_time: *max_time,
-        wait_async: *wait_async,
-        print_thoughts: *print_thoughts,
+        max_time,
+        wait_async,
+        print_thoughts,
         a2ui: a2ui_caps.is_some(),
     };
     if system_template.is_some() && overrides.system_prompt.is_some() {
         anyhow::bail!("--system-prompt and --system-template cannot be combined: both replace the system prompt");
     }
+    if let (Some(warn), Some(max)) = (warn_cost, max_cost)
+        && warn > max
+    {
+        anyhow::bail!("--warn-cost ({warn}) must not exceed --max-cost ({max})");
+    }
+    if no_session && (args.resume.is_some() || args.continue_latest || args.goal.is_some()) {
+        anyhow::bail!(
+            "--no-session cannot be combined with --resume, --continue or --goal, which need a stored session"
+        );
+    }
+    crate::server::hosted_tenant::enforce_at_startup()?;
     register_on_demand_server_spawner_for_run(args.provider.clone(), args.model.clone(), args.provider_profile.clone());
     let provider = provider_init::init_provider_for_run(&args.provider, args.model.as_deref()).await?;
     let registry = crate::tool::Registry::new(provider.clone()).await;
-    if *no_pty {
+    if no_pty {
         registry.disable_bash_pty().await;
     }
     if commands::run_command_mcp_enabled() {
@@ -45,23 +111,13 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         registry.register_mcp_tools(None, None, None).await;
         commands::wait_for_cold_cache_mcp_tools(&registry).await;
     }
-    if let (Some(warn), Some(max)) = (warn_cost, max_cost)
-        && warn > max
-    {
-        anyhow::bail!("--warn-cost ({warn}) must not exceed --max-cost ({max})");
-    }
     if warn_cost.is_some() || max_cost.is_some() {
         crate::spend_cap::install(crate::spend_cap::Limits {
-            warn_usd: *warn_cost,
-            max_usd: *max_cost,
+            warn_usd: warn_cost,
+            max_usd: max_cost,
         });
     }
-    if *no_session && (args.resume.is_some() || args.goal.is_some()) {
-        anyhow::bail!(
-            "--no-session cannot be combined with --resume, --continue or --goal, which need a stored session"
-        );
-    }
-    let mut agent = if *no_session {
+    let mut agent = if no_session {
         Agent::for_memory_only_run(provider.clone(), registry)
     } else {
         Agent::for_one_shot_run(provider.clone(), registry)
@@ -96,11 +152,16 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         agent.mark_closed();
         return Err(error);
     }
+    if let Err(error) = agent.verify_spend_cap_route(max_cost) {
+        agent.mark_closed();
+        return Err(error);
+    }
     if let Some(caps) = a2ui_caps {
         agent.set_a2ui_capabilities(Some(caps)).await;
     }
     // User-authored `run` message; later helper turns are synthetic.
     agent.arm_effort_keywords(message);
+    *emitted_structured_error = emit_json || emit_ndjson;
     let result =
         commands::run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson, limits).await;
     if let Some(summary) = crate::spend_cap::summary() {

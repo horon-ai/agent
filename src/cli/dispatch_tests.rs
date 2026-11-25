@@ -1,4 +1,5 @@
 use super::*;
+use crate::cli::args::ApprovalVerdictArg;
 use crate::transport::Listener;
 use clap::Parser;
 
@@ -792,4 +793,91 @@ async fn a_human_skip_reaches_the_blocked_waiter_as_a_denial() {
         }
         other => panic!("a skip must reach the waiter as a denial: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn warn_cost_above_max_cost_fails_before_starting_mcp_or_provider() {
+    let home = TestHome::new();
+    let marker = home._dir.path().join("mcp-started.marker");
+    let bogus_mcp = serde_json::json!({
+        "mcpServers": {
+            "canary": {
+                "command": "sh",
+                "args": ["-c", format!("touch {}", marker.display())]
+            }
+        }
+    });
+    std::fs::write(home._dir.path().join("mcp.json"), bogus_mcp.to_string()).unwrap();
+
+    let args = Args::parse_from(["horon-agent", "run", "hi", "--warn-cost", "2", "--max-cost", "1"]);
+    let err = one_shot::run(&args)
+        .await
+        .expect_err("warn-cost > max-cost must fail cleanly");
+    assert!(err.to_string().contains("--warn-cost"), "{err}");
+    assert!(
+        !marker.exists(),
+        "MCP server must not start before cost flag validation"
+    );
+}
+
+#[test]
+fn runtime_state_and_export_and_resume_list_contracts() -> Result<()> {
+    use crate::message::{ContentBlock, Role};
+
+    let home = TestHome::new();
+
+    // Missing runtime-state session must fail without creating a journal dir.
+    let err = crate::cli::runtime_state::run(crate::cli::args::RuntimeStateCommand {
+        action: crate::cli::args::RuntimeStateAction::Show {
+            session: "nonexistent-session-xyz-999".to_string(),
+            json: true,
+        },
+    })
+    .expect_err("missing session must error");
+    assert!(err.to_string().contains("unknown session"), "{err}");
+    assert!(
+        !home
+            ._dir
+            .path()
+            .join("durable-runtime")
+            .join("nonexistent-session-xyz-999")
+            .exists(),
+        "missing session lookup must not create a runtime journal directory"
+    );
+
+    // Export --json --out writes the output file on disk.
+    let mut sess = session::Session::create_with_id("session_export_json_out".to_owned(), None, None);
+    sess.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "export check".to_owned(),
+            cache_control: None,
+        }],
+    );
+    sess.save()?;
+    let out_file = home._dir.path().join("report.json");
+    crate::cli::sessions::export_transcript("session_export_json_out", Some(&out_file), true, false)?;
+    let written: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&out_file)?)?;
+    assert_eq!(written["session_id"], "session_export_json_out");
+    assert!(written["markdown"].as_str().unwrap().contains("export check"));
+
+    // `--resume` with no ID when no subcommand is given lists sessions instead of failing.
+    let mut resume_args = Args::parse_from(["horon-agent", "--resume"]);
+    crate::cli::dispatch::continue_latest::resolve(&mut resume_args)?;
+    crate::cli::sessions::list_sessions_for_resume()?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_check_runs_swarm_spawn_mode_migration() {
+    let _home = TestHome::new();
+    let path = crate::config::Config::path().expect("config path");
+    std::fs::write(&path, "[agents]\nswarm_spawn_mode = \"visible\"\n").unwrap();
+
+    run_main(Args::parse_from(["horon-agent", "config", "check"]))
+        .await
+        .expect("config check must migrate and pass");
+    let migrated = std::fs::read_to_string(path).unwrap();
+    assert!(migrated.contains("swarm_spawn_mode = \"inline\""), "{migrated}");
 }

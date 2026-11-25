@@ -564,6 +564,7 @@ impl App {
         // given for that session: both go with it, so its audio cannot become
         // a draft in the session being attached.
         self.voice.forget();
+        self.voice.live.clear_pending_send();
         self.voice.live.forget();
         self.resend_held = false;
         self.session_status = Some(session.status);
@@ -628,11 +629,25 @@ impl App {
         self.path_cycle = None;
         self.work_notes.reset();
         self.transcript.clear();
+        fn strip_leading_system_reminders(text: &str) -> Option<String> {
+            let mut rest = text.trim_start();
+            if !rest.starts_with("<system-reminder>") {
+                return (!rest.is_empty()).then(|| text.to_string());
+            }
+            while let Some(after_open) = rest.strip_prefix("<system-reminder>") {
+                let end = after_open.find("</system-reminder>")?;
+                rest = after_open[end + "</system-reminder>".len()..].trim_start();
+            }
+            (!rest.is_empty()).then(|| rest.to_string())
+        }
+
         for message in &session.history {
             match message.role.as_str() {
-                "user" => self
-                    .transcript
-                    .push_user_stored(message.content.clone(), message.message_id.clone()),
+                "user" => {
+                    if let Some(cleaned) = strip_leading_system_reminders(&message.content) {
+                        self.transcript.push_user_stored(cleaned, message.message_id.clone());
+                    }
+                }
                 // A stored assistant row carries the reasoning the daemon
                 // re-rendered before the answer. Reading it back with the
                 // daemon's own markup helper keeps the answer row identical to

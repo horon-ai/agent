@@ -44,8 +44,8 @@ pub fn set_session_internal(session_id: &str, internal: bool) {
         return;
     };
     if internal {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join(session_id), "");
+        let _ = crate::ensure_dir(&dir);
+        let _ = horon_agent_platform::fs::write_owner_only(&dir.join(session_id), b"");
     } else {
         let _ = std::fs::remove_file(dir.join(session_id));
     }
@@ -59,8 +59,8 @@ pub fn session_is_internal(session_id: &str) -> bool {
 /// Record that `session_id` is owned by process `pid`.
 pub fn register_active_pid(session_id: &str, pid: u32) {
     if let Some(dir) = active_pids_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join(session_id), pid.to_string());
+        let _ = crate::ensure_dir(&dir);
+        let _ = horon_agent_platform::fs::write_owner_only(&dir.join(session_id), pid.to_string().as_bytes());
     }
 }
 
@@ -237,8 +237,11 @@ pub fn prune_dead_owner_markers(now: std::time::SystemTime, min_age: std::time::
 /// Mark a session as actively streaming a model response.
 pub fn mark_streaming(session_id: &str) {
     if let Some(dir) = streaming_pids_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join(session_id), std::process::id().to_string());
+        let _ = crate::ensure_dir(&dir);
+        let _ = horon_agent_platform::fs::write_owner_only(
+            &dir.join(session_id),
+            std::process::id().to_string().as_bytes(),
+        );
     }
 }
 

@@ -406,14 +406,13 @@ fn an_import_refuses_an_archive_that_is_not_a_memory_export() {
 fn an_import_refuses_an_encrypted_manifest_it_cannot_open() {
     let volume = TempVolume::new("import-encrypted");
     let layout = volume.layout();
-    // A complete-shaped manifest whose encryption field names an algorithm this
-    // build cannot open, with a metadata file so the manifest is what the
-    // importer reads and refuses.
+    // A manifest naming an unsupported encryption algorithm with a metadata
+    // file so the importer reads the manifest and fails closed.
     let manifest = serde_json::json!({
         "version": manifest::FORMAT_VERSION,
         "exported_at": "2026-11-23T00:00:00Z",
         "store_revision": 1,
-        "encryption": "aes-256-gcm",
+        "encryption": "chacha20-poly1305",
         "pages": 0,
         "files": [],
         "total_bytes": 0,
@@ -439,7 +438,7 @@ fn an_encrypted_manifest_is_refused_before_any_page_is_written() {
         "version": manifest::FORMAT_VERSION,
         "exported_at": "2026-11-23T00:00:00Z",
         "store_revision": 1,
-        "encryption": "aes-256-gcm",
+        "encryption": "chacha20-poly1305",
         "pages": 0,
         "files": [],
         "total_bytes": 0,

@@ -78,7 +78,6 @@ async fn run_disconnect_cleanup(
         session_id,
         processing,
         turn,
-        tokio::spawn(std::future::pending()),
         members,
         &Arc::new(RwLock::new(HashMap::new())),
         &Arc::new(RwLock::new(HashMap::new())),
@@ -96,9 +95,7 @@ async fn run_disconnect_cleanup(
     )
     .await
     .expect("disconnect cleanup reports no error");
-    CleanupOutcome {
-        retained: retained.is_some(),
-    }
+    CleanupOutcome { retained }
 }
 
 struct ResumeOutcome {

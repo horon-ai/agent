@@ -83,6 +83,7 @@ impl Client {
             system_prompt: None,
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             id,
             working_dir: Some(working_dir),
             target_session_id,
@@ -95,6 +96,7 @@ impl Client {
             acp: None,
             history_message_ids: false,
             a2ui: None,
+            fresh_session: false,
         };
         let json = serde_json::to_string(&request)? + "\n";
         self.writer.write_all(json.as_bytes()).await?;

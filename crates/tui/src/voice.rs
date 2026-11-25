@@ -440,7 +440,7 @@ impl Voice {
         }
         self.recorder = None;
         self.finish = None;
-        kill_active_process();
+        kill_local_process();
         if self.phase != Phase::Idle {
             // A result already on its way carries the old generation and is
             // dropped by `accept`.
@@ -518,13 +518,18 @@ impl Drop for Voice {
     }
 }
 
-/// Stop the program in flight, for the terminal's exit and signal path.
-pub(crate) fn kill_active_process() {
+/// Stop the local dictation/playback program in flight without disturbing live mode.
+fn kill_local_process() {
     let pid = ACTIVE_PID.swap(0, Ordering::SeqCst);
     if pid != 0 {
         // The program may already have ended; the client is stopping.
         stop_group(pid);
     }
+}
+
+/// Stop every active voice program in flight, for the terminal's exit and signal path.
+pub(crate) fn kill_active_process() {
+    kill_local_process();
     live::kill_active_process();
 }
 

@@ -56,6 +56,7 @@ horon session inspect <id>     # layout, heads, archive state, damage (read-only
 horon session doctor [<id>]    # validate originals without repairing
 horon session migrate          # migrate legacy originals (dry run unless --apply)
 horon export <id> --out file.md   # Markdown transcript; secrets redacted
+horon export <id> --json --out file.json  # JSON payload to file; JSON summary to stdout
 horon export <id> --html --out report.html  # offline HTML report; secrets redacted
 horon session export <id> --output <dir>  # events and blobs as a bundle
 horon session restore <id>     # restore an archived session
@@ -67,7 +68,10 @@ truncated in it, matching the `export_session_markdown` harness API reply.
 `--html` writes that same redacted projection as one standalone report instead:
 stored markup is escaped, the stylesheet is inline, a Content-Security-Policy
 forbids network loads, so the saved file opens offline; an `--out` path that
-already exists is refused.
+already exists is refused (whereas Markdown overwrites an existing `--out`).
+Adding `--json --out <path>` writes `{"session_id": ..., "markdown"|"html": ...}`
+to `<path>` and prints the JSON summary (`session_id`, `out`, `format`,
+`bytes`) to stdout.
 `horon session export` is the other direction: it writes the original
 `events.jsonl` and `blobs/` into a new directory as a movable bundle, which
 `horon session import` reads into another store.
@@ -87,7 +91,8 @@ horon runtime-state show --session <id>
 horon runtime-state resolve-input --session <id> --input <id> --action retry
 ```
 
-`show` lists the live inputs and which outcomes are undetermined. `resolve-input`
+`show` lists the live inputs and which outcomes are undetermined, exiting `1`
+when `<id>` has no stored session or runtime journal. `resolve-input`
 takes `retry` (run the message again) or `cancel` (drop it).
 
 ## Replication

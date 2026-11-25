@@ -529,6 +529,8 @@ impl Agent {
             super::stream_rules::user_turn_index(&self.session),
         );
         self.reset_a2ui_turn();
+        self.last_guardrail_notice = None;
+        let mut recovered_partial_prefix = String::new();
 
         loop {
             // Do not start another provider request once a cancel has been
@@ -757,10 +759,13 @@ impl Agent {
                 .repeat_guard
                 .then(super::turn_streaming_mpsc::prose_repeat::ProseRepeatGuard::default);
             while let Some(event) = stream.next().await {
+                if self.is_graceful_shutdown() {
+                    break;
+                }
                 let event = match event {
                     Ok(event) => event,
                     Err(e) => {
-                        let err_str = e.to_string();
+                        let err_str = format!("{e:#}");
                         self.record_failed_credential_route(&err_str);
                         let attached_client = crate::server::session_has_attached_client(&self.session.id);
                         match self.handle_provider_error(&e, attached_client).await {
@@ -768,7 +773,7 @@ impl Agent {
                                 // A resend restarts the response, and the partial already
                                 // printed to stdout cannot be retracted there. History is
                                 // unaffected: the resend discards this attempt's text.
-                                if print_output && !text_content.is_empty() {
+                                if print_output && !self.is_graceful_shutdown() && !text_content.is_empty() {
                                     println!("\n[connection interrupted, retrying response from the top]");
                                     io::stdout().flush()?;
                                 }
@@ -808,6 +813,20 @@ impl Agent {
                             retry_after_compaction = true;
                             break;
                         }
+                        if self
+                            .maybe_recover_truncated_stream(&err_str, &text_content, !tool_calls.is_empty())
+                            .await?
+                        {
+                            if !text_content.trim().is_empty() {
+                                recovered_partial_prefix.push_str(&text_content);
+                            }
+                            if print_output && !text_content.is_empty() {
+                                println!();
+                                io::stdout().flush()?;
+                            }
+                            retry_after_recovery = true;
+                            break;
+                        }
                         log_agent_provider_stream_lifecycle(
                             logging::LogLevel::Error,
                             self,
@@ -831,7 +850,8 @@ impl Agent {
                     }
                     StreamEvent::ThinkingDelta(thinking_text) => {
                         // Display reasoning content only if enabled
-                        if print_output && crate::config::config().display.show_thinking {
+                        if print_output && !self.is_graceful_shutdown() && crate::config::config().display.show_thinking
+                        {
                             crate::terminal_println!("💭 {}", thinking_text);
                         }
                         // Always capture reasoning text so it can be persisted as a
@@ -849,12 +869,12 @@ impl Agent {
                     }
                     StreamEvent::ThinkingDone { duration_secs } => {
                         // Bridge provides accurate wall-clock timing
-                        if print_output {
+                        if print_output && !self.is_graceful_shutdown() {
                             println!("Thought for {:.1}s\n", duration_secs);
                         }
                     }
                     StreamEvent::TextDelta(text) => {
-                        if print_output {
+                        if print_output && !self.is_graceful_shutdown() {
                             crate::terminal_print!("{}", text);
                             io::stdout().flush()?;
                         }
@@ -862,7 +882,7 @@ impl Agent {
                         if let Some(sentence) = prose_guard.as_mut().and_then(|guard| guard.feed(&text)) {
                             logging::warn("Repeated prose detected; stopping the turn");
                             let notice = self.finish_prose_repeat_stop(&text_content, &sentence)?;
-                            if print_output {
+                            if print_output && !self.is_graceful_shutdown() {
                                 println!("\n{}", notice);
                             }
                             prose_repeat_stop = true;
@@ -872,6 +892,7 @@ impl Agent {
                     StreamEvent::TextSuffixReplace { old_text, new_text } => {
                         if provider_native_items.replace_text_suffix(&mut text_content, &old_text, &new_text)
                             && print_output
+                            && !self.is_graceful_shutdown()
                         {
                             // Plain stdout cannot retract already printed deltas.
                             // Still surface the real source links to CLI users.
@@ -886,7 +907,7 @@ impl Agent {
                         if trace {
                             eprintln!("\n[trace] tool_use_start name={} id={}", name, id);
                         }
-                        if print_output {
+                        if print_output && !self.is_graceful_shutdown() {
                             print!("\n[{}] ", name);
                             io::stdout().flush()?;
                         }
@@ -1078,7 +1099,7 @@ impl Agent {
                             text_content.len(),
                             tool_calls.len(),
                         ));
-                        if print_output && !text_content.is_empty() {
+                        if print_output && !self.is_graceful_shutdown() && !text_content.is_empty() {
                             // Already-printed text can't be unprinted on a plain
                             // stdout stream; mark the discontinuity instead.
                             println!("\n[connection interrupted, retrying response from the top]");
@@ -1103,6 +1124,7 @@ impl Agent {
                     }
                     StreamEvent::ProviderNative { provider, item } => {
                         if print_output
+                            && !self.is_graceful_shutdown()
                             && let Some(display) =
                                 horon_agent_message_types::provider_native::provider_native_display(&provider, &item)
                         {
@@ -1221,7 +1243,7 @@ impl Agent {
                         let attached_client = crate::server::session_has_attached_client(&self.session.id);
                         match self.handle_provider_error(&stream_error, attached_client).await {
                             ProviderErrorAction::Resend { .. } => {
-                                if print_output && !text_content.is_empty() {
+                                if print_output && !self.is_graceful_shutdown() && !text_content.is_empty() {
                                     println!("\n[connection interrupted, retrying response from the top]");
                                     io::stdout().flush()?;
                                 }
@@ -1258,6 +1280,20 @@ impl Agent {
                                 ));
                             }
                             retry_after_compaction = true;
+                            break;
+                        }
+                        if self
+                            .maybe_recover_truncated_stream(&message, &text_content, !tool_calls.is_empty())
+                            .await?
+                        {
+                            if !text_content.trim().is_empty() {
+                                recovered_partial_prefix.push_str(&text_content);
+                            }
+                            if print_output && !text_content.is_empty() {
+                                println!();
+                                io::stdout().flush()?;
+                            }
+                            retry_after_recovery = true;
                             break;
                         }
                         log_agent_provider_stream_lifecycle(
@@ -1327,6 +1363,7 @@ impl Agent {
             );
 
             if print_output
+                && !self.is_graceful_shutdown()
                 && (usage_input.is_some()
                     || usage_output.is_some()
                     || usage_cache_read.is_some()
@@ -1487,15 +1524,16 @@ impl Agent {
                 // an empty final answer with no explanation.
                 if let Some(notice) = Self::provider_guardrail_notice(
                     stop_reason.as_deref(),
-                    visible_text_is_empty,
+                    visible_text_is_empty && recovered_partial_prefix.trim().is_empty(),
                     !reasoning_content.trim().is_empty(),
                 ) {
+                    self.last_guardrail_notice = Some(notice.clone());
                     logging::warn(&format!(
                         "{}: turn ended with no visible output (stop_reason={:?})",
                         Self::empty_turn_log_event(stop_reason.as_deref()),
                         stop_reason
                     ));
-                    if print_output {
+                    if print_output && !self.is_graceful_shutdown() {
                         println!("\n[provider guardrail] {}", notice);
                     }
                     if text_content.trim().is_empty() {
@@ -1503,10 +1541,13 @@ impl Agent {
                     }
                 }
                 logging::info("Turn complete - no tool calls, returning");
-                if print_output {
+                if print_output && !self.is_graceful_shutdown() {
                     println!();
                 }
                 self.flush_deferred_a2ui_blocks()?;
+                if !recovered_partial_prefix.is_empty() {
+                    text_content = format!("{recovered_partial_prefix}{text_content}");
+                }
                 self.turn_state.set_final_text(&text_content);
                 let outcome = if self.is_graceful_shutdown() {
                     TurnOutcome::Aborted
@@ -1514,6 +1555,11 @@ impl Agent {
                     outcome_for_stop_reason(stop_reason.as_deref())
                 };
                 self.turn_state.finish(outcome)?;
+                break;
+            }
+            if self.is_graceful_shutdown() {
+                logging::info("Cancel observed after stream - skipping pending tool calls");
+                self.turn_state.finish(TurnOutcome::Aborted)?;
                 break;
             }
 

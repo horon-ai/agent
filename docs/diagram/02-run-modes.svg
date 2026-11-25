@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 580" width="960" height="580" role="img" aria-labelledby="t d">
-<title id="t">horon-agent run modes</title><desc id="d">Bare horon on a terminal first makes sure a daemon is running, then decides between the interactive client and the headless path. stdin and stdout must both be terminals, HORON_NO_TUI must be unset, and a horon-tui file must sit beside the running binary; only then does the process replace itself with horon-tui, passing --cwd and --session. Any failed condition keeps the headless path and prints the reason plus the install hint. The subcommands serve, run, api-bridge, acp and rpc are headless entry points that skip that decision; --mode rpc is promoted to the rpc subcommand when no subcommand is given.</desc>
+<title id="t">horon-agent run modes</title><desc id="d">Bare horon first runs tui_handoff::decide_for_process() before starting any daemon. stdin and stdout must both be terminals, HORON_NO_TUI must be unset, and a horon-tui file must sit beside the running binary; only then does it ensure a daemon is running and replace itself with horon-tui, passing --cwd and --session. Any failed condition starts no daemon, prints the reason and its remedy (the install hint only when horon-tui is missing), and exits 1. Starting horon-tui directly checks that stdin and stdout are terminals before entering the alternate screen and exits 1 otherwise. The subcommands serve, run, api-bridge, acp and rpc are headless entry points that skip that decision; --mode rpc is promoted to the rpc subcommand when no subcommand is given.</desc>
 <style>
 :root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
 @media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
@@ -12,61 +12,61 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <rect x="30" y="44" width="480" height="480" rx="12" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
 <text x="44" y="66" font-size="12.5" class="m">Bare launch, no subcommand</text>
 
-<rect x="44" y="78" width="452" height="42" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
-<text x="270" y="96" font-size="13.5" font-weight="600" text-anchor="middle">horon</text>
-<text x="270" y="112" font-size="11" class="m mono" text-anchor="middle">--continue selects the latest workspace session</text>
-<line x1="270" y1="120" x2="270" y2="132" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<rect x="44" y="76" width="452" height="40" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="270" y="93" font-size="13.5" font-weight="600" text-anchor="middle">horon</text>
+<text x="270" y="109" font-size="11" class="m mono" text-anchor="middle">--continue selects the latest workspace session</text>
+<line x1="142" y1="116" x2="142" y2="146" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
 
-<rect x="44" y="132" width="452" height="56" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
-<text x="270" y="153" font-size="12" text-anchor="middle">no live daemon: reap a stale socket, spawn `serve`,</text>
-<text x="270" y="171" font-size="12" text-anchor="middle">wait for the socket, then continue as its client</text>
-<line x1="270" y1="188" x2="270" y2="200" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="496" y="135" font-size="11" class="m mono" text-anchor="end">tui_handoff::decide_for_process()</text>
 
-<text x="44" y="216" font-size="11" class="m mono">tui_handoff::decide_for_process()</text>
+<rect x="44" y="146" width="196" height="46" rx="8" fill="var(--bg)" stroke="var(--a)" stroke-width="1.5"/>
+<text x="142" y="165" font-size="12" text-anchor="middle">stdin and stdout</text>
+<text x="142" y="182" font-size="12" text-anchor="middle">both terminals?</text>
+<line x1="240" y1="169" x2="266" y2="169" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="253" y="161" font-size="10" class="m" text-anchor="middle">no</text>
+<rect x="266" y="146" width="230" height="46" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="381" y="165" font-size="12" text-anchor="middle">headless exit 1, reason:</text>
+<text x="381" y="182" font-size="11" class="m mono" text-anchor="middle">not both terminals</text>
 
-<rect x="44" y="224" width="196" height="48" rx="8" fill="var(--bg)" stroke="var(--a)" stroke-width="1.5"/>
-<text x="142" y="244" font-size="12" text-anchor="middle">stdin and stdout</text>
-<text x="142" y="261" font-size="12" text-anchor="middle">both terminals?</text>
-<line x1="240" y1="248" x2="266" y2="248" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
-<text x="253" y="240" font-size="10" class="m" text-anchor="middle">no</text>
-<rect x="266" y="224" width="230" height="48" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
-<text x="381" y="244" font-size="12" text-anchor="middle">headless path, reason:</text>
-<text x="381" y="261" font-size="11" class="m mono" text-anchor="middle">not both terminals</text>
+<line x1="142" y1="192" x2="142" y2="208" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="150" y="204" font-size="10" class="m">yes</text>
 
-<line x1="142" y1="272" x2="142" y2="288" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
-<text x="150" y="285" font-size="10" class="m">yes</text>
+<rect x="44" y="208" width="196" height="46" rx="8" fill="var(--bg)" stroke="var(--a)" stroke-width="1.5"/>
+<text x="142" y="227" font-size="12" text-anchor="middle">HORON_NO_TUI</text>
+<text x="142" y="244" font-size="12" text-anchor="middle">unset?</text>
+<line x1="240" y1="231" x2="266" y2="231" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="253" y="223" font-size="10" class="m" text-anchor="middle">set</text>
+<rect x="266" y="208" width="230" height="46" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="381" y="227" font-size="12" text-anchor="middle">headless exit 1, reason:</text>
+<text x="381" y="244" font-size="11" class="m mono" text-anchor="middle">HORON_NO_TUI is set</text>
 
-<rect x="44" y="288" width="196" height="48" rx="8" fill="var(--bg)" stroke="var(--a)" stroke-width="1.5"/>
-<text x="142" y="308" font-size="12" text-anchor="middle">HORON_NO_TUI</text>
-<text x="142" y="325" font-size="12" text-anchor="middle">unset?</text>
-<line x1="240" y1="312" x2="266" y2="312" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
-<text x="253" y="304" font-size="10" class="m" text-anchor="middle">set</text>
-<rect x="266" y="288" width="230" height="48" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
-<text x="381" y="308" font-size="12" text-anchor="middle">headless path, reason:</text>
-<text x="381" y="325" font-size="11" class="m mono" text-anchor="middle">HORON_NO_TUI is set</text>
+<line x1="142" y1="254" x2="142" y2="270" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="150" y="266" font-size="10" class="m">yes</text>
 
-<line x1="142" y1="336" x2="142" y2="352" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
-<text x="150" y="349" font-size="10" class="m">yes</text>
+<rect x="44" y="270" width="196" height="46" rx="8" fill="var(--bg)" stroke="var(--a)" stroke-width="1.5"/>
+<text x="142" y="289" font-size="12" text-anchor="middle">horon-tui file</text>
+<text x="142" y="306" font-size="12" text-anchor="middle">beside the binary?</text>
+<line x1="240" y1="293" x2="266" y2="293" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="253" y="285" font-size="10" class="m" text-anchor="middle">no</text>
+<rect x="266" y="270" width="230" height="46" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="381" y="289" font-size="12" text-anchor="middle">headless + install-release:</text>
+<text x="381" y="306" font-size="11" class="m mono" text-anchor="middle">no horon-tui beside binary</text>
 
-<rect x="44" y="352" width="196" height="48" rx="8" fill="var(--bg)" stroke="var(--a)" stroke-width="1.5"/>
-<text x="142" y="372" font-size="12" text-anchor="middle">horon-tui file</text>
-<text x="142" y="389" font-size="12" text-anchor="middle">beside the binary?</text>
-<line x1="240" y1="376" x2="266" y2="376" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
-<text x="253" y="368" font-size="10" class="m" text-anchor="middle">no</text>
-<rect x="266" y="352" width="230" height="48" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
-<text x="381" y="372" font-size="12" text-anchor="middle">headless path, reason:</text>
-<text x="381" y="389" font-size="11" class="m mono" text-anchor="middle">no horon-tui beside binary</text>
+<line x1="142" y1="316" x2="142" y2="334" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="150" y="329" font-size="10" class="m">yes</text>
 
-<line x1="142" y1="400" x2="142" y2="416" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
-<text x="150" y="413" font-size="10" class="m">yes</text>
+<rect x="44" y="334" width="452" height="52" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="270" y="355" font-size="12" text-anchor="middle">no live daemon: reap a stale socket, spawn `serve`,</text>
+<text x="270" y="373" font-size="12" text-anchor="middle">wait for the socket, then continue as its client</text>
+<line x1="270" y1="386" x2="270" y2="402" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
 
-<rect x="44" y="416" width="452" height="50" rx="8" fill="var(--bg)" stroke="var(--ok)" stroke-width="1.5"/>
-<text x="270" y="437" font-size="12.5" font-weight="600" text-anchor="middle">exec into horon-tui</text>
-<text x="270" y="455" font-size="11" class="m mono" text-anchor="middle">--cwd &lt;dir&gt;  [--session &lt;id&gt;]</text>
+<rect x="44" y="402" width="452" height="48" rx="8" fill="var(--bg)" stroke="var(--ok)" stroke-width="1.5"/>
+<text x="270" y="422" font-size="12.5" font-weight="600" text-anchor="middle">exec into horon-tui</text>
+<text x="270" y="440" font-size="11" class="m mono" text-anchor="middle">--cwd &lt;dir&gt;  [--session &lt;id&gt;]</text>
 
-<text x="44" y="490" font-size="11" class="m">Every headless case prints the reason plus the install hint</text>
-<text x="44" y="505" font-size="11" class="m mono">horon-agent install-release</text>
-<text x="44" y="520" font-size="11" class="m">and exits non-zero; a daemon started first keeps running.</text>
+<text x="44" y="472" font-size="11" class="m">Failed checks start no daemon, print the reason + remedy,</text>
+<text x="44" y="488" font-size="11" class="m">and exit 1 (horon-agent install-release only when sibling missing).</text>
+<text x="44" y="504" font-size="11" class="m">Direct horon-tui exits 1 on a pipe before alt-screen.</text>
 
 <rect x="530" y="44" width="400" height="480" rx="12" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
 <text x="544" y="66" font-size="12.5" class="m">Headless entry points, decision skipped</text>

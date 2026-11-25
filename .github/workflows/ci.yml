@@ -2168,6 +2168,21 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- overnight_handoff --nocapture
 
+      - name: Run field QA runtime and CLI cohorts
+        shell: bash
+        # `auto_poke` CLI tests moved from `cli::commands_tests` into
+        # `cli::commands::auto_poke::tests`, and REPL EOF handling tests live in
+        # `agent::repl::tests`; both crates only run through cohort filters here.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::commands::auto_poke::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- agent::repl::tests:: --nocapture
+
       - name: Run integration contracts
         shell: bash
         env:

@@ -297,6 +297,10 @@ pub enum Request {
         /// Only such a client makes the `ask` tool wait for a human.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         supports_ask_requests: bool,
+        /// Interactive client renders `approval_pending` and answers with
+        /// `permission_decision`, so tools park and execute when approved.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        supports_permission_requests: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         working_dir: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -338,6 +342,10 @@ pub enum Request {
         /// non-A2UI clients so existing Subscribe wire bytes remain unchanged.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         a2ui: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities>,
+        /// Request a brand-new session even if this transport connection is
+        /// already subscribed to an earlier session (used by harness `create_session`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        fresh_session: bool,
     },
 
     /// Declare that this client is intentionally detaching before its transport
@@ -565,8 +573,8 @@ pub enum Request {
     /// The decision is recorded in the same durable store external approvers
     /// (channel replies, the IMAP poller) write to, so the tool that is waiting
     /// on the request sees it on its next poll and emits `approval_resolved`.
-    /// `allow_always` records an approval: this daemon has no persistent
-    /// always-allow store to extend, so it must not claim to have created one.
+    /// `allow_always` also persists a workspace-scoped tool grant via
+    /// `approval_grants` when eligible.
     #[serde(rename = "permission_decision")]
     PermissionDecision {
         id: u64,

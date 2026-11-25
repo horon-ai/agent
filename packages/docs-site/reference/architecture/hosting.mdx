@@ -25,7 +25,7 @@ What each mode does with an MCP server or a package child, the `HOSTED_POLICY` a
 
 ## The startup boundary
 
-A per-user container refuses to start unless all of the following hold. The daemon checks them before it binds a socket and exits with a message naming the failed condition.
+A per-user container refuses to start unless all of the following hold. `Server::run`, `horon-agent run`, and `horon-agent mcp` enforce the startup check (`hosted_tenant::enforce_at_startup`) before binding a socket or running, exiting with status `1` and a message naming the failed condition or invalid `HORON_AGENT_HOSTING_MODE`.
 
 | Condition | Why |
 | --- | --- |
@@ -35,7 +35,7 @@ A per-user container refuses to start unless all of the following hold. The daem
 | `HORON_AGENT_TENANT_ID` is set and valid | Every hosted process carries its audit label |
 | `[gateway] enabled` is false | The TCP gateway binds an address outside the container's socket boundary |
 
-A shared worker starts without those checks so its own gate can refuse the operations it must not run: it never allows child processes or remote MCP connections for a customer, whatever `config.toml` says.
+A shared worker starts without those per-user-container boundary checks (`horon-agent run` and `horon-agent mcp` still validate `HORON_AGENT_HOSTING_MODE`) so its own gate can refuse the operations it must not run: it never allows child processes or remote MCP connections for a customer, and also refuses `horon mcp list` (`HOSTED_POLICY`, exit `1`), whatever `config.toml` says.
 
 ## Image, volume and runtime layout
 

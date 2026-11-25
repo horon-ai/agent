@@ -179,7 +179,7 @@ Commit I/O does not create a dedicated thread per session. A process-wide writer
 The pool keeps the contract of the previous structure.
 
 - **Submission order**: jobs for one session run on its worker in submission order. `call()` waits on a response rendezvous until the job finishes, so the caller signature and the blocking semantics are unchanged.
-- **Lock lifetime**: `.writer.lock` is held by the `BlockingWriter` owned by the worker's session entry. The entry disappears when the `Close` queued by the last facade's drop arrives, so the drop drains every earlier job before releasing the lock. The `BlockingWriter` is declared before the slab lease in the entry, so a waiter reopening the same session wakes after the lock is released.
+- **Lock lifetime**: `.writer.lock` is held by the `BlockingWriter` owned by the worker's session entry. The entry disappears when the `Close` queued by the last facade's drop arrives, so the drop drains every earlier job before releasing the lock. The `BlockingWriter` is declared before the slab lease in the entry, so a waiter reopening the same session wakes after the lock is released. When the daemon keeps an idle session for reconnect grace after client disconnect, it releases derived caches and drops the idle writer before sleeping so no `.writer.lock` descriptor remains open while detached, and opens a fresh writer on reattach or write.
 - **Panic isolation**: jobs are wrapped in `catch_unwind`. A panic removes only that session's entry, which releases the lock, and the other sessions on the same worker keep committing. Waiting callers of that session lose their response and receive a "reply lost" error, and the process stays alive.
 - **Reentrancy**: calling or dropping a worker thread's own writer re-entrantly becomes an error instead of a deadlock. The open path returns an error for the same reason when it is called on a worker.
 - **Head-of-line blocking**: one save reads the event log three times, so saving a large session can hold that worker for hundreds of milliseconds, and saves of other sessions pinned to the same worker wait that long. Sessions on other workers are unaffected. This is the price of decoupling thread count from session count, and it is measured together with the per-session thread and RSS slope.
@@ -328,6 +328,10 @@ The `JournalLimits` defaults (`store.rs`).
 ### Sessions that had no journal
 
 The existing `<session>.json` queue is imported once. The deterministic input id mapping is recorded, and a second start does not import again. After a normal transition the legacy JSON is mirrored with fsync. A mirror failure does not roll back admission into the new journal. It surfaces as a recovery warning and as a reason for `export-legacy` to refuse.
+
+### Inspecting and resolving live inputs
+
+`horon-agent runtime-state show --session <id>` prints live and `in_doubt` inputs from the session's runtime journal and exits with status `1` when `<id>` has no stored session or runtime journal. `horon-agent runtime-state resolve-input --session <id> --input <id> --action retry|cancel` settles an undetermined input.
 
 ### What this journal does not guarantee
 

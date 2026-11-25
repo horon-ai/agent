@@ -68,11 +68,11 @@ pub(crate) fn redact_secrets_cow(text: &str) -> Cow<'_, str> {
     }
 
     for re in crate::secrets::rules::assignment_regexes() {
-        redacted = re.replace_all(&redacted, "${1}[REDACTED_SECRET]").into_owned();
+        redacted = redact_assignment_group(&redacted, re);
     }
 
     for (_, re) in crate::secrets::rules::custom_assignment_regexes() {
-        redacted = re.replace_all(&redacted, "${1}[REDACTED_SECRET]").into_owned();
+        redacted = redact_assignment_group(&redacted, &re);
     }
 
     if redacted != text {
@@ -80,6 +80,30 @@ pub(crate) fn redact_secrets_cow(text: &str) -> Cow<'_, str> {
     }
 
     Cow::Owned(redacted)
+}
+
+fn redact_assignment_group(text: &str, regex: &regex::Regex) -> String {
+    if !regex.is_match(text) {
+        return text.to_string();
+    }
+    regex
+        .replace_all(text, |caps: &regex::Captures<'_>| {
+            let Some(whole) = caps.get(0) else {
+                return String::new();
+            };
+            let Some(value) = caps.get(2) else {
+                return whole.as_str().to_string();
+            };
+            let val = value.as_str();
+            if val.trim().is_empty() || val.contains("[REDACTED_SECRET]") || val.contains("«SECRET:") {
+                return whole.as_str().to_string();
+            }
+            let whole_text = whole.as_str();
+            let start = value.start() - whole.start();
+            let end = value.end() - whole.start();
+            format!("{}[REDACTED_SECRET]{}", &whole_text[..start], &whole_text[end..])
+        })
+        .into_owned()
 }
 
 pub const GENERATED_IMAGE_TOOL_NAME: &str = "image_generation";

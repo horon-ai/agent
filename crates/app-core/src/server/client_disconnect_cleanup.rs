@@ -325,13 +325,12 @@ pub(super) async fn release_before_disconnect(
     clippy::too_many_arguments,
     reason = "disconnect cleanup updates sessions, swarms, files, debug state, and shutdown signals together"
 )]
-/// Returns the event task when a successor needs this lifecycle to finish its turn.
+/// Returns `true` when a successor needs this lifecycle to finish its turn.
 pub(super) async fn cleanup_client_connection(
     sessions: &SessionAgents,
     client_session_id: &str,
     client_is_processing: bool,
     processing_task: &mut Option<tokio::task::JoinHandle<()>>,
-    event_handle: tokio::task::JoinHandle<()>,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
     swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
@@ -346,7 +345,7 @@ pub(super) async fn cleanup_client_connection(
     swarm_event_tx: &broadcast::Sender<SwarmEvent>,
     client_event_tx: &mpsc::UnboundedSender<crate::protocol::ServerEvent>,
     idle_reconnect_grace: Duration,
-) -> Result<Option<tokio::task::JoinHandle<()>>> {
+) -> Result<bool> {
     let disposition = disconnect_disposition(disconnected_while_processing(
         client_is_processing,
         processing_task.as_ref(),
@@ -374,13 +373,33 @@ pub(super) async fn cleanup_client_connection(
     .await;
 
     if allow_reconnect {
+        // Release the idle `.writer.lock` FD and derived caches before sleeping
+        // for reconnect grace so disconnected sessions hold zero OS lock FDs
+        // while staying live for fast reattachment.
+        if !idle_reconnect_grace.is_zero()
+            && let Some(agent_arc) = sessions.read().await.get(client_session_id).cloned()
+        {
+            let released_writer = if let Ok(mut agent) = agent_arc.try_lock() {
+                if let Some(release) = agent.hibernate_idle_caches() {
+                    crate::logging::info(&format!(
+                        "Released idle caches before reconnect grace for {} (provider_cache_bytes={}, tool_index_entries={})",
+                        client_session_id, release.provider_cache_bytes, release.tool_index_entries
+                    ));
+                }
+                agent.release_idle_writer()
+            } else {
+                None
+            };
+            if let Some(writer) = released_writer {
+                blocking_session_io(move || drop(writer));
+            }
+        }
         // Empty roots intentionally have no snapshot, and saved sessions already
         // have theirs on disk. A replacement UI/SDK connection gets a bounded
         // opportunity to reclaim the live Agent; a saved session that nobody
         // reclaims closes (save, `session_end`, memory extraction) when the grace
         // expires. No registry or agent lock is held across the wait.
         // Processing/crash cleanup never enters this path.
-        event_handle.abort();
         crate::logging::info(&format!(
             "Retaining idle {} session {} for reconnect grace",
             if saved_session { "saved" } else { "unsaved" },
@@ -395,7 +414,7 @@ pub(super) async fn cleanup_client_connection(
                     .values()
                     .any(|info| info.session_id == client_session_id)
             {
-                return Ok(None);
+                return Ok(false);
             }
             if tokio::time::Instant::now() >= deadline {
                 break;
@@ -425,15 +444,10 @@ pub(super) async fn cleanup_client_connection(
             "Skipping destructive disconnect cleanup for {} because another client is still attached",
             client_session_id
         ));
-        // The lifecycle, not the socket, owns completion bookkeeping. Return
-        // its writer handle so it can retain and await the task using the same
-        // continuation path as an explicitly detached remote turn. Merely
-        // dropping the JoinHandle here would lose completion/status handling.
-        if processing_task.is_some() {
-            return Ok(Some(event_handle));
-        }
-        event_handle.abort();
-        return Ok(None);
+        // The lifecycle, not the socket, owns completion bookkeeping. Report
+        // `true` so the caller retains and awaits the task using the same
+        // continuation path as an explicitly detached remote turn.
+        return Ok(processing_task.is_some());
     }
 
     // A live processing task owns the agent mutex. Abort it before trying to
@@ -535,6 +549,7 @@ pub(super) async fn cleanup_client_connection(
             // its writer arc, whose `Drop` joins the writer thread. Run that in
             // blocking work so the join never occupies a runtime worker.
             blocking_session_io(move || drop(agent_arc));
+            crate::process_memory::release_retained_heap_debounced("server_session_closed", Duration::from_secs(5));
         }
     }
 
@@ -609,8 +624,7 @@ pub(super) async fn cleanup_client_connection(
     // The barrier opens only now: the terminal save, the removed reference and
     // every identity cleanup above belong to the removed owner.
     drop(close_guard);
-    event_handle.abort();
-    Ok(None)
+    Ok(false)
 }
 
 #[cfg(test)]

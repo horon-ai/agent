@@ -323,6 +323,11 @@ export interface ConnectOptions {
    */
   supportsAskRequests?: boolean;
   /**
+   * Enable when this client renders `approval_pending` interactively and
+   * answers via `respondToPermission`, so gated tools park and run on approval.
+   */
+  supportsPermissionRequests?: boolean;
+  /**
    * Maximum requests awaiting a reply at once. Defaults to 1024.
    *
    * Each outstanding request holds a pending entry until its reply or timeout,
@@ -571,6 +576,7 @@ export class HoronAgentClient extends EventEmitter {
       client: clientName,
       supports_user_response: options.supportsUserResponse ?? false,
       supports_ask_requests: options.supportsAskRequests ?? false,
+      supports_permission_requests: options.supportsPermissionRequests ?? false,
       event_capabilities: EVENT_CAPABILITIES,
       ...(options.a2ui === undefined ? {} : { a2ui: options.a2ui }),
     });

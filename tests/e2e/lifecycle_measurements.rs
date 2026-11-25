@@ -194,6 +194,7 @@ fn sdk_client(api_socket: &Path) -> HoronAgentClient {
         ensure_runtime: false,
         supports_user_response: false,
         supports_ask_requests: false,
+        supports_permission_requests: false,
         a2ui: None,
     })
     .expect("connect to the harness API bridge")

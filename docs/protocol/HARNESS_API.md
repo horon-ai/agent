@@ -882,7 +882,7 @@ A session holds several heads after a branched import or after a turn is appende
 
 `export_session_markdown` takes `session_id` and replies with a `session_markdown` event carrying the whole readable transcript in `markdown`. Each turn is a `### User` or `### Assistant` heading followed by its content: text verbatim, a tool call as a fenced JSON block, a tool result as a fenced block, and an image or audio block as a short placeholder. Secrets are redacted with the same pattern table the disk path uses, so a token that never reached the event log cannot appear in the transcript. A tool result longer than 4 KiB is cut at a UTF-8 boundary and replaced with a `… (truncated, N bytes total)` marker.
 
-The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
+The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon export <session-id> [--out <path>]` writes identical bytes, because both call one renderer; `--json` wraps them as `{"session_id": ..., "markdown": ...}`, and `--json --out <path>` writes that JSON payload to `<path>` (overwriting an existing Markdown target) while printing a JSON summary (`session_id`, `out`, `format`, `bytes`) to stdout.
 
 ### HTML report (protocol 1.27)
 
@@ -890,7 +890,7 @@ The reply is not part of the replication protocol and needs no `protocol_version
 
 The document is meant to be saved and opened later without a connection. Every transcript character is escaped, so stored text that looks like markup renders as characters instead of becoming a node; the stylesheet is inline, with no font, image or script reference; and the head carries `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">`, which makes a browser refuse any network load the document might later gain. It requires `session_replication_v1` and answers `unknown_session` for an id the store does not hold.
 
-`horon export <session-id> --html [--out <path>]` writes the same bytes, and `--json` wraps them as `{"session_id": ..., "html": ...}`. Unlike the Markdown form, an `--out` path that already exists is refused rather than overwritten: a report is a destination the reader named by hand.
+`horon export <session-id> --html [--out <path>]` writes the same bytes, and `--json` wraps them as `{"session_id": ..., "html": ...}` (with `--json --out <path>` writing that payload to `<path>` and printing the JSON summary to stdout). Unlike the Markdown form, an `--out` path that already exists is refused rather than overwritten: a report is a destination the reader named by hand.
 
 Two rules a client must not break:
 
@@ -945,18 +945,19 @@ The `ask` tool shows a person a question and waits for the answer. The daemon dr
 | Field | Type | When absent | Meaning |
 | --- | --- | --- | --- |
 | `supports_ask_requests` | boolean | `false` | This connection draws the `ask` tool's questions and answers them |
+| `supports_permission_requests` | boolean | `false` | This connection prompts on `approval_pending` and answers with `permission_decision` interactively |
 
-The bridge reads the field with `hello["supports_ask_requests"].as_bool().unwrap_or(false)` (`crates/harness-api-server/src/lib.rs`), so a client that predates the field advertises nothing and keeps working. The field is not a capability string and not a protocol-minor negotiation: it gates the direction the person is asked in. A session whose attached connection advertised it gets the question there and the call waits for the answer; a session without such a connection falls back to `ask_policy` (`docs/safety/SAFETY.md`).
+The bridge reads `hello["supports_ask_requests"].as_bool().unwrap_or(false)` and `hello["supports_permission_requests"].as_bool().unwrap_or(false)` (`crates/harness-api-server/src/lib.rs`), so a client that predates either field advertises nothing and keeps working. Neither field is a capability string or protocol-minor negotiation: each gates whether a turn waits for an interactive reply on this connection. A session whose attached connection advertised `supports_ask_requests` receives the question there and waits; otherwise it falls back to `ask_policy` (`docs/safety/SAFETY.md`). Likewise, when the attached turn-owning connection advertises `supports_permission_requests`, gated tool calls emit `approval_pending` and block until `permission_decision` (`allow`, `allow_always`, `deny`) is sent rather than failing immediately for the model to retry.
 
-The SDKs expose it as one connect option, and all three default it to off:
+The SDKs expose both as connect options, and all three default them to off:
 
-| SDK | Option | Default |
-| --- | --- | --- |
-| Rust | `ConnectOptions::supports_ask_requests` | `false` |
-| TypeScript | `supportsAskRequests` | `false` |
-| Python | `supports_ask_requests` | `False` |
+| SDK | `ask` option | Permission option | Default |
+| --- | --- | --- | --- |
+| Rust | `ConnectOptions::supports_ask_requests` | `ConnectOptions::supports_permission_requests` | `false` |
+| TypeScript | `supportsAskRequests` | `supportsPermissionRequests` | `false` |
+| Python | `supports_ask_requests` | `supports_permission_requests` | `False` |
 
-The Rust SDK copies the option into `Hello` (`crates/agent-sdk/src/client.rs`), TypeScript writes `options.supportsAskRequests ?? false` and Python passes the field straight through. The TUI binary `horon-tui` sets it to `true` in `connect_options` (`crates/tui/src/lib.rs`), because it draws the question and answers it. A client that only runs turns leaves the default in place, and a turn that reaches `ask` then resolves through the policy instead of parking on a question nobody can see.
+The Rust SDK copies both options into `Hello` (`crates/agent-sdk/src/client.rs`), TypeScript defaults both to `false` (`options.supportsAskRequests ?? false`, `options.supportsPermissionRequests ?? false`), and Python passes both fields straight through. The TUI binary `horon-tui` sets both to `true` in `connect_options` (`crates/tui/src/lib.rs`), because it draws prompts and answers them interactively. A client that only runs turns leaves the defaults in place so automated runs never stall waiting on a prompt nobody can answer.
 
 ## Harness API request and event surfaces: usage_report, search_sessions, list_artifacts, durable_runtime
 
@@ -1220,7 +1221,8 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 
 - A `SnapshotMarker` and a `Snapshot` never go to different connections. Only the connection that received the marker receives the snapshot.
 - Live events after a snapshot carry a `seq` issued by the observation owner. A client can prove "everything after N is newer" itself instead of guessing order.
-- `apply_control` has the server build the fingerprint. The same id with the same fingerprint replays the stored result, the same id with a different fingerprint is `conflict`, and a concurrent `applying` is `pending` without a second execution. Anything still applying at restart is sealed as `indeterminate` and never executed again.
+- `apply_control` has the server build the fingerprint. The same id with the same fingerprint replays the stored result, the same id with a different fingerprint is `conflict`, and a concurrent `applying` is `pending` without a second execution. Anything still applying at restart is sealed as `indeterminate` and never executed again. Invalid `apply_control` arguments (empty `operation_id`, empty `expected_run_id`, or empty `input_ids`) fail with `invalid_request`.
+- Concurrent `create_session` and `attach_session` calls on one bridge connection keep separate wire correlation ids instead of overwriting an earlier in-flight attach.
 - An operation id outside the retention window is `unknown`. The SDK never retries automatically in that case.
 - The only supported actions are `abort_run(expected_run_id)` and `cancel_inputs(input_ids)`. Model changes, files, shells and arbitrary commands are not on this surface.
 - A request against a capability the bridge does not advertise is unreachable. That is why all four strings are in `BRIDGE_CAPABILITIES`.

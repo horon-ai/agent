@@ -118,10 +118,10 @@ npm 설치본은 에이전트 자체 업데이터가 아니라 npm으로 갱신�
 | 릴리스가 그 플랫폼용 압축 파일을 배포하지 않음 | 한 줄을 남기고 `horon-agent`만 설치한다 |
 | `SHA256SUMS`에 그 압축 파일 항목이 없음 | 한 줄을 남기고 `horon-agent`만 설치한다 |
 | 다이제스트가 다름 | 한 줄을 남기고 `horon-agent`만 설치한다 |
-| `--source-binary`, 또는 FreeBSD | 배포된 클라이언트를 넣지 않는다. FreeBSD는 `horon-agent`만 배포한다 |
+| `--source-binary`, 또는 FreeBSD | `--source-binary` 옆에 형제 `horon-tui`가 있으면 함께 배치한다(`install.sh` 소스 폴백과 `horon update`도 FreeBSD가 아니면 함께 빌드). FreeBSD는 `horon-agent`만 배포한다 |
 | 버전 디렉터리가 이미 있음 | 파일이 없을 때만 클라이언트를 더한다. 그 밖에는 버전 디렉터리를 바꾸지 않는다 |
 
-`scripts/install/uninstall.sh`와 `scripts/install/uninstall.ps1`은 설치 디렉터리의 `horon-tui` 런처를 다른 대상과 함께 목록에 올리고 지운다. 예전 설치가 남긴 런처도 포함한다.
+`scripts/install/uninstall.sh`는 `HORON_HOME`(및 `HORON_AGENT_INSTALL_DIR`이 없을 때 `${HORON_HOME}/bin`)을 따르고, 다른 홈의 데몬을 건드리지 않도록 그 설치에 속한 데몬만 멈추며, `/`나 `$HOME` 같은 위험한 `--purge` 경로를 거절하고, 설치 디렉터리의 `horon-tui` 런처를 다른 대상과 함께 목록에 올리고 지운다(Windows의 `uninstall.ps1`도 같다).
 
 ## Linux 서버에서 실행
 

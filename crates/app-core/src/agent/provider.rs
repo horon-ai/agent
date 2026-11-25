@@ -131,6 +131,27 @@ impl Agent {
         crate::spend_cap::admit()
     }
 
+    /// Reject `--max-cost` upfront when running against a non-local, authenticated
+    /// custom route whose model has no known per-token pricing. Keyless local
+    /// loopback endpoints remain permitted and report unpriced counts separately.
+    pub fn verify_spend_cap_route(&self, max_cost: Option<f64>) -> Result<()> {
+        let Some(max_usd) = max_cost else {
+            return Ok(());
+        };
+        let source_key = self.compaction_route_from_provider().unwrap_or_else(|| {
+            let runtime = std::env::var("HORON_AGENT_RUNTIME_PROVIDER").into_iter().next();
+            crate::provider_activity::source_key_for_provider_label(&self.provider_name(), runtime.as_deref())
+        });
+        let model = self.provider_model();
+        let priced = crate::provider::pricing::metered_usage_cost_usd(&source_key, &model, 1, 1, 0, 0).is_some();
+        if !priced && !crate::model_pricing::openai_compatible_profile_uses_local_endpoint(&source_key) {
+            anyhow::bail!(
+                "spend cap of ${max_usd:.4} cannot be verified: model '{model}' on remote route '{source_key}' has no known pricing"
+            );
+        }
+        Ok(())
+    }
+
     pub(super) fn record_model_turn_usage(&mut self, turn_id: &str) {
         // Identity is recorded even when usage is not, so runtime info can name
         // the model that served the last response after a fallback switch.
@@ -507,6 +528,7 @@ impl Agent {
         if !self.session.set_additional_dirs(directories) {
             return;
         }
+        crate::tool::register_session_additional_dirs(self.session.id.as_str(), &self.session.additional_dirs());
         self.persist_session_best_effort("additional directories");
     }
 
@@ -522,6 +544,7 @@ impl Agent {
     pub fn add_additional_dir(&mut self, raw: &str) -> Result<bool> {
         let added = self.session.add_additional_dir(raw)?;
         if added {
+            crate::tool::register_session_additional_dirs(self.session.id.as_str(), &self.session.additional_dirs());
             self.persist_session_best_effort("additional directories");
         }
         Ok(added)
@@ -533,6 +556,7 @@ impl Agent {
     pub fn remove_additional_dir(&mut self, raw: &str) -> Result<bool> {
         let removed = self.session.remove_additional_dir(raw);
         if removed {
+            crate::tool::register_session_additional_dirs(self.session.id.as_str(), &self.session.additional_dirs());
             self.persist_session_best_effort("additional directories");
         }
         Ok(removed)
@@ -739,5 +763,48 @@ mod registry_handles_tests {
             SESSION_WINDOW,
             "a caller that keeps the plain handle cannot move the session's budget"
         );
+    }
+
+    struct RemoteOpenAISlotProvider;
+
+    #[async_trait]
+    impl Provider for RemoteOpenAISlotProvider {
+        async fn complete(&self, _: &[Message], _: &[ToolDefinition], _: &str, _: Option<&str>) -> Result<EventStream> {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+        fn name(&self) -> &str {
+            "OpenAI"
+        }
+        fn model(&self) -> String {
+            "unpriced-xyz".to_string()
+        }
+        fn fork(&self) -> Arc<dyn Provider> {
+            Arc::new(RemoteOpenAISlotProvider)
+        }
+    }
+
+    #[tokio::test]
+    async fn verify_spend_cap_route_rejects_remote_noauth_unpriced_profile() {
+        let sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+        std::fs::write(
+            sandbox.root().join("config.toml"),
+            "[providers.remote_noauth]\nbase_url = \"https://remote-unpriced.example.invalid/v1\"\nauth = \"none\"\ndefault_model = \"unpriced-xyz\"\n\n\
+             [providers.local_noauth]\nbase_url = \"http://127.0.0.1:11434/v1\"\nauth = \"none\"\ndefault_model = \"unpriced-xyz\"\n",
+        )
+        .unwrap();
+        crate::config::invalidate_config_cache();
+
+        let mut agent = Agent::new(Arc::new(RemoteOpenAISlotProvider), Registry::empty());
+        agent.set_session_provider_key(Some("remote_noauth".to_string()));
+        let err = agent
+            .verify_spend_cap_route(Some(0.01))
+            .expect_err("remote unpriced auth=none profile must be rejected under --max-cost");
+        assert!(err.to_string().contains("has no known pricing"), "{err}");
+
+        agent.set_session_provider_key(Some("local_noauth".to_string()));
+        agent
+            .verify_spend_cap_route(Some(0.01))
+            .expect("local unpriced profile remains allowed under --max-cost");
+        crate::config::invalidate_config_cache();
     }
 }

@@ -6,7 +6,7 @@
 
 ## 실행 방법
 
-터미널에서 인자 없이 실행한 `horon`(또는 `hrn`, `horon-agent`)은 필요하면 서버를 띄운 뒤 자기 프로세스를 형제 `horon-tui`로 넘긴다. 넘길 때 작업 디렉터리를 `--cwd`로 전달하므로 새 세션은 명령을 실행한 디렉터리에 속한다.
+터미널에서 인자 없이 실행한 `horon`(또는 `hrn`, `horon-agent`)은 먼저 대화형 클라이언트를 실행할 수 있는지 확인한 뒤, 필요하면 서버를 띄우고 자기 프로세스를 형제 `horon-tui`로 넘긴다. 넘길 때 작업 디렉터리를 `--cwd`로 전달하므로 새 세션은 명령을 실행한 디렉터리에 속한다.
 
 프로세스를 넘기기 전에 세 조건을 모두 확인한다(`src/cli/tui_handoff.rs`).
 
@@ -14,7 +14,7 @@
 - `HORON_NO_TUI`가 설정되어 있지 않아야 한다. 값이 무엇이든 설정하면 터미널에서도 헤드리스 모드를 쓴다.
 - 실행 중인 실행 파일 옆에 `horon-tui` 파일이 있어야 한다. 실행 파일이 심볼릭 링크인 런처는 실제 위치에서 다시 찾는다. macOS에서 필요한 처리다.
 
-조건이 하나라도 맞지 않으면 명령은 그 조건(`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, `no horon-tui beside this binary`), 그 조건에 맞는 해결 방법 하나, 헤드리스 대안을 담은 문장을 출력하고 0이 아닌 코드로 끝난다. 설치라는 해결 방법은 클라이언트가 없을 때만 쓴다. 파이프나 `HORON_NO_TUI`는 클라이언트가 이미 설치된 상태에서 생기므로, 그 문장은 설치 명령 대신 터미널이나 그 환경 변수를 가리킨다. 판정 전에 띄운 서버는 계속 돈다. `horon-tui`를 직접 실행하면 이 판정을 건너뛴다.
+이 검사는 데몬을 확인하거나 띄우기 전에 실행되므로(`src/cli/dispatch.rs`), 조건이 맞지 않으면 백그라운드 서버를 띄우지 않는다. 조건이 하나라도 맞지 않으면 명령은 그 조건(`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, `no horon-tui beside this binary`), 그 조건에 맞는 해결 방법 하나, 헤드리스 대안을 담은 문장을 출력하고 종료 코드 `1`로 끝난다. 설치(`horon-agent install-release`) 안내는 클라이언트가 없을 때만 쓴다. 파이프나 `HORON_NO_TUI`는 클라이언트가 이미 설치된 상태에서 생기므로, 그 문장은 설치 명령 대신 터미널이나 그 환경 변수를 가리킨다. `horon-tui`를 직접 실행하면 이 판정을 건너뛰고, 대체 화면(alternate screen)에 들어가기 전에 `stdin`과 `stdout`이 모두 터미널인지 확인해 아니면 오류를 출력하고 `1`로 종료하며, 화면이 `20x6`보다 작으면 `"terminal too small"`을 표시한다.
 
 재개한 세션도 그대로 넘긴다. `horon --resume <id>`는 클라이언트에 `--session <id>`를 전달하므로, 클라이언트는 새 세션을 만들지 않고 그 세션에 붙는다. 소켓은 명령줄로 넘기지 않는다. 이미 `HORON_AGENT_SOCKET`으로 내보내져 있고, 클라이언트가 하네스 API 소켓을 스스로 찾는다.
 
@@ -321,7 +321,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집한다. `VISUAL`이 비어 �
 
 미리보기가 무언가를 가리는 선택된 보존 호출의 표시에는 나머지를 보여 주는 키가 적힌다. `+N lines · ctrl+o expands`이고, 여기서 키는 지금 적용된 배치가 `app.expand_tool`에 준 키다. 이 선택은 보기가 끝을 따라갈 때는 가장 최근의 보존 호출을 가리키고, 위로 스크롤한 보기에서는 화면에 보이는 보존 호출로 옮겨 간다. 그 키는 그 호출의 출력 전체를 그리고 다시 누르면 미리보기로 되돌리며, 붙잡힌 보기를 끝으로 튀기지 않고 제자리에 맞춰 다시 흐르게 한다. 보여 줄 것이 남아 있지 않으면 `no tool output to expand`라고 알린다. 잘린 호출 가운데 최근 열여섯 개의 글 전체를 호출마다 최대 64 KiB까지 남기고, 그보다 긴 출력은 글자 경계에서 멈추며 남긴 마지막 줄이 `… output truncated`다. 행의 오른쪽 끝만 잘린 호출도 잘린 것으로 세어 줄 수 대신 `cut`을 달고, 남긴 글이 창 밖으로 밀려난 호출은 사라진 보기를 약속하지 않도록 키 이름을 달지 않는다.
 
-승인 게이트가 거절한 호출은 데몬의 문장 전체가 아니라 짧은 이름 하나로 그린다. 옆의 프롬프트가 이미 그 질문을 하기 때문이고, 그 이름은 요청의 상태를 따른다. 결정을 기다리는 동안 머리 행은 `◐ needs approval`이고, 답이 나면 그 답을 적는다. `• allowed`, `• allowed always`, `n`이나 `esc`면 `✕ denied`, 답 없이 프롬프트가 사라지면(연결 끊김, 취소된 턴) `✕ not answered`다. 이 셋 중 어느 것도 `failed`가 아니다. 호출은 실행되지 않았고, 게이트가 붙잡았을 뿐이므로 모델이 도구를 다시 불러야 한다. 그 프롬프트에 답해도 호출은 실행되지 않는다. 결정을 기록하고 모델이 도구를 다시 불러야 하며, 트랜스크립트가 그 사실을 적는다.
+승인 게이트가 붙잡은 호출은 데몬의 문장 전체가 아니라 짧은 이름 하나로 그린다. 옆의 프롬프트가 이미 그 질문을 하기 때문이고, 그 이름은 요청의 상태를 따른다. 결정을 기다리는 동안 머리 행은 `◐ needs approval`이고, 답이 나면 `• allowed`, `• allowed always`, `n`이나 `esc`면 `✕ denied`, 답 없이 프롬프트가 사라지면(연결 끊김, 취소된 턴) `✕ not answered`다. 클라이언트가 `supports_permission_requests = true`로 턴을 소유하고 있으면 프롬프트에 답하자마자 대기하던 호출이 바로 이어서 실행(`y`·`a`)되거나 거절을 돌려주며(`n`·`esc`), 대화형 대기가 없는 경우에는 모델의 다음 호출을 위해 결정만 기록한다.
 
 `notify_pattern`을 지정한 `bash` 작업은 실행한 세션의 트랜스크립트에 일치한 출력을 실시간으로 표시한다. 각 알림에는 작업과 표준 출력 또는 표준 오류 구분이 표시된다.
 
@@ -373,7 +373,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집한다. `VISUAL`이 비어 �
 
 승인은 대기열이다. 첫 호출이 화면에 있는 동안 승인이 필요한 두 번째 호출은 그 뒤에서 기다리고, 화면의 프롬프트가 `N more prompt waiting` 줄을 덧붙인다(하나면 `1 more prompt waiting`). 그래야 두 번째 승인이 첫 번째의 반복으로 읽히지 않는다. 프롬프트는 호출의 동작과, 트랜스크립트가 거절이 적어 둔 요청 아이디로 그 호출과 짝을 지을 수 있을 때 그 호출의 인자를 보여 준다. 프롬프트가 다른 호출의 명령을 보여 주는 일은 없다.
 
-`y`는 한 번 승인하고, `a`는 승인하면서 이후 같은 호출도 묻도록 하고, `n`이나 `esc`는 거절한다. 승인은 그 턴보다 오래간다. 요청은 데몬의 대기열에 제 기한과 함께 남으므로, 프롬프트를 잃으면 답할 유일한 방법을 잃는다. 승인해도 호출은 실행되지 않는다. 트랜스크립트는 결정을 `you allowed <action>: the model has to call it again before it runs`로, `a` 키였으면 `you allowed <action>: recorded once (the daemon keeps no always-rule), so the model has to call it again`로, 거절이면 `you denied <action>: the call will not run`로 적는다. 모델이 도구를 다시 불러야 실행되기 때문이다.
+`y`는 한 번 승인하고, `a`는 이 작업공간에서 해당 도구를 계속 승인하며(이중 확인 고위험 호출, `eval`, bash 패턴, `restricted_paths`를 제외한 적격 호출이면 `approvals.json`에 작업공간 범위 `tool` 승인을 저장한다), `n`이나 `esc`는 거절한다. 승인을 답하지 않으면 요청이 데몬의 대기열에 제 기한과 함께 남으므로, 프롬프트를 잃으면 답할 유일한 방법을 잃는다. 클라이언트가 `supports_permission_requests`를 광고했으면 답하는 즉시 대기 중인 도구 실행이 풀려나고, 아니면 모델의 다음 호출을 위해 기록만 남긴다. 트랜스크립트는 `you allowed <action>: continuing execution`, `you allowed <action> for this workspace: continuing execution`(영속 저장 대상이 아니면 `you allowed <action>: recorded once ...`), 거절이면 `you denied <action>: the call will not run`으로 적는다.
 
 `ask` 도구의 질문은 `(1/2)` 세기와 함께 하나씩 그린다. 단일 선택 질문은 선택지의 숫자로 답하고, 다중 선택 질문은 숫자로 켜고 끈 뒤 `enter`로 확정하며, 고른 선택지는 `[x]`를 단다. 추천 선택지에는 `(recommended)`가 붙는다. `esc`는 질문을 연 채로 둔다. 그 도구에는 거절 경로가 없고 제 기한을 스스로 정하므로, 프롬프트를 닫으면 답할 유일한 방법이 사라진다. 모든 질문에 답하면 `you answered the ask tool (N answers): the call resumes`가 남는다. 도구가 재시도를 위해 기억되는 것이 아니라 이 연결에서 답을 기다리기 때문이다.
 
@@ -515,7 +515,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집한다. `VISUAL`이 비어 �
 
 받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요하다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생한다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생한다. `/voice status`에서 빠진 항목을 확인할 수 있다. 필요한 프로그램과 모델은 사용자가 직접 설치한다. 필요한 프로그램이 없어도 키보드로 입력할 수 있다.
 
-`/live`는 `tui.toml`(`voice.live_enabled`, `voice.live_endpoint`, `voice.live_adapter`, `voice.live_api_key_env`, `voice.live_model`, `voice.live_command`, `voice.live_fallback_to_text`)에 설정한 선택형 외부 실시간 음성 세션 어댑터를 제어한다. 기본값은 꺼져 있으며 사전 설정된 서드파티 엔드포인트 없이 세션별 `/live consent`를 요구한다. `/live talk`와 `/live end`로 명시적 수집을 시작·전송하고, `/live stop`·`/live reconnect`로 이전 수집을 폐기한 뒤 재연결하며, `/live leave`로 연결된 세션과 초안을 유지한 채 텍스트 모드로 돌아온다. `Alt+V`(`app.live_voice`)가 전환 키이며 `Ctrl+L`은 `app.repaint`로 유지된다(`keybindings.toml`에서 재지정 가능).
+`/live`는 `tui.toml`(`voice.live_enabled`, `voice.live_endpoint`, `voice.live_adapter`, `voice.live_api_key_env`, `voice.live_model`, `voice.live_command`, `voice.live_fallback_to_text`)에 설정한 선택형 외부 실시간 음성 세션 어댑터를 제어한다. 기본값은 꺼져 있으며 사전 설정된 서드파티 엔드포인트 없이 세션별 `/live consent`를 요구한다. `/live talk`와 `/live end`로 명시적 수집을 시작·전송하고, `/live stop`·`/live reconnect`로 이전 수집을 폐기한 뒤 재연결하며, `/live leave`로 세션 동의를 철회하고 연결된 세션과 초안을 유지한 채 텍스트 모드로 돌아온다. `Alt+V`(`app.live_voice`)가 전환 키이며 `Ctrl+L`은 `app.repaint`로 유지된다(`keybindings.toml`에서 재지정 가능).
 
 이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른아홉 명령을 이름 순으로 적었다. `/tools`는 데몬이 현재 세션에 제공하는 도구 목록을 읽고, 데몬이 로딩 단계를 보고하지 않으면 `unknown`으로 표시한다.
 
@@ -652,7 +652,7 @@ harness commands:
 - 노력 단계는 바뀔 때마다 서버에 저장되고, 턴이 도는 동안 바꾼 값은 그 턴이 끝날 때까지 미뤄지므로 턴 중에 고른 단계는 그때까지 효력을 내지 않는다.
 - 클라이언트는 연결할 때마다, 세션에 붙을 때마다, 새 세션을 시작할 때마다 하네스에 그 세션의 스킬 목록을 묻고, 데몬은 그 답마다 전역 스킬 디렉터리를 다시 읽는다.
 - 데몬이 스스로 시작한 턴은 이 클라이언트에 시작 이벤트를 보내지 않으므로 `esc` 전달 표시가 움직이지 않는다. `esc`로 보낸 메시지는 끝난 턴으로 보낸 것으로 그려진 채 남는다.
-- `--session <id>`로 시작하면 저장된 대화를 그리지 않고 붙기만 한다. `/resume <id>`는 그 대화를 다시 그린다.
+- `--session <id>`로 시작하면(인자 없는 `horon --resume <id>` 인계 포함) 앞쪽의 `<system-reminder>` 주입 블록을 걷어 내고 저장된 최신 20개 메시지까지 다시 그린다. `/resume <id>`는 같은 정리 규칙으로 저장된 전체 대화를 다시 그린다.
 - 팝업이 닫혀 있으면 Tab으로 내장 명령, 하네스 명령과 명령 파일의 이름이나 로컬 작업공간의 경로를 완성한다. 스킬은 팝업이나 `/skills`에서 고른다.
 - 한 번에 하나씩만 펼칠 수 있으며, 선택되는 호출은 위로 스크롤한 보기에서는 화면에 들어온 보존 도구 호출이고 끝을 따라갈 때는 가장 최근의 보존 도구 호출이다. 펼치거나 접을 때 붙잡힌 보기는 대화 끝으로 튀지 않고 제자리를 지킨다. 64 KiB보다 긴 사본은 `… output truncated`로 자르며, `ctrl+o expands` 이름표는 표시와 함께 한 행에 들어가지 않을 때 뺀다. 세 자리 줄 수에서는 29칸 아래가 그런 경우다.
 - 첫 답이 오기 전에 두 번째 `/new`를 입력하면 그 세션은 재개로 보고된다. 클라이언트가 시작 중인 세션을 표시 하나로 들고 있기 때문이다.

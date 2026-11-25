@@ -443,6 +443,10 @@ class ConnectOptions:
     #: answers them with :meth:`respond_to_ask`. Without it the server resolves
     #: every question itself and never waits for this client.
     supports_ask_requests: bool = False
+    #: Enable when this client renders ``approval_pending`` interactively and
+    #: answers with :meth:`respond_to_permission`, so gated tools park and run
+    #: when approved.
+    supports_permission_requests: bool = False
     #: Maximum requests awaiting a reply at once. Defaults to 1024.
     max_pending_requests: int = 1024
     #: Supply a custom transport instead of dialing a Unix socket.
@@ -1119,6 +1123,7 @@ class HoronAgentClient:
                     client_name=base.client_name,
                     supports_user_response=base.supports_user_response,
                     supports_ask_requests=base.supports_ask_requests,
+                    supports_permission_requests=base.supports_permission_requests,
                     max_pending_requests=base.max_pending_requests,
                     transport=base.transport,
                     request_timeout_ms=base.request_timeout_ms,
@@ -1158,6 +1163,7 @@ class HoronAgentClient:
             "client": resolved.client_name,
             "supports_user_response": resolved.supports_user_response,
             "supports_ask_requests": resolved.supports_ask_requests,
+            "supports_permission_requests": resolved.supports_permission_requests,
             "event_capabilities": EVENT_CAPABILITIES,
         }
         if resolved.a2ui is not None:

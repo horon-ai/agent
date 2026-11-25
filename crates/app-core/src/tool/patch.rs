@@ -88,6 +88,7 @@ impl Tool for PatchTool {
     }
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
+        super::path_policy::enforce("patch", &input, &ctx)?;
         let params: PatchInput = serde_json::from_value(input)?;
 
         let patches = parse_patch(&params.patch_text)?;

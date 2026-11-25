@@ -1406,6 +1406,7 @@ impl RawClient {
             system_prompt: None,
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             id,
             working_dir: Some(working_dir.display().to_string()),
             target_session_id: None,
@@ -1418,6 +1419,7 @@ impl RawClient {
             acp: None,
             history_message_ids: false,
             a2ui: None,
+            fresh_session: false,
         })
         .await?;
         self.read_until(

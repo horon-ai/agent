@@ -651,7 +651,7 @@ method_order = ["handoff", "structured"]
 
 `horon run --max-time 30 "..."`는 턴 처리 시간을 30초로 제한한다. 초기화가 끝나면 시간을 재기 시작하며 양수 초를 소수로도 지정할 수 있다. 제한 시간이 지나면 턴을 취소하고 최대 1초 동안 정리를 기다린다. 프로세스는 종료 상태 `124`를 반환한다.
 
-텍스트 모드는 시간 초과를 표준 오류에 표시한다. `--json`은 오류 객체 하나를 쓰고 `--ndjson`은 오류 레코드로 끝난다. 두 형식은 `"code":"deadline_exceeded"`와 함께 `max_time_seconds` 및 세션 ID를 포함한다.
+텍스트 모드는 시간 초과를 표준 오류에 표시하고 만료 뒤 지연된 응답을 표준 출력에 내보내지 않는다. `--json`은 오류 객체 하나를 쓰고 `--ndjson`은 오류 레코드로 끝난다. 두 형식은 `"code":"deadline_exceeded"`와 함께 `max_time_seconds` 및 세션 ID를 포함한다. 시간 초과가 아닌 검증 오류나 턴 실패도 `--json`·`--ndjson`에서는 표준 출력에 구조화된 오류 객체를 쓴다.
 
 `--wait-async`를 쓰면 현재 실행과 세션이 시작한 백그라운드 작업을 기다리는 시간도 제한에 포함한다. 텍스트 모드는 표준 오류에 작업마다 상태를 한 번씩 표시한다. `--json`이 성공하면 `background_jobs` 배열을 포함하고, `--ndjson`은 `done` 전에 작업마다 `background_job` 레코드를 보낸다. 시간이 초과되면 확인한 상태를 표준 오류에 쓰고 선택한 형식으로 기존 시간 초과 오류를 보낸다.
 
@@ -659,14 +659,20 @@ method_order = ["handoff", "structured"]
 
 `horon run --print-thoughts "..."`는 제공자가 보이는 텍스트로 돌려주는 추론을 답변보다 먼저 표준 오류에 `[thinking]` 표시와 함께 출력한다. 답변은 표준 출력에 그대로 남으므로 파이프로 받은 출력은 달라지지 않는다. 옵션을 주지 않으면 텍스트 출력은 바이트 단위로 같다. 제공자가 보이는 텍스트로 돌려주지 않는 추론은 표시하지 않으며, 이 옵션은 형식이 바뀌지 않는 `--json`, `--ndjson`과 함께 쓸 수 없다.
 
+## 비정상 종료, 자동 재촉 상한, 비용 상한
+
+- `horon-agent run`은 가드레일(`content_filter` 등), `length`(완료 전 출력 한도 도달), 아무 출력 없는 빈 응답으로 턴이 끝나면 종료 코드 `1`로 실패한다.
+- `horon-agent run`의 자동 이어가기(`auto_poke`)는 추가 턴 상한을 기본 `6`회로 제한하고(`DEFAULT_RUN_AUTO_POKE_MAX_TURNS = 6`, `HORON_AGENT_RUN_AUTO_POKE_MAX_TURNS`로 조정, `HORON_AGENT_RUN_AUTO_POKE=0`으로 비활성화), 미완료 todo 목록이 연속으로 진전 없으면 조기에 멈춘다(정체 차단).
+- `--max-cost <USD>`를 지정했을 때 가격이 등록되지 않은 원격 경로(`auth = "none"`을 포함한 비로컬 `base_url`)는 요청 전에 종료 코드 `1`로 거부한다. 명시적 로컬 엔드포인트(루프백·사설·링크 로컬 대역, `localhost`, `.local`, `.lan`, `host.docker.internal`)는 표준 오류 경고와 함께 실행을 허용하고 미가격 사용량을 따로 보고한다.
+
 ## `--resume` 동작
 
-값 없이 `--resume`만 넘기면 데몬을 시작하기 전에 세션 선택기 오류를 표시하고 종료한다.
+하위 명령 없이 `--resume`만 넘기면(`horon-agent --resume`) 보관되지 않은 저장 세션 목록을 표준 출력에 출력하고 정상 종료한다. 하위 명령과 함께 값 없는 `--resume`을 넘기면 `horon-agent --resume`을 안내하며 오류로 종료한다.
 
 ### 기본 동작
 
 - `--resume <id>`는 세션 id를 받아 그 세션으로 시작한다. 값이 전체 id가 아니면 로컬 저장소에서
-  먼저 해석한다(`src/cli/dispatch.rs:696-736`).
+  먼저 해석한다(`src/cli/dispatch.rs`).
 - 해석에 실패하면 원문 id를 그대로 서버로 넘겨 서버가 다시 해석하게 한다
   (`src/cli/dispatch.rs:721`).
 - `--resume`은 다른 전역 플래그와 함께 쓸 수 있다. 세션은 이 프로세스에서 그대로

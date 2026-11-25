@@ -1454,6 +1454,7 @@ mod client_terminal;
 mod destructive_gate;
 use bash_pty::{BoxedReader, BoxedWriter};
 use destructive_gate::destructive_command_refusal;
+pub use destructive_gate::validate_direct_bash_policy;
 
 /// The destructive-command gate, exposed so a monitored command cannot skip it.
 ///

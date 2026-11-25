@@ -213,11 +213,11 @@ The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:2074`
 
 ### Scoped grants
 
-An answer can cover a place instead of one call. `allow_path` approves the one file the request named; `allow_folder` approves its folder and everything under it. The grant lives in `<agent home>/approvals.json`, written with mode 0600 under `approvals/.grants.lock`, and every grant carries an expiry (`[tools] approval_grant_ttl_days`, default 7; `0` turns grants off).
+An answer can cover a place or a tool in a workspace instead of one call. `allow_path` approves the one file the request named; `allow_folder` approves its folder and everything under it; `allow_always` persists a workspace-scoped `tool` grant (`scope = "tool"`, `capability = "all"`) for normal-urgency eligible calls (never `eval`). The grant lives in `<agent home>/approvals.json`, written with mode 0600 under `approvals/.grants.lock`, and every grant carries an expiry (`[tools] approval_grant_ttl_days`, default 7; `0` turns grants off).
 
-`horon approvals grants list [--json]` shows every stored grant with a stable id, its capability (`append` or `write`), scope (`path` or `folder`), canonical path, workspace and expiry, and marks expired ones. It writes nothing, and paths are printed with control characters escaped. `horon approvals grants revoke <id>...` removes the named grants, so the next matching call asks again. `revoke --all` prints how many grants in which workspaces it would remove and needs `--yes`. Revocation leaves other grants untouched, refuses to touch an `approvals.json` it cannot read, and cannot weaken `[tools] restricted_paths`, which no grant covers.
+`horon approvals grants list [--json]` shows every stored grant with a stable id, its capability (`append`, `write`, or `all`), scope (`path`, `folder`, or `tool`), canonical path or workspace target, workspace and expiry, and marks expired ones. It writes nothing, and paths are printed with control characters escaped. `horon approvals grants revoke <id>...` removes the named grants, so the next matching call asks again. `revoke --all` prints how many grants in which workspaces it would remove and needs `--yes`. Revocation leaves other grants untouched, refuses to touch an `approvals.json` it cannot read, and cannot weaken `[tools] restricted_paths`, which no grant covers.
 
-A grant is consulted only after `evaluate` said "ask" for a reason a grant can answer: not a dual-confirm class, not a restricted path, not a bash-pattern verdict, and only for a call whose effect is a file mutation. A hit becomes an auto-approval with reason `grant`, so the audit line says why the user was not asked. Five things a grant is not:
+A grant is consulted only after `evaluate` said "ask" for a reason a grant can answer: not a dual-confirm class, not a restricted path, not a bash-pattern verdict, and (for path/folder grants) for a call whose effect is a file mutation or (for `tool` grants) any normal-urgency call matching that `(workspace, tool_name)`. A hit becomes an auto-approval with reason `grant`, so the audit line says why the user was not asked. Five things a grant is not:
 
 - **Not portable between workspaces.** The workspace root is the canonical session working directory; a grant records it, and a grant whose root differs covers nothing even for the same absolute path.
 - **Not wider than its effect.** A grant issued for an append covers appends; a write grant covers both. Replacing a file is a stronger answer than appending to it.
@@ -850,7 +850,9 @@ Lowering the spill threshold keeps valid inline JSON intact when it fits the too
 
 A call given `accept_large_output: true` and `read`'s text files are not condensed. A text `read` returns at most 64 KiB at once and points at the next `start_line` (or `offset`). The file is on disk, so nothing is stored separately. SDK tool results never pass through the registry and get only the history cap (512 KiB, by bytes).
 
-Set `[tools] read_default_limit = 300` to change the default page size for `read` without an explicit `limit` or end line. The default is 5,000 lines. Configured values are clamped to 1–5,000. Explicit limits, line ranges, and path selectors keep their own behavior. A partial page reports where to continue.
+Set `[tools] read_default_limit = 300` to change the default page size for `read` without an explicit `limit` or end line. The default is 5,000 lines. Configured values are clamped to 1–5,000. Explicit `limit` values must be `1` or greater (`limit = 0` is refused). Explicit limits, line ranges, and path selectors keep their own behavior. A partial page reports where to continue.
+
+Normal-mode mutating file tools (`write`, `edit`, `apply_patch`, `replace`, `hashline_edit`, `patch`) enforce canonical workspace containment (including granted `--add-dir` roots) across `..` segments and symbolic links, and `webfetch` rejects loopback, private, link-local/metadata, reserved IPs, `.localhost`/`.local`/`.internal` hostnames, and DNS-resolved or redirected private targets.
 
 ### Markdown heading outlines
 

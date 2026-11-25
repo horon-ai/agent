@@ -240,8 +240,12 @@ impl MemoryManager {
             .update(StoreScope::Global, |graph| Ok(Self::remember_in_graph(graph, entry)))
     }
 
-    fn remember_in_graph(graph: &mut MemoryGraph, entry: MemoryEntry) -> String {
-        let normalized = entry.content.trim();
+    fn remember_in_graph(graph: &mut MemoryGraph, mut entry: MemoryEntry) -> String {
+        entry.content = crate::message::redact_secrets(&entry.content);
+        for tag in &mut entry.tags {
+            *tag = crate::message::redact_secrets(tag);
+        }
+        let normalized = entry.content.trim().to_string();
         let duplicate = graph
             .active_memories()
             .into_iter()

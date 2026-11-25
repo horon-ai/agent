@@ -45,6 +45,7 @@ fn subscribe(target: &str) -> Request {
         system_prompt: None,
         supports_user_response: false,
         supports_ask_requests: false,
+        supports_permission_requests: false,
         id: 71,
         working_dir: None,
         target_session_id: Some(target.into()),
@@ -57,6 +58,7 @@ fn subscribe(target: &str) -> Request {
         acp: None,
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     }
 }
 

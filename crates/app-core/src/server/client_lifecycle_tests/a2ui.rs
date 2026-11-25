@@ -254,6 +254,7 @@ async fn socket_subscribe_a2ui_round_trip_and_invalid_event_rejection() {
             system_prompt: None,
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             id: 1,
             working_dir: env.home.path().to_str().map(str::to_string),
             target_session_id: None,
@@ -266,6 +267,7 @@ async fn socket_subscribe_a2ui_round_trip_and_invalid_event_rejection() {
             acp: None,
             history_message_ids: false,
             a2ui: Some(A2uiSessionCapabilities::default()),
+            fresh_session: false,
         })
         .unwrap(),
     )

@@ -331,6 +331,7 @@ impl WsTestClient {
             system_prompt: None,
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             crash_on_disconnect: false,
             continue_on_disconnect: false,
             id,
@@ -343,6 +344,7 @@ impl WsTestClient {
             acp: None,
             history_message_ids: false,
             a2ui: None,
+            fresh_session: false,
         })
         .await
     }

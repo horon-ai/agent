@@ -156,7 +156,7 @@ pub(super) async fn connect_with_a2ui(
     daemon.request(&subscribe).await?;
 
     let history_request = Request::GetHistory { id: daemon.next_id() };
-    let history_reply = daemon.request(&history_request).await?;
+    let history_reply = daemon.request_settled(&history_request).await?;
     if !matches!(history_reply, ServerEvent::History { .. }) {
         anyhow::bail!("unexpected reply to get_history: {history_reply:?}");
     }
@@ -205,6 +205,7 @@ fn subscribe_request(id: u64, cwd: Option<&std::path::Path>, resume: Option<&str
         system_prompt: None,
         supports_user_response: false,
         supports_ask_requests: false,
+        supports_permission_requests: false,
         working_dir: cwd.map(|cwd| cwd.display().to_string()),
         target_session_id: resume.map(str::to_string),
         client_instance_id: Some(CLIENT_INSTANCE_ID.to_string()),
@@ -216,6 +217,7 @@ fn subscribe_request(id: u64, cwd: Option<&std::path::Path>, resume: Option<&str
         acp: None,
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     }
 }
 

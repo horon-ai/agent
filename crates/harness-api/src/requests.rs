@@ -52,6 +52,11 @@ pub enum ApiRequest {
         /// and answer them with `ask_response`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         supports_ask_requests: bool,
+        /// Opt in when this client interactively renders `approval_pending`
+        /// and answers with `permission_response`, allowing tools to pause and
+        /// resume in the same turn.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        supports_permission_requests: bool,
         /// Optional event capabilities this client handles.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         event_capabilities: Vec<String>,

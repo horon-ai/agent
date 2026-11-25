@@ -115,6 +115,23 @@ fn assert_every_outcome_is_stored(agent: &Agent) {
         ("call-failed".to_string(), Some(ToolVerdict::Failed), Some(true)),
     ];
     assert_eq!(stored, expected, "stored verdicts differ: {stored:?}");
+
+    let history_errors: Vec<(Option<String>, Option<bool>)> = agent
+        .get_history(true)
+        .into_iter()
+        .filter(|row| row.role == "tool")
+        .map(|row| (row.tool_data.map(|data| data.id), row.is_error))
+        .collect();
+    let expected_history = vec![
+        (Some("call-ok".to_string()), None),
+        (Some("call-partial".to_string()), None),
+        (Some("call-rejected".to_string()), Some(true)),
+        (Some("call-failed".to_string()), Some(true)),
+    ];
+    assert_eq!(
+        history_errors, expected_history,
+        "history rows must propagate is_error only on failed/rejected tool results"
+    );
 }
 
 #[tokio::test]

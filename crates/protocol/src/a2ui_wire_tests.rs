@@ -10,6 +10,7 @@ fn subscribe_omits_a2ui_when_absent_and_roundtrips_capabilities() -> Result<()> 
         system_prompt: None,
         supports_user_response: false,
         supports_ask_requests: false,
+        supports_permission_requests: false,
         working_dir: Some("/tmp/proj".to_string()),
         target_session_id: None,
         client_instance_id: None,
@@ -21,6 +22,7 @@ fn subscribe_omits_a2ui_when_absent_and_roundtrips_capabilities() -> Result<()> 
         acp: None,
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     };
     let encoded_plain: Value = serde_json::from_str(&serde_json::to_string(&plain)?)?;
     assert!(
@@ -33,6 +35,7 @@ fn subscribe_omits_a2ui_when_absent_and_roundtrips_capabilities() -> Result<()> 
         system_prompt: None,
         supports_user_response: false,
         supports_ask_requests: false,
+        supports_permission_requests: false,
         working_dir: Some("/tmp/proj".to_string()),
         target_session_id: None,
         client_instance_id: None,
@@ -48,6 +51,7 @@ fn subscribe_omits_a2ui_when_absent_and_roundtrips_capabilities() -> Result<()> 
             supported_catalog_ids: vec![A2UI_BASIC_CATALOG_V1_0.to_string()],
             accepts_inline_catalogs: false,
         }),
+        fresh_session: false,
     };
     let raw = serde_json::to_string(&with_a2ui)?;
     let Request::Subscribe { a2ui, .. } = decode_request(&raw)? else {

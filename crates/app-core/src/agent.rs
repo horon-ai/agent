@@ -52,6 +52,7 @@ mod provisional_init;
 #[cfg(test)]
 #[path = "agent/pruning_tests.rs"]
 mod pruning_tests;
+mod repl;
 mod request_messages;
 #[cfg(test)]
 pub(crate) use request_messages::request_extra_clone_counters;
@@ -574,6 +575,8 @@ pub struct Agent {
     a2ui_capabilities: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities>,
     /// Per-turn A2UI streaming and deferred block emission state.
     a2ui_turn: a2ui::TurnA2uiState,
+    /// Guardrail or empty-response notice recorded on the latest turn.
+    last_guardrail_notice: Option<String>,
 }
 
 impl Agent {
@@ -636,6 +639,7 @@ impl Agent {
         let secret_vault_registration = crate::secrets::register_session_vault(&session.id);
         // Dispatch reads the same frozen tier snapshot as the tool list.
         crate::tool::register_session_load_tiers(&session.id, load_tiers.clone());
+        crate::tool::register_session_additional_dirs(&session.id, &session.additional_dirs());
         let mut agent = Self {
             provider,
             registry,
@@ -703,6 +707,7 @@ impl Agent {
             advisor_enabled: None,
             a2ui_capabilities: None,
             a2ui_turn: a2ui::TurnA2uiState::default(),
+            last_guardrail_notice: None,
         };
         agent.restore_failover_budget();
         agent.refresh_prompt_skills_snapshot();

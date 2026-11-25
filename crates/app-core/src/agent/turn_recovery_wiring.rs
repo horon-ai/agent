@@ -212,6 +212,120 @@ impl Agent {
         );
     }
 
+    /// Recover from a mid-stream connection/SSE drop before completion
+    /// (`finish_reason` / `[DONE]`) when automatic turn recovery is enabled and
+    /// no tool calls were queued in this stream.
+    ///
+    /// Shares [`TurnState::auto_continuations`] with
+    /// [`Self::maybe_auto_continue_unexpected_stop`] so truncated stream retries
+    /// stay bounded by [`MAX_AUTO_CONTINUATIONS`].
+    pub(super) async fn maybe_recover_truncated_stream(
+        &mut self,
+        error_message: &str,
+        partial_text: &str,
+        had_tool_calls: bool,
+    ) -> Result<bool> {
+        if had_tool_calls || self.is_graceful_shutdown() {
+            return Ok(false);
+        }
+        if Self::configured_recovery_mode() == RecoveryMode::Off {
+            return Ok(false);
+        }
+        if !Self::is_truncated_stream_error(error_message) {
+            return Ok(false);
+        }
+        if self.turn_state.auto_continuations() >= MAX_AUTO_CONTINUATIONS {
+            return Ok(false);
+        }
+
+        let attempts = self.turn_state.record_auto_continuation();
+        logging::warn(&format!(
+            "Mid-stream drop before response completion ({error_message}); requesting automatic recovery {attempts}/{MAX_AUTO_CONTINUATIONS}"
+        ));
+
+        if !partial_text.trim().is_empty() {
+            self.add_message(
+                Role::Assistant,
+                vec![ContentBlock::Text {
+                    text: partial_text.to_string(),
+                    cache_control: None,
+                }],
+            );
+            self.add_message(
+                Role::User,
+                vec![ContentBlock::Text {
+                    text: format!(
+                        "{TURN_RECOVERY_NUDGE_PREFIX} (detected: the provider stream dropped before finishing; attempt {attempts}/{MAX_AUTO_CONTINUATIONS}). Continue exactly where you left off, do not repeat completed content, and if the next step is a tool call, emit the tool call now.]"
+                    ),
+                    cache_control: None,
+                }],
+            );
+            self.save_session()?;
+        }
+        Ok(true)
+    }
+
+    pub(super) async fn try_recover_truncated_prefix(
+        &mut self,
+        error_message: &str,
+        partial_text: &str,
+        had_tool_calls: bool,
+        recovered_partial_prefix: &mut String,
+    ) -> Result<bool> {
+        if self
+            .maybe_recover_truncated_stream(error_message, partial_text, had_tool_calls)
+            .await?
+        {
+            if !partial_text.trim().is_empty() {
+                recovered_partial_prefix.push_str(partial_text);
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub(super) fn emit_provider_guardrail_if_empty(
+        &mut self,
+        stop_reason: Option<&str>,
+        text_empty: bool,
+        has_reasoning: bool,
+        reasoning_chars: usize,
+        event_tx: &mpsc::UnboundedSender<ServerEvent>,
+    ) {
+        if let Some(notice) = Self::provider_guardrail_notice(stop_reason, text_empty, has_reasoning) {
+            self.last_guardrail_notice = Some(notice.clone());
+            logging::warn(&format!(
+                "{}: turn ended with no visible output (stop_reason={:?}, reasoning_chars={})",
+                Self::empty_turn_log_event(stop_reason),
+                stop_reason,
+                reasoning_chars
+            ));
+            if let Err(error) = event_tx.send(ServerEvent::ProviderGuardrail {
+                stop_reason: stop_reason.map(str::to_string),
+                message: notice,
+            }) {
+                logging::debug(&format!("Failed to send ProviderGuardrail event: {error}"));
+            }
+        }
+    }
+
+    fn is_truncated_stream_error(message: &str) -> bool {
+        let lower = message.to_ascii_lowercase();
+        lower.contains("stream ended before the response finished")
+            || lower.contains("ended before response.completed")
+            || lower.contains("closed before response.completed")
+            || lower.contains("stream closed before completion")
+            || lower.contains("unexpected eof")
+            || lower.contains("unexpected-eof")
+            || lower.contains("unexpected end of file")
+            || lower.contains("early eof")
+            || lower.contains("incomplete stream")
+            || lower.contains("incomplete message")
+            || lower.contains("error reading a body from connection")
+            || lower.contains("connection closed before message completed")
+            || lower.contains("close_notify")
+    }
+
     /// Whether enabling the judge extends `mode` to the semantic class.
     ///
     /// `aggressive` already acts on every non-clean class, so a judgment there

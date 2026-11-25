@@ -536,10 +536,12 @@ pub fn ensure_runtime(options: &LaunchOptions, progress: &Progress<'_>) -> Resul
         .api_socket
         .clone()
         .unwrap_or_else(horon_agent_harness_api::api_socket_path);
-    if socket_accepts(&api) {
+    let daemon = horon_agent_harness_api::legacy_socket_path();
+    let paired_shared = options.api_socket.is_none() && std::env::var_os("HORON_AGENT_API_SOCKET").is_none();
+    let api_ready = socket_accepts(&api);
+    if api_ready && (!paired_shared || socket_accepts(&daemon)) {
         return Ok(());
     }
-    let daemon = horon_agent_harness_api::legacy_socket_path();
     let horon_agent = options.binary.clone().unwrap_or_else(|| sibling_exe("horon-agent"));
     if !socket_accepts(&daemon) {
         progress("starting horon-agent runtime...");
@@ -561,6 +563,9 @@ pub fn ensure_runtime(options: &LaunchOptions, progress: &Progress<'_>) -> Resul
             )
         })?;
         wait_for_socket(&daemon, "horon-agent runtime", options.start_timeout)?;
+    }
+    if api_ready {
+        return Ok(());
     }
     progress("starting harness API bridge...");
     let standalone_bridge = sibling_exe("horon-agent-harness-api-bridge");

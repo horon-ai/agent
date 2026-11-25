@@ -971,7 +971,7 @@ fn created_session_reports_requested_working_dir_before_first_prompt() {
         panic!("expected attached")
     };
     assert_eq!(session.working_dir.as_deref(), Some("/workspace/fresh"));
-    assert!(state.pending_create_dir.is_none());
+    assert!(state.pending_attaches.is_empty());
 }
 
 #[test]
@@ -1021,8 +1021,7 @@ fn attach_session_without_persisted_working_dir_reclaims_live_target() {
     assert_eq!(reply[0].reply_to, Some(41));
     assert!(matches!(&reply[0].event, ApiEvent::Attached { session } if session.session_id == "live-empty"));
     assert_eq!(state.session_id.as_deref(), Some("live-empty"));
-    assert!(state.pending_attach_id.is_none());
-    assert!(state.pending_attach_subscribe_id.is_none());
+    assert!(state.pending_attaches.is_empty());
 }
 
 #[test]
@@ -1048,8 +1047,8 @@ fn attach_session_unknown_target_error_is_correlated_and_clears_pending_attach()
             ..
         }
     ));
-    assert!(state.pending_attach_id.is_none());
-    assert!(state.pending_model_probe.is_none());
+    assert!(state.pending_attaches.is_empty());
+    assert!(state.pending_model_probes.is_empty());
     assert!(state.session_id.is_none());
     let event = only_reply_event(state.api_request_to_legacy(&json!({
         "req": "clear_session", "id": 44, "session_id": "missing",
@@ -3461,6 +3460,7 @@ fn history_response_stats_cross_real_render_protocol_and_sdk_boundary() {
             tool_calls: None,
             tool_data: row.tool_data,
             response_stats: row.response_stats,
+            is_error: None,
             verdict: None,
         })
         .collect();

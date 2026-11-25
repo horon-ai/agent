@@ -114,7 +114,7 @@ horon run "summarize this repo"
 
 | 명령 | 하는 일 |
 | --- | --- |
-| `horon`(하위 명령 없음) | 터미널에서는 서버를 띄운 뒤 형제 파일 `horon-tui`로 자기 프로세스를 넘긴다. 키 바인딩, 사용자 파일, 설정 화면이 있다([문서](docs/runtime/TUI.ko.md)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재 중 하나면 어떤 조건인지와 설치 명령을 알리는 문장을 남기고 0이 아닌 코드로 끝난다. |
+| `horon`(하위 명령 없음) | 먼저 터미널 인계 조건을 확인하고, 모두 맞으면 필요 시 서버를 띄운 뒤 형제 파일 `horon-tui`로 자기 프로세스를 넘긴다. 키 바인딩, 사용자 파일, 설정 화면이 있다([문서](docs/runtime/TUI.ko.md)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재 중 하나면 데몬을 띄우지 않고 조건과 해결책(설치 안내는 형제 파일 부재 시에만)을 출력한 뒤 종료 코드 `1`로 끝난다. |
 | `horon run "<메시지>"` | 메시지 하나를 보내고, 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. `--thinking`과 `--service-tier`로 [모델 옵션](docs/provider/MODEL.ko.md#설정)을 지정한다. `--no-pty`로 셸 도구에 파이프를 쓰며 `--no-session`으로 실행을 메모리에만 두고, `--add-dir <path>`(반복 가능)로 추가 워크스페이스 디렉터리를 세션 컨텍스트에 올리고, [`--max-time`](docs/runtime/TURNS.ko.md#실행-시간-제한)으로 실행 시간을 제한하며 `--warn-cost`와 `--max-cost`로 추정 비용을 감시한다. |
 | `horon repl` | 전체 화면 클라이언트 없이 터미널에서 한 줄씩 입력한다. |
 | `horon serve` | 유닉스 소켓(`HORON_AGENT_SOCKET`)에서 도는 백그라운드 에이전트 데몬. |
@@ -122,7 +122,7 @@ horon run "summarize this repo"
 | `horon api-credentials issue\|rotate\|revoke\|list` | TCP로 노출한 하네스 API가 받는 베어러 토큰을 발급·회전·폐기·조회한다. 토큰은 한 번만 출력된다([문서](docs/protocol/HARNESS_API.ko.md)). |
 | `horon acp` | 에디터용 표준 입출력 ACP v1·v2 어댑터. |
 | `horon stats --from 2026-11-01 --through 2026-11-21` | 저장한 토큰 사용량을 UTC 날짜, 제공자와 모델별로 표시한다. `--json`으로 구조화된 결과를 받고, 터미널 클라이언트에서는 `/stats`로 연결된 세션의 사용량을 본다. |
-| `horon config show` / `horon config check` | 읽기 전용이다. `show`는 유효 설정과 각 값의 출처(default, file, env, cli)를 표시하며 자격 증명은 표시하지 않는다. `--json`으로 구조화된 결과를 받는다. `check`는 시작 때 쓰는 로더로 `config.toml`을 검증하고, 잘못된 섹션을 알리며 잘못됐으면 종료 코드 1로 끝난다. |
+| `horon config show` / `horon config check` | `show`는 읽기 전용으로 유효 설정과 출처(default, file, env, cli)를 표시하며 자격 증명은 표시하지 않는다(`--json` 지원). `check`는 시작 때 쓰는 로더로 `config.toml`을 검증해(레거시 `swarm_spawn_mode` 1회 마이그레이션 적용) 잘못된 TOML, 알 수 없는 키, 미등록 `[provider] default_provider`를 거부하고 잘못된 항목을 알리며 종료 코드 `1`로 끝난다. |
 | `horon rpc` | 프로세스를 직접 소유한 호스트 프로그램용 표준 입출력 JSONL RPC 어댑터. 표준 입력으로 한 줄에 JSON 명령 하나, 표준 출력으로 한 줄에 프레임 하나를 주고받는다([문서](docs/protocol/RPC.ko.md)). `--mode rpc`도 같은 어댑터를 고른다. |
 | `horon completions <bash\|zsh\|fish>` | 데몬을 시작하지 않고 셸 자동완성 스크립트를 출력한다. |
 | `horon stream-rules [TEXT]` | 스트림 규칙을 검사하고 모델 답변 예시에 맞는 규칙을 오프라인에서 확인한다. |
@@ -137,6 +137,7 @@ horon run "summarize this repo"
 | `horon changelog [VERSION] [--json]` | VERSION(기본값은 실행 중인 릴리스)의 공개된 릴리스 노트를 업데이트나 설치 없이 표시한다. 노트를 읽지 못하면 버전과 릴리스 페이지를 대신 표시한다. 노트의 제어 문자는 제거한다. |
 | `horon package install\|list\|verify\|disable\|remove` | 별도 자식 프로세스로 도는 사용자 설치 Rust 확장과 플러그인을 설치·나열·해시 검증·비활성화·제거한다([문서](docs/runtime/PACKAGES.ko.md)). |
 | `horon memory migrate [--dry-run]` | 위키 이전 `memory/*.json` 파일을 사용자별 마크다운 위키로 가져오고, 기록한 페이지와 건너뛴 페이지를 보고한다. 멱등이며 JSON 원본은 수정하지 않는다([문서](docs/runtime/MEMORY.ko.md#json에서-마이그레이션)). |
+| `horon memory export <출력경로> [--scope ...]` | 저장된 기억 항목을 로컬 파일로 내보내고, 내보낸 필드의 자격 증명을 마스킹하며 소유자 전용 권한(`0o600`, `O_NOFOLLOW`)으로 저장한다([문서](docs/runtime/MEMORY.ko.md#기억-항목-내보내기)). |
 | `horon volume export\|import\|quiesce\|resume\|key\|delete-user\|deletion-status` | 사용자 볼륨 하나를 백업하고, 복원하고, 스냅숏 전에 동결하고, 삭제한다. `export`는 기억 페이지와 메타데이터·manifest 파일을 tar로 쓰고, `import`는 새 빈 홈에 검증해 풀고 인덱스를 다시 만들며, `quiesce`는 스냅숏 전에 체크포인트하고 쓰기를 막고 `resume`은 그 펜스를 풀며, `delete-user`는 영속 삭제 단계를 돌려 모든 단계가 끝난 뒤에만 `deleted`를 보고한다([문서](docs/runtime/MEMORY.ko.md#볼륨-내보내기-가져오기-삭제)). |
 | `horon images --session <id> [--json] [--copy <번호> <대상>]` | 세션이 생성한 이미지를 그 세션에 저장된 `generate_image` 결과에서 읽어 나열한다. `generated-images/` 바로 아래의 일반 파일만 나열하며, 그 밖의 경로, 심볼릭 링크, 없는 파일은 거부로 표시하고 복사할 수 없다. `--copy`는 이미지 하나를 새 로컬 파일로 쓰며 덮어쓰지 않는다. 업로드는 하지 않는다. |
 
@@ -146,7 +147,7 @@ horon run "summarize this repo"
 
 `horon run --no-session "<메시지>"`는 실행을 메모리에만 둔다. `$HORON_HOME` 아래에 세션 로그, 체크포인트, 카탈로그 행, 실행 저널을 쓰지 않으므로 실행 뒤에 이어가거나 복구할 수 없고, 실패한 실행도 흔적을 남기지 않는다. `--json`과 `--ndjson` 출력의 세션 ID는 저장된 세션을 가리키지 않는다. 로그와 사용량 기록 같은 세션 밖 상태는 평소처럼 기록한다. 저장된 세션이 필요한 `--resume`, `--continue`, `--goal`과는 함께 쓸 수 없다. `todo`처럼 세션별 파일을 따로 쓰는 도구는 이 보장에 포함되지 않는다.
 
-`horon run --warn-cost <USD>`는 실행의 추정 비용이 그 금액에 닿으면 표준 오류에 경고를 한 번 표시한다. `--max-cost <USD>`는 추정 비용이 그 금액에 닿은 뒤로 새 모델 요청을 보내지 않고, 실행은 비용 상한 오류로 끝난다. 추정은 응답이 보고한 토큰과 가격 카탈로그로 계산한다. 이미 보낸 요청은 끝까지 처리해 합산하므로 합계가 처리 중이던 만큼 상한을 넘을 수 있다. 가격을 모르는 모델은 따로 보고하며 무료로 세지 않으므로 상한이 적용되지 않는다. 같은 프로세스가 소유한 자식 에이전트도 같은 실행에 합산한다. 두 옵션이 없으면 요청은 달라지지 않는다.
+`horon run --warn-cost <USD>`는 실행의 추정 비용이 그 금액에 닿으면 표준 오류에 경고를 한 번 표시한다. `--max-cost <USD>`는 가격이 등록되지 않은 원격 경로(`auth = "none"`을 포함한 비로컬 `base_url`)를 요청 전에 종료 코드 `1`로 거부하고, 명시적 로컬 엔드포인트(루프백·사설·링크 로컬 대역, `localhost`, `.local`, `.lan`, `host.docker.internal`)의 미가격 모델은 표준 오류 경고와 함께 실행하며 미가격 사용량을 상한 없이 따로 보고한다. 가격이 있는 경로에서는 추정 비용이 상한에 닿은 뒤 새 모델 요청을 보내지 않고 비용 상한 오류로 끝난다. 추정은 응답이 보고한 토큰과 가격 카탈로그로 계산하며, 이미 보낸 요청은 끝까지 처리해 합산하므로 처리 중이던 만큼 상한을 넘을 수 있다. 같은 프로세스가 소유한 자식 에이전트도 같은 실행에 합산한다. 두 옵션이 없으면 요청은 달라지지 않는다. (`horon run`은 가드레일·`length`·빈 응답 턴을 종료 코드 `1`로 실패시키며 `auto_poke` 기본 상한은 `6`회다. [TURNS.ko.md](docs/runtime/TURNS.ko.md#비정상-종료-자동-재촉-상한-비용-상한) 참고.)
 
 `horon run --role plan=<모델>`, `--prewalk <모델|role:<이름>>`, `--no-prewalk`는 `config.toml`을 건드리지 않고 그 한 번의 실행에만 모델 역할과 `[prewalk]` 핸드오프를 바꾼다. 모르는 역할, 빈 모델, 활성 프로파일이 나열하지 않는 모델은 요청을 보내기 전에 실패하고, `--no-prewalk`는 `[prewalk]`와 `--prewalk` 모두보다 우선한다([문서](docs/provider/MODEL.ko.md#실행-한-번의-역할프리워크-덮어쓰기)).
 
@@ -164,7 +165,7 @@ horon run "summarize this repo"
 
 `horon-tui`가 TUI 모드다. 거슬러 읽을 수 있고 모델의 마크다운을 렌더링하는 대화 기록 창, 여덟 행까지 자라는 여러 줄 편집기, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, 모델·세션 선택 목록, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이고 `horon-agent-sdk`로 만들어 다른 클라이언트와 같은 데몬·세션에 붙는다. 그래서 터미널 라이브러리가 에이전트 바이너리에 들어가지 않는다.
 
-터미널에서 `horon`, `hrn`, `horon-agent`를 인자 없이 실행하면 시작한다. 서버가 없으면 띄운 뒤 자기 프로세스를 에이전트 옆의 `horon-tui`로 넘긴다. 이때 새 세션이 실행한 디렉터리에 속하도록 작업 디렉터리를 넘기고, `--resume <id>`를 줬다면 세션 번호도 넘긴다. 먼저 조건 셋을 확인한다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 파이프나 리디렉션이면 클라이언트 대신 그 문장을 남기므로 스크립트와 CI는 이유를 받는다. 조건이 맞지 않으면 어떤 조건인지 알리고, 대화형 클라이언트 설치 명령을 안내한 뒤 0이 아닌 코드로 끝난다.
+터미널에서 `horon`, `hrn`, `horon-agent`를 인자 없이 실행하면 시작한다. 데몬을 띄우기 전에 먼저 조건 셋을 확인한다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 셋이 모두 맞을 때만 서버가 없으면 띄운 뒤 자기 프로세스를 `horon-tui`로 넘기며 작업 디렉터리와 `--resume <id>` 세션 번호를 전달한다. 조건이 맞지 않으면 데몬을 띄우지 않고 어떤 조건인지와 해결 방법(설치 안내는 `horon-tui` 부재 시에만)을 출력한 뒤 종료 코드 `1`로 끝난다. 그래서 스크립트와 CI에서 클라이언트나 잔여 데몬 없이 이유를 받는다.
 
 현재 작업 디렉터리에서 가장 최근에 활동한 저장 세션을 다시 열려면 `horon --continue`를 실행한다. 특정 세션을 고르려면 `--resume <id>`를 사용한다.
 

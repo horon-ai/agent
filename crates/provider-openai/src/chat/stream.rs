@@ -451,8 +451,9 @@ impl Stream for ChatCompletionsStream {
                     this.framer.push_str(&text);
                 }
                 Poll::Ready(Some(Err(error))) => {
+                    let chain = anyhow::Error::new(error);
                     let message = redact_secret(
-                        format!("OpenAI-compatible stream error: {error}"),
+                        format!("OpenAI-compatible stream error: {chain:#}"),
                         this.api_key.as_deref(),
                     );
                     return Poll::Ready(Some(Err(anyhow::anyhow!(message))));

@@ -120,7 +120,7 @@ impl Fixture {
     }
 
     async fn cleanup(&self, processing: bool, grace: Duration) {
-        assert!(self.cleanup_task(processing, grace, &mut None).await.is_none());
+        assert!(!self.cleanup_task(processing, grace, &mut None).await);
     }
 
     async fn cleanup_task(
@@ -128,14 +128,13 @@ impl Fixture {
         processing: bool,
         grace: Duration,
         task: &mut Option<tokio::task::JoinHandle<()>>,
-    ) -> Option<tokio::task::JoinHandle<()>> {
+    ) -> bool {
         let (swarm_events, _) = broadcast::channel(8);
         cleanup_client_connection(
             &self.sessions,
             &self.id,
             processing,
             task,
-            tokio::spawn(std::future::pending()),
             &self.members,
             &Arc::new(RwLock::new(HashMap::new())),
             &Arc::new(RwLock::new(HashMap::new())),
@@ -334,15 +333,12 @@ async fn busy_successor_retains_owner_task_and_completion_receiver() {
         wait.await.unwrap();
         done.send("completed").unwrap();
     }));
-    let writer = fixture
-        .cleanup_task(true, Duration::ZERO, &mut task)
-        .await
-        .expect("successor returns ownership to lifecycle continuation");
+    let retained = fixture.cleanup_task(true, Duration::ZERO, &mut task).await;
+    assert!(retained, "successor returns ownership to lifecycle continuation");
     assert!(!task.as_ref().unwrap().is_finished());
     assert!(fixture.sessions.read().await.contains_key(&fixture.id));
     assert!(fixture.connections.read().await.contains_key("successor"));
     assert!(!fixture.connections.read().await.contains_key("original"));
-    writer.abort();
     finish.send(()).unwrap();
     task.take().unwrap().await.expect("owner was not cancelled");
     assert_eq!(completions.recv().await, Some("completed"));
@@ -361,7 +357,7 @@ async fn busy_without_successor_aborts_owner_and_marks_crashed() {
         let _guard = dropped;
         std::future::pending::<()>().await;
     }));
-    assert!(fixture.cleanup_task(true, Duration::ZERO, &mut task).await.is_none());
+    assert!(!fixture.cleanup_task(true, Duration::ZERO, &mut task).await);
     assert!(task.is_none());
     assert!(timeout(Duration::from_secs(1), observed_drop).await.unwrap().is_err());
     assert!(fixture.sessions.read().await.is_empty());
@@ -369,4 +365,208 @@ async fn busy_without_successor_aborts_owner_and_marks_crashed() {
         fixture.agent.lock().await.session_for_split().status,
         SessionStatus::Crashed { .. }
     ));
+}
+
+#[tokio::test]
+async fn idle_reconnect_grace_releases_writer_lock_immediately() {
+    let _lock = crate::storage::lock_test_env();
+    let _home = Home::new();
+    let fixture = Fixture::new(true).await;
+    let id = fixture.id.clone();
+    let home = std::path::PathBuf::from(std::env::var_os("HORON_HOME").unwrap());
+    let paths = crate::session::event_store_api::SessionPaths::new(home.canonicalize().unwrap().join("sessions"));
+    let sid = crate::session::event_store_api::SessionId::parse(&id).unwrap();
+
+    // Before disconnect cleanup, the saved live session keeps its writer lock open.
+    let busy = crate::session::event_store_api::BlockingWriter::open(paths.clone(), sid.clone());
+    assert!(
+        busy.is_err(),
+        "live session should hold its writer lock before disconnect"
+    );
+
+    let ((), ()) = tokio::join!(fixture.cleanup(false, Duration::from_secs(2)), async {
+        fixture.wait_for_detach().await;
+        // Wait briefly for release_idle_writer before grace sleep, well before 2s expires.
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let released = crate::session::event_store_api::BlockingWriter::open(paths.clone(), sid.clone());
+        assert!(
+            released.is_ok(),
+            "idle session in reconnect grace must release .writer.lock FD immediately: {:?}",
+            released.err()
+        );
+        drop(released);
+        fixture.attach_successor().await;
+    });
+    assert!(
+        Arc::ptr_eq(fixture.sessions.read().await.get(&id).unwrap(), &fixture.agent),
+        "releasing the idle writer preserves the live Agent for fast reattach"
+    );
+}
+
+#[tokio::test]
+async fn disconnected_socket_closes_immediately_during_grace_and_prepare_disconnect_skips_grace() {
+    use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
+
+    let _lock = crate::storage::lock_test_env();
+    let _home = Home::new();
+    let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::new()));
+    let provider: Arc<dyn Provider> = Arc::new(NoRequests);
+    let (global_tx, _) = broadcast::channel(8);
+    let (swarm_tx, _) = broadcast::channel(8);
+    let (server_stream, client_stream) = crate::transport::Stream::pair().unwrap();
+
+    let server = tokio::spawn(crate::server::client_lifecycle::handle_client(
+        server_stream,
+        Arc::clone(&sessions),
+        global_tx.clone(),
+        Arc::clone(&provider),
+        Arc::new(RwLock::new(false)),
+        Arc::new(RwLock::new(String::new())),
+        Arc::new(RwLock::new(0usize)),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        FileTouchService::new(),
+        Arc::new(RwLock::new(std::collections::VecDeque::new())),
+        Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        swarm_tx.clone(),
+        "horon-agent-test".to_string(),
+        "t".to_string(),
+        Arc::new(crate::mcp::SharedMcpPool::from_default_config()),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        super::super::AwaitMembersRuntime::default(),
+        super::super::SwarmMutationRuntime::default(),
+        Duration::from_secs(30),
+    ));
+
+    let home = tempfile::tempdir().unwrap();
+    let working_dir = home.path().to_string_lossy().into_owned();
+    let (reader, mut writer) = client_stream.into_split();
+    let mut lines = tokio::io::BufReader::new(reader);
+    let sub1 = serde_json::json!({"type":"subscribe","id":1,"working_dir":working_dir}).to_string() + "\n";
+    writer.write_all(sub1.as_bytes()).await.unwrap();
+    let mut buf = String::new();
+    loop {
+        buf.clear();
+        let read = timeout(Duration::from_secs(5), lines.read_line(&mut buf))
+            .await
+            .expect("timed out waiting for subscribe Done")
+            .unwrap();
+        assert!(read > 0, "unexpected EOF waiting for subscribe Done; last={buf}");
+        if let Ok(ServerEvent::Done { id: 1 }) = serde_json::from_str::<ServerEvent>(buf.trim()) {
+            break;
+        }
+    }
+
+    // Exercise prepare_disconnect -> immediate socket half-close; server must drop
+    // its write half and finish lifecycle immediately rather than sleeping 30s.
+    writer
+        .write_all(b"{\"type\":\"prepare_disconnect\",\"id\":2}\n")
+        .await
+        .unwrap();
+    loop {
+        buf.clear();
+        let read = timeout(Duration::from_secs(5), lines.read_line(&mut buf))
+            .await
+            .expect("timed out waiting for prepare_disconnect Done")
+            .unwrap();
+        assert!(read > 0, "unexpected EOF waiting for prepare_disconnect Done");
+        if let Ok(ServerEvent::Done { id: 2 }) = serde_json::from_str::<ServerEvent>(buf.trim()) {
+            break;
+        }
+    }
+    writer.shutdown().await.unwrap();
+
+    let mut inner_reader = lines.into_inner();
+    let mut eof_buf = [0u8; 16];
+    let n = timeout(Duration::from_secs(1), inner_reader.read(&mut eof_buf))
+        .await
+        .expect("server must close its stream write half immediately on client EOF")
+        .unwrap();
+    assert_eq!(n, 0);
+    timeout(Duration::from_secs(2), server)
+        .await
+        .expect("prepared_disconnect lifecycle must finish immediately without 30s grace")
+        .unwrap()
+        .unwrap();
+    assert!(sessions.read().await.is_empty());
+
+    // Without prepare_disconnect, half-closing the write side still triggers immediate
+    // server socket EOF on the read side even while the 30s reconnect grace is active.
+    let (server_stream2, client_stream2) = crate::transport::Stream::pair().unwrap();
+    let server2 = tokio::spawn(crate::server::client_lifecycle::handle_client(
+        server_stream2,
+        Arc::clone(&sessions),
+        global_tx,
+        provider,
+        Arc::new(RwLock::new(false)),
+        Arc::new(RwLock::new(String::new())),
+        Arc::new(RwLock::new(0usize)),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        FileTouchService::new(),
+        Arc::new(RwLock::new(std::collections::VecDeque::new())),
+        Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        swarm_tx,
+        "horon-agent-test".to_string(),
+        "t".to_string(),
+        Arc::new(crate::mcp::SharedMcpPool::from_default_config()),
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+        super::super::AwaitMembersRuntime::default(),
+        super::super::SwarmMutationRuntime::default(),
+        Duration::from_secs(30),
+    ));
+    let (reader2, mut writer2) = client_stream2.into_split();
+    let mut lines2 = tokio::io::BufReader::new(reader2);
+    let sub10 = serde_json::json!({"type":"subscribe","id":10,"working_dir":working_dir}).to_string() + "\n";
+    writer2.write_all(sub10.as_bytes()).await.unwrap();
+    loop {
+        buf.clear();
+        let read = timeout(Duration::from_secs(5), lines2.read_line(&mut buf))
+            .await
+            .expect("timed out waiting for second subscribe Done")
+            .unwrap();
+        assert!(read > 0, "unexpected EOF waiting for second subscribe Done");
+        if let Ok(ServerEvent::Done { id: 10 }) = serde_json::from_str::<ServerEvent>(buf.trim()) {
+            break;
+        }
+    }
+    // Switching sessions via fresh_session must also evict the old idle session.
+    let sub11 = serde_json::json!({"type":"subscribe","id":11,"working_dir":working_dir,"fresh_session":true})
+        .to_string()
+        + "\n";
+    writer2.write_all(sub11.as_bytes()).await.unwrap();
+    loop {
+        buf.clear();
+        let read = timeout(Duration::from_secs(5), lines2.read_line(&mut buf))
+            .await
+            .expect("timed out waiting for fresh_session subscribe Done")
+            .unwrap();
+        assert!(read > 0, "unexpected EOF waiting for fresh_session Done");
+        if let Ok(ServerEvent::Done { id: 11 }) = serde_json::from_str::<ServerEvent>(buf.trim()) {
+            break;
+        }
+    }
+    assert_eq!(
+        sessions.read().await.len(),
+        1,
+        "fresh_session switch must evict the previous unused session rather than retaining both"
+    );
+    writer2.shutdown().await.unwrap();
+    let mut inner_reader2 = lines2.into_inner();
+    let n2 = timeout(Duration::from_secs(1), inner_reader2.read(&mut eof_buf))
+        .await
+        .expect("server must close its stream write half immediately even during 30s grace")
+        .unwrap();
+    assert_eq!(n2, 0);
+    server2.abort();
 }

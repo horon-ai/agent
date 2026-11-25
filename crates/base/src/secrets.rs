@@ -36,7 +36,7 @@ pub(crate) mod rules {
 
     /// Whole-match token shapes, paired with the label their placeholders carry.
     pub(crate) const DIRECT: &[(&str, &str)] = &[
-        ("anthropic", r"sk-ant-(?:oat|ort)01-[A-Za-z0-9_-]{20,}"),
+        ("anthropic", r"sk-ant-(?:api\d{2}|(?:oat|ort)01)-[A-Za-z0-9_-]{20,}"),
         ("openrouter", r"sk-or-v1-[A-Za-z0-9_-]{20,}"),
         ("github", r"ghp_[A-Za-z0-9]{20,}"),
         ("github_pat", r"github_pat_[A-Za-z0-9_]{20,}"),
@@ -89,6 +89,11 @@ pub(crate) mod rules {
         r"(?m)^\s*(GITHUB_TOKEN\s*=\s*)([^\r\n]+)",
         r"(?im)^\s*((?:export\s+)?(?:[A-Z][A-Z0-9_]*)?(?:API_KEY|TOKEN|SECRET|PASSWORD|COOKIE)\s*=\s*)([^\r\n]+)",
         r"(?im)^\s*(AUTHORIZATION\s*[:=]\s*)([^\r\n]+)",
+        r#"(?i)(?:^|[^A-Za-z0-9_])((?:[A-Za-z0-9_-]*[-_])?(?:api[-_]?key|token|secret|password|passwd|cookie)\s*=\s*")([^"\r\n]+)""#,
+        r#"(?i)(?:^|[^A-Za-z0-9_])((?:[A-Za-z0-9_-]*[-_])?(?:api[-_]?key|token|secret|password|passwd|cookie)\s*=\s*')([^'\r\n]+)'"#,
+        r#"(?i)(?:^|[^A-Za-z0-9_])((?:[A-Za-z0-9_-]*[-_])?(?:api[-_]?key|token|secret|password|passwd|cookie)\s*=\s*)([^\s"'`,;)&#}>\r\n]+)"#,
+        r#"(?i)("[A-Za-z0-9_.-]*(?:api_?key|api-?key|token|secret|password|passwd|authorization|cookie)"\s*:\s*")((?:[^"\r\n\\]|\\.)+)""#,
+        r#"(?i)(\\"[A-Za-z0-9_.-]*(?:api_?key|api-?key|token|secret|password|passwd|authorization|cookie)\\"\s*:\s*\\")((?:[^"\\\r\n]|\\[^"])+)\\""#,
     ];
 
     /// Key names [`ASSIGNMENT`] already covers, so a runtime key name is not
@@ -188,23 +193,16 @@ pub(crate) mod rules {
 /// Cheap pre-check so the regex table is only walked for text that could hold a
 /// credential. The shapes named here mirror [`rules::DIRECT`].
 pub(crate) fn may_contain_secret(text: &str) -> bool {
+    let direct_a = text.contains("sk-") || text.contains("ghp_") || text.contains("github_pat_");
+    let direct_b = text.contains("AIza") || text.contains("ya29.") || text.contains("xox");
+    if direct_a || direct_b || text.contains("AKIA") || text.contains("-----BEGIN ") || text.contains("eyJ") {
+        return true;
+    }
     let lower = text.to_ascii_lowercase();
-    text.contains("sk-")
-        || text.contains("ghp_")
-        || text.contains("github_pat_")
-        || text.contains("AIza")
-        || text.contains("ya29.")
-        || text.contains("xox")
-        || text.contains("AKIA")
-        || text.contains("-----BEGIN ")
-        || text.contains("eyJ")
-        || lower.contains("api_key")
-        || lower.contains("token")
-        || lower.contains("bearer ")
-        || lower.contains("password")
-        || lower.contains("secret")
-        || lower.contains("authorization")
-        || lower.contains("cookie")
+    let keys = lower.contains("api_key") || lower.contains("api-key") || lower.contains("apikey");
+    let auth = lower.contains("bearer ") || lower.contains("authorization") || lower.contains("cookie");
+    let pass = lower.contains("token") || lower.contains("password") || lower.contains("passwd");
+    keys || auth || pass || lower.contains("secret")
 }
 
 /// File in the horon-agent home that holds the placeholder HMAC key.

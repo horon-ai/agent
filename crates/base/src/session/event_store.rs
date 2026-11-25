@@ -84,6 +84,16 @@ pub(super) fn sync_local_state(paths: &store::SessionPaths, id: &store::SessionI
     Ok(())
 }
 
+/// Detached handle to an idle session writer whose OS `.writer.lock` closes on drop.
+#[derive(Debug)]
+pub struct IdleWriter {
+    #[expect(
+        dead_code,
+        reason = "keeps the session writer alive only until dropped on blocking I/O"
+    )]
+    writer: Arc<Writer>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(super) struct EventState {
     pub paths: Option<store::SessionPaths>,
@@ -337,6 +347,8 @@ impl Session {
         self.event_state.skip_cache_once = true;
     }
 
+    /// Opaque handle to a detached idle session writer for blocking drop off runtime workers.
+    /// Re-exported as [`crate::session::IdleWriter`].
     pub(super) fn event_writer(&mut self) -> Result<Arc<Writer>> {
         let paths = self.event_state.paths.clone().map(Ok).unwrap_or_else(paths)?;
         if let Some(writer) = &self.event_state.writer {
@@ -345,6 +357,20 @@ impl Session {
         let writer = Writer::open(paths, store::SessionId::parse(&self.id)?)?;
         self.event_state.writer = Some(Arc::clone(&writer));
         Ok(writer)
+    }
+
+    /// Release the open OS writer handle (and its `.writer.lock` FD) when the
+    /// session has no pending events or unsaved metadata edits. The next save
+    /// re-opens the writer transparently.
+    pub fn release_idle_writer(&mut self) -> Option<IdleWriter> {
+        if self.event_state.writer.is_some()
+            && self.event_state.pending.is_empty()
+            && self.has_unsaved_event_changes().is_ok_and(|dirty| !dirty)
+        {
+            self.event_state.writer.take().map(|writer| IdleWriter { writer })
+        } else {
+            None
+        }
     }
 
     pub(super) fn has_unsaved_event_changes(&self) -> Result<bool> {

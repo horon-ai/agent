@@ -269,8 +269,12 @@ fn provider_for_named_profile(
     name: &str,
     model: Option<&str>,
     strict_model: bool,
+    explicit_selection: bool,
 ) -> Result<Arc<dyn provider::Provider>> {
-    let runtime = provider::MultiProvider::from_named_provider_profile(name)?;
+    let mut runtime = provider::MultiProvider::from_named_provider_profile(name)?;
+    if explicit_selection || model.is_some() {
+        runtime.mark_initial_selection();
+    }
     let runtime: Arc<dyn provider::Provider> = Arc::new(runtime);
     if let Some(model) = model
         && let Err(error) = runtime.set_model(model)
@@ -288,9 +292,13 @@ fn provider_for_builtin_profile(
     profile: OpenAiCompatibleProfile,
     model: Option<&str>,
     strict_model: bool,
+    explicit_selection: bool,
 ) -> Result<Arc<dyn provider::Provider>> {
     force_apply_openai_compatible_profile_env(Some(profile));
-    let runtime = provider::MultiProvider::from_openai_compatible_profile(profile)?;
+    let mut runtime = provider::MultiProvider::from_openai_compatible_profile(profile)?;
+    if explicit_selection || model.is_some() {
+        runtime.mark_initial_selection();
+    }
     let runtime: Arc<dyn provider::Provider> = Arc::new(runtime);
     let model = model
         .map(str::to_owned)
@@ -313,10 +321,10 @@ fn provider_for_configured_name(
     strict_model: bool,
 ) -> Result<Arc<dyn provider::Provider>> {
     if crate::config::config().providers.contains_key(name) {
-        return provider_for_named_profile(name, model, strict_model);
+        return provider_for_named_profile(name, model, strict_model, false);
     }
     if let Some(profile) = builtin_profile_by_id(name) {
-        return provider_for_builtin_profile(profile, model, strict_model);
+        return provider_for_builtin_profile(profile, model, strict_model, false);
     }
     anyhow::bail!(
         "Unknown provider profile '{}'. Add [providers.{}] with type = \"openai-compatible\", \"openai-responses\", \
@@ -344,9 +352,10 @@ async fn init_provider_with_options(
     // always names the profile to use.
     if let Some(profile_name) = named_profile_from_env() {
         crate::provider_catalog::apply_named_provider_profile_env(&profile_name)?;
+        crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_NAME", &profile_name);
         crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
         init_notice(&format!("Using provider profile '{}'", profile_name));
-        return provider_for_named_profile(&profile_name, model, strict_model);
+        return provider_for_named_profile(&profile_name, model, strict_model, true);
     }
 
     match choice {
@@ -371,7 +380,7 @@ async fn init_provider_with_options(
             let projected = std::env::var("HORON_AGENT_OPENROUTER_CACHE_NAMESPACE").ok();
             if let Some(profile) = projected.as_deref().and_then(builtin_profile_by_id) {
                 init_notice(&format!("Using {} via the OpenAI-compatible API", profile.display_name));
-                return provider_for_builtin_profile(profile, model, strict_model);
+                return provider_for_builtin_profile(profile, model, strict_model, false);
             }
             Err(unconfigured_provider_error())
         }
@@ -389,12 +398,13 @@ async fn init_provider_with_options(
                     Some(model) => Some(model),
                     None => user_openrouter_model_env(),
                 };
-                provider_for_builtin_profile(profile, model, strict_model)
+                provider_for_builtin_profile(profile, model, strict_model, true)
             } else {
                 crate::provider_catalog::apply_named_provider_profile_env(name)?;
+                crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_NAME", name);
                 crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
                 init_notice(&format!("Using provider profile '{}'", name));
-                provider_for_named_profile(name, model, strict_model)
+                provider_for_named_profile(name, model, strict_model, true)
             }
         }
     }

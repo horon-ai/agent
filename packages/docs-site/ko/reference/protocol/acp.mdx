@@ -114,7 +114,7 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 
 `load`는 기록을 먼저 보내고 응답한다. `resume`은 기록을 보내지 않고 바로 응답한다. 이미 이 연결에서 열려 있는 세션에 다시 `load`나 `resume`을 보내면 새로 붙지 않고 열려 있는 연결을 그대로 쓴다.
 
-`load`는 응답하기 전에 저장된 기록을 `session/update`로 다시 보낸다. 사용자 프롬프트는 `user_message_chunk`로, 추론은 `agent_thought_chunk`로, 답변은 `agent_message_chunk`로 간다. 추론은 `reasoning_display`가 `full`일 때만 저장된 대화 기록에 나타나 재생된다. `full`이 기본값이므로 기본 설정이면 추론도 함께 재생된다. 도구 호출은 한 건마다 완료 상태의 `tool_call`과 저장된 텍스트를 담은 `tool_call_update` 한 쌍으로 간다. 편집 도구라면 그 텍스트에 unified diff가 들어 있다. 구조화된 diff 내용은 저장하지 않으므로 재생하지 않는다. 실패한 도구도 기록에 오류 표시가 남지 않아서 완료로 재생된다. 마지막 계획은 `todo` 도구 입력에서 복원한다. 재생하는 메시지의 `messageId`는 `replay-<행 번호>` 형태다.
+`load`는 응답하기 전에 저장된 기록을 `session/update`로 다시 보낸다. 사용자 프롬프트는 `user_message_chunk`로, 추론은 `agent_thought_chunk`로, 답변은 `agent_message_chunk`로 간다. 추론은 `reasoning_display`가 `full`일 때만 저장된 대화 기록에 나타나 재생된다. `full`이 기본값이므로 기본 설정이면 추론도 함께 재생된다. 도구 호출은 한 건마다 완료 상태의 `tool_call`과 저장된 텍스트를 담은 `tool_call_update` 한 쌍으로 간다. 편집 도구라면 그 텍스트에 unified diff가 들어 있다. 구조화된 diff 내용은 저장하지 않으므로 재생하지 않는다. `is_error: true`로 기록된 도구 결과는 `status: "failed"`로 재생되고, 그 밖의 저장된 도구 호출은 `completed`로 재생된다. 마지막 계획은 `todo` 도구 입력에서 복원한다. 재생하는 메시지의 `messageId`는 `replay-<행 번호>` 형태다.
 
 `compaction_update`는 클라이언트가 `session.compaction`을 광고했을 때만 재생한다. 광고하지 않은 클라이언트에는 압축 정보를 보내지 않는다. 압축된 세션은 데몬이 보여주는 최근 64행만 재생한다. 재생은 `load`를 보낸 그 연결에만 가고, `session/resume`은 재생하지 않는다.
 

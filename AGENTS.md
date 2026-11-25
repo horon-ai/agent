@@ -460,8 +460,8 @@ and do not merge or report success before then.
   lowered log level or a renamed message. An external cause this repository cannot
   fix (an unmaintained transitive crate, a Rust toolchain defect) may be allowed at
   the narrowest scope, with the reason beside it and named in the report. The
-  `linker_messages` allowances in `crates/app-core/src/lib.rs` and `src/main.rs`
-  cover unoptimized macOS links. The dependency audit uses no advisory exceptions.
+  `linker_messages` allowances in `crates/app-core/src/lib.rs`, `src/lib.rs`,
+  and `src/main.rs` cover unoptimized macOS links. The dependency audit uses no advisory exceptions.
 - **Gates that keep it at zero.** `ci.yml` sets `CARGO_BUILD_WARNINGS=deny`, so a
   rustc or build-script warning in a workspace crate fails the build, and
   `scripts/ci/check_security.sh` runs `cargo audit --deny warnings`. A new

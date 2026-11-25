@@ -63,6 +63,7 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
             system_prompt: None,
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             id,
             working_dir: working_dir.clone(),
             target_session_id: target_session_id.clone(),
@@ -75,12 +76,14 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
             acp: None,
             history_message_ids: false,
             a2ui: None,
+            fresh_session: false,
         };
         let decoded = parse_request_json(&serde_json::to_string(&req)?)?;
         let Request::Subscribe {
             system_prompt: _,
             supports_user_response: _,
             supports_ask_requests: _,
+            supports_permission_requests: _,
             id: decoded_id,
             working_dir: decoded_working_dir,
             target_session_id: decoded_target_session_id,
@@ -93,6 +96,7 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
             acp: _,
             history_message_ids: _,
             a2ui: _,
+            fresh_session: _,
         } = decoded
         else {
             return Err(anyhow!("expected randomized Subscribe"));

@@ -1021,3 +1021,25 @@ async fn every_turn_path_replays_under_its_own_start_id() {
     let expected: Vec<String> = starts.iter().map(|start| format!("{start}:a1")).collect();
     assert_eq!(replayed_agent_ids(&rows), expected, "{rows:#?}");
 }
+
+#[tokio::test]
+async fn v2_replay_marks_failed_tool_results_with_failed_status() {
+    let (mut client, mut daemons) = v2_client().await;
+    client.send(resume(json!(1), Some(json!({"type":"start"})))).await;
+    let messages = json!([
+        {"role":"user","content":"run bad cmd","message_id":"m1","turn_start":true},
+        {"role":"assistant","content":"","tool_calls":["bash"],"message_id":"m1-a"},
+        {"role":"tool","content":"exit 1","is_error":true,"message_id":"m1-r",
+            "tool_data":{"id":"call_err","name":"bash","input":{"command":"false"}}},
+        {"role":"assistant","content":"it failed","message_id":"m1-b"}
+    ]);
+    let _daemon = serve_attach(&mut daemons, messages, vec![idle_snapshot()]).await;
+    let (before, _response) = client.recv_response(json!(1)).await;
+    assert_v2_updates(&before);
+    let failed = updates(&before)
+        .into_iter()
+        .find(|update| update["sessionUpdate"] == "tool_call_update" && update["toolCallId"] == "call_err")
+        .expect("replayed failed tool_call_update");
+    assert_eq!(failed["status"], "failed", "{failed:#?}");
+    client.close_stdin().await;
+}

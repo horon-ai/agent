@@ -447,3 +447,33 @@ fn prune_asks_the_harness_about_every_noted_session() {
         Some(Action::CheckSessions(vec!["session_a".to_string()]))
     );
 }
+
+#[test]
+fn attach_session_strips_leading_system_reminders_from_user_history() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let mut app = app_at(directory.path().join("tui-notes.json"));
+    app.attach_session(
+        attached(
+            "session_a",
+            None,
+            &[
+                (
+                    "user",
+                    "<system-reminder>\n# Session Context\nDate: 2026-11-25\n</system-reminder>",
+                ),
+                (
+                    "user",
+                    "<system-reminder>\nInternal hint\n</system-reminder>\n\nactual prompt",
+                ),
+                ("assistant", "actual answer"),
+            ],
+        ),
+        false,
+    );
+
+    let drawn = screen(&mut app);
+    assert!(!drawn.contains("<system-reminder>"), "{drawn}");
+    assert!(!drawn.contains("# Session Context"), "{drawn}");
+    assert!(drawn.contains("actual prompt"), "{drawn}");
+    assert!(drawn.contains("actual answer"), "{drawn}");
+}

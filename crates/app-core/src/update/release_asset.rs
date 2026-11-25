@@ -45,7 +45,7 @@ fn tui_asset_name(agent_asset_name: &str) -> Option<String> {
 }
 
 /// The interactive client is found beside the agent, so it keeps the bare stem.
-fn tui_binary_name() -> &'static str {
+pub(super) fn tui_binary_name() -> &'static str {
     if crate::build::binary_name().ends_with(".exe") {
         "horon-tui.exe"
     } else {
@@ -53,15 +53,25 @@ fn tui_binary_name() -> &'static str {
     }
 }
 
+/// Whether the running platform builds and ships the separate `horon-tui` binary.
+pub(super) fn tui_binary_expected() -> bool {
+    tui_asset_name(super::get_asset_name()).is_some()
+}
+
 /// Where the optional interactive-client archive came from, before it is checked.
 enum TuiSource {
-    /// Nothing to install: source builds, and asset directories without a TUI.
+    /// Nothing to install: platforms without a TUI, missing optional source TUI, or asset dirs without a TUI.
     NotRequested,
     /// The release publishes no interactive client for this platform.
     Missing {
         asset: String,
     },
     Archive {
+        asset: String,
+        bytes: Vec<u8>,
+    },
+    /// A locally built `horon-tui` executable paired beside a source-built agent binary.
+    Local {
         asset: String,
         bytes: Vec<u8>,
     },
@@ -145,18 +155,54 @@ pub(super) fn stage_source(
     versions: &Path,
 ) -> Result<PathBuf> {
     let bytes = std::fs::read(binary)?;
-    // A source build pairs with the client built from the same tree, so a
-    // released interactive client must never be staged beside it.
+    // A source build pairs only with the interactive client built beside it
+    // from the same source tree, never a published archive.
+    let tui = sibling_tui_source(binary);
     let (installed, _tui) = stage_package(
         &|name| download(client, asset(release, name)?),
         release,
         AgentInput::Local(&bytes),
-        TuiSource::NotRequested,
+        tui,
         agent_version,
         directory_version,
         versions,
     )?;
     Ok(installed)
+}
+
+/// Find a locally built interactive client sitting beside a source-built agent binary.
+fn sibling_tui_source(source_binary: &Path) -> TuiSource {
+    if !tui_binary_expected() {
+        return TuiSource::NotRequested;
+    }
+    let Some(parent) = source_binary.parent() else {
+        return TuiSource::NotRequested;
+    };
+    let asset = tui_binary_name().to_owned();
+    let path = parent.join(&asset);
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return TuiSource::NotRequested,
+        Err(error) => {
+            return TuiSource::Failed {
+                asset,
+                reason: error.to_string(),
+            };
+        }
+    };
+    if !metadata.file_type().is_file() {
+        return TuiSource::Failed {
+            asset,
+            reason: "source interactive client is not a regular file".to_owned(),
+        };
+    }
+    match std::fs::read(&path) {
+        Ok(bytes) => TuiSource::Local { asset, bytes },
+        Err(error) => TuiSource::Failed {
+            asset,
+            reason: error.to_string(),
+        },
+    }
 }
 
 enum AgentInput<'a> {
@@ -265,10 +311,9 @@ pub(super) fn stage_local(
     } else {
         AgentInput::Published(&binary_asset, &bytes)
     };
-    let tui = if source_binary.is_some() {
-        TuiSource::NotRequested
-    } else {
-        directory_tui_source(directory)?
+    let tui = match source_binary {
+        Some(path) => sibling_tui_source(path),
+        None => directory_tui_source(directory)?,
     };
     let (binary, _tui) = stage_package(&read_asset, &release, input, tui, version, version, versions)?;
     Ok(binary)
@@ -428,6 +473,7 @@ fn stage_tui(source: TuiSource, sums: &str, versions: &Path) -> StagedTui {
         TuiSource::NotRequested => return StagedTui::Settled(TuiOutcome::NotRequested),
         TuiSource::Missing { asset } => return StagedTui::Settled(TuiOutcome::Missing { asset }),
         TuiSource::Failed { asset, reason } => return StagedTui::Settled(TuiOutcome::Skipped { asset, reason }),
+        TuiSource::Local { asset, bytes } => return stage_local_tui(asset, &bytes, versions),
         TuiSource::Archive { asset, bytes } => (asset, bytes),
     };
     let skip = |reason: String| {
@@ -486,6 +532,43 @@ fn stage_tui(source: TuiSource, sums: &str, versions: &Path) -> StagedTui {
         }
     }
     StagedTui::Ready { asset, files, stage }
+}
+
+/// Stage a verified regular local `horon-tui` file built beside `horon-agent`.
+fn stage_local_tui(asset: String, bytes: &[u8], versions: &Path) -> StagedTui {
+    let skip = |reason: String| {
+        StagedTui::Settled(TuiOutcome::Skipped {
+            asset: asset.clone(),
+            reason,
+        })
+    };
+    let stage = match tempfile::Builder::new().prefix(".tui-stage-").tempdir_in(versions) {
+        Ok(stage) => stage,
+        Err(error) => return skip(error.to_string()),
+    };
+    let staged_bin = stage.path().join(tui_binary_name());
+    let write_result = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged_bin)
+        .and_then(|mut output| {
+            output.write_all(bytes)?;
+            output.sync_all()
+        });
+    if let Err(error) = write_result {
+        return skip(error.to_string());
+    }
+    if let Err(error) = horon_agent_platform::set_permissions_executable(&staged_bin) {
+        return skip(error.to_string());
+    }
+    if let Err(error) = super::patch_termux_interpreter_if_needed(&staged_bin) {
+        return skip(format!("{error:#}"));
+    }
+    StagedTui::Ready {
+        asset,
+        files: vec![staged_bin],
+        stage,
+    }
 }
 
 /// Resolve a staged client through `place`, turning a failure into one warning.
@@ -886,6 +969,30 @@ mod tests {
             std::fs::read(directory.join(crate::build::binary_name())).unwrap(),
             b"agent-binary"
         );
+    }
+
+    #[test]
+    fn source_build_stages_sibling_tui_and_rejects_non_regular_file() {
+        let assets = tempfile::tempdir().unwrap();
+        let src_bin_dir = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"published-agent");
+        let agent_src = src_bin_dir.path().join(crate::build::binary_name());
+        std::fs::write(&agent_src, b"source-agent").unwrap();
+        let tui_src = src_bin_dir.path().join(tui_binary_name());
+        std::fs::write(&tui_src, b"source-tui").unwrap();
+
+        let installed = stage_local(assets.path(), "1.2.3", Some(&agent_src), versions.path()).unwrap();
+        let dir = installed.parent().unwrap();
+        assert_eq!(std::fs::read(&installed).unwrap(), b"source-agent");
+        assert_eq!(std::fs::read(dir.join(tui_binary_name())).unwrap(), b"source-tui");
+
+        let versions_bad = tempfile::tempdir().unwrap();
+        std::fs::remove_file(&tui_src).unwrap();
+        std::fs::create_dir(&tui_src).unwrap();
+        let installed_bad = stage_local(assets.path(), "1.2.4", Some(&agent_src), versions_bad.path()).unwrap();
+        assert_eq!(std::fs::read(&installed_bad).unwrap(), b"source-agent");
+        assert!(!installed_bad.parent().unwrap().join(tui_binary_name()).exists());
     }
 
     #[test]

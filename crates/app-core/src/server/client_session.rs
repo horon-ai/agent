@@ -1058,7 +1058,7 @@ pub(super) struct DetachedSource {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn cleanup_detached_source_session_if_unused(
+pub(super) async fn cleanup_detached_source_session_if_unused(
     old_session_id: &str,
     client_connection_id: &str,
     source_agent: Arc<Mutex<Agent>>,
@@ -1330,7 +1330,7 @@ pub(super) async fn handle_resume_session(
         // free to release the source before its barrier on every exit.
         let source = std::mem::replace(agent, Arc::clone(live_target_agent));
         let detach_start = Instant::now();
-        let _detached = cleanup_detached_source_session_if_unused(
+        let detached = cleanup_detached_source_session_if_unused(
             &old_session_id,
             client_connection_id,
             source,
@@ -1345,6 +1345,7 @@ pub(super) async fn handle_resume_session(
             swarm_coordinators,
         )
         .await;
+        blocking_session_io(move || drop(detached));
         let detach_source_ms = detach_start.elapsed().as_millis();
 
         if let Some(conflict) = conflicting_live_client {

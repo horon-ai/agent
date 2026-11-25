@@ -19,6 +19,7 @@ fn subscribe_to(target: &str) -> Request {
         system_prompt: None,
         supports_user_response: false,
         supports_ask_requests: false,
+        supports_permission_requests: false,
         id: 1,
         working_dir: Some(std::env::temp_dir().to_string_lossy().into_owned()),
         target_session_id: Some(target.to_string()),
@@ -31,6 +32,7 @@ fn subscribe_to(target: &str) -> Request {
         acp: None,
         history_message_ids: false,
         a2ui: None,
+        fresh_session: false,
     }
 }
 

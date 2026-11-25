@@ -19,6 +19,15 @@ pub(crate) fn run(command: RuntimeStateCommand) -> Result<()> {
 }
 
 fn open(session: &str) -> Result<crate::durable_input::DurableInputStore> {
+    if !crate::session::is_store_session_id(session) {
+        bail!("invalid session id {session:?}");
+    }
+    let has_journal = crate::storage::horon_agent_dir()
+        .map(|home| home.join("durable-runtime").join(session).exists())
+        .unwrap_or(false);
+    if !crate::session::session_exists(session) && !has_journal {
+        bail!("unknown session {session:?}: no saved session or runtime journal found");
+    }
     crate::durable_input::DurableInputStore::open(session)
 }
 

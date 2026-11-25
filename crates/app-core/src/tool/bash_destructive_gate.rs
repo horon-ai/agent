@@ -43,6 +43,99 @@ pub(super) fn destructive_command_refusal(
     }
 }
 
+/// Validate configured tool-selection, plan-mode, approval, interceptor, git-guard,
+/// and destructive-command policies for direct `bash` execution outside a model turn.
+pub async fn validate_direct_bash_policy(
+    session_id: &str,
+    command: &str,
+    cwd: &std::path::Path,
+    force_plan_mode: bool,
+) -> anyhow::Result<()> {
+    let cfg = crate::config::config();
+    let selection = cfg.tools.selection();
+    if let Some(allowed) = selection.allowed_tools.as_ref()
+        && !crate::tool::tool_name_is_allowed(allowed, "bash")
+    {
+        anyhow::bail!("Tool 'bash' is not allowed");
+    }
+    if crate::tool::tool_name_is_disabled(&selection.disabled_tools, "bash") {
+        anyhow::bail!("Tool 'bash' is disabled");
+    }
+
+    let effects = crate::tool::ToolEffects::write().union(crate::tool::ToolEffects::process());
+    if force_plan_mode || !crate::plan_mode::allows_effects(session_id, effects) {
+        anyhow::bail!("{}", crate::plan_mode::block_message("bash"));
+    }
+
+    let input = serde_json::json!({ "command": command });
+    let bash_pattern = crate::approval::bash_pattern_verdict(command);
+    if let Some(verdict) = bash_pattern.as_ref()
+        && verdict.approval == crate::config::BashPatternApproval::Deny
+    {
+        anyhow::bail!("Blocked by bash pattern '{}' (deny).", verdict.pattern);
+    }
+
+    let approval_mode = crate::tool::run_approval::stricter(
+        session_id,
+        crate::tool::approval_override::get(session_id).unwrap_or(cfg.tools.approval_mode),
+    );
+    let danger = crate::approval::danger_class("bash", &input, Some(cwd));
+    let approval_paths = crate::tool::path_policy::named_paths("bash", &input, Some(cwd));
+    let restricted = crate::approval_grants::restricted_match("bash", &input, Some(cwd));
+    let tool_call_id = format!("direct-bash-{}", horon_agent_time::Timestamp::now().timestamp_millis());
+    let evaluation = crate::approval::evaluate_and_audit(
+        crate::approval::ApprovalCall {
+            tool: "bash",
+            effects,
+            mode: approval_mode,
+            dual_confirm: &cfg.tools.dual_confirm_classes,
+            danger,
+            bash_pattern: bash_pattern.as_ref(),
+            paths: &approval_paths,
+            restricted: restricted.as_deref(),
+        },
+        &tool_call_id,
+    );
+    let evaluation = match evaluation {
+        crate::approval::ApprovalEvaluation::RequiresApproval {
+            is_dual_confirm: false, ..
+        } if restricted.is_none()
+            && bash_pattern.is_none()
+            && crate::approval_grants::covered("bash", &input, Some(cwd), effects) =>
+        {
+            crate::approval::audit_granted_call("bash", approval_mode, &tool_call_id);
+            crate::approval::ApprovalEvaluation::AutoApproved {
+                reason: "grant".to_string(),
+            }
+        }
+        other => other,
+    };
+    if let crate::approval::ApprovalEvaluation::RequiresApproval { reason, .. } = evaluation {
+        anyhow::bail!("Tool 'bash' needs approval before it runs: {reason}. Nothing was executed.");
+    }
+
+    if cfg.tools.bash_interceptor == crate::config::BashInterceptorMode::Block
+        && let Some(interception) = crate::tool::bash_interceptor::intercept(command, false)
+    {
+        anyhow::bail!("Blocked: {}\n\nOriginal command: {}", interception.message, command);
+    }
+
+    if cfg.tools.git_guard {
+        let wd = cwd.to_path_buf();
+        let cmd = command.to_string();
+        if let Ok(Some(refusal)) = tokio::task::spawn_blocking(move || crate::tool::git_guard::review(&cmd, &wd)).await
+        {
+            anyhow::bail!("{refusal}");
+        }
+    }
+
+    if let Some(refusal) = destructive_command_refusal(command, None, Some(cwd.to_path_buf())) {
+        anyhow::bail!("{refusal}");
+    }
+
+    Ok(())
+}
+
 /// The `bash` tool's JSON schema, including the `justification` field the
 /// destructive-command gate consumes.
 ///

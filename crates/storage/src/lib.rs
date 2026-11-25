@@ -57,7 +57,7 @@ fn fallback_runtime_dir() -> PathBuf {
 }
 
 fn ensure_private_runtime_dir(path: &Path) {
-    let _ = std::fs::create_dir_all(path);
+    let _ = horon_agent_platform::create_private_dir(path, true);
     horon_agent_platform::fs::harden_dir_permissions(path);
 }
 
@@ -202,7 +202,7 @@ pub fn validate_external_auth_file(path: &Path) -> Result<PathBuf> {
 
 pub fn ensure_dir(path: &Path) -> Result<()> {
     if !path.exists() {
-        std::fs::create_dir_all(path)?;
+        horon_agent_platform::create_private_dir(path, true)?;
         horon_agent_platform::fs::set_dir_permissions_owner_only(path)?;
     }
     Ok(())
@@ -421,9 +421,17 @@ pub fn append_json_line_fast<T: Serialize + ?Sized>(path: &Path, value: &T) -> R
 
     let mut line = serde_json::to_vec(value)?;
     line.push(b'\n');
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut file = horon_agent_platform::fs::open_owner_only_append(path)?;
     file.write_all(&line)?;
     Ok(())
+}
+
+/// Open or create `path` for append writes with owner-only (`0o600` / `0o700`) permissions.
+pub fn open_owner_only_append(path: &Path) -> Result<std::fs::File> {
+    if let Some(parent) = path.parent() {
+        ensure_dir(parent)?;
+    }
+    Ok(horon_agent_platform::fs::open_owner_only_append(path)?)
 }
 
 #[cfg(test)]

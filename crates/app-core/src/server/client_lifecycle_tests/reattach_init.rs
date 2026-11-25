@@ -343,6 +343,7 @@ async fn target_aware_reattach_serves_history_without_a_placeholder_prewarm() {
             system_prompt: None,
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             id: 1,
             working_dir: Some(working_dir),
             target_session_id: Some(target_session_id.to_string()),
@@ -355,6 +356,7 @@ async fn target_aware_reattach_serves_history_without_a_placeholder_prewarm() {
             acp: None,
             history_message_ids: false,
             a2ui: None,
+            fresh_session: false,
         },
     )
     .await;

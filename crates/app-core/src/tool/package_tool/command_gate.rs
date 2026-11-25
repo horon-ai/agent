@@ -106,6 +106,12 @@ async fn approval_refusal(session_id: &str, name: &str, input: &Value, ctx: &Too
     else {
         return None;
     };
+    if !is_dual_confirm
+        && crate::approval_grants::covered(name, input, ctx.working_dir.as_deref(), ToolEffects::process())
+    {
+        crate::approval::audit_granted_call(name, mode, &ctx.tool_call_id);
+        return None;
+    }
     let prompt = ApprovalPromptRef {
         resolved_name: name,
         reason: &reason,

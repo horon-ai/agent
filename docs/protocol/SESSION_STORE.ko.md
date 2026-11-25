@@ -308,7 +308,9 @@ fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식�
 - **락 수명**: `.writer.lock`은 워커의 세션 항목이 들고 있는 `BlockingWriter`가 쥔다. 세션 항목은
   마지막 파사드의 drop이 큐에 넣은 `Close`가 도착할 때 사라지므로, drop은 앞선 job을 모두 drain한
   뒤에 락을 놓는다. 항목에서 `BlockingWriter`를 슬롯 리스보다 먼저 선언해, 같은 세션을 다시 열려는
-  대기자는 락이 풀린 뒤에 깨어난다.
+  대기자는 락이 풀린 뒤에 깨어난다. 클라이언트가 끊긴 뒤 데몬이 재연결 유예 기간 동안 유휴 세션을
+  보유할 때는 파생 캐시와 유휴 writer를 바로 해제해 분리된 동안 `.writer.lock` 파일 서술자를
+  잡아 두지 않으며, 재연결이나 다음 쓰기 시점에 새 writer를 연다.
 - **panic 격리**: job은 `catch_unwind`로 감싼다. panic하면 그 세션 항목만 제거되어 락이 풀리고,
   같은 워커의 다른 세션은 계속 커밋한다. 그 세션의 대기 호출자는 응답이 사라져 "reply lost" 오류를
   받고, 프로세스는 살아 있다.
@@ -557,6 +559,10 @@ HOME의 레거시 배치로 다시 쓴다. `recover-to`는 검증된 접두부�
 기동에서는 다시 가져오지 않는다. 정상 전이 뒤에는 legacy JSON을 fsync로 미러링한다.
 미러 실패는 새 저널의 접수를 되돌리지 않는다. 대신 복구 경고로 드러나고
 `export-legacy`의 거절 사유가 된다.
+
+### 살아 있는 입력 조회와 결정
+
+`horon-agent runtime-state show --session <id>`는 세션의 런타임 저널에서 살아 있거나 `in_doubt` 상태인 입력을 출력하며, `<id>`에 저장된 세션이나 런타임 저널이 없으면 종료 코드 `1`로 끝난다. `horon-agent runtime-state resolve-input --session <id> --input <id> --action retry|cancel`은 결과가 불확실한 입력을 확정한다.
 
 ### 이 저널이 보장하지 않는 것
 

@@ -244,3 +244,95 @@ pub fn atomic_replace(from: &Path, to: &Path) -> io::Result<()> {
 pub fn symlink_file(src: &Path, dst: &Path) -> io::Result<()> {
     Current::symlink_file(src, dst)
 }
+
+/// Write `bytes` to `path`, creating private (`0o700`) missing parent levels and
+/// locking the file to owner-only permissions (`0o600`).
+pub fn write_owner_only(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        crate::create_private_dir(parent, true)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    request_owner_only_mode(&mut options);
+    let mut file = options.open(path)?;
+    set_permissions_owner_only_file(&file)?;
+    file.write_all(bytes)?;
+    file.flush()
+}
+
+/// Open (or create) `path` for owner-only (`0o600`) append writes, creating
+/// private (`0o700`) missing parent levels.
+pub fn open_owner_only_append(path: &Path) -> io::Result<File> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        crate::create_private_dir(parent, true)?;
+    }
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    request_owner_only_mode(&mut options);
+    let file = options.open(path)?;
+    set_permissions_owner_only_file(&file)?;
+    Ok(file)
+}
+
+/// Open a regular secret-bearing file without following symlinks and verify
+/// that its ownership and POSIX permissions are owner-only (e.g. `0600` or `0400`).
+pub fn open_verified_owner_only_secret_file(path: &Path) -> io::Result<File> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if is_path_link(&meta) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing secret file {}: symbolic links are not allowed",
+                path.display()
+            ),
+        ));
+    }
+    let file = no_follow_open_options().read(true).open(path)?;
+    let actual = file.metadata()?;
+    verify_private_file_metadata(&actual)?;
+    if let Some(bits) = mode_bits(&actual)
+        && bits & 0o077 != 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing secret file {} with permissive mode {bits:04o}; run `chmod 600 {}`",
+                path.display(),
+                path.display()
+            ),
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn open_verified_owner_only_secret_file_rejects_0644_and_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let secret = dir.path().join("key.txt");
+        std::fs::write(&secret, b"secret").expect("write");
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o644)).expect("chmod 0644");
+
+        let err = open_verified_owner_only_secret_file(&secret).expect_err("0644 must be rejected");
+        assert!(err.to_string().contains("0644"), "{err}");
+
+        set_file_permissions_owner_only(&secret).expect("chmod 0600");
+        assert!(open_verified_owner_only_secret_file(&secret).is_ok());
+
+        let link = dir.path().join("key-link.txt");
+        symlink_file(&secret, &link).expect("symlink");
+        let err = open_verified_owner_only_secret_file(&link).expect_err("symlink must be rejected");
+        assert!(err.to_string().contains("symbolic link"), "{err}");
+    }
+}

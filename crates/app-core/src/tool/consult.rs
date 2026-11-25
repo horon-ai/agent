@@ -5,7 +5,7 @@
 //! session, but it cannot widen a consult for the whole stored life of the
 //! session.
 
-use super::SESSION_TOOL_POLICIES;
+use super::session_policy::SESSION_TOOL_POLICIES;
 use std::sync::Arc;
 
 /// Mark an existing policy as a consult child's.

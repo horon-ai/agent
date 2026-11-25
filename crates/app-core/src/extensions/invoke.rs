@@ -383,7 +383,13 @@ async fn start(
         let stdout = process
             .take_stdout()
             .with_context(|| format!("package {launch_id} has no standard output pipe"))?;
-        Ok(Started { process, stdin, stdout })
+        let stderr = process.take_stderr();
+        Ok(Started {
+            process,
+            stdin,
+            stdout,
+            stderr,
+        })
     })
     .await
     .context("the package launch task failed")??;
@@ -392,6 +398,18 @@ async fn start(
         .with_context(|| format!("adopt the standard input of package {package_id}"))?;
     let reader = tokio::process::ChildStdout::from_std(started.stdout)
         .with_context(|| format!("adopt the standard output of package {package_id}"))?;
+    let captured_stderr = Arc::new(Mutex::new(Vec::new()));
+    let stderr_task = if let Some(stderr) = started.stderr {
+        match tokio::process::ChildStderr::from_std(stderr) {
+            Ok(stderr) => Some(tokio::spawn(drain_stderr(stderr, Arc::clone(&captured_stderr)))),
+            Err(error) => {
+                crate::logging::warn(&format!("adopt standard error of package {package_id}: {error}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
     let wire = Arc::new(ExtensionWire::new(writer, WireLimits::default()));
     let reader_wire = Arc::clone(&wire);
     let log_id = package_id.clone();
@@ -475,7 +493,26 @@ async fn start(
 
     if let Err(error) = wire.initialize(params, &expectation).await {
         child.revoke();
-        return Err(anyhow!("package {package_id} did not complete the handshake: {error}"));
+        if let Some(task) = stderr_task
+            && tokio::time::timeout(std::time::Duration::from_millis(50), task)
+                .await
+                .is_err()
+        {
+            crate::logging::debug(&format!(
+                "package {package_id} stderr drain did not close after handshake failure"
+            ));
+        }
+        let stderr_bytes = captured_stderr
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let stderr_note = String::from_utf8_lossy(&stderr_bytes).trim().to_string();
+        if stderr_note.is_empty() {
+            return Err(anyhow!("package {package_id} did not complete the handshake: {error}"));
+        }
+        return Err(anyhow!(
+            "package {package_id} did not complete the handshake: {error} (stderr: {stderr_note})"
+        ));
     }
     // A revocation that landed during the handshake already asked this child to
     // stop; do not hand it back for a call.
@@ -639,6 +676,27 @@ struct Started {
     process: PackageProcess,
     stdin: std::process::ChildStdin,
     stdout: std::process::ChildStdout,
+    stderr: Option<std::process::ChildStderr>,
+}
+
+const MAX_CAPTURED_STDERR_BYTES: usize = 4096;
+
+async fn drain_stderr(mut stderr: tokio::process::ChildStderr, captured: Arc<Mutex<Vec<u8>>>) {
+    use tokio::io::AsyncReadExt;
+
+    let mut chunk = [0u8; 1024];
+    loop {
+        match stderr.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let mut buf = captured.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let remaining = MAX_CAPTURED_STDERR_BYTES.saturating_sub(buf.len());
+                if remaining > 0 {
+                    buf.extend_from_slice(&chunk[..n.min(remaining)]);
+                }
+            }
+        }
+    }
 }
 
 /// Render a child's result as the tool text the model reads.

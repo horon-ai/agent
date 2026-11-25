@@ -34,6 +34,7 @@ fn identity(grant: &Grant) -> String {
         match grant.scope {
             GrantScope::Path => "path",
             GrantScope::Folder => "folder",
+            GrantScope::Tool => "tool",
         },
         grant.capability.as_str(),
     ] {
@@ -75,6 +76,7 @@ fn view(grant: &Grant, now: Timestamp) -> GrantView {
         scope: match grant.scope {
             GrantScope::Path => "path",
             GrantScope::Folder => "folder",
+            GrantScope::Tool => "tool",
         },
         capability: grant.capability.as_str(),
         granted_at: grant.granted_at.to_string(),

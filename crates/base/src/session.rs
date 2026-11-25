@@ -27,6 +27,7 @@ mod event_replication;
 pub use event_replication::{SessionEventJob, SessionGeneration, event_store_api};
 mod event_save;
 mod event_store;
+pub use event_store::IdleWriter;
 mod event_tools;
 mod event_views;
 mod event_wire;

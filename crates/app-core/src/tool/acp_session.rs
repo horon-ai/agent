@@ -57,6 +57,15 @@ fn lock() -> MutexGuard<'static, HashMap<String, Installed>> {
     registry().lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+fn turn_registry() -> &'static Mutex<HashMap<String, ActiveTurn>> {
+    static TURNS: OnceLock<Mutex<HashMap<String, ActiveTurn>>> = OnceLock::new();
+    TURNS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn lock_turns() -> MutexGuard<'static, HashMap<String, ActiveTurn>> {
+    turn_registry().lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Record that `connection_id` is the ACP connection driving `session_id`.
 ///
 /// Replaces any previous installation: the newest connection is the one the
@@ -75,7 +84,9 @@ pub(crate) fn install_with_version(
 ) -> u64 {
     static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
     let token = NEXT_TOKEN.fetch_add(1, Ordering::Relaxed);
-    lock().insert(
+    let mut installed = lock();
+    let mut turns = lock_turns();
+    installed.insert(
         session_id.to_string(),
         Installed {
             token,
@@ -85,14 +96,17 @@ pub(crate) fn install_with_version(
             protocol_version,
         },
     );
+    turns.remove(session_id);
     token
 }
 
 /// Withdraw an installation, but only the one this token created.
 pub(crate) fn clear(session_id: &str, token: u64) {
     let mut installed = lock();
+    let mut turns = lock_turns();
     if installed.get(session_id).is_some_and(|entry| entry.token == token) {
         installed.remove(session_id);
+        turns.remove(session_id);
     }
 }
 
@@ -157,21 +171,36 @@ pub(crate) fn send_v2(session_id: &str, event: ServerEvent) -> bool {
 pub(crate) fn claim_turn(session_id: &str, connection_id: Option<&str>) -> TurnOwnership {
     static NEXT_TURN: AtomicU64 = AtomicU64::new(1);
     let mut installed = lock();
-    let Some(entry) = installed.get_mut(session_id) else {
-        return TurnOwnership::unclaimed(session_id);
-    };
-    if entry.turn.is_some() {
+    let mut turns = lock_turns();
+    if turns.contains_key(session_id) || installed.get(session_id).is_some_and(|entry| entry.turn.is_some()) {
         return TurnOwnership::unclaimed(session_id);
     }
     let id = NEXT_TURN.fetch_add(1, Ordering::Relaxed);
-    entry.turn = Some(ActiveTurn {
-        id,
-        connection_id: connection_id.map(str::to_string),
-    });
+    turns.insert(
+        session_id.to_string(),
+        ActiveTurn {
+            id,
+            connection_id: connection_id.map(str::to_string),
+        },
+    );
+    if let Some(entry) = installed.get_mut(session_id) {
+        entry.turn = Some(ActiveTurn {
+            id,
+            connection_id: connection_id.map(str::to_string),
+        });
+    }
     TurnOwnership {
         session_id: session_id.to_string(),
         turn_id: Some(id),
     }
+}
+
+/// Whether the turn running in `session_id` was started by `connection_id`,
+/// regardless of whether that connection is an ACP bridge.
+pub(crate) fn connection_owns_turn(session_id: &str, connection_id: &str) -> bool {
+    lock_turns()
+        .get(session_id)
+        .is_some_and(|turn| turn.connection_id.as_deref() == Some(connection_id))
 }
 
 /// Whether the turn running in `session_id` was started by the ACP connection
@@ -223,6 +252,10 @@ impl Drop for TurnOwnership {
             return;
         };
         let mut installed = lock();
+        let mut turns = lock_turns();
+        if turns.get(&self.session_id).is_some_and(|turn| turn.id == turn_id) {
+            turns.remove(&self.session_id);
+        }
         if let Some(entry) = installed.get_mut(&self.session_id)
             && entry.turn.as_ref().is_some_and(|turn| turn.id == turn_id)
         {

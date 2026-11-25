@@ -398,16 +398,16 @@ fn every_approval_answer_leaves_one_line_that_states_what_happens_next() {
     app.on_key(key(KeyCode::Char('y')));
     let allowed = last_line(&app);
     assert!(
-        allowed.contains("you allowed bash") && allowed.contains("call it again"),
-        "the confirmation line does not say the call must be retried: {allowed}"
+        allowed.contains("you allowed bash") && allowed.contains("continuing"),
+        "the confirmation line does not confirm interactive continuation: {allowed}"
     );
 
     app.apply_event(&approval_pending("r2", "write"));
     app.on_key(key(KeyCode::Char('a')));
     let always = last_line(&app);
     assert!(
-        always.contains("you allowed write") && always.contains("no always-rule"),
-        "the always answer claims a rule the daemon does not keep: {always}"
+        always.contains("you always allowed write") && always.contains("in this workspace"),
+        "the always answer does not reflect the saved workspace grant: {always}"
     );
 
     app.apply_event(&approval_pending("r3", "edit"));
@@ -580,16 +580,17 @@ fn a_lost_connection_takes_the_prompt_with_it() {
 }
 
 #[test]
-fn an_answer_line_never_claims_the_call_ran() {
-    // The engine records the approval and refuses the call, so the wording is
-    // the only place a user learns a retry is needed.
+fn an_answer_line_states_interactive_continuation_on_allow() {
     let mut app = app();
     app.apply_event(&approval_pending("r1", "bash"));
     app.on_key(key(KeyCode::Char('y')));
     let line = last_line(&app);
-    assert!(!line.contains("approved"), "the line reads as a granted call: {line}");
-    assert!(!line.contains("ran"), "the line claims the tool ran: {line}");
-    assert!(line.contains("call it again"), "the retry is not named: {line}");
+    assert!(line.contains("you allowed bash"), "{line}");
+    assert!(
+        !line.contains("call it again"),
+        "interactive wait should continue: {line}"
+    );
+    assert!(line.contains("continuing"), "{line}");
 }
 
 #[test]

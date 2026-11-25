@@ -215,7 +215,7 @@ pub fn lookup_with_provenance(horon_agent_provider: &str, model: &str) -> Option
 /// API key, so its traffic is not billed at hosted rates. Unknown ids (not a
 /// built-in profile and not a configured `[providers.<id>]`) are treated as
 /// hosted resellers.
-fn openai_compatible_profile_is_local(horon_agent_provider: &str) -> bool {
+pub fn openai_compatible_profile_is_local(horon_agent_provider: &str) -> bool {
     let Some(id) = horon_agent_provider
         .trim()
         .strip_prefix("openai-compatible:")
@@ -230,6 +230,27 @@ fn openai_compatible_profile_is_local(horon_agent_provider: &str) -> bool {
         return api_base_is_local(&named.base_url)
             || named.requires_api_key == Some(false)
             || named.resolved_auth() == crate::config::NamedProviderAuth::None;
+    }
+    false
+}
+
+/// Whether `horon_agent_provider` resolves to an explicitly local endpoint.
+///
+/// Spend-cap enforcement uses this stricter check so an unpriced remote
+/// profile cannot bypass `--max-cost` merely by disabling authentication.
+pub fn openai_compatible_profile_uses_local_endpoint(horon_agent_provider: &str) -> bool {
+    let Some(id) = horon_agent_provider
+        .trim()
+        .strip_prefix("openai-compatible:")
+        .map(str::trim)
+    else {
+        return false;
+    };
+    if let Some(profile) = crate::provider_catalog::openai_compatible_profile_by_id(id) {
+        return api_base_is_local(profile.api_base);
+    }
+    if let Some(named) = crate::config::config().providers.get(id) {
+        return api_base_is_local(&named.base_url);
     }
     false
 }

@@ -231,20 +231,21 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
     // every event of the session it just attached to. The worker applies the
     // filter that matters, against the id the answer names.
     let stream = client.events(None);
-    let session = match attach {
-        Some(session_id) => client
-            .attach_session(session_id)
-            .map_err(|error| explain_attach(&error, session_id))?,
-        None => client
-            .create_session(working_dir.map(str::to_owned))
-            .map_err(|error| format!("the harness refused a new session: {error}"))?,
-    };
+    let where_ = socket.display().to_string();
+    let (session, initial_attached) = sessions::open_initial(&client, attach, working_dir, &where_)?;
     let session_id = session.session_id.clone();
     let workspace = session.working_dir.clone();
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     let description = format!("{} · {}", socket.display(), session_id);
-    let where_ = socket.display().to_string();
+    if let Some((attached, attached_dir)) = initial_attached {
+        event_tx
+            .send(Incoming::Attached {
+                session: Box::new(attached),
+                working_dir: attached_dir,
+            })
+            .map_err(|error| format!("could not queue initial session history: {error}"))?;
+    }
     let worker_client = client.clone();
     thread::Builder::new()
         .name("horon-tui-bridge".to_string())
@@ -279,16 +280,6 @@ fn explain_connect(error: &Error, socket: &Path) -> String {
             None => format!("the daemon did not complete the v{client_major} handshake. Restart it and try again."),
         },
         _ => format!("cannot reach the harness: {error}"),
-    }
-}
-
-/// What to tell the user when attaching to a session fails.
-fn explain_attach(error: &Error, session_id: &str) -> String {
-    match &error.kind {
-        ErrorKind::UnknownSession { session_id } => {
-            format!("the harness does not have session {session_id}. Check the id, or start a new session.")
-        }
-        _ => format!("the harness refused to attach to {session_id}: {error}"),
     }
 }
 

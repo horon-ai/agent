@@ -185,12 +185,12 @@ async fn memory_cli_semantic_requires_jev_but_keyword_search_remains_local() {
         .expect("an empty project must not leak another project's candidates");
 }
 
-struct SavedEnv {
+pub(super) struct SavedEnv {
     vars: Vec<(String, Option<String>)>,
 }
 
 impl SavedEnv {
-    fn capture(keys: &[&str]) -> Self {
+    pub(super) fn capture(keys: &[&str]) -> Self {
         Self {
             vars: keys
                 .iter()
@@ -670,6 +670,8 @@ fn open_todos_do_not_consume_the_pending_gate_digest() {
 /// into the next turn and be raised again against work they never described.
 #[test]
 fn take_run_gate_digest_consumes_the_log_and_respects_delivery() {
+    use crate::cli::commands::auto_poke::take_run_gate_digest;
+
     let _guard = crate::storage::lock_test_env();
     let previous_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
@@ -1150,4 +1152,45 @@ async fn run_single_message_with_agent_a2ui_collects_json_and_text_cards() {
     let mut rendered = Vec::new();
     a2ui_run::write_a2ui_text_cards(&mut rendered, &cards).expect("write cards");
     assert!(String::from_utf8(rendered).expect("utf8").contains("Deploy Ready"));
+}
+
+struct OpenAISlotProvider;
+
+#[async_trait]
+impl Provider for OpenAISlotProvider {
+    async fn complete(&self, _: &[Message], _: &[ToolDefinition], _: &str, _: Option<&str>) -> Result<EventStream> {
+        unreachable!()
+    }
+    fn name(&self) -> &str {
+        "OpenAI"
+    }
+    fn model(&self) -> String {
+        "mock-model".to_string()
+    }
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(OpenAISlotProvider)
+    }
+}
+
+#[test]
+fn run_report_provider_name_and_memory_export_privacy() {
+    assert_eq!(run_report_provider_name(&OpenAISlotProvider, Some("mock")), "mock");
+    assert_eq!(
+        run_report_provider_name(&OpenAISlotProvider, Some("openai-compatible:mock")),
+        "mock"
+    );
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = dir.path().join("mem.json");
+    let mut entries = vec![memory::MemoryEntry::new(
+        memory::MemoryCategory::Fact,
+        "api_key=my_inline_secret_123456 {\"api_key\":\"json_secret_value_999\"}".to_string(),
+    )];
+    write_redacted_memory_export(&mut entries, &out).expect("export memories");
+    let saved = std::fs::read_to_string(&out).expect("read export");
+    assert!(!saved.contains("my_inline_secret_123456"), "{saved}");
+    assert!(!saved.contains("json_secret_value_999"), "{saved}");
+    assert!(
+        horon_agent_platform::fs::is_private_file(&std::fs::symlink_metadata(&out).expect("meta")),
+        "memory export file must stay owner-only"
+    );
 }
