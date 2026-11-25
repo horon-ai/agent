@@ -198,6 +198,10 @@ reinforcements: [{session: "session-1", message_index: 4, timestamp: "2026-11-21
 
 **가져오지 않는 것:** 임베딩(파생이며 다시 만들 수 있다), 그리고 저장소 수준 병합이 바꿀 만한 것. 기억 필드나 엣지 중 버려지는 것은 없다.
 
+## 기억 항목 내보내기
+
+`horon-agent memory export <output> [--scope global|project|all]`는 저장된 기억 항목(`MemoryEntry`)을 `<output>`으로 내보낸다. 내보낸 항목 필드에 포함된 인식 가능한 자격 증명은 마스킹 처리하며, 파일은 `O_NOFOLLOW`와 소유자 전용 권한(`0o600`)으로 기록한다.
+
 ## 볼륨 내보내기, 가져오기, 삭제
 
 호스팅 사용자는 루트가 `HORON_HOME`인 볼륨 하나를 소유하고, 그 안 `memory/` 아래의 기억 위키가 운영자가 백업하고 옮기고 파괴하는 대상이다. `horon volume` 명령이 그 일을 한다. 컨트롤 플레인이 tar를 전달하고 Fly API 호출을 소유하며, 에이전트는 그 파일을 만들고 읽는다.

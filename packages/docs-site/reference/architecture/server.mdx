@@ -78,7 +78,7 @@ stable identity that clients can address. An optional `HORON_AGENT_SERVER_DISPLA
 prefer a display name. CLI input beats environment input. Names are normalized to a lowercase label that is safe for the registry, so
 `mount-cloud/fabian` shows up as `mount-cloud-fabian`.
 
-A hosted process runs the same server; the only difference is a startup check. When `HORON_AGENT_HOSTING_MODE` selects `per-user-container`, `Server::run` confirms the hosted boundary before it binds a socket and exits with a message unless the home volume, runtime directory, gateway state and tenant id are acceptable. With the variable absent the check is a no-op. [`HOSTING.md`](/reference/architecture/hosting) states the contract, the image and volume layout, and the deletion procedure.
+A hosted process runs the same server; the difference is startup policy enforcement (`hosted_tenant::enforce_at_startup`). `Server::run`, `horon-agent run`, and `horon-agent mcp` all validate `HORON_AGENT_HOSTING_MODE` (exiting `1` on an unknown value). When it selects `per-user-container`, they confirm the hosted boundary before binding a socket or executing and exit `1` unless the home volume, runtime directory, gateway state and tenant id are acceptable; in `shared-worker`, `horon mcp list` is also refused with `HOSTED_POLICY` (exit `1`). With the variable absent the check is a no-op. [`HOSTING.md`](/reference/architecture/hosting) states the contract, the image and volume layout, and the deletion procedure.
 
 ### Server shutdown
 

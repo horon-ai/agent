@@ -3,15 +3,20 @@ title: CLI
 description: "Every horon subcommand: serve, run, repl, api-bridge, acp, rpc, sessions, providers, cloud move."
 ---
 
-Bare `horon` on a terminal starts the server and then replaces itself with the
-`horon-tui` client beside it. A pipe, `HORON_NO_TUI=1`, or a missing sibling
-prints the condition and its remedy (or the install hint when the sibling is missing), then exits non-zero.
+Bare `horon` checks terminal handoff conditions first (`stdin` and `stdout`
+are terminals, `HORON_NO_TUI` is unset, `horon-tui` sits beside the binary);
+only when all hold does it start the server if needed and replace itself with
+`horon-tui`. A pipe, `HORON_NO_TUI=1`, or a missing sibling starts no daemon,
+prints the condition and its remedy (or the install hint only when the sibling
+is missing), then exits `1`. Running `horon-tui` directly exits `1` on a pipe
+without entering the alternate screen and renders `"terminal too small"` below
+`20x6`.
 
 ## Core commands
 
 | Command | What it does |
 | --- | --- |
-| `horon run "<message>"` | Send one message, run tools until the turn ends, exit. `--json` prints a machine-readable result, `--ndjson` streams events. |
+| `horon run "<message>"` | Send one message, run tools until the turn ends, exit. Exits `1` on guardrail stops (e.g. `content_filter`), `length`, or empty turns; `auto_poke` defaults to `6` follow-up turns (`HORON_AGENT_RUN_AUTO_POKE=0` disables, stops early on unchanged todos). `--max-cost <USD>` rejects unpriced remote routes upfront (`1`) while explicitly local unpriced endpoints warn on stderr. `--json` prints a machine-readable result, `--ndjson` streams events. |
 | `horon repl` | One line at a time in the terminal, without the full-screen client. |
 | `horon serve` | Background agent daemon on a Unix socket (or named pipe on Windows; `HORON_AGENT_SOCKET`). |
 | `horon api-bridge` | Harness API for SDK clients on a Unix socket or Windows named pipe (`HORON_AGENT_API_SOCKET`), with optional bearer-authenticated `--api-bind <IP:PORT>` TCP listener (`alias: api`). |
@@ -49,14 +54,17 @@ different socket.
 `horon session inspect <session> [--json]` is read-only: it reports the store
 layout, the heads, the archive state and any damage.
 
-`horon export <session> [--out FILE]` prints a Markdown transcript.
+`horon export <session> [--json] [--out FILE]` prints a Markdown transcript (or
+wraps it as `{"session_id": ..., "markdown": ...}`).
 Secrets are redacted and tool results over 4 KiB are truncated; the output matches
 the `export_session_markdown` harness API reply.
-`horon export <session> --html [--out FILE]` writes the same redacted projection
+`horon export <session> --html [--json] [--out FILE]` writes the same redacted projection
 as a standalone offline HTML report instead: every transcript character is
 escaped, the stylesheet is inline, and a Content-Security-Policy forbids any
 network load, so the saved file opens without a connection. Unlike the Markdown
-form, an `--out` path that already exists is refused.
+form, an `--out` path that already exists is refused. Passing `--json --out FILE`
+writes the JSON payload (`{"session_id": ..., "markdown"|"html": ...}`) to `FILE`
+and prints a JSON summary (`session_id`, `out`, `format`, `bytes`) to stdout.
 `horon session export <session>
 --output <dir>` is a different command: it writes the original events and blobs
 as a bundle into a directory that must not exist yet, and `horon session import`
@@ -71,7 +79,7 @@ and a session a running daemon has open is refused.
 
 | Command | What it does |
 | --- | --- |
-| `horon runtime-state show --session <id>` | List the live inputs of a session and which ones are undetermined. |
+| `horon runtime-state show --session <id>` | List the live inputs of a session and which ones are undetermined; exits `1` when `<id>` has no stored session or runtime journal. |
 | `horon runtime-state resolve-input --session <id> --input <id> --action retry\|cancel` | Settle an input whose outcome is unknown. |
 | `horon approvals resolve --request-id <id> --tool-call-id <id> --verdict retry\|skip` | Record a human verdict for a run that stopped waiting on a person. |
 
@@ -89,11 +97,11 @@ and a session a running daemon has open is refused.
 | `horon api-credentials issue\|rotate\|revoke\|list` | Manage bearer tokens accepted by `api-bridge --api-bind`. |
 | `horon package install\|list\|verify\|disable\|remove` | Install and manage user-installed Rust extension and plugin packages. |
 | `horon skills ...` | List skills with their provenance, or install one from an approved source. |
-| `horon mcp list` | Configured MCP servers and their local authentication state, without connecting. `test <server>`, `login <server>` and `logout <server>` manage one remote server's OAuth credentials; the bare `horon mcp` prints its usage because it needs a subcommand. |
-| `horon memory list\|search\|export\|import\|stats` | Stored memories: list them by scope and tag, search, export or import a JSON file, or print statistics. |
+| `horon mcp list` | Configured MCP servers and their local authentication state, without connecting (refused under `HORON_AGENT_HOSTING_MODE=shared-worker` with `HOSTED_POLICY`, exit `1`). `test <server>`, `login <server>` and `logout <server>` manage one remote server's OAuth credentials; the bare `horon mcp` prints its usage because it needs a subcommand. |
+| `horon memory list\|search\|export\|import\|stats` | Stored memories: list them by scope and tag, search, export (masking recognizable credentials and writing `0o600` with `O_NOFOLLOW`), import a JSON file, or print statistics. |
 | `horon preview <read\|agentgrep\|websearch> <json>` | Run one read-only built-in locally without a model or session. |
 | `horon diagnostics <files...>` | List language-server diagnostics before edits, or delegate selected ones (`--select` with `--delegate`). |
-| `horon config ...` | Inspect effective configuration (read-only). |
+| `horon config show [--json] \| check [--json]` | `show` inspects effective configuration (read-only). `check` validates `config.toml` (applying one-time legacy `swarm_spawn_mode` migration) and exits `1` on malformed TOML, unknown keys, or an unknown `[provider] default_provider`. |
 | `horon images ...` | List generated images of a session or copy one (read-only). |
 | `horon volume ...` | Back up, restore, and delete this user's data volume. |
 | `horon agents` | Inspect named agent definitions without starting a session. |

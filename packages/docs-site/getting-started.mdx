@@ -54,16 +54,15 @@ missing `[providers.<name>]` table. Nothing silently falls back to another path.
 
 ## TUI mode
 
-Run bare `horon` (or `hrn`, or `horon-agent`) on a terminal and it starts the
-server if needed, then replaces itself with `horon-tui`, the TUI binary that sits
-beside the agent binary and owns the screen from then on. The handoff checks
-three things first: standard input and standard output are both terminals,
-`HORON_NO_TUI` is unset, and `horon-tui` exists next to the running executable.
-A pipe or a redirect prints that sentence instead, which is what scripts and CI
-want.
-When a check fails the command names it, prints the one-line hint about
-installing `horon-tui` next to the binary, and exits non-zero; a server it had
-already started stays up.
+Run bare `horon` (or `hrn`, or `horon-agent`) on a terminal and it checks three
+conditions first (before starting any daemon): standard input and standard
+output are both terminals, `HORON_NO_TUI` is unset, and `horon-tui` exists next
+to the running executable. When all three hold, it starts the server if needed
+and replaces itself with `horon-tui`, the TUI binary that owns the screen from
+then on.
+When a check fails, it starts no daemon, names the condition and its remedy
+(printing the install hint only when `horon-tui` is missing), and exits `1` —
+so pipes, redirects, and CI get the reason with no orphan server left behind.
 
 ```sh
 horon                      # starts the server, then opens horon-tui

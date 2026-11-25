@@ -16,7 +16,7 @@ Source: `README.md`, `AGENTS.md`, `docs/architecture/CRATES.md`, `docs/assets/ar
 
 ![실행 모드](02-run-modes.ko.svg)
 
-`horon-agent`를 시작하는 모든 방법을 경우별로 정리했다. 터미널에서 인자 없이 `horon`을 부르면 세 조건을 확인한 뒤 `horon-tui`로 넘어가고, 하나라도 어긋나면 이유와 설치 안내를 출력하고 헤드리스로 남는다. 이름 붙인 하위 명령은 그 판단을 건너뛴다. 시작 방식 때문에 실행이 예상과 다르게 움직일 때 쓴다.
+`horon-agent`를 시작하는 모든 방법을 경우별로 정리했다. 터미널에서 인자 없이 `horon`을 부르면 데몬을 띄우기 전에 먼저 세 조건을 확인한 뒤 `horon-tui`로 넘어가고, 하나라도 어긋나면 데몬을 시작하지 않은 채 이유와 해결책(바이너리가 없을 때만 설치 안내)을 출력하고 헤드리스로 남는다. 이름 붙인 하위 명령은 그 판단을 건너뛴다. 시작 방식 때문에 실행이 예상과 다르게 움직일 때 쓴다.
 
 Source: `docs/runtime/TUI.md`, `src/cli/tui_handoff.rs`, `src/cli/startup.rs`, `docs/README.md`
 

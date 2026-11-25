@@ -332,6 +332,10 @@ The `JournalLimits` defaults (`store.rs`).
 
 The existing `<session>.json` queue is imported once. The deterministic input id mapping is recorded, and a second start does not import again. After a normal transition the legacy JSON is mirrored with fsync. A mirror failure does not roll back admission into the new journal. It surfaces as a recovery warning and as a reason for `export-legacy` to refuse.
 
+### Inspecting and resolving live inputs
+
+`horon-agent runtime-state show --session <id>` prints live and `in_doubt` inputs from the session's runtime journal and exits with status `1` when `<id>` has no stored session or runtime journal. `horon-agent runtime-state resolve-input --session <id> --input <id> --action retry|cancel` settles an undetermined input.
+
 ### What this journal does not guarantee
 
 - Exactly-once external side effects. It does not stop a tool from running twice.

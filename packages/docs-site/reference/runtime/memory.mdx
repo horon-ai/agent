@@ -256,6 +256,10 @@ reads them exactly as before. No state outside `memory/` is involved.
 **What is not migrated:** embeddings (derived, and re-derivable), and anything a
 store-level merge would change — none of the entry fields or edges are dropped.
 
+## Exporting entries
+
+`horon-agent memory export <output> [--scope global|project|all]` exports stored memory entries (`MemoryEntry`) to `<output>`. Recognizable credentials inside exported entry fields are redacted before writing, and the file is created with `O_NOFOLLOW` and owner-only permissions (`0o600`).
+
 ## Exporting, importing and deleting a volume
 
 A hosted user owns one volume whose root is `HORON_HOME`, and the memory wiki
