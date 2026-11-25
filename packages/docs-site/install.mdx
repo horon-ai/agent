@@ -110,6 +110,9 @@ disables verification; to use an internal CA, put it in the OS store.
 
 The release publishes `horon-tui`, the TUI binary, as its own archive
 (`horon-tui-<suffix>.tar.gz`) beside the agent, built from the same tag and
-verified against the same `SHA256SUMS`. It is optional for an installation that
-only uses headless mode. A copy that cannot be verified never blocks the agent:
-the installer prints one line and continues with `horon-agent` alone.
+verified against the same `SHA256SUMS` (source builds on non-FreeBSD platforms
+build and stage sibling `horon-tui` beside `horon-agent` as well). It is
+optional for an installation that only uses headless mode. A copy that cannot be
+verified never blocks the agent: the installer prints one line and continues
+with `horon-agent` alone. `uninstall.sh` honors `HORON_HOME` and stops only
+daemons belonging to that installation.

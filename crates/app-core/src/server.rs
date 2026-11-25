@@ -55,7 +55,7 @@ mod durable_state;
 mod fanout_flush;
 pub mod foreground_state;
 mod headless;
-mod hosted_tenant;
+pub mod hosted_tenant;
 mod idle_hibernation;
 mod irc;
 mod lifecycle;

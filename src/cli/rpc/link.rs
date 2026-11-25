@@ -205,6 +205,7 @@ fn subscribe_request(id: u64, cwd: Option<&std::path::Path>, resume: Option<&str
         system_prompt: None,
         supports_user_response: false,
         supports_ask_requests: false,
+        supports_permission_requests: false,
         working_dir: cwd.map(|cwd| cwd.display().to_string()),
         target_session_id: resume.map(str::to_string),
         client_instance_id: Some(CLIENT_INSTANCE_ID.to_string()),

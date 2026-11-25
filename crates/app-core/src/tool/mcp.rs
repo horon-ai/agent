@@ -447,6 +447,31 @@ impl Tool for McpCallTool {
     }
 }
 
+fn deserialize_optional_args<'de, D>(deserializer: D) -> std::result::Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(items)) => items
+            .into_iter()
+            .map(|item| match item {
+                Value::String(text) => Ok(text),
+                other => Err(serde::de::Error::custom(format!(
+                    "'args' elements must be strings, got {other}"
+                ))),
+            })
+            .collect::<std::result::Result<Vec<String>, _>>()
+            .map(Some),
+        Some(Value::Object(map)) if map.is_empty() => Ok(None),
+        Some(Value::Object(_)) => Err(serde::de::Error::custom(
+            "'args' must be an array of strings, not a map",
+        )),
+        Some(_) => Err(serde::de::Error::custom("'args' must be an array of strings")),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct McpToolInput {
     action: String,
@@ -454,7 +479,7 @@ struct McpToolInput {
     server: Option<String>,
     #[serde(default)]
     command: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_args")]
     args: Option<Vec<String>>,
     #[serde(default)]
     env: Option<HashMap<String, String>>,
@@ -757,6 +782,13 @@ impl McpManagementTool {
     }
 
     async fn list_servers(&self, session_id: &str) -> Result<ToolOutput> {
+        if crate::hosting::current().is_ok_and(crate::hosting::HostingPolicy::is_shared_worker) {
+            crate::mcp::hosted::check_current(&crate::mcp::hosted::HostedRequest {
+                operation: crate::mcp::hosted::HostedOperation::Remote,
+                server: None,
+                package: None,
+            })?;
+        }
         let manager = self.manager.read().await;
         let servers = manager.connected_servers().await;
         let all_tools = manager.all_tools().await;

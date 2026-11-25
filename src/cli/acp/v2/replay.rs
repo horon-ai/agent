@@ -241,12 +241,24 @@ fn walk_history(
                         pending_a2ui.push(entry);
                     } else if !a2ui_enabled {
                         walk.tool_round();
-                        updates.push(tool_update(call, &message.content, message.verdict, cwd));
+                        updates.push(tool_update(
+                            call,
+                            &message.content,
+                            message.is_error,
+                            message.verdict,
+                            cwd,
+                        ));
                     }
                 }
                 Some(call) => {
                     walk.tool_round();
-                    updates.push(tool_update(call, &message.content, message.verdict, cwd));
+                    updates.push(tool_update(
+                        call,
+                        &message.content,
+                        message.is_error,
+                        message.verdict,
+                        cwd,
+                    ));
                 }
                 None => {
                     walk.tool_round();
@@ -314,6 +326,7 @@ fn flush_pending_a2ui_v2(
 fn tool_update(
     call: &crate::message::ToolCall,
     output: &str,
+    is_error: Option<bool>,
     verdict: Option<crate::tool::ToolVerdict>,
     cwd: &Path,
 ) -> Value {
@@ -326,7 +339,11 @@ fn tool_update(
         name: Some(call.name.clone()),
         title: Some(tool_title(&call.name)),
         kind: Some(tool_kind(&call.name).to_string()),
-        status: Some("completed".to_string()),
+        status: Some(if is_error == Some(true) {
+            "failed".to_string()
+        } else {
+            "completed".to_string()
+        }),
         content: Some(vec![json!({
             "type": "content",
             "content": { "type": "text", "text": output },

@@ -338,6 +338,7 @@ pub(super) fn subscribe_request(
         system_prompt: None,
         supports_user_response: false,
         supports_ask_requests,
+        supports_permission_requests: false,
         crash_on_disconnect: false,
         continue_on_disconnect: false,
         id,

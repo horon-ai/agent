@@ -210,6 +210,8 @@ pub fn openai_api_pricing_with_tier(model: &str, service_tier: Option<&str>) -> 
         "gpt-5.1-codex-mini" | "gpt-5-mini" => exact(0.25, 2.0, Some(0.025), "OpenAI API pricing"),
         "gpt-5-nano" => exact(0.05, 0.4, Some(0.005), "OpenAI API pricing"),
         "gpt-5-pro" => exact(15.0, 120.0, None, "OpenAI API pricing"),
+        "gpt-4o" => exact(2.5, 10.0, Some(1.25), "OpenAI API pricing"),
+        "gpt-4o-mini" => exact(0.15, 0.6, Some(0.075), "OpenAI API pricing"),
         _ => None,
     }
 }

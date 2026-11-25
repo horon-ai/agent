@@ -42,8 +42,23 @@ fn auth_status(server: &McpServerConfig, stored: Option<&oauth::OAuthStatus>) ->
     }
 }
 
-fn server_rows(config: &McpConfig) -> Result<Vec<Value>> {
-    let mut names: Vec<_> = config.servers.keys().collect();
+fn policy_permits_row(policy: &crate::hosting::HostingPolicy, name: &str, server: &McpServerConfig) -> bool {
+    if !policy.is_hosted() {
+        return true;
+    }
+    if policy.is_shared_worker() {
+        return false;
+    }
+    policy.permits_mcp_server(name) && (server.is_remote() || policy.allows_shared_children())
+}
+
+fn server_rows(config: &McpConfig, policy: Option<&crate::hosting::HostingPolicy>) -> Result<Vec<Value>> {
+    let mut names: Vec<_> = config
+        .servers
+        .iter()
+        .filter(|(name, server)| policy.is_none_or(|policy| policy_permits_row(policy, name, server)))
+        .map(|(name, _)| name)
+        .collect();
     names.sort();
     names
         .into_iter()
@@ -86,6 +101,8 @@ fn render_list(rows: &[Value]) -> String {
 }
 
 pub(crate) async fn run(action: McpCommand) -> Result<()> {
+    crate::server::hosted_tenant::enforce_at_startup()?;
+    let policy = crate::hosting::current()?;
     crate::workspace_trust::set_explicit_cli(true);
     let config = McpConfig::load();
     match action {
@@ -93,6 +110,12 @@ pub(crate) async fn run(action: McpCommand) -> Result<()> {
             let server = config.servers.get(&name).with_context(|| {
                 format!("MCP server '{name}' is not configured. Run `horon-agent mcp list` to see configured names.")
             })?;
+            let operation = if server.is_remote() {
+                crate::mcp::hosted::HostedOperation::Remote
+            } else {
+                crate::mcp::hosted::HostedOperation::Stdio
+            };
+            crate::mcp::hosted::check(policy, &crate::mcp::hosted::HostedRequest::server(operation, &name))?;
             let mut client = crate::mcp::McpClient::connect(name.clone(), server).await
                 .with_context(|| format!("Failed to connect to MCP server '{name}'. For remote OAuth authentication, run `horon-agent mcp login {name}` first."))?;
             let info = client.server_info();
@@ -113,7 +136,17 @@ pub(crate) async fn run(action: McpCommand) -> Result<()> {
             }
         }
         McpCommand::List { json } => {
-            let rows = server_rows(&config)?;
+            if policy.is_shared_worker() {
+                crate::mcp::hosted::check(
+                    policy,
+                    &crate::mcp::hosted::HostedRequest {
+                        operation: crate::mcp::hosted::HostedOperation::Remote,
+                        server: None,
+                        package: None,
+                    },
+                )?;
+            }
+            let rows = server_rows(&config, Some(policy))?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&rows)?);
             } else {
@@ -212,7 +245,7 @@ mod tests {
 
     #[test]
     fn mcp_cli_list_is_sorted_redacted_and_shows_static_auth_precedence() {
-        let rows = server_rows(&config()).unwrap();
+        let rows = server_rows(&config(), None).unwrap();
         assert_eq!(rows[0]["name"], "broken");
         assert_eq!(rows[2]["auth"], "static Authorization header");
         let output = render_list(&rows);
@@ -246,8 +279,28 @@ mod tests {
         std::fs::write(path, "corrupt-secret-access-token").unwrap();
         let config =
             serde_json::from_value(json!({"servers": {"remote": {"url": "https://example.com/mcp"}}})).unwrap();
-        let error = server_rows(&config).unwrap_err().to_string();
+        let error = server_rows(&config, None).unwrap_err().to_string();
         assert!(error.contains("OAuth credential store is invalid"));
         assert!(!error.contains("secret-access-token"));
+    }
+
+    #[test]
+    fn mcp_cli_list_keeps_stdio_servers_outside_hosting_and_gates_hosted_modes() {
+        let cfg = config();
+        let unhosted = crate::hosting::HostingPolicy::default();
+        let unhosted_names: Vec<_> = server_rows(&cfg, Some(&unhosted))
+            .unwrap()
+            .into_iter()
+            .map(|row| row["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(unhosted_names, vec!["broken", "local", "remote"]);
+
+        let shared = crate::hosting::HostingPolicy::new(
+            crate::hosting::HostingMode::SharedWorker,
+            Some(crate::hosting::TenantId::parse("tenant-a").unwrap()),
+            &Default::default(),
+        )
+        .unwrap();
+        assert!(server_rows(&cfg, Some(&shared)).unwrap().is_empty());
     }
 }

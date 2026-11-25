@@ -376,10 +376,9 @@ pub(super) fn handle_permission_decision(
         );
         return;
     }
-    // `allow_always` is an approval: this daemon has no persistent always-allow
-    // store, and inventing one here would claim a rule the user never got.
-    // `allow_path`/`allow_folder` are approvals too, with the additional effect
-    // that the place they name stops asking; see `record_scoped_grant`.
+    // `allow_always`, `allow_path`, and `allow_folder` are approvals with an
+    // additional scoped grant written into `approvals.json` via
+    // `record_scoped_grant` so later matching calls stop asking.
     let approved = !matches!(decision, PermissionDecision::Deny);
     let bridge_waits = match bridge.map(|bridge| bridge.begin_editor_answer(&request_id)) {
         Some(EditorAnswer::AlreadyDecided) => {
@@ -447,6 +446,7 @@ fn record_scoped_grant(request_id: &str, decision: PermissionDecision) {
     use crate::approval_grants::GrantScope;
 
     let scope = match decision {
+        PermissionDecision::AllowAlways => GrantScope::Tool,
         PermissionDecision::AllowPath => GrantScope::Path,
         PermissionDecision::AllowFolder => GrantScope::Folder,
         _ => return,
@@ -466,6 +466,45 @@ fn record_scoped_grant(request_id: &str, decision: PermissionDecision) {
             request.action
         ));
     }
+}
+
+/// Withdraw per-connection bridges left over from an earlier subscribe.
+pub(super) fn clear_subscribe_bridges(
+    acp_installation: &mut Option<(String, u64)>,
+    client_bridge_installation: &mut Option<(String, u64)>,
+    permission_bridge_installation: &mut Option<(String, u64)>,
+    approval_override_installation: &mut Option<(String, u64)>,
+) {
+    if let Some((session, token)) = acp_installation.take() {
+        crate::tool::acp_session::clear(&session, token);
+    }
+    if let Some((session, token)) = client_bridge_installation.take() {
+        crate::tool::client_bridge::clear(&session, token);
+    }
+    if let Some((session, token)) = permission_bridge_installation.take() {
+        crate::tool::permission_bridge::clear(&session, token);
+    }
+    if let Some((session, token)) = approval_override_installation.take() {
+        crate::tool::approval_override::clear(&session, token);
+    }
+}
+
+/// Install the matching permission bridge when a client subscribes.
+pub(super) fn install_subscribe_permission_bridge(
+    acp_permission_requests: Option<bool>,
+    supports_permission_requests: bool,
+    session_id: &str,
+    connection_id: &str,
+    client_event_tx: mpsc::UnboundedSender<ServerEvent>,
+) -> Option<(String, u64)> {
+    let token = if acp_permission_requests == Some(true) {
+        crate::tool::permission_bridge::install(session_id, connection_id, client_event_tx)
+    } else if acp_permission_requests.is_none() && supports_permission_requests {
+        crate::tool::permission_bridge::install_interactive(session_id, connection_id, client_event_tx)
+    } else {
+        return None;
+    };
+    Some((session_id.to_owned(), token))
 }
 
 #[cfg(test)]

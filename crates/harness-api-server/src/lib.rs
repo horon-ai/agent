@@ -451,6 +451,7 @@ where
     state.session_tools_supported = session_tools_supported;
     state.supports_user_response = hello["supports_user_response"].as_bool().unwrap_or(false);
     state.supports_ask_requests = hello["supports_ask_requests"].as_bool().unwrap_or(false);
+    state.supports_permission_requests = hello["supports_permission_requests"].as_bool().unwrap_or(false);
     state.runtime_commands_supported = runtime_commands_supported;
     state.soft_interrupt_ids_supported = soft_interrupt_ids_supported;
     state.durable_runtime_api_supported = durable_runtime_api_supported;

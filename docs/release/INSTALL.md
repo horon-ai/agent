@@ -118,10 +118,10 @@ The client is optional at every step, and a copy that cannot be verified never b
 | The release publishes no archive for the platform | One line, then `horon-agent` alone |
 | `SHA256SUMS` has no entry for the archive | One line, then `horon-agent` alone |
 | The digest does not match | One line, then `horon-agent` alone |
-| `--source-binary`, or FreeBSD | No released client is staged; FreeBSD publishes `horon-agent` only |
+| `--source-binary`, or FreeBSD | Stages sibling `horon-tui` beside `--source-binary` when present (`install.sh` source fallback and `horon update` compile both when not on FreeBSD); FreeBSD publishes `horon-agent` only |
 | The version directory already exists | The client is added only when the file is absent; the version is immutable otherwise |
 
-`scripts/install/uninstall.sh` and `scripts/install/uninstall.ps1` list the `horon-tui` launcher in the install directory with the other targets and remove it, including one left behind by an older install.
+`scripts/install/uninstall.sh` honors `HORON_HOME` (and `${HORON_HOME}/bin` when `HORON_AGENT_INSTALL_DIR` is unset), stops only daemons scoped to that installation rather than killing unrelated homes, refuses unsafe `--purge` targets such as `/` or `$HOME`, and lists `horon-tui` in the install directory with the other targets (`uninstall.ps1` does the same on Windows).
 
 ## Running on a Linux server
 

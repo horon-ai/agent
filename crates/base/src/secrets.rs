@@ -36,7 +36,7 @@ pub(crate) mod rules {
 
     /// Whole-match token shapes, paired with the label their placeholders carry.
     pub(crate) const DIRECT: &[(&str, &str)] = &[
-        ("anthropic", r"sk-ant-(?:oat|ort)01-[A-Za-z0-9_-]{20,}"),
+        ("anthropic", r"sk-ant-(?:api\d{2}|(?:oat|ort)01)-[A-Za-z0-9_-]{20,}"),
         ("openrouter", r"sk-or-v1-[A-Za-z0-9_-]{20,}"),
         ("github", r"ghp_[A-Za-z0-9]{20,}"),
         ("github_pat", r"github_pat_[A-Za-z0-9_]{20,}"),

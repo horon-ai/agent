@@ -545,6 +545,7 @@ fn test_history_event_roundtrip_preserves_messages() -> Result<()> {
             tool_calls: None,
             tool_data: None,
             verdict: None,
+            is_error: None,
         }],
         images: Vec::new(),
         provider_name: Some("openai".to_string()),

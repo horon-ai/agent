@@ -185,12 +185,12 @@ async fn memory_cli_semantic_requires_jev_but_keyword_search_remains_local() {
         .expect("an empty project must not leak another project's candidates");
 }
 
-struct SavedEnv {
+pub(super) struct SavedEnv {
     vars: Vec<(String, Option<String>)>,
 }
 
 impl SavedEnv {
-    fn capture(keys: &[&str]) -> Self {
+    pub(super) fn capture(keys: &[&str]) -> Self {
         Self {
             vars: keys
                 .iter()
@@ -670,6 +670,8 @@ fn open_todos_do_not_consume_the_pending_gate_digest() {
 /// into the next turn and be raised again against work they never described.
 #[test]
 fn take_run_gate_digest_consumes_the_log_and_respects_delivery() {
+    use crate::cli::commands::auto_poke::take_run_gate_digest;
+
     let _guard = crate::storage::lock_test_env();
     let previous_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");

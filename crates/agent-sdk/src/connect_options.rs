@@ -27,6 +27,9 @@ pub struct ConnectOptions {
     /// connection that says it can ask one, so a client without a question
     /// screen must not claim one.
     pub supports_ask_requests: bool,
+    /// Whether this client renders `approval_pending` interactively and answers
+    /// via `respond_to_permission`, so gated tools park and run on approval.
+    pub supports_permission_requests: bool,
     /// Optional A2UI v1.0 renderer capabilities offered as the connection default.
     ///
     /// `None` by default so standard SDK sessions keep their prompt cache unchanged.
@@ -42,6 +45,7 @@ impl Default for ConnectOptions {
             ensure_runtime: true,
             supports_user_response: false,
             supports_ask_requests: false,
+            supports_permission_requests: false,
             a2ui: None,
         }
     }

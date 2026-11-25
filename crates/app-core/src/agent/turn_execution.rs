@@ -1,5 +1,5 @@
 use super::*;
-use crate::{terminal_eprintln as eprintln, terminal_println as println};
+use crate::terminal_eprintln as eprintln;
 
 pub(in crate::agent) mod audio;
 mod turn_token_usage;
@@ -1560,90 +1560,7 @@ impl Agent {
 
     /// Start an interactive REPL
     pub async fn repl(&mut self) -> Result<()> {
-        println!("horon-agent - Coding Agent");
-        println!("Type your message, or 'quit' to exit.");
-
-        // Show available skills
-        let skills = self.current_skills_snapshot();
-        let skill_list = skills.list();
-        if !skill_list.is_empty() {
-            println!(
-                "Available skills: {}",
-                skill_list
-                    .iter()
-                    .map(|s| format!("/{}", s.name))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
-        println!();
-
-        loop {
-            print!("> ");
-            io::stdout().flush()?;
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-
-            let input = input.trim();
-            if input.is_empty() {
-                continue;
-            }
-
-            if input == "quit" || input == "exit" {
-                break;
-            }
-
-            if input == "clear" {
-                self.clear();
-                println!("Conversation cleared.");
-                continue;
-            }
-
-            // Check for skill invocation. Resolve against the registry (not
-            // the bare tokenizer) so a `SKILL.md` `name:` field containing
-            // spaces, e.g. "My Custom Skill", can still be matched: the
-            // bare parse always stops at the first whitespace.
-            if let Some(invocation) = skills.resolve_invocation(input) {
-                if let Some(skill) = skills.get(invocation.name) {
-                    println!("Activating skill: {}", skill.name);
-                    println!("{}\n", skill.description);
-                    self.active_skill = Some(invocation.name.to_string());
-                    if let Some(prompt) = invocation.prompt {
-                        self.arm_effort_keywords(prompt);
-                        if let Err(e) = self.run_once(prompt).await {
-                            eprintln!("\nError: {}\n", e);
-                        }
-                        println!();
-                    }
-                    continue;
-                } else {
-                    println!("Unknown skill: /{}", invocation.name);
-                    println!(
-                        "Available: {}",
-                        skills
-                            .list()
-                            .iter()
-                            .map(|s| format!("/{}", s.name))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                    continue;
-                }
-            }
-
-            self.arm_effort_keywords(input);
-            if let Err(e) = self.run_once(input).await {
-                eprintln!("\nError: {}\n", e);
-            }
-
-            println!();
-        }
-
-        // Extract memories from session before exiting
-        self.extract_session_memories().await;
-
-        Ok(())
+        super::repl::run_repl(self).await
     }
 
     /// Extract memories from the session transcript
@@ -1739,7 +1656,8 @@ impl Agent {
                         _ => crate::memory::TrustLevel::Medium,
                     };
 
-                    let entry = crate::memory::MemoryEntry::new(category, &memory.content)
+                    let clean_content = crate::message::redact_secrets(&memory.content);
+                    let entry = crate::memory::MemoryEntry::new(category, &clean_content)
                         .with_source(&self.session.id)
                         .with_trust(trust);
 

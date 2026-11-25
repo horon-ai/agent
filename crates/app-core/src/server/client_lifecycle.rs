@@ -595,6 +595,7 @@ pub(super) async fn handle_client(
     let mut model_usage_updates_enabled = false;
     let mut supports_user_response = false;
     let mut supports_ask_requests = false;
+    let mut supports_permission_requests = false;
     let mut a2ui_capabilities: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities> = None;
     let mut ask_installation: Option<(String, u64)> = None;
     let mut acp_installation: Option<(String, u64)> = None;
@@ -1760,6 +1761,7 @@ pub(super) async fn handle_client(
                 system_prompt,
                 supports_user_response: requested_user_response,
                 supports_ask_requests: requested_ask_requests,
+                supports_permission_requests: requested_permission_requests,
                 working_dir: subscribe_working_dir,
                 target_session_id,
                 client_instance_id,
@@ -1843,6 +1845,7 @@ pub(super) async fn handle_client(
                 continue_on_disconnect = requested_continuation;
                 supports_user_response = requested_user_response;
                 supports_ask_requests = requested_ask_requests;
+                supports_permission_requests = requested_permission_requests;
                 a2ui_capabilities = requested_a2ui;
                 // Read before the attach below writes History, which carries
                 // stored message ids only for a connection that asked for them.
@@ -2046,18 +2049,13 @@ pub(super) async fn handle_client(
                 }
                 // ACP connections own their bridges by token, so a re-subscribe
                 // and a disconnect both withdraw exactly what they installed.
-                if let Some((session, token)) = acp_installation.take() {
-                    crate::tool::acp_session::clear(&session, token);
-                }
-                if let Some((session, token)) = client_bridge_installation.take() {
-                    crate::tool::client_bridge::clear(&session, token);
-                }
-                if let Some((session, token)) = permission_bridge_installation.take() {
-                    crate::tool::permission_bridge::clear(&session, token);
-                }
-                if let Some((session, token)) = approval_override_installation.take() {
-                    crate::tool::approval_override::clear(&session, token);
-                }
+                super::client_ask::clear_subscribe_bridges(
+                    &mut acp_installation,
+                    &mut client_bridge_installation,
+                    &mut permission_bridge_installation,
+                    &mut approval_override_installation,
+                );
+                let acp_permission_requests = acp_options.as_ref().map(|options| options.permission_requests);
                 if let Some(options) = acp_options {
                     let token = crate::tool::acp_session::install_with_version(
                         &client_session_id,
@@ -2075,14 +2073,6 @@ pub(super) async fn handle_client(
                         );
                         client_bridge_installation = Some((client_session_id.clone(), token));
                     }
-                    if options.permission_requests {
-                        let token = crate::tool::permission_bridge::install(
-                            &client_session_id,
-                            &client_connection_id,
-                            client_event_tx.clone(),
-                        );
-                        permission_bridge_installation = Some((client_session_id.clone(), token));
-                    }
                     // The directory list belongs to the session, not to this
                     // attachment: the context is captured with it once, and a
                     // later attachment that changes it queues one reminder.
@@ -2091,6 +2081,13 @@ pub(super) async fn handle_client(
                         .await
                         .set_additional_dirs(options.additional_dirs.clone());
                 }
+                permission_bridge_installation = super::client_ask::install_subscribe_permission_bridge(
+                    acp_permission_requests,
+                    supports_permission_requests,
+                    &client_session_id,
+                    &client_connection_id,
+                    client_event_tx.clone(),
+                );
                 client_subscribed = true;
                 provisional_session = false;
             }

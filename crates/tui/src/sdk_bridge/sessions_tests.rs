@@ -276,6 +276,7 @@ fn the_dial_settings_survive_the_first_connection_taking_the_options() {
         ensure_runtime: false,
         supports_user_response: true,
         supports_ask_requests: false,
+        supports_permission_requests: true,
         a2ui: None,
     };
     let again = Dial::of(&loaded).options();
@@ -285,6 +286,7 @@ fn the_dial_settings_survive_the_first_connection_taking_the_options() {
     assert_eq!(again.ensure_runtime, loaded.ensure_runtime);
     assert_eq!(again.supports_user_response, loaded.supports_user_response);
     assert_eq!(again.supports_ask_requests, loaded.supports_ask_requests);
+    assert_eq!(again.supports_permission_requests, loaded.supports_permission_requests);
 
     let bare = ConnectOptions {
         socket_path: None,
@@ -293,6 +295,7 @@ fn the_dial_settings_survive_the_first_connection_taking_the_options() {
         ensure_runtime: true,
         supports_user_response: false,
         supports_ask_requests: true,
+        supports_permission_requests: false,
         a2ui: None,
     };
     let again = Dial::of(&bare).options();
@@ -302,6 +305,7 @@ fn the_dial_settings_survive_the_first_connection_taking_the_options() {
     assert_eq!(again.ensure_runtime, bare.ensure_runtime);
     assert_eq!(again.supports_user_response, bare.supports_user_response);
     assert_eq!(again.supports_ask_requests, bare.supports_ask_requests);
+    assert_eq!(again.supports_permission_requests, bare.supports_permission_requests);
 }
 
 #[test]

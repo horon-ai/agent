@@ -621,10 +621,8 @@ fn approval_answer_line(covered: &Option<Prompt>, approved: bool, always: bool) 
         Some(Prompt::Ask(_)) | None => "the call",
     };
     match (approved, always) {
-        (true, true) => format!(
-            "you allowed {action}: recorded once (the daemon keeps no always-rule), so the model has to call it again"
-        ),
-        (true, false) => format!("you allowed {action}: the model has to call it again before it runs"),
+        (true, true) => format!("you always allowed {action} in this workspace; continuing"),
+        (true, false) => format!("you allowed {action}; continuing"),
         (false, _) => format!("you denied {action}: the call will not run"),
     }
 }

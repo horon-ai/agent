@@ -688,6 +688,10 @@ else
     || err "Failed to clone $REPO at $VERSION"
   cargo build --release --locked --manifest-path "$src_dir/Cargo.toml" \
     || err "cargo build failed while building $REPO from source"
+  if [ "$OS" != "FreeBSD" ]; then
+    cargo build --release --locked --manifest-path "$src_dir/Cargo.toml" -p horon-tui \
+      || err "cargo build failed while building horon-tui from source"
+  fi
 
   bootstrap_bin="$src_dir/target/release/$bin_name"
   [ -f "$bootstrap_bin" ] || err "Built binary not found at $bootstrap_bin"

@@ -39,6 +39,7 @@ pub use listing::{GrantView, list, revoke, revoke_all};
 pub(crate) enum GrantCapability {
     Append,
     Write,
+    All,
 }
 
 impl GrantCapability {
@@ -59,6 +60,7 @@ impl GrantCapability {
         match self {
             Self::Append => "append",
             Self::Write => "write",
+            Self::All => "all",
         }
     }
 
@@ -66,6 +68,7 @@ impl GrantCapability {
         match value {
             "append" => Some(Self::Append),
             "write" => Some(Self::Write),
+            "all" => Some(Self::All),
             _ => None,
         }
     }
@@ -73,18 +76,20 @@ impl GrantCapability {
     /// Whether a grant of `self` answers a call that needs `needed`.
     fn covers(self, needed: Self) -> bool {
         match self {
-            Self::Write => true,
+            Self::Write => needed != Self::All,
             Self::Append => needed == Self::Append,
+            Self::All => false,
         }
     }
 }
 
-/// What a grant covers: one path, or everything under it.
+/// What a grant covers: one path, everything under it, or one tool in a workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum GrantScope {
     Path,
     Folder,
+    Tool,
 }
 
 /// One stored answer.
@@ -105,7 +110,15 @@ impl Grant {
         match self.scope {
             GrantScope::Path => target == self.path,
             GrantScope::Folder => target.starts_with(&self.path),
+            GrantScope::Tool => false,
         }
+    }
+
+    fn covers_tool(&self, tool: &str, workspace: &Path, now: Timestamp) -> bool {
+        self.scope == GrantScope::Tool
+            && self.workspace == workspace
+            && self.path == Path::new(tool)
+            && now < self.expires_at
     }
 }
 
@@ -223,16 +236,21 @@ pub(crate) fn covered(tool: &str, input: &serde_json::Value, working_dir: Option
     if config().tools.approval_grant_ttl_days == 0 {
         return false;
     }
-    let Some(needed) = GrantCapability::from_effects(effects) else {
+    let Some(workspace) = workspace_root(working_dir) else {
         return false;
     };
-    let Some(workspace) = workspace_root(working_dir) else {
+    let grants = load_grants();
+    let now = Timestamp::now();
+    if grants.iter().any(|grant| grant.covers_tool(tool, &workspace, now)) {
+        return true;
+    }
+    let Some(needed) = GrantCapability::from_effects(effects) else {
         return false;
     };
     let Some(targets) = canonical_targets(tool, input, working_dir) else {
         return false;
     };
-    covered_by(&load_grants(), &workspace, &targets, needed, Timestamp::now())
+    covered_by(&grants, &workspace, &targets, needed, now)
 }
 
 fn covered_by(
@@ -298,26 +316,44 @@ fn grant_from_request_at(
         return None;
     }
     let context = request.context.as_ref()?;
-    let capability = context
-        .get("grant_capability")
-        .and_then(serde_json::Value::as_str)
-        .and_then(GrantCapability::parse)?;
-    let input = context.get("input")?;
     let working_dir = context
         .get("working_dir")
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
     let workspace = workspace_root(working_dir.as_deref())?;
-    if named_path_texts(&request.action, input).len() != 1 {
-        return None;
-    }
-    let target = canonical_target(&named_paths(&request.action, input, working_dir.as_deref())[0])?;
-    // A folder grant covers the directory the file lives in, not the file: the
-    // user answered "stop asking about this folder", and storing the file path
-    // would make `starts_with` cover that one file and nothing beside it.
-    let target = match scope {
-        GrantScope::Path => target,
-        GrantScope::Folder => target.parent()?.to_path_buf(),
+    let (target, capability) = match scope {
+        GrantScope::Tool => {
+            if request.action == "eval"
+                || request.urgency == crate::safety::Urgency::High
+                || request.action.is_empty()
+                || request.action.contains(['/', '\\'])
+                || request.action.chars().any(char::is_control)
+            {
+                return None;
+            }
+            (PathBuf::from(request.action.as_str()), GrantCapability::All)
+        }
+        GrantScope::Path | GrantScope::Folder => {
+            let capability = context
+                .get("grant_capability")
+                .and_then(serde_json::Value::as_str)
+                .and_then(GrantCapability::parse)
+                .filter(|cap| *cap != GrantCapability::All)?;
+            let input = context.get("input")?;
+            if named_path_texts(&request.action, input).len() != 1 {
+                return None;
+            }
+            let target = canonical_target(&named_paths(&request.action, input, working_dir.as_deref())[0])?;
+            // A folder grant covers the directory the file lives in, not the file: the
+            // user answered "stop asking about this folder", and storing the file path
+            // would make `starts_with` cover that one file and nothing beside it.
+            let target = match scope {
+                GrantScope::Path => target,
+                GrantScope::Folder => target.parent()?.to_path_buf(),
+                GrantScope::Tool => unreachable!(),
+            };
+            (target, capability)
+        }
     };
     Some(Grant {
         workspace,

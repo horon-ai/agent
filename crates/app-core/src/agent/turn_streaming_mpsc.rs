@@ -48,6 +48,8 @@ impl Agent {
             super::stream_rules::user_turn_index(&self.session),
         );
         self.reset_a2ui_turn();
+        self.last_guardrail_notice = None;
+        let mut recovered_partial_prefix = String::new();
 
         loop {
             // Never open a new provider request after a cancel. Several paths
@@ -504,6 +506,18 @@ impl Agent {
                                 summary_chars: None,
                                 active_messages: None,
                             });
+                            break;
+                        }
+                        if self
+                            .try_recover_truncated_prefix(
+                                &err_str,
+                                &text_content,
+                                !tool_calls.is_empty(),
+                                &mut recovered_partial_prefix,
+                            )
+                            .await?
+                        {
+                            retry_after_recovery = true;
                             break;
                         }
                         log_agent_provider_stream_lifecycle(
@@ -1140,6 +1154,18 @@ impl Agent {
                             });
                             break;
                         }
+                        if self
+                            .try_recover_truncated_prefix(
+                                &message,
+                                &text_content,
+                                !tool_calls.is_empty(),
+                                &mut recovered_partial_prefix,
+                            )
+                            .await?
+                        {
+                            retry_after_recovery = true;
+                            break;
+                        }
                         log_agent_provider_stream_lifecycle(
                             logging::LogLevel::Error,
                             self,
@@ -1449,32 +1475,19 @@ impl Agent {
                         {
                             let _ = event_tx.send(event);
                         }
-                        // Surface silent guardrail/refusal stops: the provider
-                        // ended the turn with no visible output (e.g. Anthropic
-                        // stop_reason "refusal", or a reasoning-only response).
-                        // Only when the provider actually finished the message
-                        // (saw_message_end) and the user did not cancel, so
-                        // interrupted turns never show a spurious notice.
-                        if saw_message_end
-                            && !self.is_graceful_shutdown()
-                            && let Some(notice) = Self::provider_guardrail_notice(
+                        if saw_message_end && !self.is_graceful_shutdown() {
+                            self.emit_provider_guardrail_if_empty(
                                 stop_reason.as_deref(),
-                                text_content.trim().is_empty(),
+                                text_content.trim().is_empty() && recovered_partial_prefix.trim().is_empty(),
                                 !reasoning_content.trim().is_empty(),
-                            )
-                        {
-                            logging::warn(&format!(
-                                "{}: turn ended with no visible output (stop_reason={:?}, reasoning_chars={})",
-                                Self::empty_turn_log_event(stop_reason.as_deref()),
-                                stop_reason,
-                                reasoning_content.len()
-                            ));
-                            let _ = event_tx.send(ServerEvent::ProviderGuardrail {
-                                stop_reason: stop_reason.clone(),
-                                message: notice,
-                            });
+                                reasoning_content.len(),
+                                &event_tx,
+                            );
                         }
                         self.flush_deferred_a2ui_blocks()?;
+                        if !recovered_partial_prefix.is_empty() {
+                            text_content = format!("{recovered_partial_prefix}{text_content}");
+                        }
                         self.turn_state.set_final_text(&text_content);
                         let outcome = if self.is_graceful_shutdown() {
                             TurnOutcome::Aborted

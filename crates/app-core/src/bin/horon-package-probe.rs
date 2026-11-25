@@ -49,6 +49,10 @@ fn main() -> ExitCode {
         eprintln!("horon-package-probe: the launcher did not set HORON_PACKAGE_ID");
         return ExitCode::from(2);
     };
+    if package_id == "probe-stderr" {
+        eprintln!("boom on stderr");
+        return ExitCode::from(1);
+    }
     let digest = match declaration_digest(&root) {
         Ok(digest) => digest,
         Err(error) => {

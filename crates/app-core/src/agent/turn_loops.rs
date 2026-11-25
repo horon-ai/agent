@@ -529,6 +529,8 @@ impl Agent {
             super::stream_rules::user_turn_index(&self.session),
         );
         self.reset_a2ui_turn();
+        self.last_guardrail_notice = None;
+        let mut recovered_partial_prefix = String::new();
 
         loop {
             // Do not start another provider request once a cancel has been
@@ -809,6 +811,20 @@ impl Agent {
                                 ));
                             }
                             retry_after_compaction = true;
+                            break;
+                        }
+                        if self
+                            .maybe_recover_truncated_stream(&err_str, &text_content, !tool_calls.is_empty())
+                            .await?
+                        {
+                            if !text_content.trim().is_empty() {
+                                recovered_partial_prefix.push_str(&text_content);
+                            }
+                            if print_output && !text_content.is_empty() {
+                                println!();
+                                io::stdout().flush()?;
+                            }
+                            retry_after_recovery = true;
                             break;
                         }
                         log_agent_provider_stream_lifecycle(
@@ -1266,6 +1282,20 @@ impl Agent {
                             retry_after_compaction = true;
                             break;
                         }
+                        if self
+                            .maybe_recover_truncated_stream(&message, &text_content, !tool_calls.is_empty())
+                            .await?
+                        {
+                            if !text_content.trim().is_empty() {
+                                recovered_partial_prefix.push_str(&text_content);
+                            }
+                            if print_output && !text_content.is_empty() {
+                                println!();
+                                io::stdout().flush()?;
+                            }
+                            retry_after_recovery = true;
+                            break;
+                        }
                         log_agent_provider_stream_lifecycle(
                             logging::LogLevel::Error,
                             self,
@@ -1494,9 +1524,10 @@ impl Agent {
                 // an empty final answer with no explanation.
                 if let Some(notice) = Self::provider_guardrail_notice(
                     stop_reason.as_deref(),
-                    visible_text_is_empty,
+                    visible_text_is_empty && recovered_partial_prefix.trim().is_empty(),
                     !reasoning_content.trim().is_empty(),
                 ) {
+                    self.last_guardrail_notice = Some(notice.clone());
                     logging::warn(&format!(
                         "{}: turn ended with no visible output (stop_reason={:?})",
                         Self::empty_turn_log_event(stop_reason.as_deref()),
@@ -1514,6 +1545,9 @@ impl Agent {
                     println!();
                 }
                 self.flush_deferred_a2ui_blocks()?;
+                if !recovered_partial_prefix.is_empty() {
+                    text_content = format!("{recovered_partial_prefix}{text_content}");
+                }
                 self.turn_state.set_final_text(&text_content);
                 let outcome = if self.is_graceful_shutdown() {
                     TurnOutcome::Aborted

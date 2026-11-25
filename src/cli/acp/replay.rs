@@ -64,10 +64,24 @@ pub(super) fn replay_updates(
                     if let Some(entry) = a2ui::extract_replay_a2ui_message(&call.id, &call.input, &message.content) {
                         pending_a2ui.push(entry);
                     } else if !options.a2ui {
-                        tool_updates(&mut updates, call, &message.content, message.verdict, options);
+                        tool_updates(
+                            &mut updates,
+                            call,
+                            &message.content,
+                            message.is_error,
+                            message.verdict,
+                            options,
+                        );
                     }
                 }
-                Some(call) => tool_updates(&mut updates, call, &message.content, message.verdict, options),
+                Some(call) => tool_updates(
+                    &mut updates,
+                    call,
+                    &message.content,
+                    message.is_error,
+                    message.verdict,
+                    options,
+                ),
                 None => updates.push(agent_text(index, &message.content)),
             },
             "system" => {
@@ -124,22 +138,25 @@ fn flush_pending_a2ui(
     }
 }
 
-/// A completed call: the call, the plan a todo write showed, then the final
-/// update with the stored result text and the stored verdict, when there is one.
+/// A completed (or failed) call: the call, the plan a todo write showed, then
+/// the final update with the stored result text and the stored verdict, when
+/// there is one.
 fn tool_updates(
     updates: &mut Vec<Value>,
     call: &crate::message::ToolCall,
     output: &str,
+    is_error: Option<bool>,
     verdict: Option<crate::tool::ToolVerdict>,
     options: &MapperOptions,
 ) {
+    let failed = is_error == Some(true);
     let mut started = json!({
         "sessionUpdate": "tool_call",
         "toolCallId": call.id,
         "name": call.name,
         "title": tool_title(&call.name),
         "kind": tool_kind(&call.name),
-        "status": "completed",
+        "status": if failed { "pending" } else { "completed" },
     });
     if call.input.is_object()
         && let Some(object) = started.as_object_mut()
@@ -160,7 +177,7 @@ fn tool_updates(
         "toolCallId": call.id,
         "title": tool_title(&call.name),
         "kind": tool_kind(&call.name),
-        "status": "completed",
+        "status": if failed { "failed" } else { "completed" },
         "content": [{ "type": "content", "content": text_block(output) }],
         "rawOutput": { "output": output },
     });

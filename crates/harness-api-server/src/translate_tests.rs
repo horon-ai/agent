@@ -3460,6 +3460,7 @@ fn history_response_stats_cross_real_render_protocol_and_sdk_boundary() {
             tool_calls: None,
             tool_data: row.tool_data,
             response_stats: row.response_stats,
+            is_error: None,
             verdict: None,
         })
         .collect();

@@ -697,6 +697,25 @@ async fn a_blocking_pre_tool_gate_keeps_the_call_from_the_child() {
     assert!(h.record("probe-ext", "starts.log").is_empty(), "no child started");
 }
 
+#[tokio::test]
+async fn early_child_exit_includes_stderr_in_initialize_error() {
+    let _env = TEST_ENV.lock().await;
+    let mut h = harness("[tools]\nprofile = \"core\"\n").await;
+    let fixture = extension_fixture("probe-stderr", &["greet"], &[]);
+
+    h.install(fixture.path());
+    h.enter().await;
+
+    let error = h
+        .call(&public_name("probe-stderr", "greet"), json!({}))
+        .await
+        .expect_err("exiting child must fail initialize");
+    assert!(
+        error.to_string().contains("boom on stderr"),
+        "expected stderr snippet in error: {error}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Collision and revocation
 // ---------------------------------------------------------------------------

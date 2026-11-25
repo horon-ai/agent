@@ -58,7 +58,22 @@ pub fn metered_pricing_for_source_with_tier(
     }
 
     // 2. Live models.dev catalog (disk cache; refreshes in the background).
-    let (cost, matched) = crate::model_pricing::lookup_with_provenance(source_key, model)?;
+    let (cost, matched) = match crate::model_pricing::lookup_with_provenance(source_key, model) {
+        Some(hit) => hit,
+        None => {
+            // For custom OpenAI-compatible profiles whose models.dev table did not
+            // match (or before a catalog refresh exists), fall back to curated vendor
+            // pricing for well-known upstream OpenAI/Anthropic model ids so spend caps
+            // still track usage instead of treating them as $0.0000.
+            if source_key.starts_with("openai-compatible:")
+                && crate::model_pricing::models_dev_provider_id(source_key).is_none()
+            {
+                return core_pricing::openai_api_pricing_with_tier(model, service_tier)
+                    .or_else(|| core_pricing::anthropic_api_pricing_with_tier(model, service_tier));
+            }
+            return None;
+        }
+    };
     // A price borrowed from other providers' listings (reseller fallback) is
     // a reasonable estimate, not the route's own published rate.
     let (confidence, note) = match matched {

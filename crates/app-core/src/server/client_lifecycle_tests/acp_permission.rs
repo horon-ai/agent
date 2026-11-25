@@ -417,19 +417,16 @@ async fn acp_permission_bridge_round_trip_and_plain_turn_never_prompts() {
     until_without_prompt(&mut acp_reader, |event| matches!(event, ServerEvent::Done { id: 20 })).await;
     assert!(!denied_marker.exists(), "a denied shell call never runs");
 
-    // A plain file write runs in write mode without asking.
-    let written = work.join("written.txt");
+    // A plain read runs in write mode without asking, while file mutations prompt.
+    let readable = work.join("readable.txt");
+    std::fs::write(&readable, "from the editor workspace").expect("seed workspace file");
     provider.push_tool_call(
-        "call-write",
-        "write",
-        json!({"file_path": written.display().to_string(), "content": "from the editor turn", "intent": "qa"}),
+        "call-read",
+        "read",
+        json!({"file_path": readable.display().to_string(), "intent": "qa"}),
     );
-    send_line(&mut acp, json!({"type": "message", "id": 30, "content": "write run"})).await;
+    send_line(&mut acp, json!({"type": "message", "id": 30, "content": "read run"})).await;
     until_without_prompt(&mut acp_reader, |event| matches!(event, ServerEvent::Done { id: 30 })).await;
-    assert_eq!(
-        std::fs::read_to_string(&written).expect("the write ran without a request"),
-        "from the editor turn"
-    );
 
     // A plain connection's turn on the same session never reaches the editor
     // and does not inherit the editor's "write" mode.
@@ -475,4 +472,150 @@ async fn acp_permission_bridge_round_trip_and_plain_turn_never_prompts() {
         .unwrap()
         .unwrap()
         .unwrap();
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "HORON_HOME is process-global; tests serialize env access under lock_test_env"
+)]
+async fn interactive_client_blocks_for_decision_and_allow_always_persists_tool_grant() {
+    let _lock = crate::storage::lock_test_env();
+    let home = tempfile::tempdir().expect("isolated agent home");
+    let runtime = tempfile::tempdir().expect("isolated runtime dir");
+    let work = home.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let prev_home = std::env::var_os("HORON_HOME");
+    let prev_runtime = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
+    std::fs::write(home.path().join("config.toml"), "[tools]\napproval_mode = \"write\"\n").unwrap();
+    crate::env::set_var("HORON_HOME", home.path());
+    crate::env::set_var("HORON_AGENT_RUNTIME_DIR", runtime.path());
+    crate::config::invalidate_config_cache();
+
+    let run = async {
+        let provider = ScriptedToolProvider::default();
+        let provider_template: Arc<dyn Provider> = Arc::new(provider.clone());
+        let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::new()));
+        let global_session_id = Arc::new(RwLock::new(String::new()));
+        let client_count = Arc::new(RwLock::new(0usize));
+        let client_connections = Arc::new(RwLock::new(HashMap::new()));
+        let swarm_members = Arc::new(RwLock::new(HashMap::new()));
+        let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
+        let plan_proposals = Arc::new(RwLock::new(HashMap::new()));
+        let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
+        let swarm_coordinators = Arc::new(RwLock::new(HashMap::new()));
+        let file_touch = FileTouchService::new();
+        let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
+        let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let (swarm_event_tx, _) = broadcast::channel(8);
+        let (global_event_tx, _) = broadcast::channel(8);
+        let global_is_processing = Arc::new(RwLock::new(false));
+        let shutdown_signals = Arc::new(RwLock::new(HashMap::new()));
+        let soft_interrupt_queues: SessionInterruptQueues = Arc::new(RwLock::new(HashMap::new()));
+        let mcp_pool = Arc::new(crate::mcp::SharedMcpPool::from_default_config());
+
+        let (server_stream, client_stream) = crate::transport::Stream::pair().expect("socket pair");
+        let task = tokio::spawn(handle_client(
+            server_stream,
+            Arc::clone(&sessions),
+            global_event_tx,
+            provider_template,
+            global_is_processing,
+            global_session_id,
+            client_count,
+            client_connections,
+            swarm_members,
+            swarms_by_id,
+            plan_proposals,
+            swarm_plans,
+            swarm_coordinators,
+            file_touch,
+            event_history,
+            event_counter,
+            swarm_event_tx,
+            "horon-agent-test".to_string(),
+            "test".to_string(),
+            mcp_pool,
+            shutdown_signals,
+            soft_interrupt_queues,
+            AwaitMembersRuntime::default(),
+            SwarmMutationRuntime::default(),
+            Duration::ZERO,
+        ));
+        let (reader, mut writer) = client_stream.into_split();
+        let mut reader = BufReader::new(reader);
+
+        send_line(
+            &mut writer,
+            json!({
+                "type": "subscribe",
+                "id": 1,
+                "working_dir": work,
+                "supports_permission_requests": true,
+            }),
+        )
+        .await;
+        until_without_prompt(&mut reader, |event| matches!(event, ServerEvent::Done { id: 1 })).await;
+
+        let marker1 = work.join("interactive-1.marker");
+        provider.push_tool_call(
+            "call-interactive-1",
+            "bash",
+            json!({"command": format!("touch '{}'", marker1.display()), "intent": "qa"}),
+        );
+        send_line(&mut writer, json!({"type": "message", "id": 10, "content": "first"})).await;
+        let pending = until_without_prompt(&mut reader, |event| {
+            matches!(event, ServerEvent::ApprovalPending { .. })
+        })
+        .await;
+        let ServerEvent::ApprovalPending { request_id, .. } = pending else {
+            unreachable!()
+        };
+        assert!(!marker1.exists(), "bash must block until interactive client answers");
+
+        send_line(
+            &mut writer,
+            json!({"type": "permission_decision", "id": 11, "request_id": request_id, "decision": "allow_always"}),
+        )
+        .await;
+        until_without_prompt(&mut reader, |event| matches!(event, ServerEvent::Done { id: 10 })).await;
+        assert!(marker1.exists(), "allow_always must let the blocked tool finish");
+
+        let marker2 = work.join("interactive-2.marker");
+        provider.push_tool_call(
+            "call-interactive-2",
+            "bash",
+            json!({"command": format!("touch '{}'", marker2.display()), "intent": "qa"}),
+        );
+        send_line(&mut writer, json!({"type": "message", "id": 20, "content": "second"})).await;
+        let done2 = until_without_prompt(&mut reader, |event| {
+            if matches!(event, ServerEvent::ApprovalPending { .. }) {
+                panic!("subsequent bash call in same workspace must reuse persisted tool grant: {event:?}");
+            }
+            matches!(event, ServerEvent::Done { id: 20 })
+        })
+        .await;
+        assert!(matches!(done2, ServerEvent::Done { id: 20 }));
+        assert!(marker2.exists(), "second bash call must execute automatically");
+
+        sessions.write().await.clear();
+        drop(writer);
+        drop(reader);
+        tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    };
+    run.await;
+
+    match prev_home {
+        Some(v) => crate::env::set_var("HORON_HOME", v),
+        None => crate::env::remove_var("HORON_HOME"),
+    }
+    match prev_runtime {
+        Some(v) => crate::env::set_var("HORON_AGENT_RUNTIME_DIR", v),
+        None => crate::env::remove_var("HORON_AGENT_RUNTIME_DIR"),
+    }
+    crate::config::Config::invalidate_cache();
 }

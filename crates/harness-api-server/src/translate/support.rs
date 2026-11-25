@@ -30,3 +30,36 @@ pub(crate) struct PendingAttach {
     pub(crate) requested_session: Option<String>,
     pub(crate) create_dir: Option<String>,
 }
+
+/// Populate `working_dir` or `target_session_id` on a subscribe frame and return the directory for `create_session`.
+pub(crate) fn apply_session_subscribe_target(
+    subscribe: &mut Value,
+    request: &Value,
+    is_create: bool,
+) -> Option<String> {
+    if is_create {
+        subscribe["fresh_session"] = serde_json::json!(true);
+        if let Some(prompt) = request["system_prompt"].as_str() {
+            subscribe["system_prompt"] = serde_json::json!(prompt);
+        }
+        let working_dir = match request["working_dir"].as_str() {
+            Some(dir) => Some(dir.to_string()),
+            None => match std::env::current_dir() {
+                Ok(dir) => Some(dir.display().to_string()),
+                Err(error) => {
+                    horon_agent_base::logging::warn(&format!("create_session could not read current_dir: {error}"));
+                    None
+                }
+            },
+        };
+        subscribe["working_dir"] = serde_json::json!(working_dir);
+        working_dir
+    } else if let Some(target) = request["session_id"].as_str() {
+        // The daemon owns both live and persisted session roots. Empty panels
+        // have no file yet, and a cached disk cwd may be older than the live Agent.
+        subscribe["target_session_id"] = serde_json::json!(target);
+        None
+    } else {
+        None
+    }
+}

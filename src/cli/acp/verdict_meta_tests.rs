@@ -102,3 +102,33 @@ fn initialize_results_do_not_mention_the_verdict() {
         assert!(!v2.contains("verdict"), "{v2}");
     }
 }
+
+#[test]
+fn replay_marks_failed_tool_results_with_failed_status() {
+    let history: Vec<HistoryMessage> = serde_json::from_value(json!([
+        {"role": "user", "content": "check"},
+        {
+            "role": "tool",
+            "content": "exit status 1",
+            "is_error": true,
+            "verdict": "failed",
+            "tool_data": {"id": "call-err", "name": "bash", "input": {"command": "false"}}
+        },
+        {
+            "role": "tool",
+            "content": "ok",
+            "verdict": "ok",
+            "tool_data": {"id": "call-ok", "name": "bash", "input": {"command": "true"}}
+        }
+    ]))
+    .expect("history rows");
+    let updates = replay_updates(&history, &[], &MapperOptions::default());
+    assert_eq!(updates[1]["sessionUpdate"], "tool_call");
+    assert_eq!(updates[1]["status"], "pending");
+    assert_eq!(updates[2]["sessionUpdate"], "tool_call_update");
+    assert_eq!(updates[2]["status"], "failed");
+    assert_eq!(updates[3]["sessionUpdate"], "tool_call");
+    assert_eq!(updates[3]["status"], "completed");
+    assert_eq!(updates[4]["sessionUpdate"], "tool_call_update");
+    assert_eq!(updates[4]["status"], "completed");
+}

@@ -86,6 +86,7 @@ struct State {
 pub(crate) struct PermissionBridge {
     session_id: String,
     connection_id: String,
+    emit_acp_request: bool,
     tx: mpsc::UnboundedSender<ServerEvent>,
     state: Mutex<State>,
     waiters_changed: Notify,
@@ -105,16 +106,37 @@ fn lock() -> MutexGuard<'static, HashMap<String, Installed>> {
     registry().lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Offer `connection_id` as the approver for turns it starts in `session_id`.
+/// Offer `connection_id` as the ACP approver for turns it starts in `session_id`.
 ///
 /// Replaces any previous installation and returns the token a later [`clear`]
 /// must present.
 pub(crate) fn install(session_id: &str, connection_id: &str, tx: mpsc::UnboundedSender<ServerEvent>) -> u64 {
+    install_with_mode(session_id, connection_id, tx, true)
+}
+
+/// Offer a non-ACP interactive client (`horon-tui` / SDK with
+/// `supports_permission_requests`) as the approver for turns it starts in
+/// `session_id`, relying on `ApprovalPending` without emitting ACP-only frames.
+pub(crate) fn install_interactive(
+    session_id: &str,
+    connection_id: &str,
+    tx: mpsc::UnboundedSender<ServerEvent>,
+) -> u64 {
+    install_with_mode(session_id, connection_id, tx, false)
+}
+
+fn install_with_mode(
+    session_id: &str,
+    connection_id: &str,
+    tx: mpsc::UnboundedSender<ServerEvent>,
+    emit_acp_request: bool,
+) -> u64 {
     static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
     let token = NEXT_TOKEN.fetch_add(1, Ordering::Relaxed);
     let bridge = Arc::new(PermissionBridge {
         session_id: session_id.to_string(),
         connection_id: connection_id.to_string(),
+        emit_acp_request,
         tx,
         state: Mutex::new(State::default()),
         waiters_changed: Notify::new(),
@@ -148,7 +170,12 @@ pub(crate) fn clear(session_id: &str, token: u64) {
 /// another connection (or none is running).
 pub(crate) fn for_session(session_id: &str) -> Option<Arc<PermissionBridge>> {
     let bridge = lock().get(session_id).map(|entry| Arc::clone(&entry.bridge))?;
-    acp_session::turn_owned_by(session_id, &bridge.connection_id).then_some(bridge)
+    let owns = if bridge.emit_acp_request {
+        acp_session::turn_owned_by(session_id, &bridge.connection_id)
+    } else {
+        acp_session::connection_owns_turn(session_id, &bridge.connection_id)
+    };
+    owns.then_some(bridge)
 }
 
 /// Whether a tool call in `session_id` is waiting for the editor's answer.
@@ -387,14 +414,20 @@ impl PermissionBridge {
                     .unwrap_or_else(|_| horon_agent_time::Duration::seconds(1800)),
         );
         crate::safety::dispatch_permission_notification(resolved_name, &description, request_id);
-        let asked = self.tx.send(ServerEvent::ToolPermissionRequested {
-            request_id: request_id.to_string(),
-            tool_call_id: ctx.tool_call_id.clone(),
-            tool_name: resolved_name.to_string(),
-            title: format!("{resolved_name}: {reason}"),
-            input: input.clone(),
-        });
-        if asked.is_err() {
+        let asked_ok = if self.emit_acp_request {
+            self.tx
+                .send(ServerEvent::ToolPermissionRequested {
+                    request_id: request_id.to_string(),
+                    tool_call_id: ctx.tool_call_id.clone(),
+                    tool_name: resolved_name.to_string(),
+                    title: format!("{resolved_name}: {reason}"),
+                    input: input.clone(),
+                })
+                .is_ok()
+        } else {
+            !self.tx.is_closed()
+        };
+        if !asked_ok {
             self.settle(request_id, Outcome::denied(DISCONNECTED_VIA), Source::Local);
             return Err(denial_text(resolved_name, request_id, DISCONNECTED_VIA));
         }

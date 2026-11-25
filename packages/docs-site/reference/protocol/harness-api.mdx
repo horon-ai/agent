@@ -948,18 +948,19 @@ The `ask` tool shows a person a question and waits for the answer. The daemon dr
 | Field | Type | When absent | Meaning |
 | --- | --- | --- | --- |
 | `supports_ask_requests` | boolean | `false` | This connection draws the `ask` tool's questions and answers them |
+| `supports_permission_requests` | boolean | `false` | This connection prompts on `approval_pending` and answers with `permission_decision` interactively |
 
-The bridge reads the field with `hello["supports_ask_requests"].as_bool().unwrap_or(false)` (`crates/harness-api-server/src/lib.rs`), so a client that predates the field advertises nothing and keeps working. The field is not a capability string and not a protocol-minor negotiation: it gates the direction the person is asked in. A session whose attached connection advertised it gets the question there and the call waits for the answer; a session without such a connection falls back to `ask_policy` (`docs/safety/SAFETY.md`).
+The bridge reads `hello["supports_ask_requests"].as_bool().unwrap_or(false)` and `hello["supports_permission_requests"].as_bool().unwrap_or(false)` (`crates/harness-api-server/src/lib.rs`), so a client that predates either field advertises nothing and keeps working. Neither field is a capability string or protocol-minor negotiation: each gates whether a turn waits for an interactive reply on this connection. A session whose attached connection advertised `supports_ask_requests` receives the question there and waits; otherwise it falls back to `ask_policy` (`docs/safety/SAFETY.md`). Likewise, when the attached turn-owning connection advertises `supports_permission_requests`, gated tool calls emit `approval_pending` and block until `permission_decision` (`allow`, `allow_always`, `deny`) is sent rather than failing immediately for the model to retry.
 
-The SDKs expose it as one connect option, and all three default it to off:
+The SDKs expose both as connect options, and all three default them to off:
 
-| SDK | Option | Default |
-| --- | --- | --- |
-| Rust | `ConnectOptions::supports_ask_requests` | `false` |
-| TypeScript | `supportsAskRequests` | `false` |
-| Python | `supports_ask_requests` | `False` |
+| SDK | `ask` option | Permission option | Default |
+| --- | --- | --- | --- |
+| Rust | `ConnectOptions::supports_ask_requests` | `ConnectOptions::supports_permission_requests` | `false` |
+| TypeScript | `supportsAskRequests` | `supportsPermissionRequests` | `false` |
+| Python | `supports_ask_requests` | `supports_permission_requests` | `False` |
 
-The Rust SDK copies the option into `Hello` (`crates/agent-sdk/src/client.rs`), TypeScript writes `options.supportsAskRequests ?? false` and Python passes the field straight through. The TUI binary `horon-tui` sets it to `true` in `connect_options` (`crates/tui/src/lib.rs`), because it draws the question and answers it. A client that only runs turns leaves the default in place, and a turn that reaches `ask` then resolves through the policy instead of parking on a question nobody can see.
+The Rust SDK copies both options into `Hello` (`crates/agent-sdk/src/client.rs`), TypeScript defaults both to `false` (`options.supportsAskRequests ?? false`, `options.supportsPermissionRequests ?? false`), and Python passes both fields straight through. The TUI binary `horon-tui` sets both to `true` in `connect_options` (`crates/tui/src/lib.rs`), because it draws prompts and answers them interactively. A client that only runs turns leaves the defaults in place so automated runs never stall waiting on a prompt nobody can answer.
 
 ## Harness API request and event surfaces: usage_report, search_sessions, list_artifacts, durable_runtime
 

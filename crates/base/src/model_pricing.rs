@@ -215,7 +215,7 @@ pub fn lookup_with_provenance(horon_agent_provider: &str, model: &str) -> Option
 /// API key, so its traffic is not billed at hosted rates. Unknown ids (not a
 /// built-in profile and not a configured `[providers.<id>]`) are treated as
 /// hosted resellers.
-fn openai_compatible_profile_is_local(horon_agent_provider: &str) -> bool {
+pub fn openai_compatible_profile_is_local(horon_agent_provider: &str) -> bool {
     let Some(id) = horon_agent_provider
         .trim()
         .strip_prefix("openai-compatible:")

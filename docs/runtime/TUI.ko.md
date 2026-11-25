@@ -321,7 +321,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집한다. `VISUAL`이 비어 �
 
 미리보기가 무언가를 가리는 선택된 보존 호출의 표시에는 나머지를 보여 주는 키가 적힌다. `+N lines · ctrl+o expands`이고, 여기서 키는 지금 적용된 배치가 `app.expand_tool`에 준 키다. 이 선택은 보기가 끝을 따라갈 때는 가장 최근의 보존 호출을 가리키고, 위로 스크롤한 보기에서는 화면에 보이는 보존 호출로 옮겨 간다. 그 키는 그 호출의 출력 전체를 그리고 다시 누르면 미리보기로 되돌리며, 붙잡힌 보기를 끝으로 튀기지 않고 제자리에 맞춰 다시 흐르게 한다. 보여 줄 것이 남아 있지 않으면 `no tool output to expand`라고 알린다. 잘린 호출 가운데 최근 열여섯 개의 글 전체를 호출마다 최대 64 KiB까지 남기고, 그보다 긴 출력은 글자 경계에서 멈추며 남긴 마지막 줄이 `… output truncated`다. 행의 오른쪽 끝만 잘린 호출도 잘린 것으로 세어 줄 수 대신 `cut`을 달고, 남긴 글이 창 밖으로 밀려난 호출은 사라진 보기를 약속하지 않도록 키 이름을 달지 않는다.
 
-승인 게이트가 거절한 호출은 데몬의 문장 전체가 아니라 짧은 이름 하나로 그린다. 옆의 프롬프트가 이미 그 질문을 하기 때문이고, 그 이름은 요청의 상태를 따른다. 결정을 기다리는 동안 머리 행은 `◐ needs approval`이고, 답이 나면 그 답을 적는다. `• allowed`, `• allowed always`, `n`이나 `esc`면 `✕ denied`, 답 없이 프롬프트가 사라지면(연결 끊김, 취소된 턴) `✕ not answered`다. 이 셋 중 어느 것도 `failed`가 아니다. 호출은 실행되지 않았고, 게이트가 붙잡았을 뿐이므로 모델이 도구를 다시 불러야 한다. 그 프롬프트에 답해도 호출은 실행되지 않는다. 결정을 기록하고 모델이 도구를 다시 불러야 하며, 트랜스크립트가 그 사실을 적는다.
+승인 게이트가 붙잡은 호출은 데몬의 문장 전체가 아니라 짧은 이름 하나로 그린다. 옆의 프롬프트가 이미 그 질문을 하기 때문이고, 그 이름은 요청의 상태를 따른다. 결정을 기다리는 동안 머리 행은 `◐ needs approval`이고, 답이 나면 `• allowed`, `• allowed always`, `n`이나 `esc`면 `✕ denied`, 답 없이 프롬프트가 사라지면(연결 끊김, 취소된 턴) `✕ not answered`다. 클라이언트가 `supports_permission_requests = true`로 턴을 소유하고 있으면 프롬프트에 답하자마자 대기하던 호출이 바로 이어서 실행(`y`·`a`)되거나 거절을 돌려주며(`n`·`esc`), 대화형 대기가 없는 경우에는 모델의 다음 호출을 위해 결정만 기록한다.
 
 `notify_pattern`을 지정한 `bash` 작업은 실행한 세션의 트랜스크립트에 일치한 출력을 실시간으로 표시한다. 각 알림에는 작업과 표준 출력 또는 표준 오류 구분이 표시된다.
 
@@ -373,7 +373,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집한다. `VISUAL`이 비어 �
 
 승인은 대기열이다. 첫 호출이 화면에 있는 동안 승인이 필요한 두 번째 호출은 그 뒤에서 기다리고, 화면의 프롬프트가 `N more prompt waiting` 줄을 덧붙인다(하나면 `1 more prompt waiting`). 그래야 두 번째 승인이 첫 번째의 반복으로 읽히지 않는다. 프롬프트는 호출의 동작과, 트랜스크립트가 거절이 적어 둔 요청 아이디로 그 호출과 짝을 지을 수 있을 때 그 호출의 인자를 보여 준다. 프롬프트가 다른 호출의 명령을 보여 주는 일은 없다.
 
-`y`는 한 번 승인하고, `a`는 승인하면서 이후 같은 호출도 묻도록 하고, `n`이나 `esc`는 거절한다. 승인은 그 턴보다 오래간다. 요청은 데몬의 대기열에 제 기한과 함께 남으므로, 프롬프트를 잃으면 답할 유일한 방법을 잃는다. 승인해도 호출은 실행되지 않는다. 트랜스크립트는 결정을 `you allowed <action>: the model has to call it again before it runs`로, `a` 키였으면 `you allowed <action>: recorded once (the daemon keeps no always-rule), so the model has to call it again`로, 거절이면 `you denied <action>: the call will not run`로 적는다. 모델이 도구를 다시 불러야 실행되기 때문이다.
+`y`는 한 번 승인하고, `a`는 이 작업공간에서 해당 도구를 계속 승인하며(이중 확인 고위험 호출, `eval`, bash 패턴, `restricted_paths`를 제외한 적격 호출이면 `approvals.json`에 작업공간 범위 `tool` 승인을 저장한다), `n`이나 `esc`는 거절한다. 승인을 답하지 않으면 요청이 데몬의 대기열에 제 기한과 함께 남으므로, 프롬프트를 잃으면 답할 유일한 방법을 잃는다. 클라이언트가 `supports_permission_requests`를 광고했으면 답하는 즉시 대기 중인 도구 실행이 풀려나고, 아니면 모델의 다음 호출을 위해 기록만 남긴다. 트랜스크립트는 `you allowed <action>: continuing execution`, `you allowed <action> for this workspace: continuing execution`(영속 저장 대상이 아니면 `you allowed <action>: recorded once ...`), 거절이면 `you denied <action>: the call will not run`으로 적는다.
 
 `ask` 도구의 질문은 `(1/2)` 세기와 함께 하나씩 그린다. 단일 선택 질문은 선택지의 숫자로 답하고, 다중 선택 질문은 숫자로 켜고 끈 뒤 `enter`로 확정하며, 고른 선택지는 `[x]`를 단다. 추천 선택지에는 `(recommended)`가 붙는다. `esc`는 질문을 연 채로 둔다. 그 도구에는 거절 경로가 없고 제 기한을 스스로 정하므로, 프롬프트를 닫으면 답할 유일한 방법이 사라진다. 모든 질문에 답하면 `you answered the ask tool (N answers): the call resumes`가 남는다. 도구가 재시도를 위해 기억되는 것이 아니라 이 연결에서 답을 기다리기 때문이다.
 
