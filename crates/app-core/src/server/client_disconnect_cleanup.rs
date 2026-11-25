@@ -93,6 +93,11 @@ impl Drop for SessionCloseGuard {
     }
 }
 
+/// Whether a close or delete barrier is currently published for `session_id`.
+pub(super) fn has_pending_close(session_id: &str) -> bool {
+    close_gates().contains_key(session_id)
+}
+
 /// Wait until no close is pending for `session_id`, restarting whenever a newer
 /// close replaces the one being waited on. Returns true when it waited at all.
 pub(super) async fn await_pending_close(session_id: &str) -> bool {
@@ -378,19 +383,15 @@ pub(super) async fn cleanup_client_connection(
         // while staying live for fast reattachment.
         if !idle_reconnect_grace.is_zero()
             && let Some(agent_arc) = sessions.read().await.get(client_session_id).cloned()
+            && let Ok(mut agent) = agent_arc.try_lock()
         {
-            let released_writer = if let Ok(mut agent) = agent_arc.try_lock() {
-                if let Some(release) = agent.hibernate_idle_caches() {
-                    crate::logging::info(&format!(
-                        "Released idle caches before reconnect grace for {} (provider_cache_bytes={}, tool_index_entries={})",
-                        client_session_id, release.provider_cache_bytes, release.tool_index_entries
-                    ));
-                }
-                agent.release_idle_writer()
-            } else {
-                None
-            };
-            if let Some(writer) = released_writer {
+            if let Some(release) = agent.hibernate_idle_caches() {
+                crate::logging::info(&format!(
+                    "Released idle caches before reconnect grace for {} (provider_cache_bytes={}, tool_index_entries={})",
+                    client_session_id, release.provider_cache_bytes, release.tool_index_entries
+                ));
+            }
+            if let Some(writer) = agent.release_idle_writer() {
                 blocking_session_io(move || drop(writer));
             }
         }

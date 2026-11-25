@@ -302,6 +302,63 @@ async fn an_idle_resident_agent_is_closed_and_deleted() {
     );
 }
 
+#[tokio::test]
+async fn a_delete_waits_for_an_in_flight_disconnect_close_before_purging() {
+    let _sandbox = Sandbox::new();
+    let session_id = "delete_waits_for_pending_close";
+    let seeded = seed_session(session_id);
+    let sessions = no_sessions();
+    let connections = no_connections();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    // Model cleanup_client_connection after it removed the session from the
+    // map and published its close barrier while mark_closed() writes local-runtime.json.
+    let close_guard = crate::server::client_disconnect_cleanup::SessionCloseGuard::register(session_id).await;
+    let delete_task = tokio::spawn({
+        let session_id = session_id.to_string();
+        async move {
+            handle_delete_session(14, session_id, true, &sessions, &connections, &tx).await;
+        }
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !delete_task.is_finished(),
+        "delete must wait until the in-flight close finishes"
+    );
+    assert!(
+        drain_events(&mut rx).is_empty(),
+        "delete must not reply before the close barrier releases"
+    );
+    for path in &seeded {
+        assert!(path.exists(), "{} must remain while close is active", path.display());
+    }
+
+    let session_dir = crate::storage::horon_agent_dir()
+        .expect("home")
+        .join("sessions")
+        .join(session_id);
+    let runtime_path = session_dir.join("local-runtime.json");
+    let temp = tempfile::NamedTempFile::new_in(&session_dir).expect("temp runtime file");
+    temp.persist(&runtime_path).expect("persist runtime file");
+    drop(close_guard);
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), delete_task)
+        .await
+        .expect("delete completes after close barrier drops")
+        .expect("delete task join");
+
+    let events = drain_events(&mut rx);
+    assert!(
+        matches!(events.as_slice(), [ServerEvent::Done { id: 14 }]),
+        "{events:?}"
+    );
+    assert!(!runtime_path.exists(), "runtime file must be purged");
+    for path in &seeded {
+        assert!(!path.exists(), "{} must be gone after a delete", path.display());
+    }
+}
+
 /// A provider that would fail a turn. These tests never send one.
 struct RefusingProvider;
 
