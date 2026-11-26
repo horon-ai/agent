@@ -1,5 +1,5 @@
-//! Context notes ride in the dynamic system prompt, never the cached prefix,
-//! and disappear with the conversation they describe.
+//! Context notes ride in the turn context appended to the transcript, never the
+//! cached system prefix, and disappear with the conversation they describe.
 
 use super::*;
 

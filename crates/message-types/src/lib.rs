@@ -1,5 +1,8 @@
 pub mod degradation;
 pub mod provider_native;
+mod turn_context;
+
+pub use turn_context::{reminder_update, turn_context_update};
 
 use horon_agent_time::{Duration, Precision, Timestamp};
 

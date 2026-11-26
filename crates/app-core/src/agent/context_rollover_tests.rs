@@ -235,3 +235,32 @@ async fn new_context_rollover_keeps_a_prior_text_summary_in_front_of_the_marker(
     );
     assert_eq!(agent.session.active_context().len(), 1);
 }
+
+#[tokio::test]
+async fn new_context_rollover_starts_at_the_user_message_not_a_stored_reminder() {
+    let (_sandbox, mut agent) = rollover_fixture().await;
+    // A turn context and a memory summary stored after the newest user
+    // message are the harness speaking; the boundary stays at the user turn.
+    agent.add_message_with_display_role(
+        Role::User,
+        text_block("<system-reminder>\n# Turn context\nThis replaces any earlier turn context.\n\n# Context Notes\n\n- continue\n</system-reminder>"),
+        Some(crate::session::StoredDisplayRole::System),
+    );
+    agent.add_message_with_display_role(
+        Role::User,
+        text_block("<system-reminder>\n# Memory Summary\n\nfacts\n</system-reminder>"),
+        Some(crate::session::StoredDisplayRole::System),
+    );
+
+    crate::tool::new_context::request_rollover(&agent.session.id);
+    agent.apply_pending_context_rollover();
+
+    let kept = agent
+        .session
+        .active_context()
+        .iter()
+        .map(stored_text)
+        .collect::<Vec<_>>();
+    assert_eq!(kept.len(), 3, "{kept:?}");
+    assert_eq!(kept[0], "now finish the parser");
+}

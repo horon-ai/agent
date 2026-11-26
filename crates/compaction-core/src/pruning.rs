@@ -315,12 +315,16 @@ fn is_agentgrep_zero_match(content: &str) -> bool {
 }
 
 /// Whether `message` opens a turn the provider can start its context on.
+///
+/// A `<system-reminder>` message (a stored turn context or memory summary) is
+/// the harness speaking inside a turn, not the start of one.
 pub fn is_turn_start(message: &Message) -> bool {
+    let first_text = message.content.iter().find_map(|block| match block {
+        ContentBlock::Text { text, .. } => Some(text.as_str()),
+        _ => None,
+    });
     matches!(message.role, Role::User)
-        && message
-            .content
-            .iter()
-            .any(|block| matches!(block, ContentBlock::Text { .. }))
+        && first_text.is_some_and(|text| !text.trim_start().starts_with("<system-reminder>"))
         && !message
             .content
             .iter()
