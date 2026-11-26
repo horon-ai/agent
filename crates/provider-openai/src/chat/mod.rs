@@ -13,6 +13,7 @@ pub mod stream;
 pub mod transport;
 
 mod prompt_cache_memo;
+mod session_uuid;
 mod stream_timeout;
 
 #[cfg(test)]
@@ -635,10 +636,10 @@ impl OpenAiCompatibleProvider {
         for (name, value) in &self.headers {
             request = request.header(name, value);
         }
-        // A session id is an internal ASCII token; one that is not a valid
-        // header value is left off rather than failing the turn.
+        // The header names the session the way session-aware gateways and the
+        // agents they serve do: as a UUID derived from the session id.
         if let (Some(name), Some(session_id)) = (&self.session_header, session_id)
-            && let Ok(value) = reqwest::header::HeaderValue::from_str(session_id)
+            && let Ok(value) = reqwest::header::HeaderValue::from_str(&session_uuid::session_uuid(session_id))
         {
             request = request.header(name.clone(), value);
         }

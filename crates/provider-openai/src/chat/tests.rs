@@ -891,8 +891,11 @@ async fn session_header_carries_each_request_session_id() {
         };
 
         for (runtime, session) in [
-            (&provider as &dyn Provider, "session_a"),
-            (forked.as_ref(), "session_b"),
+            (
+                &provider as &dyn Provider,
+                "session_otter_1795696332403_9a252fd9aabc0a1f",
+            ),
+            (forked.as_ref(), "session_badger_1795695929227_2cbdae737a3f6c2c"),
         ] {
             let mut stream = runtime
                 .complete_with_context(&[Message::user("hi")], &[], "system", None, &context(session))
@@ -906,9 +909,17 @@ async fn session_header_carries_each_request_session_id() {
             .expect("stream opens");
         let _ = collect(&mut plain).await;
 
+        // A UUIDv7 like Claude Code's and omp's session ids: the session's
+        // creation time leads, and the same id always maps to the same UUID.
         let requests = server.requests();
-        assert_eq!(requests[0].header("x-session-affinity"), Some("session_a"));
-        assert_eq!(requests[1].header("x-session-affinity"), Some("session_b"));
+        assert_eq!(
+            requests[0].header("x-session-affinity"),
+            Some("01a217d7-8e73-7b04-88b4-ad9122fa3265")
+        );
+        assert_eq!(
+            requests[1].header("x-session-affinity"),
+            Some("01a217d1-678b-7b5a-8e49-ec6ef495d79d")
+        );
         assert!(requests[2].header("x-session-affinity").is_none());
     })
     .await
