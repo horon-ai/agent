@@ -26,7 +26,7 @@ const EXCLUDED: &[&str] = &["codemode", "batch"];
 /// Maximum characters of the final report returned to the model.
 const MAX_REPORT_CHARS: usize = 60_000;
 
-const DESCRIPTION: &str = r#"Run a JavaScript program in a sandbox that can call any of your other tools, including MCP tools. Use it to chain, loop over, filter, or parallelize many tool calls in one step, so intermediate results never enter the conversation. Only what you `return` (plus console output) comes back.
+const DESCRIPTION: &str = r#"Run a sandboxed JavaScript program that calls other tools. It can call any of your other tools, including MCP tools. Use it to chain, loop over, filter, or parallelize many tool calls in one step, so intermediate results never enter the conversation. Only what you `return` (plus console output) comes back.
 
 The code is the body of an async function: use `await` and `return`.
 - `await tools.<name>(args)` calls a tool with the same arguments it normally takes. JSON output is parsed into objects, other output is a string. Failures throw an Error.

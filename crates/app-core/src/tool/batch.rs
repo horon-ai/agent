@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 const MAX_PARALLEL: usize = 10;
 
-const BATCH_DESCRIPTION: &str = r#"Run independent tool calls in parallel instead of making them sequentially. Example:
+const BATCH_DESCRIPTION: &str = r#"Run independent tool calls in parallel. Use it instead of making them sequentially. Example:
 {
   "intent": "Inspect the relevant files in parallel",
   "tool_calls": [

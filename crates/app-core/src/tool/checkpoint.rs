@@ -161,7 +161,7 @@ impl Tool for CheckpointTool {
     }
 
     fn description(&self) -> &str {
-        "Mark a point that `rewind` can later fold this session back to."
+        "Mark a point that `rewind` can fold this session back to."
     }
 
     /// The record is appended to the session transcript at turn end.
@@ -230,7 +230,7 @@ impl Tool for RewindTool {
     }
 
     fn description(&self) -> &str {
-        "Fold context back to the checkpoint; files are not restored."
+        "Fold context back to the checkpoint; files stay as they are."
     }
 
     /// The rewind truncates the session transcript at turn end.

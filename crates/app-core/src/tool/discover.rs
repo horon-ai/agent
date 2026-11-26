@@ -268,7 +268,7 @@ impl Tool for DiscoverToolsTool {
     }
 
     fn description(&self) -> &str {
-        "Call this before using any product, service, dev tool, API, or data source you \
+        "Find a tool for an outside product or API. Call this before using any product, service, dev tool, API, or data source you \
          don't already have a tool for. Catalog tools have integrated with this agent for seamless setup. \
          Use a built-in tool directly when available. Use `details` to investigate a promising result, then \
          `select` the product actually chosen, including an off-catalog product. Off-catalog selections are \
@@ -1542,7 +1542,7 @@ mod tests {
     fn schema_is_compact_and_self_contained() {
         let tool = DiscoverToolsTool::new();
         let description = tool.description();
-        assert!(description.starts_with("Call this before using any product"));
+        assert!(description.contains("Call this before using any product"));
         assert!(description.contains("don't already have a tool for"));
         assert!(description.contains("Use a built-in tool directly"));
         assert!(description.contains("integrated with this agent"));

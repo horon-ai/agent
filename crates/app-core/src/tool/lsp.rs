@@ -97,7 +97,7 @@ impl Tool for LspTool {
     }
 
     fn description(&self) -> &str {
-        "Query the language server: diagnostics, references, renames."
+        "Language server queries: diagnostics, references, renames."
     }
 
     fn effects(&self) -> ToolEffects {

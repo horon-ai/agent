@@ -20,8 +20,8 @@ use crate::config::CORE_TOOL_PROFILE;
 /// reachable tool, which is where the current count comes from. `eval` is
 /// pinned to the listed tier here so the count does not depend on the host's
 /// PATH.
-const CORE_STATIC_BYTES: usize = 2375;
-const CORE_STATIC_SHA256: &str = "3e8f396fffa2d44c88202f8acae8e0f8c434ec688c44cdde3c86def06aa479f4";
+const CORE_STATIC_BYTES: usize = 2264;
+const CORE_STATIC_SHA256: &str = "10dc7fddb5d0de6c1cc96463abfe61cbcd038264b60f6836a70b3d347d16960c";
 
 /// The pin session names `eval`'s tier, so a host with no Python on PATH and a
 /// host with one produce the same prefix.

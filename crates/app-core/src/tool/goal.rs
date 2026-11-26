@@ -74,7 +74,7 @@ impl Tool for InitiativeTool {
     }
 
     fn description(&self) -> &str {
-        "Manage durable goals: create, list, show, resume, update, checkpoint, focus."
+        "Manage durable goals. Actions: create, list, show, resume, update."
     }
 
     fn parameters_schema(&self) -> Value {
