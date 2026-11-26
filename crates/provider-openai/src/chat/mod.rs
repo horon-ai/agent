@@ -100,6 +100,8 @@ pub struct OpenAiCompatibleProvider {
     /// Explicit `prompt_cache_key` policy. `None` sends the key only to hosts
     /// whose gateway is known to accept the field.
     prompt_cache_key: Option<bool>,
+    /// Header that carries the request's session id, when the profile names one.
+    session_header: Option<reqwest::header::HeaderName>,
     /// Resolves the retention to send for the active model. Only consulted for
     /// [`OFFICIAL_OPENAI_HOST`].
     prompt_cache_retention: Option<PromptCacheRetentionResolver>,
@@ -161,6 +163,7 @@ impl OpenAiCompatibleProvider {
             headers: Vec::new(),
             extra_body: None,
             prompt_cache_key: None,
+            session_header: None,
             prompt_cache_retention: None,
             profile_id: None,
             display_name,
@@ -235,6 +238,15 @@ impl OpenAiCompatibleProvider {
     /// `openrouter.ai`, whose gateways document it.
     pub fn with_prompt_cache_key_policy(mut self, enabled: Option<bool>) -> Self {
         self.prompt_cache_key = enabled;
+        self
+    }
+
+    /// Name the header that carries each request's session id.
+    ///
+    /// A session-aware gateway keys its upstream conversation on that header;
+    /// `None` sends no session header, so the request is unchanged.
+    pub fn with_session_header(mut self, header: Option<reqwest::header::HeaderName>) -> Self {
+        self.session_header = header;
         self
     }
 
@@ -528,7 +540,8 @@ impl OpenAiCompatibleProvider {
             // classifier without copying what was just serialized.
             let body: bytes::Bytes = self.build_body(messages, tools, system, context).into();
             let first_deadline = self.stream_first_event_timeout.map(|budget| Instant::now() + budget);
-            let post = self.post_stream(&endpoint, body.clone());
+            let session_id = context.and_then(|context| context.session_id.as_deref());
+            let post = self.post_stream(&endpoint, body.clone(), session_id);
             let response = match first_deadline {
                 Some(deadline) => timeout_at(deadline, post)
                     .await
@@ -606,7 +619,12 @@ impl OpenAiCompatibleProvider {
     }
 
     /// POST one streaming request and wait for the initial response.
-    async fn post_stream(&self, endpoint: &str, body: bytes::Bytes) -> Result<reqwest::Response> {
+    async fn post_stream(
+        &self,
+        endpoint: &str,
+        body: bytes::Bytes,
+        session_id: Option<&str>,
+    ) -> Result<reqwest::Response> {
         let mut request = self
             .client
             .post(endpoint)
@@ -616,6 +634,13 @@ impl OpenAiCompatibleProvider {
         request = apply_auth(request, &self.auth, self.api_key.as_deref())?;
         for (name, value) in &self.headers {
             request = request.header(name, value);
+        }
+        // A session id is an internal ASCII token; one that is not a valid
+        // header value is left off rather than failing the turn.
+        if let (Some(name), Some(session_id)) = (&self.session_header, session_id)
+            && let Ok(value) = reqwest::header::HeaderValue::from_str(session_id)
+        {
+            request = request.header(name.clone(), value);
         }
         send_with_initial_response_timeout(request, INITIAL_RESPONSE_TIMEOUT)
             .await
@@ -918,6 +943,7 @@ impl OpenAiCompatibleProvider {
             headers: self.headers.clone(),
             extra_body: self.extra_body.clone(),
             prompt_cache_key: self.prompt_cache_key,
+            session_header: self.session_header.clone(),
             prompt_cache_retention: self.prompt_cache_retention.clone(),
             profile_id: self.profile_id.clone(),
             display_name: self.display_name.clone(),

@@ -131,6 +131,13 @@ pub struct NamedProviderConfig {
     /// endpoints from rejecting an unknown field.
     #[serde(default, alias = "prompt-cache-key", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<bool>,
+    /// Header that carries the issuing session's id on every model request to
+    /// this endpoint, such as `x-session-affinity`. A gateway that holds one
+    /// upstream conversation per client session (magpie in front of Claude)
+    /// uses it to continue that conversation instead of guessing it from the
+    /// history. Unset sends no session header.
+    #[serde(default, alias = "session-header", skip_serializing_if = "Option::is_none")]
+    pub session_header: Option<String>,
     /// Seconds from sending an attempt to the first meaningful stream event.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_first_event_timeout_secs: Option<std::num::NonZeroU32>,

@@ -96,6 +96,72 @@ fn responses_messages_become_chat_messages() {
 }
 
 #[test]
+fn parallel_tool_calls_stay_one_assistant_message() {
+    let call = |id: &str, command: &str| ContentBlock::ToolUse {
+        id: id.to_string(),
+        name: "bash".to_string(),
+        input: json!({ "command": command }),
+        thought_signature: None,
+    };
+    let messages = vec![
+        Message::user("run both"),
+        Message {
+            role: Role::Assistant,
+            content: vec![call("call_a", "echo one"), call("call_b", "echo two")],
+            timestamp: None,
+            tool_duration_ms: None,
+        },
+        Message::tool_result("call_a", "one", false),
+        Message::tool_result("call_b", "two", false),
+    ];
+
+    let body = build_chat_completions_request("m", &messages, &[], "", None);
+    let chat = body["messages"].as_array().expect("messages array");
+
+    let roles: Vec<&str> = chat.iter().filter_map(|message| message["role"].as_str()).collect();
+    assert_eq!(roles, ["user", "assistant", "tool", "tool"], "{body}");
+    let ids: Vec<&str> = chat[1]["tool_calls"]
+        .as_array()
+        .expect("tool calls")
+        .iter()
+        .filter_map(|call| call["id"].as_str())
+        .collect();
+    assert_eq!(ids, ["call_a", "call_b"]);
+    assert_eq!(chat[2]["tool_call_id"], json!("call_a"));
+    assert_eq!(chat[3]["tool_call_id"], json!("call_b"));
+}
+
+#[test]
+fn parallel_tool_calls_stay_one_message_when_a_result_is_missing() {
+    let call = |id: &str| ContentBlock::ToolUse {
+        id: id.to_string(),
+        name: "bash".to_string(),
+        input: json!({ "command": "true" }),
+        thought_signature: None,
+    };
+    let messages = vec![
+        Message::user("run both"),
+        Message {
+            role: Role::Assistant,
+            content: vec![call("call_a"), call("call_b")],
+            timestamp: None,
+            tool_duration_ms: None,
+        },
+        Message::tool_result("call_b", "two", false),
+    ];
+
+    let body = build_chat_completions_request("m", &messages, &[], "", None);
+    let chat = body["messages"].as_array().expect("messages array");
+
+    let roles: Vec<&str> = chat.iter().filter_map(|message| message["role"].as_str()).collect();
+    assert_eq!(roles, ["user", "assistant", "tool", "tool"], "{body}");
+    assert_eq!(chat[1]["tool_calls"].as_array().map(Vec::len), Some(2));
+    assert_eq!(chat[2]["tool_call_id"], json!("call_a"));
+    assert_eq!(chat[3]["tool_call_id"], json!("call_b"));
+    assert_eq!(chat[3]["content"], json!("two"));
+}
+
+#[test]
 fn failed_tool_result_keeps_its_error_marker() {
     let messages = vec![tool_use_message(), Message::tool_result("call_1", "boom", true)];
     let body = build_chat_completions_request("m", &messages, &[], "", None);
@@ -808,6 +874,45 @@ async fn extra_body_fields_override_generated_request_fields() {
     })
     .await
     .expect("extra body checks finish within the deadline");
+}
+
+#[tokio::test]
+async fn session_header_carries_each_request_session_id() {
+    tokio::time::timeout(DEADLINE, async {
+        let server = MockServer::start(Reply::sse(&["data: [DONE]\n\n"]));
+        let provider = OpenAiCompatibleProvider::new(format!("{}/v1", server.url), ChatAuth::None, None, "m", vec![])
+            .expect("provider")
+            .with_session_header(Some(reqwest::header::HeaderName::from_static("x-session-affinity")));
+        let forked = provider.fork();
+        let context = |session: &str| ProviderRequestContext {
+            session_id: Some(session.to_string()),
+            cache_root_id: Some("shared-root".to_string()),
+            ..Default::default()
+        };
+
+        for (runtime, session) in [
+            (&provider as &dyn Provider, "session_a"),
+            (forked.as_ref(), "session_b"),
+        ] {
+            let mut stream = runtime
+                .complete_with_context(&[Message::user("hi")], &[], "system", None, &context(session))
+                .await
+                .expect("stream opens");
+            let _ = collect(&mut stream).await;
+        }
+        let mut plain = provider
+            .complete(&[Message::user("hi")], &[], "system", None)
+            .await
+            .expect("stream opens");
+        let _ = collect(&mut plain).await;
+
+        let requests = server.requests();
+        assert_eq!(requests[0].header("x-session-affinity"), Some("session_a"));
+        assert_eq!(requests[1].header("x-session-affinity"), Some("session_b"));
+        assert!(requests[2].header("x-session-affinity").is_none());
+    })
+    .await
+    .expect("session header checks finish within the deadline");
 }
 
 #[test]
