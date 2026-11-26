@@ -582,6 +582,13 @@ Where skills come from and what happens when names collide is in the "Skills" se
 - The name is resolved against this session's effective list, which is user skills plus the skills in that session's working folder, so project skills from another repository are invisible.
 - The path is canonicalized and must lie inside the canonical skill folder. `..`, absolute paths, and outward symlinks fail with `skill:// path resolves outside the skill directory`. An unknown skill fails with `skill:// names no installed skill: <name>. Available: <names>` (the first 40 names, sorted), so the next call can use a real name without listing skills first.
 
+### `read horon://`
+
+- The documentation bundled into the binary (the root `README.md` and every English file under `docs/`) is read at `horon://<path>`, as in `horon://docs/runtime/TOOLS.md`. `docs/`, `.md` and letter case may be left out (`horon://runtime/tools`); the exact path wins when both match.
+- `horon://` alone lists every bundled document with its title. An unknown path fails with `horon://<path> names no bundled document`.
+- Like a skill read, a document comes whole and without line numbers unless a selector or range asks for part of it (`horon://docs/runtime/TOOLS.md:40-80`).
+- The `horon` tool searches the same documents and prints `horon://` addresses; the address reads the copy built into this binary, so it describes the version that is running.
+
 ### Relationship to path policy
 
 The path-denial policy (`path_policy`) never treats the literal `skill://` as a working-folder path. Instead it applies the existing denial rules to the real file that `skill://<name>/<path>` names, so a file the policy blocks cannot be read through a skill path either. In a session whose policy blocks everything outside the working folder, a sub-file of a user-level skill such as `~/.horon/skills` hits that rule. Such sessions read user-level skills with `skill_manage` (action `load`).

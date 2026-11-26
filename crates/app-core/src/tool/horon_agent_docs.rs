@@ -8,6 +8,9 @@ use std::collections::HashSet;
 
 include!(concat!(env!("OUT_DIR"), "/horon_agent_docs.rs"));
 
+/// The address scheme `read` resolves against the bundled documents.
+pub(crate) const SCHEME: &str = "horon://";
+
 const DEFAULT_LIMIT: usize = 5;
 const MAX_LIMIT: usize = 10;
 const MAX_SECTION_CHARS: usize = 4_000;
@@ -46,11 +49,11 @@ struct Section<'a> {
 #[async_trait]
 impl Tool for HoronAgentDocsTool {
     fn name(&self) -> &str {
-        "documentation"
+        "horon"
     }
 
     fn description(&self) -> &str {
-        "Search bundled HoronAgent docs. Use first for questions about HoronAgent itself."
+        "Search bundled Horon docs; read one as horon://<path>."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -69,7 +72,7 @@ impl Tool for HoronAgentDocsTool {
                 },
                 "path": {
                     "type": "string",
-                    "description": "Exact bundled path returned by search/list. Required for read."
+                    "description": "Bundled path or horon:// address from search/list. Required for read."
                 },
                 "limit": {
                     "type": "integer",
@@ -91,37 +94,77 @@ impl Tool for HoronAgentDocsTool {
                     .ok_or_else(|| anyhow!("query is required for search"))?,
                 params.limit,
             ),
-            "read" => read_doc(
-                params
+            "read" => {
+                let path = params
                     .path
                     .as_deref()
-                    .ok_or_else(|| anyhow!("path is required for read"))?,
-            )?,
+                    .ok_or_else(|| anyhow!("path is required for read"))?;
+                let reference = path
+                    .get(..SCHEME.len())
+                    .filter(|head| head.eq_ignore_ascii_case(SCHEME))
+                    .map_or(path, |_| &path[SCHEME.len()..]);
+                read_doc(reference)?
+            }
             "list" => list_docs(),
             other => {
                 return Err(anyhow!("unknown action {other:?}; use search, read, or list"));
             }
         };
-        Ok(ToolOutput::new(output).with_title(format!("horon-agent docs {}", params.action)))
+        Ok(ToolOutput::new(output).with_title(format!("horon docs {}", params.action)))
     }
 }
 
-fn list_docs() -> String {
-    let mut output = format!("Bundled HoronAgent documentation ({} files):\n", HORON_AGENT_DOCS.len());
+pub(crate) fn list_docs() -> String {
+    let mut output = format!(
+        "Bundled Horon documentation ({} files); read one with read {SCHEME}<path>:\n",
+        HORON_AGENT_DOCS.len()
+    );
     for (path, body) in HORON_AGENT_DOCS {
         let title = body.lines().find_map(|line| line.strip_prefix("# ")).unwrap_or(path);
-        output.push_str(&format!("- `{path}`: {title}\n"));
+        output.push_str(&format!("- {SCHEME}{path}: {title}\n"));
     }
     output
 }
 
-fn read_doc(path: &str) -> Result<String> {
-    let (_, body) = HORON_AGENT_DOCS
-        .iter()
-        .find(|(candidate, _)| *candidate == path)
-        .ok_or_else(|| anyhow!("documentation path not found: {path}. Use action=list to see available paths."))?;
+/// The bundled document a `horon://` reference names, or `None` for the bare
+/// scheme, which lists them.
+///
+/// The exact bundled path wins; otherwise `docs/` and `.md` may be left out and
+/// letter case does not matter, so `runtime/tools` names `docs/runtime/TOOLS.md`.
+pub(crate) fn document(reference: &str) -> Result<Option<(&'static str, &'static str)>> {
+    let reference = reference.trim().trim_matches('/');
+    if reference.is_empty() {
+        return Ok(None);
+    }
+    let candidates = [
+        reference.to_string(),
+        format!("{reference}.md"),
+        format!("docs/{reference}"),
+        format!("docs/{reference}.md"),
+    ];
+    let found = candidates.iter().find_map(|candidate| {
+        HORON_AGENT_DOCS
+            .iter()
+            .find(|(path, _)| *path == candidate.as_str())
+            .or_else(|| {
+                HORON_AGENT_DOCS
+                    .iter()
+                    .find(|(path, _)| path.eq_ignore_ascii_case(candidate))
+            })
+    });
+    match found {
+        Some((path, body)) => Ok(Some((path, body))),
+        None => Err(anyhow!(
+            "{SCHEME}{reference} names no bundled document. Read {SCHEME} to list them, or search with the horon tool."
+        )),
+    }
+}
+
+fn read_doc(reference: &str) -> Result<String> {
+    let (path, body) =
+        document(reference)?.ok_or_else(|| anyhow!("path is required for read; action=list names the documents"))?;
     Ok(format!(
-        "Source: `{path}` (bundled with this HoronAgent build)\n\n{body}"
+        "Source: {SCHEME}{path} (bundled with this Horon build)\n\n{body}"
     ))
 }
 
@@ -156,11 +199,11 @@ fn search(query: &str, limit: Option<usize>) -> String {
         .collect::<Vec<_>>();
     matches.sort_by_key(|(score, section)| (Reverse(*score), section.path, section.heading.clone()));
     let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let mut output = format!("HoronAgent docs results for {query:?} (bundled with this HoronAgent build):\n");
+    let mut output = format!("Horon docs results for {query:?} (bundled with this Horon build):\n");
     for (index, (_, section)) in matches.into_iter().take(limit).enumerate() {
         let excerpt = relevant_excerpt(&section.body, &terms);
         output.push_str(&format!(
-            "\n{}. `{}` > {}\n{}\n",
+            "\n{}. {SCHEME}{} > {}\n{}\n",
             index + 1,
             section.path,
             section.heading,
@@ -265,12 +308,57 @@ mod tests {
     fn search_finds_relevant_version_matched_documentation() {
         let output = search("How does swarm task graph work?", Some(3));
         assert!(output.contains("docs/runtime/SWARM_TASK_GRAPH.md"), "{output}");
-        assert!(output.contains("bundled with this HoronAgent build"));
+        assert!(output.contains("bundled with this Horon build"));
     }
 
     #[test]
     fn exact_document_can_be_read() {
         let output = read_doc("docs/README.md").unwrap();
         assert!(output.contains("# horon agent documentation"));
+    }
+
+    /// `read horon://<path>` returns a bundled document whole, a selector pages
+    /// it, the bare scheme lists the documents, and an unknown path says how to
+    /// find a real one.
+    #[tokio::test]
+    async fn read_resolves_horon_addresses() {
+        use crate::tool::{Tool, ToolContext, ToolExecutionMode};
+        let workspace = tempfile::tempdir().expect("workspace");
+        let read = |path: &str| {
+            let input = json!({ "file_path": path });
+            let context = ToolContext {
+                session_id: "horon-url-session".to_string(),
+                message_id: "horon-url-message".to_string(),
+                tool_call_id: "horon-url-call".to_string(),
+                working_dir: Some(workspace.path().to_path_buf()),
+                stdin_request_tx: None,
+                graceful_shutdown_signal: None,
+                execution_mode: ToolExecutionMode::Direct,
+            };
+            async move { crate::tool::read::ReadTool::new().execute(input, context).await }
+        };
+
+        let whole = read("horon://docs/README.md").await.expect("bundled doc").output;
+        assert!(
+            whole.starts_with(
+                "Source: horon://docs/README.md (bundled with this Horon build)\n\n# horon agent documentation"
+            ),
+            "{whole}"
+        );
+        // `docs/`, `.md` and letter case may be left out.
+        let short = read("horon://runtime/tools").await.expect("short address").output;
+        assert!(short.starts_with("Source: horon://docs/runtime/TOOLS.md"), "{short}");
+        let first_line = read("horon://docs/README.md:1").await.expect("selector").output;
+        assert!(first_line.contains("# horon agent documentation"), "{first_line}");
+        assert!(
+            !first_line.contains("\n## "),
+            "a selector reads only its lines: {first_line}"
+        );
+
+        let list = read("horon://").await.expect("list").output;
+        assert!(list.contains("- horon://docs/runtime/TOOLS.md: "), "{list}");
+
+        let missing = read("horon://nope").await.expect_err("unknown doc").to_string();
+        assert!(missing.contains("horon://nope names no bundled document"), "{missing}");
     }
 }

@@ -813,12 +813,7 @@ impl Registry {
         if build_allows("irc") {
             Self::insert_tool_timed(&mut m, &mut timings, "irc", irc::IrcTool::new);
         }
-        Self::insert_tool_timed(
-            &mut m,
-            &mut timings,
-            "documentation",
-            horon_agent_docs::HoronAgentDocsTool::new,
-        );
+        Self::insert_tool_timed(&mut m, &mut timings, "horon", horon_agent_docs::HoronAgentDocsTool::new);
         if build_allows("todo") {
             Self::insert_tool_timed(&mut m, &mut timings, "todo", todo::TodoTool::new);
         }

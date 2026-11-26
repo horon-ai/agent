@@ -306,7 +306,7 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 
 ## Documentation
 
-The docs are written in English (default) and Korean (`.ko.md` next to each file, as in `docs/README.ko.md`). The English files are compiled into the binary, where the `documentation` tool serves them. [agent.horon.ai](https://agent.horon.ai) is the Mintlify site in [packages/docs-site](packages/docs-site). Its Reference tab is generated from `docs/`, `PHILOSOPHY.md` and the SDK and npm READMEs by `scripts/ci/sync_docs_site.py`; its guide pages are written by hand in English, so a behavior change that a guide repeats updates that guide too.
+The docs are written in English (default) and Korean (`.ko.md` next to each file, as in `docs/README.ko.md`). The English files are compiled into the binary, where the `horon` tool serves them and `read horon://<path>` reads them. [agent.horon.ai](https://agent.horon.ai) is the Mintlify site in [packages/docs-site](packages/docs-site). Its Reference tab is generated from `docs/`, `PHILOSOPHY.md` and the SDK and npm READMEs by `scripts/ci/sync_docs_site.py`; its guide pages are written by hand in English, so a behavior change that a guide repeats updates that guide too.
 
 | Topic | Read |
 | --- | --- |

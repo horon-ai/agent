@@ -190,6 +190,9 @@ impl Tool for ReadTool {
         if starts_with_ignore_ascii_case(&params.file_path, read_skill::SCHEME) {
             return read_skill::read_skill_url(&params, &ctx).await;
         }
+        if starts_with_ignore_ascii_case(&params.file_path, super::horon_agent_docs::SCHEME) {
+            return read_horon::read_horon_url(&params);
+        }
 
         if is_history_url(&params.file_path) {
             return read_history_url(&params, &ctx);
@@ -647,6 +650,8 @@ mod agent_url_tests;
 mod history_tests;
 #[path = "read_archive.rs"]
 mod read_archive;
+#[path = "read_horon.rs"]
+mod read_horon;
 #[path = "read_memory_url.rs"]
 mod read_memory_url;
 #[path = "read_skill.rs"]
@@ -662,12 +667,13 @@ mod options_tests;
 
 /// A path that leaves the filesystem: an `agent://` reference or any URL scheme.
 ///
-/// `artifact://`, `history://` and `skill://` name local data, so they are not
+/// `artifact://`, `history://`, `horon://` and `skill://` name local data, so they are not
 /// network effects even though they look like URLs.
 fn is_remote_path(path: &str) -> bool {
     if starts_with_ignore_ascii_case(path, "artifact://")
         || starts_with_ignore_ascii_case(path, "history://")
         || starts_with_ignore_ascii_case(path, read_skill::SCHEME)
+        || starts_with_ignore_ascii_case(path, super::horon_agent_docs::SCHEME)
         || read_memory_url::is_memory_url(path)
     {
         return false;
