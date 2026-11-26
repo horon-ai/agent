@@ -1839,7 +1839,7 @@ async fn memory_guidance_is_the_consolidation_summary_only() {
 }
 
 #[tokio::test]
-async fn memory_injection_message_defaults_to_ephemeral_history() {
+async fn memory_injection_message_can_stay_request_only() {
     let _guard = crate::storage::lock_test_env();
     let previous = std::env::var_os("HORON_AGENT_PERSIST_MEMORY_INJECTIONS");
     crate::env::set_var("HORON_AGENT_PERSIST_MEMORY_INJECTIONS", "false");
@@ -1857,7 +1857,7 @@ async fn memory_injection_message_defaults_to_ephemeral_history() {
         memory_ids: vec!["mem-ephemeral".to_string()],
     };
 
-    let (message, persisted) = agent.prepare_memory_injection_message(&memory);
+    let (message, persisted) = agent.prepare_memory_injection_message(&[], &memory).unwrap();
 
     assert!(!persisted);
     assert_eq!(agent.session.active_context().len(), before);
@@ -1890,7 +1890,7 @@ async fn memory_injection_message_can_persist_to_history() {
         memory_ids: vec!["mem-persisted".to_string()],
     };
 
-    let (message, persisted) = agent.prepare_memory_injection_message(&memory);
+    let (message, persisted) = agent.prepare_memory_injection_message(&[], &memory).unwrap();
 
     assert!(persisted);
     assert_eq!(agent.session.active_context().len(), before + 1);
@@ -3103,13 +3103,13 @@ impl Provider for SharedRoundProvider {
 
     async fn complete_split(
         &self,
-        _: &[Message],
+        m: &[Message],
         _: &[ToolDefinition],
         _: &str,
-        system_dynamic: &str,
+        d: &str,
         _: Option<&str>,
     ) -> Result<EventStream> {
-        self.dynamic_prompts.lock().unwrap().push(system_dynamic.to_string());
+        self.dynamic_prompts.lock().unwrap().push(super::context_seen(m, d));
         Ok(Box::pin(futures::stream::iter(self.next_events())))
     }
 

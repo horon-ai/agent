@@ -453,7 +453,11 @@ impl Agent {
                     .collect::<Vec<_>>()
                     .join("\n")
             })
-            .find(|text| !text.trim().is_empty() && !text.starts_with(TURN_RECOVERY_NUDGE_PREFIX))
+            .find(|text| {
+                !text.trim().is_empty()
+                    && !text.starts_with(TURN_RECOVERY_NUDGE_PREFIX)
+                    && !text.trim_start().starts_with("<system-reminder>")
+            })
             .map_or_else(String::new, String::from)
     }
 }

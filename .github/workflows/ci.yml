@@ -1833,6 +1833,23 @@ jobs:
             --timeout 600 --min-passed 3 \
             -- agent::verdict_store_tests:: --nocapture
 
+      - name: Run append-only turn context cohort
+        shell: bash
+        # Every request of a session must start with the previous request's
+        # messages. The rule for appending a reminder lives in
+        # `horon-agent-message-types` and the two turn loops that store it in
+        # `horon-agent-app-core`; no other filter names either module. Each
+        # `--min-passed` is the number of tests the filter matches.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-message-types \
+            --timeout 600 --min-passed 4 \
+            -- turn_context::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- agent::turn_context::tests:: --nocapture
+
       - name: Run A2UI core cohort
         shell: bash
         run: |

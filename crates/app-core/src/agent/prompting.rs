@@ -441,10 +441,11 @@ impl Agent {
         split.dynamic_part.push_str(plan);
     }
 
-    /// The system prompt this session would send, for debug introspection.
+    /// The guidance this session gives the model, for debug introspection.
     ///
-    /// The static and dynamic parts are concatenated exactly as the provider would receive them,
-    /// so a caller can check what the model is told without starting a turn.
+    /// The static system prompt followed by the turn context: the turn loops
+    /// send the latter as a reminder at the end of the transcript, so a caller
+    /// can check what the model is told without starting a turn.
     pub fn system_prompt_for_debug(&self) -> String {
         let split = self.build_system_prompt_split(None);
         if split.dynamic_part.is_empty() {

@@ -582,12 +582,11 @@ impl Agent {
             // the whole transcript again.
             // Memory guidance is the consolidation summary; recall is the agent's own `memory` call.
             let memory_pending = self.build_memory_prompt_nonblocking_shared(std::sync::Arc::clone(&messages));
-            // Use split prompt for better caching - static content cached, dynamic not
+            // The static part is the cached system prompt; the dynamic part becomes the turn context.
             self.log_prompt_prefix_accounting(&split_prompt, &tools);
 
-            // Check for client-side cache violations before memory injection.
-            // Memory is an ephemeral suffix that changes each turn; tracking it would cause
-            // false-positive violations every turn (prior turn's memory ≠ current history prefix).
+            // Check for client-side cache violations on the stored transcript, before the
+            // reminders below are stored and appended.
             self.record_client_cache_request(&messages);
 
             // The request snapshot now owns everything the provider needs. Drop
@@ -595,22 +594,30 @@ impl Agent {
             self.session.release_provider_messages_cache();
 
             // Only the appended tail is owned; the transcript prefix stays borrowed.
+            // Everything below is stored in the transcript as it is sent, so the
+            // next request starts with this one: the turn context, the memory
+            // summary and the batch nudge each reach the model once, at the end.
             let mut request_suffix: Vec<Message> = Vec::new();
-            // Inject memory as a user message at the end (preserves cache prefix)
-            if let Some(memory) = memory_pending.as_ref() {
+            if let Some(turn_context) = self.store_turn_context(&messages, &split_prompt.dynamic_part) {
+                request_suffix.push(turn_context);
+            }
+            if let Some(memory) = memory_pending.as_ref()
+                && let Some((memory_msg, _persisted)) = self.prepare_memory_injection_message(&messages, memory)
+            {
                 let memory_count = memory.count.max(1);
                 let age_ms = memory.computed_at.elapsed().as_millis() as u64;
                 crate::memory::record_injected_prompt(&memory.prompt, memory_count, age_ms);
                 self.record_memory_injection_in_session(memory);
                 logging::info(&format!("Memory injected as message ({} chars)", memory.prompt.len()));
-                let (memory_msg, _persisted) = self.prepare_memory_injection_message(memory);
                 request_suffix.push(memory_msg);
             }
             if self
                 .turn_state
                 .take_batch_nudge(tools.iter().any(|tool| tool.name == "batch"))
             {
-                request_suffix.push(Message::user(Self::BATCH_NUDGE));
+                let nudge = Message::user(Self::BATCH_NUDGE);
+                self.add_message_with_display_role(Role::User, nudge.content.clone(), Some(StoredDisplayRole::System));
+                request_suffix.push(nudge);
             }
             logging::info(&format!(
                 "API call starting: {} messages, {} tools",
@@ -626,7 +633,7 @@ impl Agent {
                 model: Some(self.provider.model()),
             }));
 
-            // A suffix (memory, batch nudge, plan-limit notice) is the only reason
+            // A suffix (turn context, memory, batch nudge) is the only reason
             // the request grows; an unmodified request stays a borrow of the
             // snapshot.
             let joined_request =
@@ -661,7 +668,8 @@ impl Agent {
                     send_messages,
                     &tools,
                     &split_prompt.static_part,
-                    &split_prompt.dynamic_part,
+                    // The turn context already rides in the transcript.
+                    "",
                     self.provider_session_id.as_deref(),
                     &self.provider_request_context(),
                 )

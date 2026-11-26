@@ -37,7 +37,9 @@ pub struct FeatureConfig {
     /// Inject timestamps into user messages and tool results sent to the model (default: true)
     pub message_timestamps: bool,
     /// Persist auto-recalled memory injections into normal session history instead of sending
-    /// them as request-only ephemeral suffix messages (default: false)
+    /// them as request-only ephemeral suffix messages (default: true). A request-only summary
+    /// is gone from the next request, which rewrites the history a session-aware gateway
+    /// continues from.
     pub persist_memory_injections: bool,
     /// Surface an in-chat system message whenever a request misses the KV cache
     /// for a harness-caused (avoidable) reason: the system prompt, tool set, or
@@ -86,7 +88,7 @@ impl Default for FeatureConfig {
             parallel_tools: true,
             loop_guard: true,
             message_timestamps: true,
-            persist_memory_injections: false,
+            persist_memory_injections: true,
             kv_cache_miss_notices: true,
             update_channel: UpdateChannel::default(),
             crash_bundles: true,

@@ -417,13 +417,60 @@ install the new runtime candidate, then use the existing graceful server upgrade
 It preserves session state and does not kill the live daemon or the harness bridge. The
 feature stays unusable until both sides run the new code.
 
+## Requests only grow: the turn context
+
+Within one session every request starts with every message of the previous
+request. A provider's prompt cache, and a gateway that continues one upstream
+conversation per client session (magpie in front of Claude, for example), only
+keeps going while that holds; a request that edits an earlier message makes the
+gateway open a new upstream conversation with the whole history pasted in.
+
+Context that changes during a session is therefore appended, never edited in
+place. Both turn loops, before each request
+(`crates/app-core/src/agent/turn_loops.rs`, `turn_streaming_mpsc.rs`):
+
+- Build the turn context: the working notes, this turn's reminder (a loop-guard
+  warning, for example), an approved plan, an active skill, the swarm and yield
+  directives. When it differs from the newest `# Turn context` reminder in the
+  transcript, a new `<system-reminder>` that opens with `# Turn context` is
+  stored at the end of the transcript (display role system) and sent. An
+  unchanged context adds nothing. Context that was present and is gone is
+  cleared with a `(none)` turn context. The comparison is
+  `turn_context_update` (`crates/message-types/src/turn_context.rs`), called
+  through `Agent::store_turn_context` (`crates/app-core/src/agent/turn_context.rs`).
+- Store the memory summary the same way when `[features]
+  persist_memory_injections` is on (the default): a summary equal to the newest
+  one in the transcript is not sent again. With the setting off the summary
+  rides only on the request that carried it, so the next request no longer
+  starts with that one.
+- On the non-streaming path, store the batch nudge in the transcript before
+  sending it (the streaming path has no batch nudge).
+
+The provider's dynamic system prompt channel stays empty for these turns, so a
+fresh user message no longer moves the context behind it. Some paths still
+rewrite earlier messages on purpose, and a gateway that continues one upstream
+conversation per session starts a new one after them: compaction, a context
+rollover, rewind, the repair of an interrupted turn, aging old tool results once
+the prompt cache has gone cold (`crates/app-core/src/agent/tool_result_aging.rs`),
+replacing older screenshots, `/trim`, and a `pre_request` hook that edits
+messages. A stored reminder is never a user turn: the rollover boundary, the
+compaction turn start (`crates/compaction-core/src/pruning.rs`) and the turn
+recovery judge (`crates/app-core/src/agent/turn_recovery_wiring.rs`) skip it.
+
+Tests: `crates/message-types/src/turn_context.rs` covers when a reminder is
+appended; `crates/app-core/src/agent/turn_context_tests.rs` runs two turns on
+each loop and checks that every request extends the previous one and that a
+memory summary is stored once and the batch nudge stays; the loop-guard tests in
+`crates/app-core/src/agent/turn_loops_round_tests.rs` and
+`turn_streaming_mpsc_round_tests.rs` check that the warning reaches the model.
+
 ## Model-requested context rollover
 
 `context_notes` gives the model a small notes file. `new_context` lets it decide
 that those notes are enough and start the next turn from a clean active context.
 The tool is registered only while `[tools] context_notes` is on
 (`crates/app-core/src/tool/mod.rs:1107`), because the rollover keeps exactly the
-notes the dynamic system prompt carries.
+notes the turn context carries.
 
 The call itself only records a pending request keyed by session
 (`crates/app-core/src/tool/new_context.rs`), so two calls in one turn queue one
@@ -440,9 +487,9 @@ boundary over every message before the newest user turn. No summary is generated
 the boundary carries a one-line marker (`compaction.rs:9`), with a text summary
 the session already had left in front of it. A provider-native window is dropped
 instead, because advancing the boundary past it would replay a payload the server
-built for the earlier coverage. The next request is then the dynamic system
-prompt (with the working notes), that user message, and the marker naming
-`history://current`. Nothing is deleted: `history://current` still serves the full
+built for the earlier coverage. The next request is then the marker naming
+`history://current`, that user message, and a fresh turn context with the working
+notes. Nothing is deleted: `history://current` still serves the full
 transcript, including the tool results the rollover dropped.
 
 The boundary never lands on a tool-result message (`compaction.rs:17`). The call

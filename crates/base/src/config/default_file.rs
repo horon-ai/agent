@@ -67,8 +67,10 @@ swarm = true
 auto_poke = true
 # Inject timestamps into user messages and tool results sent to the model
 message_timestamps = true
-# Persist memory injections into session history instead of sending them as request-only ephemeral context
-persist_memory_injections = false
+# Persist memory injections into session history instead of sending them as request-only
+# ephemeral context. `false` makes the next request drop the summary, which a provider
+# cache or a session-aware gateway reads as a rewritten history.
+persist_memory_injections = true
 # Import rule files written for other agent tools (.cursor/rules/*.mdc, .cursorrules,
 # .clinerules, Copilot instructions, Windsurf rules, GEMINI.md) into the system
 # prompt, read-only. AGENTS.md and CLAUDE.md are skipped because they are injected

@@ -8,7 +8,7 @@ use tokio::sync::{Notify, mpsc};
 
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::provider::EventStream;
+use crate::{agent::context_seen, provider::EventStream};
 
 use crate::tool::{ConcurrencyClass, Tool, ToolEffects, ToolOutput};
 
@@ -864,13 +864,13 @@ impl Provider for ScriptedProvider {
 
     async fn complete_split(
         &self,
-        _: &[Message],
+        m: &[Message],
         _: &[ToolDefinition],
         _: &str,
-        system_dynamic: &str,
+        d: &str,
         _: Option<&str>,
     ) -> Result<EventStream> {
-        self.dynamic_prompts.lock().unwrap().push(system_dynamic.to_string());
+        self.dynamic_prompts.lock().unwrap().push(context_seen(m, d));
         Ok(Box::pin(futures::stream::iter(self.next_events())))
     }
 
