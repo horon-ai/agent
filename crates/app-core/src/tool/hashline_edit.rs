@@ -490,7 +490,7 @@ impl Tool for HashlineEditTool {
     }
 
     fn description(&self) -> &str {
-        "Replace line spans named by hashline anchors, and optionally move or delete the whole file. Every anchor is validated before anything is written."
+        "Replace line spans named by hashline anchors from `read`."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -505,7 +505,7 @@ impl Tool for HashlineEditTool {
                 },
                 "move_to": {
                     "type": "string",
-                    "description": "After the line ops, move the file to this path and remove the source. The destination must not exist. Cannot be combined with `delete`."
+                    "description": "Move the file here after the line ops; the destination must not exist."
                 },
                 "delete": {
                     "type": "boolean",
@@ -513,7 +513,7 @@ impl Tool for HashlineEditTool {
                 },
                 "ops": {
                     "type": "array",
-                    "description": "Anchored replacements, applied as one all-or-nothing call. Spans may not overlap. Omit only when `move_to` or `delete` names the call's whole effect.",
+                    "description": "Anchored replacements applied all-or-nothing; spans may not overlap.",
                     "minItems": 1,
                     "items": {
                         "type": "object",
@@ -521,7 +521,7 @@ impl Tool for HashlineEditTool {
                         "properties": {
                             "start_anchor": {
                                 "type": "string",
-                                "description": "Anchor of the first line of the span, as `{line}#{tag}` copied from a `read` with hashline: true. Inserts use only this anchor."
+                                "description": "`{line}#{tag}` of the span's first line, from `read` with hashline: true."
                             },
                             "end_anchor": {
                                 "type": "string",
@@ -538,7 +538,7 @@ impl Tool for HashlineEditTool {
                             },
                             "block": {
                                 "type": "boolean",
-                                "description": "Expand the span to the enclosing function, impl, class, or block of the start line. Requires a supported language (rust, typescript, tsx, javascript, python, go)."
+                                "description": "Expand the span to the enclosing function, class, or block."
                             }
                         }
                     }

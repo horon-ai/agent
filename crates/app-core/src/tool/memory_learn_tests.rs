@@ -408,13 +408,13 @@ async fn memory_learn_creates_and_updates_a_managed_skill() {
 
 #[tokio::test]
 async fn memory_learn_keeps_the_lesson_when_authoring_is_off() {
-    let _isolated = IsolatedHome::new("");
+    let _isolated = IsolatedHome::new("managed_skills = false\n");
     let project = tempfile::tempdir().expect("project");
     let ctx = test_ctx(project.path().to_path_buf());
     let tool = MemoryTool::new();
 
-    // `[tools] managed_skills` is off by default, so authoring is refused. The
-    // lesson is still the point of the call and must survive.
+    // `[tools] managed_skills = false` refuses authoring. The lesson is still
+    // the point of the call and must survive.
     let output = tool
         .execute(
             json!({

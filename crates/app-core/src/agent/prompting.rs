@@ -269,7 +269,7 @@ impl Agent {
             "# Python cells (`eval`)\n\
              Use `eval` for Python computation or data processing, especially when later cells reuse intermediate values. \
              Pass Python source as `code`. Variables persist in the session until reset, timeout, or kernel shutdown. \
-             Set `reset: true` for a fresh kernel. Each cell requires explicit approval, and denied cells do not run. \
+             Set `reset: true` for a fresh kernel. A cell asks for approval exactly like a shell command, and a denied cell does not run. \
              Inside Python, call allowed Horon tools with top-level `await`, for example \
              `await tool.read(file_path=\"notes.txt\")`. Print values you want back. \
              The default timeout is 30 seconds. Each cell can make up to 64 bridge calls, with frames up to 256 KiB.",

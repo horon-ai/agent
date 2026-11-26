@@ -190,7 +190,7 @@ impl crate::provider::Provider for MockProvider {
 }
 
 #[test]
-fn ast_tools_stay_off_by_default_and_register_when_the_gate_is_on() {
+fn ast_tools_register_by_default_and_the_gate_removes_them() {
     let _env = crate::storage::lock_test_env();
     let home = tempfile::tempdir().expect("home");
     let _guard = HomeGuard::new(home.path());
@@ -209,8 +209,12 @@ fn ast_tools_stay_off_by_default_and_register_when_the_gate_is_on() {
         .await;
         let names = registry.tool_names().await;
         assert!(
-            !names.iter().any(|name| name == "ast_grep" || name == "ast_edit"),
-            "ast tools must stay unregistered by default, got {names:?}"
+            names.iter().any(|name| name == "ast_grep"),
+            "ast_grep must be registered by default, got {names:?}"
+        );
+        assert!(
+            names.iter().any(|name| name == "ast_edit"),
+            "ast_edit must be registered by default, got {names:?}"
         );
         assert!(!crate::config::CORE_TOOLS.contains(&"ast_grep"));
         assert!(!crate::config::CORE_TOOLS.contains(&"ast_edit"));
@@ -218,7 +222,7 @@ fn ast_tools_stay_off_by_default_and_register_when_the_gate_is_on() {
 
     let path = crate::config::Config::path().expect("config path");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
-    std::fs::write(&path, "[tools]\nast_tools = true\n").expect("write config");
+    std::fs::write(&path, "[tools]\nast_tools = false\n").expect("write config");
     crate::config::Config::invalidate_cache();
 
     runtime().block_on(async {
@@ -228,12 +232,8 @@ fn ast_tools_stay_off_by_default_and_register_when_the_gate_is_on() {
         .await;
         let names = registry.tool_names().await;
         assert!(
-            names.iter().any(|name| name == "ast_grep"),
-            "[tools] ast_tools = true must register ast_grep, got {names:?}"
-        );
-        assert!(
-            names.iter().any(|name| name == "ast_edit"),
-            "[tools] ast_tools = true must register ast_edit, got {names:?}"
+            !names.iter().any(|name| name == "ast_grep" || name == "ast_edit"),
+            "[tools] ast_tools = false must remove both tools, got {names:?}"
         );
     });
 }

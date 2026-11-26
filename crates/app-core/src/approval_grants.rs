@@ -323,8 +323,7 @@ fn grant_from_request_at(
     let workspace = workspace_root(working_dir.as_deref())?;
     let (target, capability) = match scope {
         GrantScope::Tool => {
-            if request.action == "eval"
-                || request.urgency == crate::safety::Urgency::High
+            if request.urgency == crate::safety::Urgency::High
                 || request.action.is_empty()
                 || request.action.contains(['/', '\\'])
                 || request.action.chars().any(char::is_control)

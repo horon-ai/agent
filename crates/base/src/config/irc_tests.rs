@@ -1,6 +1,6 @@
 //! Tests for the `[tools] irc` switch, the `[irc]` section, and the template.
 
-use crate::config::{CORE_TOOLS, Config, IRC_TOOL, PLAN_TOOL, TOOLBOX_TOOL, ToolConfig};
+use crate::config::{Config, IRC_TOOL, PLAN_TOOL, TOOLBOX_TOOL, ToolConfig};
 use std::ffi::OsString;
 
 fn restore_env_var(key: &str, previous: Option<OsString>) {
@@ -30,7 +30,11 @@ fn irc_switch_adds_irc_to_core_allow_list() {
         .expect("core is an allow-list");
     assert!(allowed.contains(IRC_TOOL), "the irc tool must join the core list");
     assert!(allowed.contains(TOOLBOX_TOOL));
-    assert_eq!(allowed.len(), CORE_TOOLS.len() + 2);
+    assert_eq!(
+        allowed.len(),
+        18 + 17 + 3 + 1,
+        "the open core surface plus irc, the checkpoint pair, and the dispatcher"
+    );
     assert!(!allowed.contains(PLAN_TOOL), "plan mode stays off");
     println!(
         "--- manual QA: core allow-list with irc = {} entries including {IRC_TOOL} ---",
@@ -39,27 +43,49 @@ fn irc_switch_adds_irc_to_core_allow_list() {
 }
 
 #[test]
-fn irc_switch_off_keeps_core_allow_list_unchanged() {
-    let cfg = core_config();
-    let allowed = cfg
+fn irc_switch_off_removes_only_irc_from_the_core_allow_list() {
+    let on = core_config()
         .selection_with_ambient(&crate::config::AmbientConfig::default())
         .allowed_tools
         .expect("core is an allow-list");
-    let mut expected: std::collections::HashSet<String> = CORE_TOOLS.iter().map(|name| (*name).to_string()).collect();
-    expected.insert(TOOLBOX_TOOL.to_string());
-    assert_eq!(allowed, expected, "the default core surface must not change");
-    assert!(!allowed.contains(IRC_TOOL));
+    let off = ToolConfig {
+        irc: false,
+        ..core_config()
+    }
+    .selection_with_ambient(&crate::config::AmbientConfig::default())
+    .allowed_tools
+    .expect("core is an allow-list");
 
+    assert!(on.contains(IRC_TOOL), "the default surface reaches irc");
+    assert!(!off.contains(IRC_TOOL), "the switch off removes irc");
+    let mut expected = on;
+    expected.remove(IRC_TOOL);
+    assert_eq!(off, expected, "the switch off leaves every other tool alone");
+
+    // A list that is spelled out stays exactly as written: the switch joins
+    // only the default core surface, and naming irc is how another list gets it.
     for profile in ["acp", "minimal"] {
-        let off = ToolConfig {
+        let allowed = ToolConfig {
             profile: profile.to_string(),
             ..ToolConfig::default()
         }
         .selection_with_ambient(&crate::config::AmbientConfig::default())
         .allowed_tools
         .expect("profile is an allow-list");
-        assert!(!off.contains(IRC_TOOL), "{profile} must not gain irc by default");
+        assert!(!allowed.contains(IRC_TOOL), "{profile} stays as written");
     }
+    let named = ToolConfig {
+        enabled: vec!["read".to_string(), IRC_TOOL.to_string()],
+        ..ToolConfig::default()
+    }
+    .selection_with_ambient(&crate::config::AmbientConfig::default())
+    .allowed_tools
+    .expect("an explicit list is an allow-list");
+    assert_eq!(
+        named,
+        ["read".to_string(), IRC_TOOL.to_string()].into_iter().collect(),
+        "an explicit list that names irc reaches it and nothing else"
+    );
 }
 
 #[test]
@@ -99,27 +125,33 @@ fn irc_section_defaults_match_documented_values() {
 fn irc_env_override_turns_switch_on() {
     let _guard = crate::storage::lock_test_env();
     let previous = std::env::var_os("HORON_AGENT_IRC");
-    crate::env::set_var("HORON_AGENT_IRC", "1");
 
-    let mut cfg = Config::default();
-    cfg.apply_env_overrides();
-    assert!(cfg.tools.irc);
-
-    crate::env::set_var("HORON_AGENT_IRC", "maybe");
-    let mut ignored = Config::default();
-    ignored.apply_env_overrides();
-    assert!(!ignored.tools.irc, "an unparseable value must be ignored");
-
-    crate::env::set_var("HORON_AGENT_IRC", "0");
     let mut off = Config {
         tools: ToolConfig {
-            irc: true,
+            irc: false,
             ..ToolConfig::default()
         },
         ..Config::default()
     };
+    crate::env::set_var("HORON_AGENT_IRC", "1");
     off.apply_env_overrides();
-    assert!(!off.tools.irc);
+    assert!(off.tools.irc, "the env override turns the switch on");
+
+    let mut ignored = Config {
+        tools: ToolConfig {
+            irc: false,
+            ..ToolConfig::default()
+        },
+        ..Config::default()
+    };
+    crate::env::set_var("HORON_AGENT_IRC", "maybe");
+    ignored.apply_env_overrides();
+    assert!(!ignored.tools.irc, "an unparseable value must be ignored");
+
+    crate::env::set_var("HORON_AGENT_IRC", "0");
+    let mut disabled = Config::default();
+    disabled.apply_env_overrides();
+    assert!(!disabled.tools.irc);
 
     restore_env_var("HORON_AGENT_IRC", previous);
 }
@@ -127,7 +159,7 @@ fn irc_env_override_turns_switch_on() {
 #[test]
 fn default_file_documents_irc_switch_and_section() {
     let template = Config::default_config_file_contents();
-    for key in ["irc = false", "HORON_AGENT_IRC", "[irc]", "mailbox_cap = 100"] {
+    for key in ["irc = true", "HORON_AGENT_IRC", "[irc]", "mailbox_cap = 100"] {
         assert!(template.contains(key), "the template should document `{key}`");
     }
     for key in [
@@ -139,6 +171,6 @@ fn default_file_documents_irc_switch_and_section() {
     }
 
     let parsed = toml::from_str::<Config>(&template).expect("the shipped template must parse");
-    assert!(!parsed.tools.irc, "the shipped switch is off");
+    assert!(parsed.tools.irc, "the shipped switch is on");
     assert_eq!(parsed.irc, Config::default().irc);
 }

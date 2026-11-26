@@ -395,6 +395,7 @@ async fn checkpoint_pair_is_registered_only_when_the_switch_is_on() {
 
     let core_off = crate::config::ToolConfig {
         profile: "core".to_string(),
+        checkpoint: false,
         ..Default::default()
     };
     let off = core_off
@@ -408,22 +409,21 @@ async fn checkpoint_pair_is_registered_only_when_the_switch_is_on() {
 }
 
 #[tokio::test]
-async fn an_unset_switch_registers_nothing_and_leaves_the_surface_unchanged() {
+async fn an_unset_switch_registers_the_pair_and_false_removes_it() {
     let guard = HomeGuard::new();
 
     guard.unset_checkpoint();
     let unset = guard.registered_names().await;
-    assert!(!unset.is_empty(), "the profile still registers its own tools");
     assert!(
-        !unset.iter().any(|name| name == "checkpoint" || name == "rewind"),
-        "an unset switch is off, not on: {unset:?}"
+        unset.iter().any(|name| name == "checkpoint") && unset.iter().any(|name| name == "rewind"),
+        "the switch is on by default: {unset:?}"
     );
 
     guard.set_checkpoint(false);
     let explicit_off = guard.registered_names().await;
-    assert_eq!(
-        unset, explicit_off,
-        "an absent switch and an explicit false register the same surface"
+    assert!(
+        !explicit_off.iter().any(|name| name == "checkpoint" || name == "rewind"),
+        "an explicit false registers neither tool: {explicit_off:?}"
     );
 }
 

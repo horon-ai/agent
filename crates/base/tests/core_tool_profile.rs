@@ -6,43 +6,63 @@
 
 use horon_agent_base::config::{CORE_TOOL_PROFILE, TOOLBOX_TOOL, ToolConfig};
 
-/// The eighteen-tool headless default, exactly as `AGENTS.md` and `CORE_TOOLS`
-/// state it. `toolbox` sits beside this set as the dispatcher for the deferred
-/// entries, not inside it.
+/// The open headless default, as `AGENTS.md` states it: every built-in tool
+/// this build constructs, the dispatcher, and the `irc` bus and checkpoint pair
+/// their switches join. Most of it is listed rather than sent eagerly; this
+/// test is about reach.
 const KEEP: &[&str] = &[
-    "bash",
-    "read",
-    "write",
-    "edit",
-    "replace",
-    "apply_patch",
     "agentgrep",
-    "ls",
-    "webfetch",
-    "websearch",
-    "skill_manage",
-    "mcp",
-    "monitor",
-    "undo",
+    "apply_patch",
     "ask",
-    "todo",
-    "session_search",
-    "swarm",
-];
-
-/// Tools the core profile still refuses. `memory` and `irc` are off in the
-/// shipped default; the rest are operator and self-development surfaces that
-/// only the `full` profile carries.
-const DROP: &[&str] = &[
+    "ast_edit",
+    "ast_grep",
+    "bash",
     "batch",
     "bg",
+    "checkpoint",
+    "codemode",
+    "context_notes",
+    "conversation_search",
+    "edit",
+    "eval",
+    "generate_image",
+    "goal",
+    "hashline_edit",
+    "horon_agent_docs",
+    "integration_tools",
+    "irc",
+    "ls",
+    "lsp",
+    "mcp",
     "memory",
+    "monitor",
+    "new_context",
+    "read",
+    "redo",
+    "replace",
+    "rewind",
+    "session_search",
+    "skill_manage",
+    "swarm",
+    "todo",
+    "toolbox",
+    "undo",
+    "webfetch",
+    "websearch",
+    "write",
+];
+
+/// Tools the core profile still refuses: per-session and mode-only tools that
+/// join only when their own condition holds, and operator surfaces that only
+/// the `full` profile carries.
+const DROP: &[&str] = &[
     "selfdev",
     "desktop_selfdev",
     "compile_remote",
     "schedule",
-    "conversation_search",
-    "irc",
+    "invalid",
+    "request_permission",
+    "submit_plan",
 ];
 
 #[test]
@@ -53,20 +73,10 @@ fn core_profile_keeps_exactly_the_headless_tool_set() {
     };
     let allowed = cfg.allowed_tools().expect("core profile is an allow-list");
 
-    assert_eq!(
-        allowed.len(),
-        KEEP.len() + 1,
-        "core profile must expose the kept set plus the dispatcher, got {allowed:?}"
-    );
-    for kept in KEEP {
-        assert!(allowed.contains(*kept), "core profile must keep {kept}");
-    }
-    assert!(
-        allowed.contains(TOOLBOX_TOOL),
-        "core profile must reach the dispatcher that lists the other core tools"
-    );
-    assert!(allowed.contains("skill_manage"), "skill tool must stay");
-    assert!(allowed.contains("mcp"), "mcp tool must stay");
+    let mut names: Vec<&str> = allowed.iter().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, KEEP, "core profile must reach exactly the open default surface");
+    assert!(allowed.contains(TOOLBOX_TOOL), "core profile must reach the dispatcher");
     for dropped in DROP {
         assert!(!allowed.contains(*dropped), "core profile must not expose {dropped}");
     }

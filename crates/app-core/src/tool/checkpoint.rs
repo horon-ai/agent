@@ -161,9 +161,7 @@ impl Tool for CheckpointTool {
     }
 
     fn description(&self) -> &str {
-        "Mark this point of the conversation so `rewind` can later fold everything after it into a \
-         report you write. One checkpoint per session; it applies when this turn ends. Files, \
-         background tasks and process state are not restored."
+        "Mark a point that `rewind` can later fold this session back to."
     }
 
     /// The record is appended to the session transcript at turn end.
@@ -232,9 +230,7 @@ impl Tool for RewindTool {
     }
 
     fn description(&self) -> &str {
-        "Rewind to the active checkpoint: every message after it leaves this session's context and \
-         `report` takes its place as background for the work ahead. Files, background tasks and \
-         process state are not restored."
+        "Fold context back to the checkpoint; files are not restored."
     }
 
     /// The rewind truncates the session transcript at turn end.
@@ -251,9 +247,7 @@ impl Tool for RewindTool {
                 "report": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "What the abandoned branch established, why it was abandoned, \
-                                    and what the next attempt should do differently. This is the \
-                                    only record of that work left in context."
+                    "description": "What the abandoned branch found, why it was dropped, and what to try next."
                 }
             }
         })

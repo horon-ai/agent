@@ -87,7 +87,7 @@ impl Tool for AstGrepTool {
     }
 
     fn description(&self) -> &str {
-        "Search code by syntax shape with an ast-grep pattern (`foo($A, $B)`). Reports the path and line span of each match; `$A` captures are reported when named."
+        "Search code by syntax shape with an ast-grep pattern."
     }
 
     fn effects(&self) -> ToolEffects {
@@ -106,7 +106,7 @@ impl Tool for AstGrepTool {
                 "intent": super::intent_schema_property(),
                 "pattern": {
                     "type": "string",
-                    "description": "ast-grep pattern, for example `foo($A, $B)` or `if ($COND) { $$$BODY }`. `$NAME` captures one node, `$$$NAME` captures many."
+                    "description": "ast-grep pattern such as `foo($A, $B)`; `$$$NAME` captures many nodes."
                 },
                 "path": {
                     "type": "string",
@@ -114,7 +114,7 @@ impl Tool for AstGrepTool {
                 },
                 "lang": {
                     "type": "string",
-                    "description": "Language override: rust, typescript, tsx, javascript, python, go. Inferred from each file's extension when omitted."
+                    "description": "Language override (rust, typescript, tsx, javascript, python, go); else by extension."
                 },
                 "limit": {
                     "type": "integer",
@@ -248,7 +248,7 @@ impl Tool for AstEditTool {
     }
 
     fn description(&self) -> &str {
-        "Rewrite code by ast-grep pattern and template. Previews a unified diff unless `expected_replacements` is given; a count mismatch writes nothing."
+        "Rewrite code with an ast-grep pattern and template."
     }
 
     fn effects(&self) -> ToolEffects {

@@ -630,7 +630,19 @@ impl Agent {
         // gets every core tool eager again instead of tools nothing can call.
         let core_listed = default_core_profile && tool_config.toolbox_reachable();
         let allowed_tools = consult::narrow(tool_config, &session, allowed_tools, core_listed);
-        let load_tiers = tool_config.load_tiers(allowed_tools.as_ref(), core_listed);
+        let mut load_tiers = tool_config.load_tiers(allowed_tools.as_ref(), core_listed);
+        // `eval` earns an eager slot only where a cell can start: its schema is
+        // worth the cached-prefix bytes when a Python interpreter is on PATH and
+        // is dead weight when none is. An explicit `[tools.load_mode] eval`
+        // entry still wins, and a switch that turns the tool off removes it
+        // before the tier matters.
+        if core_listed
+            && tool_config.eval
+            && load_tiers.explicit_tier(crate::tool::eval::NAME).is_none()
+            && crate::tool::eval::interpreter_on_path()
+        {
+            load_tiers.force_essential(crate::tool::eval::NAME);
+        }
         let working_dir = session.working_dir.as_deref().map(std::path::Path::new);
         let agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
         let static_prompt_sources = crate::prompt::StaticPromptSources::load(working_dir);
