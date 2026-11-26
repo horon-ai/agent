@@ -65,6 +65,7 @@ pub(super) async fn snapshot(
                     content: message.content,
                     answer,
                     message_id: None,
+                    tool: None,
                 }
             })
             .collect(),

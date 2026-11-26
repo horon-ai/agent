@@ -545,6 +545,14 @@ fn ctrl_w_deletes_a_word_and_alt_arrows_move_by_word() {
     assert_eq!(app.input.cursor(), 4);
     app.on_key(modified(KeyCode::Right, KeyModifiers::ALT));
     assert_eq!(app.input.cursor(), 10);
+    // Option-← and Option-→ on a macOS terminal arrive as `alt+b` and `alt+f`.
+    app.on_key(modified(KeyCode::Char('b'), KeyModifiers::ALT));
+    assert_eq!(app.input.cursor(), 4);
+    app.on_key(modified(KeyCode::Char('f'), KeyModifiers::ALT));
+    assert_eq!(app.input.cursor(), 10);
+    // An unbound Alt chord is a shortcut, never text.
+    app.on_key(modified(KeyCode::Char('x'), KeyModifiers::ALT));
+    assert_eq!(app.input.text(), "two words ");
 }
 
 #[test]
@@ -718,4 +726,16 @@ fn editing_withdraws_a_suggestion_and_the_accept_key_cannot_bring_it_back() {
     assert_eq!(app.suggestion_text(), None);
     app.on_key(modified(KeyCode::Right, KeyModifiers::CONTROL));
     assert_eq!(app.input.text(), "help");
+}
+
+#[test]
+fn command_arrows_jump_to_either_end_of_the_conversation() {
+    assert_eq!(parse("cmd+up").to_string(), "cmd+up");
+    assert_eq!(parse("Super+Up"), parse("cmd+up"));
+    let mut app = app();
+    // A Command chord the terminal reports with the super modifier.
+    app.on_key(modified(KeyCode::Up, KeyModifiers::SUPER));
+    assert_eq!(app.scroll.offset(), usize::MAX, "cmd+up did not jump to the top");
+    app.on_key(modified(KeyCode::Down, KeyModifiers::SUPER));
+    assert_eq!(app.scroll.offset(), 0, "cmd+down did not follow the end again");
 }

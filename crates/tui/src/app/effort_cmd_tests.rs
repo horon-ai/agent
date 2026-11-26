@@ -57,10 +57,13 @@ fn a_level_on_the_ladder_is_the_action_and_nothing_else() {
         submit(&mut app, "/effort high"),
         Some(Action::Effort("high".to_string()))
     );
-    // The level leaves the client as the ladder spells it, and nothing is
-    // claimed on screen before the harness answers.
-    assert_eq!(app.status_data().effort, None, "a level was shown before it was set");
+    // The level leaves the client as the ladder spells it; the status line
+    // shows the choice at once, and no transcript line claims it was applied.
+    assert_eq!(app.status_data().effort, Some("high"));
     assert!(app.transcript.items().is_empty(), "an unconfirmed level was reported");
+    // A refused request falls back to the level the harness reported.
+    app.request_failed("refused");
+    assert_eq!(app.status_data().effort, None);
 }
 
 #[test]
@@ -248,7 +251,7 @@ fn shift_tab_completes_the_draft_while_the_slash_popup_is_open() {
     assert_eq!(app.on_key(back_tab()), None);
     assert_eq!(
         app.input.text(),
-        "/effort",
+        "/effort ",
         "shift+tab changed the effort instead of completing the command on screen"
     );
     assert!(app.effort_requested.is_none(), "the popup key asked for a level");
@@ -560,4 +563,17 @@ fn the_model_list_says_what_a_row_would_switch_to() {
         current.preview.join("\n").contains("the current model of this session"),
         "the row of the model in force does not say so"
     );
+}
+
+#[test]
+fn the_status_line_shows_the_chosen_effort_before_it_is_confirmed() {
+    let mut app = app();
+    app.reasoning_effort = Some("medium".to_string());
+    app.on_key(back_tab());
+    assert_eq!(app.status_data().effort, Some("high"), "an idle press shows at once");
+
+    // During a turn the level waits to be sent, and the line already says it.
+    app.pending_turn = true;
+    app.on_key(back_tab());
+    assert_eq!(app.status_data().effort, Some("xhigh"));
 }

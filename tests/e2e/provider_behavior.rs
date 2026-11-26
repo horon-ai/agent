@@ -528,8 +528,8 @@ async fn test_system_prompt_no_claude_code_identity() -> Result<()> {
         identity_portion
     );
 
-    // Should identify as HoronAgent. The prompt states the display name
-    // ("You are HoronAgent"), while `horon-agent` is the executable and ACP
+    // Should identify as Horon. The prompt states the display name
+    // ("You are Horon"), while `horon-agent` is the executable and ACP
     // agent name, so compare the name without case or separator style instead
     // of pinning one spelling of the same product.
     let identity_name: String = lower_identity
@@ -537,8 +537,8 @@ async fn test_system_prompt_no_claude_code_identity() -> Result<()> {
         .filter(|character| !matches!(character, '-' | '_' | ' '))
         .collect();
     assert!(
-        identity_name.contains("horonagent"),
-        "System prompt should identify as HoronAgent. Found: {}",
+        identity_name.contains("youarehoron"),
+        "System prompt should identify as Horon. Found: {}",
         identity_portion
     );
 

@@ -516,16 +516,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 1
     },
-    "crates/app-core/src/tool/discover.rs": {
-      "dot_ok": 2,
-      "let_underscore": 0,
-      "unwrap_or_default": 6
-    },
-    "crates/app-core/src/tool/discover_secrets.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/app-core/src/tool/edit.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
@@ -1132,11 +1122,6 @@
       "unwrap_or_default": 4
     },
     "crates/base/src/soft_interrupt_store.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/sponsors/provenance.rs": {
       "dot_ok": 0,
       "let_underscore": 1,
       "unwrap_or_default": 0

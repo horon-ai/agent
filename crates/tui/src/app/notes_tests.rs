@@ -30,6 +30,7 @@ fn message(role: &str, content: &str) -> HistoryMessage {
         content: content.to_string(),
         answer: None,
         message_id: None,
+        tool: None,
     }
 }
 

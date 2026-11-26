@@ -205,6 +205,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (ids::APP_SCROLL_UP, "hold the transcript one row higher"),
     (ids::APP_SCROLL_DOWN, "move the transcript one row back towards the end"),
+    (ids::APP_SCROLL_TOP, "jump to the first message of the session"),
     (ids::APP_SCROLL_BOTTOM, "follow the end of the conversation again"),
     (
         ids::APP_EXPAND_TOOL,
@@ -282,6 +283,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         "fill the popup's selected command, complete the prefix, or fill a workspace path",
     ),
     (
+        ids::EDITOR_PASTE_IMAGE,
+        "attach the image on the clipboard to the draft",
+    ),
+    (
         ids::EDITOR_ACCEPT_SUGGESTION,
         "fill the draft with the local suggestion shown after the caret",
     ),
@@ -318,6 +323,9 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "help" => "list the commands and the keys in force",
         "jobs" => "list the background work this session is running, and cancel a terminal",
         "stats" => "show the attached session's recorded token usage",
+        "session" => {
+            "show this session's id, title, folder, model, messages and tokens; /session delete removes it and starts a new one"
+        }
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
         "live" => "opt-in real-time voice session adapter (consent, start, talk, end, stop, reconnect, leave, status)",
@@ -341,7 +349,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         }
         "skills" => "list the skills the harness reports, and put one in the draft",
         "swarm" => "list this session's swarm children and the parent it returns to, and attach to one",
-        "switch" => "move to another stored session, or pick one from the list",
+        "switch" => "switch the model, or pick one from the list (same as /model)",
         "tools" => "browse the current session's enabled tools without running them",
         "voice" => "on-device speech input and playback (consent, stop, cancel, say, read, status)",
         _ => "",
@@ -602,19 +610,16 @@ pub fn popup_matches(entries: &[Entry], needle: &str) -> Vec<Entry> {
     matches.into_iter().map(|(_, entry)| entry).collect()
 }
 
-/// Drop the offer once the draft already names the command it would offer.
+/// Put the command the draft names exactly first.
 ///
-/// A list saying what the user has just finished typing is in the way: there is
-/// nothing left to choose, and the next key is the one that sends. A name that
-/// another match extends still leaves a choice (`resume` and `resume_all`), so
-/// the list stays; a row the letters only resemble (`autoreview` for `review`)
-/// is no choice at all and must not keep a finished name open.
-fn settled(matches: Vec<Entry>, needle: &str) -> Vec<Entry> {
-    let names = matches.iter().any(|entry| entry.name == needle);
-    let extended = matches
-        .iter()
-        .any(|entry| entry.name != needle && entry.name.starts_with(needle));
-    if names && !extended { Vec::new() } else { matches }
+/// A finished name keeps the list open, so the description of the command the
+/// next `enter` runs stays in view, and that command is the selected row.
+fn named_first(mut matches: Vec<Entry>, needle: &str) -> Vec<Entry> {
+    if let Some(at) = matches.iter().position(|entry| entry.name == needle) {
+        let named = matches.remove(at);
+        matches.insert(0, named);
+    }
+    matches
 }
 
 /// The rows the popup shows, and the first of them.
@@ -781,7 +786,7 @@ impl SlashPopup {
         self.selected = 0;
         self.dismissed = false;
         self.matches = match prefix(draft) {
-            Some(prefix) => settled(popup_matches(&registry.entries(), prefix), prefix),
+            Some(prefix) => named_first(popup_matches(&registry.entries(), prefix), prefix),
             None => Vec::new(),
         };
     }

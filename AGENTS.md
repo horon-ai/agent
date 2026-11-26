@@ -641,7 +641,7 @@ one page with the files each one is drawn from. They follow the style of
 reference, light and dark colours through `prefers-color-scheme`.
 
 Every English Markdown file under `docs/`, including subfolders, and the root
-`README.md` are compiled into the binary and served by the `horon_agent_docs`
+`README.md` are compiled into the binary and served by the `documentation`
 tool (`crates/app-core/build.rs`); `.ko.md` files are not bundled. The root
 `PHILOSOPHY.md` pair is checked like the READMEs but is not bundled.
 A moved or deleted doc must leave no stale path in code, scripts, or tests.

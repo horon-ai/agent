@@ -55,7 +55,7 @@ fn rows() -> Vec<SessionRow> {
 
 /// Open the session list and fill it with the newest-first answer.
 fn open_list(app: &mut App) {
-    assert_eq!(submit(app, "/switch"), Some(Action::Sessions));
+    assert_eq!(submit(app, "/resume"), Some(Action::Sessions));
     app.show_sessions(rows());
 }
 
@@ -147,7 +147,7 @@ fn a_pin_survives_a_restart_and_still_leads_the_list() {
     // answer whose recent order changed since the pin was taken.
     let mut second = app();
     second.pins.store = PinStore::at(&path, "/run/one.sock");
-    assert_eq!(submit(&mut second, "/switch"), Some(Action::Sessions));
+    assert_eq!(submit(&mut second, "/resume"), Some(Action::Sessions));
     second.show_sessions(vec![
         row("session_old", "oldest", "11-21 13:00"),
         row("session_new", "newest", "11-21 12:30"),

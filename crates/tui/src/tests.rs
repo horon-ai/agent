@@ -208,7 +208,7 @@ fn streams_text_and_finishes_turn() {
         screen.contains(&format!("{} bash", app.symbols.tool_done)),
         "tool card missing from:\n{screen}"
     );
-    assert!(screen.contains("done"), "tool outcome missing from:\n{screen}");
+    assert!(screen.contains("╰─"), "the card did not close:\n{screen}");
     assert!(!app.pending_turn);
 }
 
@@ -369,10 +369,10 @@ fn statusline_custom_preset_draws_left_then_right() {
         .trim_end()
         .to_string();
     assert!(
-        row.starts_with("anthropic/claude-sonnet-4 · ~/proj"),
+        row.starts_with("claude-sonnet-4 · ~/proj"),
         "left side wrong: {row:?}\n{screen}"
     );
-    assert!(row.contains("25% · "), "context percentage missing: {row:?}");
+    assert!(row.contains("25%|1K · "), "context percentage missing: {row:?}");
     let time = row.rsplit(" · ").next().unwrap_or_default();
     assert!(time.len() == 5 && time.as_bytes()[2] == b':', "clock missing: {row:?}");
 }
@@ -896,7 +896,7 @@ fn a_tool_preview_wraps_under_its_own_column() {
     let wrapped = wrap::wrap_rows(rows, 40);
     assert!(wrapped.len() > 3, "the preview row did not wrap");
     let second: String = wrapped[2].spans.iter().map(|span| span.content.as_ref()).collect();
-    assert!(second.starts_with("│ than"), "{second:?}");
+    assert!(second.starts_with("│  than"), "{second:?}");
     assert!(second.ends_with(" │"), "{second:?}");
 }
 

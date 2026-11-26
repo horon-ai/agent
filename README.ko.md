@@ -306,7 +306,7 @@ jcode v1.1.2(Linux: 릴리스 `v1.1.2`, 커밋 `4f874c9ea6b7c3e228045fa8269e4d84
 
 ## 문서
 
-문서는 영어(기본)와 한국어(`.ko.md`, `docs/README.ko.md`처럼 같은 폴더에 나란히) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. [agent.horon.ai](https://agent.horon.ai)는 [packages/docs-site](packages/docs-site)에 있는 Mintlify 사이트다. Reference 탭은 `scripts/ci/sync_docs_site.py`가 `docs/`, `PHILOSOPHY.md`, SDK·npm README에서 생성하고, 안내 페이지는 영어로 손수 쓴다. 그래서 안내 페이지가 되풀이하는 동작이 바뀌면 그 페이지도 함께 고친다.
+문서는 영어(기본)와 한국어(`.ko.md`, `docs/README.ko.md`처럼 같은 폴더에 나란히) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `documentation` 도구가 제공한다. [agent.horon.ai](https://agent.horon.ai)는 [packages/docs-site](packages/docs-site)에 있는 Mintlify 사이트다. Reference 탭은 `scripts/ci/sync_docs_site.py`가 `docs/`, `PHILOSOPHY.md`, SDK·npm README에서 생성하고, 안내 페이지는 영어로 손수 쓴다. 그래서 안내 페이지가 되풀이하는 동작이 바뀌면 그 페이지도 함께 고친다.
 
 | 주제 | 문서 |
 | --- | --- |

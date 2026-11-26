@@ -883,11 +883,10 @@ async fn toolbox_list_names_the_listed_core_tools_under_core() {
         "codemode",
         "context_notes",
         "conversation_search",
+        "documentation",
         "eval",
         "goal",
         "hashline_edit",
-        "horon_agent_docs",
-        "integration_tools",
         "irc",
         "lsp",
         "mcp",
@@ -1187,3 +1186,6 @@ async fn effects_for_input_answers_only_run_through_the_target() {
         "a run without args reaches nothing this hook can classify"
     );
 }
+
+#[path = "toolbox_tests/args.rs"]
+mod args;

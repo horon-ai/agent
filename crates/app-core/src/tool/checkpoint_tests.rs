@@ -106,10 +106,10 @@ fn checkpoint_pair_declares_a_write_effect() {
 }
 
 #[test]
-fn rewind_schema_requires_a_report() {
+fn rewind_schema_takes_a_report_and_a_dry_run() {
     let schema = RewindTool::new().parameters_schema();
-    assert_eq!(schema["required"], json!(["report"]), "{schema}");
-    assert_eq!(schema["properties"]["report"]["minLength"], 1, "{schema}");
+    assert_eq!(schema["properties"]["report"]["type"], "string", "{schema}");
+    assert_eq!(schema["properties"]["dry_run"]["type"], "boolean", "{schema}");
     assert!(
         schema["properties"]["intent"].is_object(),
         "every mutating tool takes the shared intent field: {schema}"
@@ -255,6 +255,19 @@ async fn rewind_refuses_an_empty_report_and_a_missing_checkpoint() {
     assert_eq!(pending_request(&ctx.session_id), None);
 
     fixture.store_marker();
+    // A dry run answers what the rewind would do and queues nothing, report
+    // or not.
+    let preview = tool
+        .execute(json!({"dry_run": true}), ctx.clone())
+        .await
+        .expect("a dry run checks a committed checkpoint");
+    assert!(
+        preview.output.starts_with("Dry run: a rewind now would fold"),
+        "{}",
+        preview.output
+    );
+    assert_eq!(pending_request(&ctx.session_id), None, "a dry run queues nothing");
+
     let with_report = tool
         .execute(json!({"report": "  the rewrite broke the lexer  "}), ctx.clone())
         .await

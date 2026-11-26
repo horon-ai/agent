@@ -110,8 +110,21 @@ fn draw_to_string(app: &mut App) -> String {
 }
 
 /// The first `count` rows of a drawn screen, where the transcript sits.
+/// The first `count` rows of the conversation, without the scrollbar column:
+/// the thumb moves with the height, and these compare the rows the view shows.
 fn top_rows(screen: &str, count: usize) -> String {
-    screen.lines().take(count).collect::<Vec<_>>().join("\n")
+    screen
+        .lines()
+        .take(count)
+        .map(|row| {
+            let mut characters: Vec<char> = row.chars().collect();
+            if characters.len() >= 2 && characters.last() == Some(&'"') {
+                characters.remove(characters.len() - 2);
+            }
+            characters.into_iter().collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// An app whose transcript holds `count` one-row notices.
@@ -721,9 +734,9 @@ fn the_key_label_costs_the_line_no_rows_at_any_width() {
             .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
             .collect();
         // `+197 lines · ctrl+o expands` is 27 cells and a card's sides take
-        // four more, so it fits on the marker's one row from 31 columns up and
+        // six more, so it fits on the marker's one row from 33 columns up and
         // is dropped below that.
-        if width >= 31 {
+        if width >= 33 {
             assert!(
                 text.contains("expands"),
                 "the hint is missing at width {width}: {text:?}"
@@ -899,19 +912,19 @@ fn an_earlier_result_opens_and_folds_without_moving_the_view() {
 fn a_block_that_changes_above_the_view_leaves_its_offset_alone() {
     let mut scroll = crate::scroll::Scroll::new();
     scroll.up(1);
-    scroll.measure(20, 3, [0, 0], 2, |_| 2);
+    scroll.measure(20, 3, None, [0, 0], 2, |_| 2);
     assert_eq!(scroll.offset(), 1);
 
     // The first block grows by eight rows, all above the two rows on screen.
     // The rows being read move down with the block, but the view shows the same
     // rows, which is exactly what leaving the offset alone does.
     scroll.reflow();
-    scroll.measure(20, 3, [0, 0], 2, |index| if index == 0 { 10 } else { 2 });
+    scroll.measure(20, 3, None, [0, 0], 2, |index| if index == 0 { 10 } else { 2 });
     assert_eq!(scroll.offset(), 1, "a block growing above the view moved it");
 
     // Hiding it again has the same answer in the other direction.
     scroll.reflow();
-    scroll.measure(20, 3, [0, 0], 2, |_| 2);
+    scroll.measure(20, 3, None, [0, 0], 2, |_| 2);
     assert_eq!(scroll.offset(), 1, "a block shrinking above the view moved it");
 }
 
@@ -919,13 +932,13 @@ fn a_block_that_changes_above_the_view_leaves_its_offset_alone() {
 fn a_block_that_changes_below_the_view_moves_its_offset_by_that_change() {
     let mut scroll = crate::scroll::Scroll::new();
     scroll.up(1);
-    scroll.measure(20, 3, [0, 0], 2, |_| 2);
+    scroll.measure(20, 3, None, [0, 0], 2, |_| 2);
     assert_eq!(scroll.offset(), 1);
 
     // The last block grows by eight rows below the view's top edge: those rows
     // sit between the view and the end, so the offset grows with them.
     scroll.reflow();
-    scroll.measure(20, 3, [0, 0], 2, |index| if index == 2 { 10 } else { 2 });
+    scroll.measure(20, 3, None, [0, 0], 2, |index| if index == 2 { 10 } else { 2 });
     assert_eq!(scroll.offset(), 9, "rows below the view did not push the offset");
 }
 

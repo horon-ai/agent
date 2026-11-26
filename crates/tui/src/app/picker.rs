@@ -452,7 +452,7 @@ impl App {
                     Some(Action::Attach(value))
                 }
                 // A row of the swarm list names a child the harness reported,
-                // and attaching is the same request `/switch` makes: the row
+                // and attaching is the same request `/resume` makes: the row
                 // cannot grant access by existing, the harness answers for the
                 // session it serves. The choice is a session change, so it waits
                 // under the rule every other one does.
@@ -587,6 +587,8 @@ impl App {
         // to wait for here.
         self.effort_requested = None;
         self.effort_after_turn = None;
+        // Speed is the session's: another session starts its own average.
+        self.throughput = crate::statusline::Throughput::default();
         self.model_after_turn = None;
         // The model a request named belongs to the session being left, and the
         // catalog was read for its provider: neither describes the one being
@@ -641,7 +643,7 @@ impl App {
             (!rest.is_empty()).then(|| rest.to_string())
         }
 
-        for message in &session.history {
+        for (index, message) in session.history.iter().enumerate() {
             match message.role.as_str() {
                 "user" => {
                     if let Some(cleaned) = strip_leading_system_reminders(&message.content) {
@@ -668,9 +670,24 @@ impl App {
                         crate::a2ui::push_replayed_assistant(&mut self.transcript, answer, message.message_id.clone());
                     }
                 }
-                // Tool rows are the daemon's record of what ran, not the
-                // conversation; the answers they produced are in the assistant
-                // messages that follow them.
+                // A tool row the daemon stored with its call is drawn as the
+                // card the live call drew: its name, its arguments, and its
+                // result as the preview. A row without the call (an older
+                // daemon) has nothing to name, so it stays out of the view.
+                "tool" => {
+                    if let Some(call) = &message.tool {
+                        let call_id = if call.call_id.is_empty() {
+                            format!("history-{index}")
+                        } else {
+                            call.call_id.clone()
+                        };
+                        self.transcript.tool_start(&call_id, &call.name);
+                        self.transcript.tool_input(&call_id, &call.input);
+                        let error = call.is_error.then_some(message.content.as_str());
+                        let output = (!call.is_error).then_some(message.content.as_str());
+                        self.transcript.tool_done(&call_id, &call.name, output, error);
+                    }
+                }
                 _ => {}
             }
         }

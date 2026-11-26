@@ -73,7 +73,20 @@ pub(crate) fn transcript_pane(app: &mut App, width: u16, height: u16) -> Pane {
     } else {
         None
     };
+    app.pane.rows = rows.len();
+    app.pane.width = width;
+    app.pane.offset = offset;
     Pane { rows, indicator }
+}
+
+/// `count` conversation rows ending `below` rows above the last one, oldest
+/// first, as the pane draws them; fewer when the conversation is shorter.
+pub(crate) fn rows_ending_at(app: &App, width: u16, below: usize, count: usize) -> Vec<Line<'static>> {
+    if below == 0 {
+        follow_rows(app, width, count)
+    } else {
+        held_rows(app, width, below, count)
+    }
 }
 
 /// The rows the pane shows, and the line that says it is not at the end.
@@ -159,9 +172,18 @@ fn block_source<'a>(
         source.append(item_lines::note(text, look));
     }
     // A turn starts one blank row below the previous one, so a new message is
-    // not read as more of the answer above it. It is a line of the block, so a
-    // window that starts at the block's first row still counts it.
-    if !first && matches!(block, Block::Item(Item::User(_))) {
+    // not read as more of the answer above it; a tool card, an answer and its
+    // reasoning get the same row, so a card's border never touches the text
+    // or the card next to it. Notices stay packed: a run of them reads as one
+    // list. It is a line of the block, so a window that starts at the block's
+    // first row still counts it.
+    let spaced = matches!(
+        block,
+        Block::Item(Item::User(_) | Item::Tool(_) | Item::Assistant(_) | Item::Reasoning(_) | Item::A2ui(_))
+            | Block::Answer(_)
+            | Block::Reasoning(_)
+    );
+    if !first && spaced {
         source.prepend(wrap::Indented::plain(Line::default()));
     }
     source
@@ -175,6 +197,7 @@ fn block_source<'a>(
 /// whose height changes while the view is held.
 fn measure_transcript(app: &mut App, width: u16, view: usize) {
     let items = app.transcript.items().len();
+    let changed_from = app.transcript.take_changed_from();
     let App {
         scroll,
         transcript,
@@ -194,28 +217,38 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         markdown: item_lines::markdown_enabled(settings),
         visual_blocks: item_lines::visual_blocks_enabled(settings),
     };
+    // An open block is first only when nothing is drawn above it, and every
+    // other open block carries the blank row `block_source` puts before it.
+    let reasoning_first = items == 0;
+    let answer_first = reasoning_first && transcript.open_reasoning().is_none();
     let open = [
-        open_rows(transcript.open_reasoning(), &look, true),
-        open_rows(transcript.open_text(), &look, false),
+        open_rows(transcript.open_reasoning(), &look, true, reasoning_first),
+        open_rows(transcript.open_text(), &look, false, answer_first),
     ];
     // An expanded call is one row taller per row of its whole output, so the
     // height measured here has to know about the expansion: a view held above
     // the end counts this height, and a stale one would leave the offset short.
     let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
     let frame = notes::Frame::from_parts(note_store, session_id.as_deref(), transcript, note_keys);
-    scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
-        // Counted, not built: the rows of a block that stays off screen are not
-        // made to measure it.
-        Some(item) => block_source(&Block::Item(item), &look, Some(&expand), index == 0, &frame, index).height(width),
-        None => 0,
+    scroll.measure(width, items, changed_from, open, view, |index| {
+        match transcript.items().get(index) {
+            // Counted, not built: the rows of a block that stays off screen are not
+            // made to measure it.
+            Some(item) => {
+                block_source(&Block::Item(item), &look, Some(&expand), index == 0, &frame, index).height(width)
+            }
+            None => 0,
+        }
     });
 }
 
-/// Wrapped rows of one open buffer, as the pane would draw it.
-fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool) -> usize {
+/// Wrapped rows of one open buffer, as the pane would draw it, with the blank
+/// row before it unless it is the conversation's first block.
+fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool, first: bool) -> usize {
+    let gap = usize::from(!first);
     match text {
-        Some(text) if reasoning => wrap::Source::built(item_lines::reasoning(text, look)).height(look.width),
-        Some(text) => wrap::Source::built(item_lines::answer(text, look)).height(look.width),
+        Some(text) if reasoning => gap + wrap::Source::built(item_lines::reasoning(text, look)).height(look.width),
+        Some(text) => gap + wrap::Source::built(item_lines::answer(text, look)).height(look.width),
         None => 0,
     }
 }

@@ -192,13 +192,13 @@ pub fn resolve_tool_name(name: &str) -> &str {
         // work as-is.
         "grep" | "file_grep" => "agentgrep",
         "skill" | "Skill" => "skill_manage",
-        // The integration catalog tool was renamed from `discover_tools`;
-        // models trained on or resuming from the old vocabulary still emit it.
-        "discover_tools" => "integration_tools",
         "todoread" | "todowrite" | "todo_read" | "todo_write" | "todos" => "todo",
         // The goal tool shipped as `initiative`; sessions resumed from that
         // vocabulary still emit the old name.
         "initiative" | "Initiative" => "goal",
+        // The bundled documentation tool shipped as `horon_agent_docs`;
+        // sessions resumed from that vocabulary still emit the old name.
+        "horon_agent_docs" => "documentation",
         // The Anthropic OAuth surface advertises PascalCase tool names and
         // reverse-maps them provider-side for top-level calls, but nested
         // `batch` subcall names bypass that mapping and resolve here (issue

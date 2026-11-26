@@ -124,6 +124,17 @@ pub fn run_auto_update() -> Result<()> {
         anyhow::bail!("cargo build failed");
     }
 
+    // The interactive client is its own package and cargo invocation. A failed
+    // client build keeps the installed one, which the install carries over.
+    let tui_built = ProcessCommand::new("cargo")
+        .args(["build", "--release", "-p", "horon-tui"])
+        .current_dir(&repo_dir)
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !tui_built {
+        crate::logging::warn("auto-update: horon-tui did not build; keeping the installed client");
+    }
+
     if let Err(e) = build::install_local_release(&repo_dir) {
         crate::logging::warn(&format!("auto-update install failed: {}", e));
     }

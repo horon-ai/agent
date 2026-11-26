@@ -47,6 +47,7 @@ fn sample() -> StatusData<'static> {
         prompt: None,
         cwd: Some("/home/u/proj"),
         home: Some("/home/u"),
+        tps: None,
         tokens: Some(TokenTotals {
             input: 200,
             output: 50,
@@ -60,6 +61,8 @@ fn sample() -> StatusData<'static> {
         cost: None,
         now: Some(time(9, 5)),
         spinner: None,
+        elapsed_ms: None,
+        branch: None,
     }
 }
 
@@ -83,18 +86,29 @@ fn rendered(data: &StatusData<'_>, layout: &Layout, width: u16) -> String {
 fn statusline_default_preset_orders_left_then_right() {
     let layout = Layout::default();
     assert_eq!(layout.preset, Preset::Default);
-    assert_eq!(layout.left, vec![SegmentId::Status, SegmentId::Model, SegmentId::Path]);
     assert_eq!(
-        layout.right,
-        vec![SegmentId::Tokens, SegmentId::ContextPct, SegmentId::Time]
+        layout.left,
+        vec![
+            SegmentId::Status,
+            SegmentId::Elapsed,
+            SegmentId::Model,
+            SegmentId::Path,
+            SegmentId::Branch,
+        ]
     );
+    assert_eq!(layout.right, vec![SegmentId::Tokens, SegmentId::ContextPct]);
 
-    let line = rendered(&sample(), &layout, 100);
+    let data = StatusData {
+        elapsed_ms: Some(12_300),
+        branch: Some("dev"),
+        ..sample()
+    };
+    let line = rendered(&data, &layout, 100);
     assert!(
-        line.starts_with("idle · anthropic/claude-sonnet-4 · ~/proj"),
+        line.starts_with("idle · 12.3s · claude-sonnet-4 · ~/proj · ⑂ dev"),
         "left side wrong: {line:?}"
     );
-    assert!(line.ends_with("↑200 ↓50 · 09:05"), "right side wrong: {line:?}");
+    assert!(line.ends_with("↑200 ↓50"), "the default line draws no clock: {line:?}");
     assert_eq!(line.chars().count(), 100, "line does not fill its width: {line:?}");
 }
 
@@ -107,7 +121,7 @@ fn statusline_minimal_preset_keeps_model_and_status() {
     assert_eq!(layout.right, vec![SegmentId::Status]);
 
     let line = rendered(&sample(), &layout, 80);
-    assert!(line.starts_with("anthropic/claude-sonnet-4"), "{line:?}");
+    assert!(line.starts_with("claude-sonnet-4"), "{line:?}");
     assert!(line.ends_with("idle"), "{line:?}");
     assert_eq!(line.chars().count(), 80, "line does not fill its width: {line:?}");
 }
@@ -125,15 +139,15 @@ fn statusline_custom_preset_renders_left_then_right_in_order() {
     let line = render(&sample(), &layout, &Theme::default(), Symbols::default(), 80);
     let text = line.to_string();
     assert!(
-        text.starts_with("anthropic/claude-sonnet-4 · ~/proj"),
+        text.starts_with("claude-sonnet-4 · ~/proj"),
         "left side wrong: {text:?}"
     );
-    assert!(text.ends_with("25% · 09:05"), "right side wrong: {text:?}");
+    assert!(text.ends_with("25%|1K · 09:05"), "right side wrong: {text:?}");
 
     // The same line through a real backend, which is what the client draws.
     let drawn = draw_line(line, 80);
-    assert!(drawn.starts_with("anthropic/claude-sonnet-4 · ~/proj"), "{drawn:?}");
-    assert!(drawn.ends_with("25% · 09:05"), "{drawn:?}");
+    assert!(drawn.starts_with("claude-sonnet-4 · ~/proj"), "{drawn:?}");
+    assert!(drawn.ends_with("25%|1K · 09:05"), "{drawn:?}");
 }
 
 #[test]
@@ -153,14 +167,17 @@ fn statusline_unknown_segment_warns_and_skips_only_itself() {
     assert_eq!(layout.left, vec![SegmentId::Model, SegmentId::Path]);
 
     let text = rendered(&sample(), &layout, 80);
-    assert!(text.contains("anthropic/claude-sonnet-4"), "{text:?}");
+    assert!(text.contains("claude-sonnet-4"), "{text:?}");
     assert!(text.contains("~/proj"), "{text:?}");
     assert!(text.ends_with("09:05"), "{text:?}");
 }
 
 #[test]
 fn statusline_narrow_width_drops_lowest_priority_first() {
+    // The clock is opt-in, so a custom line names it.
     let layout = Layout {
+        preset: Preset::Custom,
+        right: vec![SegmentId::Tokens, SegmentId::ContextPct, SegmentId::Time],
         context_window: 1000,
         ..Layout::default()
     };
@@ -169,7 +186,7 @@ fn statusline_narrow_width_drops_lowest_priority_first() {
 
     // 20 columns cannot hold status, model, path, tokens, percent and clock.
     let narrow = rendered(&sample(), &layout, 20);
-    assert!(narrow.contains("anthropic/claude-sonnet-4"), "{narrow:?}");
+    assert!(narrow.contains("claude-sonnet-4"), "{narrow:?}");
     assert!(!narrow.contains("09:05"), "clock should go first: {narrow:?}");
     assert!(!narrow.contains('↑'), "tokens should go second: {narrow:?}");
 }
@@ -178,7 +195,7 @@ fn statusline_narrow_width_drops_lowest_priority_first() {
 fn statusline_narrow_width_keeps_only_the_highest_priority() {
     let layout = Layout::default();
     let text = rendered(&sample(), &layout, 8);
-    assert_eq!(text, "anthropic/claude-sonnet-4");
+    assert_eq!(text, "claude-sonnet-4");
 }
 
 #[test]
@@ -320,10 +337,10 @@ fn a_chosen_separator_joins_every_part_of_the_line() {
     let (theme, symbols) = appearance("[statusline]\nseparator = \"bar\"\n");
     let line = render(&sample(), &Layout::default(), &theme, symbols, 100).to_string();
     assert!(
-        line.starts_with("idle | anthropic/claude-sonnet-4 | ~/proj"),
+        line.starts_with("idle | claude-sonnet-4 | ~/proj"),
         "left side wrong: {line:?}"
     );
-    assert!(line.ends_with("↑200 ↓50 | 09:05"), "right side wrong: {line:?}");
+    assert!(line.ends_with("↑200 ↓50"), "right side wrong: {line:?}");
     assert!(!line.contains('·'), "the glyph set's mark survived: {line:?}");
 
     // The model and its effort are parts of the same line, so the chosen mark
@@ -331,7 +348,7 @@ fn a_chosen_separator_joins_every_part_of_the_line() {
     let mut data = sample();
     data.effort = Some("high");
     let line = render(&data, &Layout::default(), &theme, symbols, 100).to_string();
-    assert!(line.contains("anthropic/claude-sonnet-4 | high"), "{line:?}");
+    assert!(line.contains("claude-sonnet-4 | high"), "{line:?}");
 
     // `preset` keeps whatever the glyph set draws, whichever set it is.
     let mut ascii = SymbolPreset::Ascii.symbols();
@@ -351,7 +368,7 @@ fn a_chosen_separator_keeps_the_narrow_priority_order() {
         ..Layout::default()
     };
     let narrow = render(&sample(), &layout, &theme, symbols, 20).to_string();
-    assert!(narrow.contains("anthropic/claude-sonnet-4"), "{narrow:?}");
+    assert!(narrow.contains("claude-sonnet-4"), "{narrow:?}");
     assert!(!narrow.contains("09:05"), "the clock should go first: {narrow:?}");
     assert!(!narrow.contains('↑'), "the tokens should go second: {narrow:?}");
     assert!(
@@ -483,7 +500,7 @@ fn the_context_percentage_follows_the_runtime_window_until_the_setting_overrides
     };
     // 250 tokens of 200 000 rounded down is zero percent, and a zero percent
     // somebody measured is still a reading.
-    assert_eq!(rendered(&data, &layout, 40), "0%");
+    assert_eq!(rendered(&data, &layout, 40), "0%|200K");
 
     // The manual override wins over the report: a user who knows the route
     // better than this daemon's catalog does gets the number they typed.
@@ -491,7 +508,13 @@ fn the_context_percentage_follows_the_runtime_window_until_the_setting_overrides
         context_window: 1_000,
         ..layout.clone()
     };
-    assert_eq!(rendered(&data, &override_, 40), "25%");
+    assert_eq!(rendered(&data, &override_, 40), "25%|1K");
+    // A binary-sized window reads the way the provider advertises it.
+    let mebi = StatusData {
+        capacity: Some(1_048_576),
+        ..sample()
+    };
+    assert_eq!(rendered(&mebi, &layout, 40), "0%|1M");
 
     // Neither known draws nothing: an unknown window is not a zero percent.
     let unknown = StatusData {
@@ -584,7 +607,7 @@ fn opt_in_segments_are_dropped_before_the_preset_segments_under_width_pressure()
     // The clock goes first, then the estimate, then the usage: the preset's
     // own segments outlive both opt-in ones, which is what makes them opt-in.
     let narrow = rendered(&data, &layout, 20);
-    assert!(narrow.starts_with("anthropic/claude-sonnet-4"), "{narrow:?}");
+    assert!(narrow.starts_with("claude-sonnet-4"), "{narrow:?}");
     assert!(!narrow.contains("09:05"), "the clock should go first: {narrow:?}");
     assert!(!narrow.contains('$'), "the estimate should go second: {narrow:?}");
 }
@@ -629,4 +652,33 @@ fn statusline_state_word_and_colour_move_with_the_change_palette() {
         state_color(&lost, &plain, "disconnected"),
         ("disconnected".to_string(), Some(theme.core.error))
     );
+}
+
+#[test]
+fn the_tokens_segment_adds_the_average_output_speed_once_measured() {
+    let mut speed = super::Throughput::default();
+    let tokens = Some(TokenTotals {
+        input: 25_300,
+        output: 409,
+        ..TokenTotals::default()
+    });
+    let layout = Layout::default();
+    let without = StatusData {
+        tokens,
+        tps: speed.per_second(),
+        ..StatusData::default()
+    };
+    let text = rendered(&without, &layout, 80);
+    assert!(text.ends_with(" ↑25.3k ↓409"), "nothing timed yet: {text:?}");
+
+    // 300 tokens over 2s and 100 over 2s: 100 tokens a second on average.
+    speed.add(300, 2_000);
+    speed.add(100, 2_000);
+    let with = StatusData {
+        tokens,
+        tps: speed.per_second(),
+        ..StatusData::default()
+    };
+    let text = rendered(&with, &layout, 80);
+    assert!(text.ends_with(" ↑25.3k ↓409 100 tok/s"), "{text:?}");
 }

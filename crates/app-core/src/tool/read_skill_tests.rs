@@ -85,7 +85,8 @@ async fn reads_the_skill_body_under_a_header() {
     let output = fixture.read("skill://qa-skill").await.expect("read skill");
     assert!(output.starts_with("## Skill: qa-skill\nBase directory: "), "{output}");
     assert!(output.contains(&dir.display().to_string()), "{output}");
-    assert!(output.contains("Line one.") && output.contains("Line two."), "{output}");
+    // Whole and without line numbers: a skill is followed, not edited.
+    assert!(output.contains("\n\nLine one.\nLine two."), "{output}");
     assert!(
         !output.contains("description: Test skill"),
         "the frontmatter is not the body: {output}"
@@ -200,7 +201,14 @@ async fn an_unknown_skill_is_an_error() {
     let fixture = Fixture::new();
     fixture.skill("qa-skill", "Body.");
     let error = fixture.read("skill://nope").await.expect_err("unknown skill");
-    assert!(error.to_string().contains("names no installed skill: nope"), "{error}");
+    let message = error.to_string();
+    assert!(message.contains("names no installed skill: nope"), "{message}");
+    // The names that exist come with the refusal, so the next call can use one.
+    let available = message.split_once("Available: ").map(|(_, names)| names);
+    assert!(
+        available.is_some_and(|names| names.split(", ").any(|name| name == "qa-skill")),
+        "{message}"
+    );
     let error = fixture.read("skill://").await.expect_err("empty reference");
     assert!(error.to_string().contains("needs a skill name"), "{error}");
 }

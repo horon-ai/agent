@@ -446,6 +446,7 @@ impl Agent {
         // whether the frozen index can carry the surface at all.
         self.freeze_mcp_surface();
         self.publish_listed_mcp_surface();
+        self.promote_requested_tools();
 
         // Provider-native deferred MCP loading: MCP definitions live outside
         // the cached prefix, so the eager snapshot never changes when servers

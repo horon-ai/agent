@@ -22,7 +22,7 @@ const SIBLING_STEM: &str = "horon-tui";
 /// two reasons happen with the client already in place, and naming an install
 /// there told the operator to fix something that was not broken.
 pub(crate) const INSTALL_HINT: &str =
-    "install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client";
+    "install `horon-tui` next to this binary (`horon install-release`) for the interactive client";
 
 /// What the bare command should do after the server is up.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,11 +92,24 @@ pub(crate) fn decide(
 /// The decision for this process: its own terminal state, environment, and
 /// sibling binary.
 pub(crate) fn decide_for_process() -> Handoff {
-    // Without a resolvable executable path there is no sibling to find; the
-    // headless message then says the client is missing, and the log keeps why.
-    let sibling = match std::env::current_exe() {
-        // The raw path is checked first; a launcher that is itself a symlink
-        // (macOS reports the unresolved path) is retried at its real location.
+    decide(
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+        std::env::var_os(DISABLE_ENV).is_some(),
+        locate_tui().as_deref(),
+    )
+}
+
+/// The interactive client this process hands over to.
+///
+/// The sibling of the running binary comes first, at its raw path and then at
+/// its real location (macOS reports a symlinked launcher unresolved). A build
+/// that has no sibling, such as a repo build in `target/debug` or a version
+/// directory a source install left without one, falls back to the client of
+/// the installed `current` and `stable` channels and then to the `horon-tui`
+/// on `PATH`, so bare `horon` still opens the client.
+fn locate_tui() -> Option<PathBuf> {
+    let beside = match std::env::current_exe() {
         Ok(exe) => sibling_tui(Some(&exe)).or_else(|| match std::fs::canonicalize(&exe) {
             Ok(real) => sibling_tui(Some(&real)),
             Err(error) => {
@@ -109,12 +122,29 @@ pub(crate) fn decide_for_process() -> Handoff {
             None
         }
     };
-    decide(
-        std::io::stdin().is_terminal(),
-        std::io::stdout().is_terminal(),
-        std::env::var_os(DISABLE_ENV).is_some(),
-        sibling.as_deref(),
-    )
+    beside
+        .or_else(installed_tui)
+        .or_else(|| tui_on_path(std::env::var_os("PATH").as_deref()))
+}
+
+/// The client beside the binary an installed channel points at.
+fn installed_tui() -> Option<PathBuf> {
+    [crate::build::current_binary_path(), crate::build::stable_binary_path()]
+        .into_iter()
+        .find_map(|channel| match channel.map(std::fs::canonicalize) {
+            Ok(Ok(real)) => sibling_tui(Some(&real)),
+            // An unset or dangling channel has no client to offer.
+            Ok(Err(_)) | Err(_) => None,
+        })
+}
+
+/// The first `horon-tui` file in the directories of `path`.
+pub(crate) fn tui_on_path(path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let name = format!("{SIBLING_STEM}{}", std::env::consts::EXE_SUFFIX);
+    std::env::split_paths(path?)
+        .filter(|directory| directory.is_absolute())
+        .map(|directory| directory.join(&name))
+        .find(|candidate| candidate.is_file())
 }
 
 /// Path of the interactive client beside `current_exe`, when one is installed.
@@ -150,7 +180,7 @@ pub(crate) fn run(
 /// still names an install.
 fn headless_message(reason: HeadlessReason) -> String {
     format!(
-        "the interactive client is unavailable in this headless build ({}); {}; use `horon-agent serve` or `horon-agent run`",
+        "the interactive client is unavailable in this headless build ({}); {}; use `horon serve` or `horon run`",
         reason.detail(),
         reason.remedy()
     )
@@ -297,12 +327,9 @@ mod tests {
         for reason in [HeadlessReason::NotATerminal, HeadlessReason::DisabledByEnv] {
             let message = headless_message(reason);
             assert!(message.contains(reason.detail()), "{message}");
-            assert!(!message.contains("horon-agent install-release"), "{message}");
+            assert!(!message.contains("horon install-release"), "{message}");
             assert!(!message.contains(INSTALL_HINT), "{message}");
-            assert!(
-                message.contains("`horon-agent serve` or `horon-agent run`"),
-                "{message}"
-            );
+            assert!(message.contains("`horon serve` or `horon run`"), "{message}");
         }
         assert!(headless_message(HeadlessReason::NotATerminal).contains("run it on a terminal"));
         assert!(headless_message(HeadlessReason::DisabledByEnv).contains("`HORON_NO_TUI`"));
@@ -310,10 +337,7 @@ mod tests {
         // A missing client is the one reason installing answers.
         let missing = headless_message(HeadlessReason::MissingSibling);
         assert!(missing.contains(INSTALL_HINT), "{missing}");
-        assert!(
-            missing.contains("`horon-agent serve` or `horon-agent run`"),
-            "{missing}"
-        );
+        assert!(missing.contains("`horon serve` or `horon run`"), "{missing}");
     }
 
     #[test]
@@ -347,5 +371,24 @@ mod tests {
         assert_eq!(sibling_tui(None), None);
 
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_build_without_a_sibling_falls_back_to_the_client_on_path() {
+        let root = std::env::temp_dir().join(format!("horon-tui-path-{}", std::process::id()));
+        let empty = root.join("empty");
+        let installed = root.join("bin");
+        std::fs::create_dir_all(&empty).expect("empty dir");
+        std::fs::create_dir_all(&installed).expect("bin dir");
+        let client = installed.join(format!("{SIBLING_STEM}{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&client, b"").expect("client placeholder");
+
+        let path = std::env::join_paths([empty.clone(), installed.clone()]).expect("path");
+        assert_eq!(tui_on_path(Some(&path)), Some(client));
+        let without = std::env::join_paths([empty]).expect("path");
+        assert_eq!(tui_on_path(Some(&without)), None);
+        assert_eq!(tui_on_path(None), None);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

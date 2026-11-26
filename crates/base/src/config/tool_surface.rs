@@ -47,7 +47,7 @@ pub const CORE_TOOLS: &[&str] = &[
 /// paying for their schemas in the cached prefix. Each one is still gated by the
 /// switch that registers it (`eval`, `redo`, `hashline_edit`, `ast_tools`,
 /// `lsp`, `context_notes`, `checkpoint`, `codemode`, and the model roles
-/// `generate_image` and `integration_tools` need), by `[tools] disabled`, and
+/// `generate_image` needs), by `[tools] disabled`, and
 /// by `[tools.load_mode]`, so any of them can be removed without touching the
 /// others. `irc`, `checkpoint`, and `rewind` are absent on purpose: they join
 /// the `core` list only through their own switches
@@ -61,12 +61,11 @@ pub const CORE_DISCOVERABLE_TOOLS: &[&str] = &[
     "codemode",
     "context_notes",
     "conversation_search",
+    "documentation",
     "eval",
     "generate_image",
     "goal",
     "hashline_edit",
-    "horon_agent_docs",
-    "integration_tools",
     "lsp",
     "memory",
     "new_context",

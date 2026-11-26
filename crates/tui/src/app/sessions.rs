@@ -42,7 +42,46 @@ impl App {
         Some(Action::NewSession)
     }
 
-    /// `/switch` and `/resume`: the list, or the session id typed after them.
+    /// `/session`: this session's details, or `delete` to remove it and start
+    /// a new one, as omp's command does.
+    ///
+    /// The delete starts the new session first and removes the old one only
+    /// once the client has left it, because the daemon refuses to delete a
+    /// session a client is attached to. omp's `pin` binds a stored OAuth account;
+    /// this build keeps none, so it is answered rather than ignored.
+    pub(crate) fn run_session(&mut self, arguments: &str) -> Option<Action> {
+        let mut words = arguments.split_whitespace();
+        match (words.next(), words.next()) {
+            (None | Some("info"), None) => {
+                if self.disconnected {
+                    self.warn("the harness connection is gone; there is no session to describe");
+                    return None;
+                }
+                Some(Action::SessionInfo)
+            }
+            (Some("delete"), None) => {
+                if !self.session_change_allowed("session delete") {
+                    return None;
+                }
+                let Some(old) = self.session_id.clone() else {
+                    self.warn("no session is attached; there is nothing to delete");
+                    return None;
+                };
+                self.new_session_pending = true;
+                Some(Action::DeleteSession(old))
+            }
+            (Some("pin"), _) => {
+                self.warn("/session pin: this build stores no OAuth accounts to pin; a session uses its provider profile's key");
+                None
+            }
+            _ => {
+                self.warn("usage: /session [info|delete]");
+                None
+            }
+        }
+    }
+
+    /// `/resume`: the list, or the session id typed after it.
     ///
     /// `name` is what the refusal names and `title` is what the panel says, so
     /// two commands that do the same thing read as the two different things a

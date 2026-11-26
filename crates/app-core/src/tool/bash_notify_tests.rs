@@ -167,6 +167,20 @@ async fn only_a_finite_background_job_accepts_a_pattern() {
     );
 }
 
+/// An empty pattern or name is a model's way of leaving the argument out, so
+/// the call runs as a plain foreground command instead of being refused.
+#[tokio::test]
+async fn an_empty_pattern_or_name_means_none() {
+    let output = BashTool::new()
+        .execute(
+            json!({"command": "printf ok", "notify_pattern": "", "name": ""}),
+            notify_ctx("notify-empty"),
+        )
+        .await
+        .expect("an empty pattern must not refuse a foreground call");
+    assert!(output.output.contains("ok"), "unexpected output: {}", output.output);
+}
+
 /// A match on a running job reaches its owner before the process exits, names
 /// the job and the stream, and wakes nothing on its own.
 #[tokio::test]

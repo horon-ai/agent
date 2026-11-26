@@ -1,4 +1,5 @@
-//! `/new`, `/switch`, `/resume` and `/swarm` in the client: what each command
+//! `/new`, `/resume` and `/swarm` in the client, and `/switch` as the model
+//! command: what each command
 //! refuses, what a created session leaves behind, and which session the swarm
 //! list attaches to.
 //!
@@ -125,7 +126,8 @@ fn todo_panel_updates_and_clears_when_the_session_changes() {
         .unwrap();
     let updated = screen(&mut app);
     assert!(updated.contains("1/2 complete"), "{updated}");
-    assert!(!updated.contains("Check the build"), "{updated}");
+    // A short panel gives the finished item's row to the open work.
+    assert!(updated.contains("Waiting for approval"), "{updated}");
 
     sender
         .send(Incoming::Attached {
@@ -207,13 +209,13 @@ fn new_is_refused_on_a_lost_connection() {
 }
 
 #[test]
-fn switch_opens_the_list_under_its_own_title_and_resume_under_its_own() {
+fn switch_opens_the_model_list_and_resume_the_session_list() {
     let mut app = app();
-    assert_eq!(submit(&mut app, "/switch"), Some(Action::Sessions));
+    assert_eq!(submit(&mut app, "/switch"), Some(Action::Models));
     assert_eq!(
         app.picker.as_ref().map(|picker| picker.title()),
-        Some("Switch session"),
-        "the /switch list does not say which command opened it"
+        Some("Select model"),
+        "/switch changes the model, as in other agents"
     );
 
     app.picker = None;
@@ -222,10 +224,10 @@ fn switch_opens_the_list_under_its_own_title_and_resume_under_its_own() {
 }
 
 #[test]
-fn switch_and_resume_attach_directly_to_the_id_typed() {
+fn resume_attaches_directly_to_the_id_typed() {
     let mut app = app();
     assert_eq!(
-        submit(&mut app, "/switch session_b"),
+        submit(&mut app, "/resume session_b"),
         Some(Action::Attach("session_b".to_string()))
     );
     assert!(app.picker.is_none(), "a named session opened the list");
@@ -235,22 +237,22 @@ fn switch_and_resume_attach_directly_to_the_id_typed() {
     );
     // Spaces around the id are the draft's, not the session's.
     assert_eq!(
-        submit(&mut app, "/switch   session_d  "),
+        submit(&mut app, "/resume   session_d  "),
         Some(Action::Attach("session_d".to_string()))
     );
     // An argument of nothing but spaces is no argument.
-    assert_eq!(submit(&mut app, "/switch    "), Some(Action::Sessions));
+    assert_eq!(submit(&mut app, "/resume    "), Some(Action::Sessions));
 }
 
 #[test]
-fn switch_and_resume_are_refused_while_a_turn_runs() {
+fn resume_is_refused_while_a_turn_runs() {
     let mut app = app();
     app.pending_turn = true;
-    assert_eq!(submit(&mut app, "/switch"), None);
+    assert_eq!(submit(&mut app, "/resume"), None);
     assert!(app.picker.is_none(), "the list opened during a turn");
     assert_eq!(
         said(&app),
-        vec!["the turn is still running; /switch works once it ends".to_string()]
+        vec!["the turn is still running; /resume works once it ends".to_string()]
     );
 
     app.transcript.clear();
@@ -344,7 +346,7 @@ fn a_failed_create_does_not_make_the_next_attach_claim_a_started_session() {
 #[test]
 fn a_message_a_session_said_finds_that_row_and_shows_it_in_the_preview() {
     let mut app = app();
-    submit(&mut app, "/switch");
+    submit(&mut app, "/resume");
     app.show_sessions(vec![
         SessionRow {
             id: "session_quiet".to_string(),
@@ -392,7 +394,7 @@ fn the_directory_every_session_preview_starts_with_does_not_match_the_filter() {
     // directory carries it: searching it would make a filter on the path keep
     // the whole list and hide the row the user is looking for.
     let mut app = app();
-    submit(&mut app, "/switch");
+    submit(&mut app, "/resume");
     app.show_sessions(vec![
         SessionRow {
             id: "session_one".to_string(),
@@ -577,4 +579,72 @@ fn disconnected_session_refuses_alt_m_mcp_and_swarm_commands() {
         "/swarm status warning missing: {}",
         last_said(&app)
     );
+}
+
+#[test]
+fn session_shows_details_and_deletes_by_starting_a_new_session_first() {
+    let last_said = |app: &App| said(app).pop().into_iter().collect::<String>();
+    let mut app = app();
+    app.session_id = Some("session_a".to_string());
+    assert_eq!(submit(&mut app, "/session"), Some(Action::SessionInfo));
+    assert_eq!(submit(&mut app, "/session info"), Some(Action::SessionInfo));
+    assert_eq!(
+        submit(&mut app, "/session delete"),
+        Some(Action::DeleteSession("session_a".to_string()))
+    );
+    assert!(
+        app.take_pending_new_session(),
+        "the answer must read as a started session, not a resumed one"
+    );
+
+    assert_eq!(submit(&mut app, "/session bogus"), None);
+    assert!(
+        last_said(&app).contains("usage: /session [info|delete]"),
+        "{}",
+        last_said(&app)
+    );
+
+    // A running turn still owns the session, so it cannot be deleted under it.
+    app.pending_turn = true;
+    assert_eq!(submit(&mut app, "/session delete"), None);
+    assert!(
+        last_said(&app).contains("/session delete works once it ends"),
+        "{}",
+        last_said(&app)
+    );
+}
+
+#[test]
+fn the_session_report_opens_as_a_panel_and_esc_closes_it() {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let mut app = App::new("socket · session_a".to_string(), receiver);
+    sender
+        .send(crate::sdk_bridge::Incoming::SessionInfo(
+            "ID: session_a\nTitle: demo\n\nProvider\nName: magpie\nModel: m1".to_string(),
+        ))
+        .expect("send the report");
+    crate::loop_io::drain_events(&mut app);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).expect("terminal");
+    crate::draw(&mut terminal, &mut app).expect("draw");
+    let screen = format!("{}", terminal.backend());
+    assert!(screen.contains("Session Info"), "{screen}");
+    assert!(screen.contains("ID: session_a"), "{screen}");
+    assert!(screen.contains("Name: magpie"), "{screen}");
+    assert!(screen.contains("esc close"), "{screen}");
+    assert!(
+        !app.transcript
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::Notice(text) if text.contains("session_a"))),
+        "the report is a panel, not a transcript line"
+    );
+
+    // Keys go to the panel while it is open; esc closes it.
+    app.input.set_text("draft");
+    app.on_key(key(KeyCode::Char('x')));
+    assert_eq!(app.input.text(), "draft");
+    app.on_key(key(KeyCode::Esc));
+    assert!(app.info.is_none());
+    crate::draw(&mut terminal, &mut app).expect("draw");
+    assert!(!format!("{}", terminal.backend()).contains("Session Info"));
 }

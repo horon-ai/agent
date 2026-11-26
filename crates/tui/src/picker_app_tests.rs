@@ -62,6 +62,7 @@ fn history(rows: &[(&str, &str)]) -> Vec<HistoryMessage> {
             response_stats: None,
             answer: None,
             message_id: None,
+            tool: None,
         })
         .collect()
 }
@@ -751,5 +752,57 @@ fn the_cycle_keys_ship_on_ctrl_p_and_ctrl_alt_p() {
     assert_eq!(
         bindings.resolve_editing(&crate::keys::Key::parse("ctrl+f").expect("a key")),
         Some(crate::keys::ids::EDITOR_RIGHT)
+    );
+}
+
+#[test]
+fn a_resumed_session_draws_its_stored_tool_calls_as_cards() {
+    let mut app = app();
+    let mut rows = history(&[
+        ("user", "find greet"),
+        ("tool", "code.py:1: greet"),
+        ("tool", "no such file"),
+        ("tool", "a row from an older daemon"),
+    ]);
+    rows[1].tool = Some(horon_agent_sdk::api::HistoryToolCall {
+        call_id: "c1".to_string(),
+        name: "agentgrep".to_string(),
+        input: r#"{"pattern":"greet"}"#.to_string(),
+        is_error: false,
+    });
+    rows[2].tool = Some(horon_agent_sdk::api::HistoryToolCall {
+        call_id: String::new(),
+        name: "read".to_string(),
+        input: r#"{"path":"gone.py"}"#.to_string(),
+        is_error: true,
+    });
+    app.attach_session(
+        AttachedSession {
+            description: "socket · session_b".to_string(),
+            session_id: "session_b".to_string(),
+            status: "idle".to_string(),
+            model: None,
+            effort: None,
+            history: rows,
+            title: None,
+        },
+        false,
+    );
+    let calls: Vec<String> = app
+        .transcript
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            Item::Tool(call) => Some(format!("{} {} {:?}", call.name, call.input, call.state)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            r#"agentgrep {"pattern":"greet"} Done"#.to_string(),
+            r#"read {"path":"gone.py"} Failed("no such file")"#.to_string(),
+        ],
+        "a stored call was not drawn, or a row with no call was"
     );
 }

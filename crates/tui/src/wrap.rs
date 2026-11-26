@@ -87,12 +87,18 @@ mod built {
 #[cfg(test)]
 pub(crate) use built::{built_rows, reset as reset_built};
 
+/// Blank columns between a card's edge and its text, on each side.
+///
+/// Two, so text inside a card does not run into the border the way it read
+/// with one.
+pub const PAD: usize = 2;
+
 /// The two sides a boxed line is drawn between.
 ///
-/// A card's rows are its text with an edge and one blank column on each side.
-/// The sides take their columns out of the pane's width before the text is
-/// broken, and every row is padded to that width, so the right edge lines up
-/// down the whole card however the text inside it wrapped.
+/// A card's rows are its text with an edge and [`PAD`] blank columns on each
+/// side. The sides take their columns out of the pane's width before the text
+/// is broken, and every row is padded to that width, so the right edge lines
+/// up down the whole card however the text inside it wrapped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sides {
     /// The glyph drawn at both edges of every row.
@@ -104,7 +110,14 @@ pub struct Sides {
 impl Sides {
     /// Columns the text of a row gets inside a pane `width` columns wide.
     pub(crate) fn inner(&self, width: usize) -> usize {
-        width.saturating_sub(2 * (self.edge.width() + 1)).max(1)
+        width.saturating_sub(2 * (self.edge.width() + PAD)).max(1)
+    }
+
+    /// `columns` blank columns in the sides' style, borrowed when they fit.
+    fn gap(&self, columns: usize) -> Span<'static> {
+        let mut gap = padding(columns);
+        gap.style = self.style;
+        gap
     }
 
     /// `row` between the two edges, padded out to `inner` columns.
@@ -112,9 +125,12 @@ impl Sides {
         let used: usize = row.spans.iter().map(|span| drawn_width(&span.content)).sum();
         let mut spans: Vec<Span<'static>> = Vec::with_capacity(row.spans.len() + 4);
         spans.push(Span::styled(self.edge, self.style));
-        spans.push(Span::raw(" "));
+        // The gap and the padding take the sides' style too: a card's edge
+        // colour does not show on a blank, while a filled box keeps its
+        // background across the whole row.
+        spans.push(self.gap(PAD));
         spans.extend(row.spans);
-        spans.push(padding(inner.saturating_sub(used) + 1));
+        spans.push(self.gap(inner.saturating_sub(used) + PAD));
         spans.push(Span::styled(self.edge, self.style));
         Line {
             style: row.style,
@@ -453,23 +469,51 @@ fn line_height(cells: &mut Cells, line: &Indented, width: usize) -> usize {
     break_rows(cells, bounds(line.sides, width), line.indent(), |_| {})
 }
 
+/// Columns between tab stops when a tab is expanded into cells.
+const TAB: usize = 4;
+
+/// Append `character` as the cells a terminal really shows, `column` being the
+/// columns already filled on this line.
+///
+/// A tab becomes spaces up to the next stop and any other control character (a
+/// carriage return, an escape) is dropped. The terminal acts on those instead
+/// of printing them: a tab jumps the cursor and a carriage return sends it back
+/// to the first column, so a row holding one moved a card's edges off the
+/// columns it was measured for.
+fn push_cell(cells: &mut Cells, column: &mut usize, character: char, style: Style) {
+    match character {
+        '\t' => {
+            let pad = TAB - *column % TAB;
+            cells.extend(std::iter::repeat_n((' ', 1, style), pad));
+            *column += pad;
+        }
+        character if character.is_control() => {}
+        character => {
+            let width = UnicodeWidthChar::width(character).unwrap_or(0);
+            cells.push((character, width, style));
+            *column += width;
+        }
+    }
+}
+
 /// Every cell of `line` in the order it is drawn.
 fn fill(cells: &mut Cells, line: &Line<'static>) {
     cells.clear();
-    cells.extend(line.spans.iter().flat_map(|span| {
-        span.content
-            .chars()
-            .map(move |character| (character, UnicodeWidthChar::width(character).unwrap_or(0), span.style))
-    }));
+    let mut column = 0;
+    for span in &line.spans {
+        for character in span.content.chars() {
+            push_cell(cells, &mut column, character, span.style);
+        }
+    }
 }
 
 /// Every cell of one output row, in one style.
 fn fill_row(cells: &mut Cells, style: Style, text: &str) {
     cells.clear();
-    cells.extend(
-        text.chars()
-            .map(|character| (character, UnicodeWidthChar::width(character).unwrap_or(0), style)),
-    );
+    let mut column = 0;
+    for character in text.chars() {
+        push_cell(cells, &mut column, character, style);
+    }
 }
 
 /// One row a line breaks into.
@@ -752,6 +796,31 @@ mod tests {
     fn counting_rows_matches_wrapping_them() {
         let lines = mixed();
         assert_eq!(Source::built(lines.clone()).height(20), wrap_rows(lines, 20).len());
+    }
+
+    #[test]
+    fn a_tab_or_a_carriage_return_inside_a_card_keeps_its_edges() {
+        let sides = Sides {
+            edge: "│",
+            style: Style::default(),
+        };
+        let rows = wrap_rows(
+            vec![
+                Indented::boxed(Line::from("    1\tactive_pids"), 0, sides),
+                Indented::boxed(Line::from("left\rover"), 0, sides),
+            ],
+            30,
+        );
+        let text: Vec<String> = rows
+            .iter()
+            .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect())
+            .collect();
+        assert_eq!(text[0], "│      1   active_pids       │");
+        assert_eq!(text[1], "│  leftover                  │");
+        for row in &text {
+            assert_eq!(UnicodeWidthStr::width(row.as_str()), 30, "{row:?}");
+            assert!(!row.contains(['\t', '\r']), "{row:?}");
+        }
     }
 
     #[test]

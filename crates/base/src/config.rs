@@ -12,9 +12,9 @@ pub use horon_agent_config_types::{
     CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DisplayConfig, FeatureConfig,
     ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, ModelReference, NamedProviderAuth,
     NamedProviderConfig, NamedProviderModelConfig, NamedProviderType, PowerConfig, PrewalkConfig, PrewalkConfigError,
-    ProviderConfig, ReasoningDisplayMode, SafetyConfig, SecretsMode, SponsorsConfig, StorageConfig, StorageSyncMode,
-    StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel,
-    WebSearchConfig, WebSearchEngine,
+    ProviderConfig, ReasoningDisplayMode, SafetyConfig, SecretsMode, StorageConfig, StorageSyncMode, StreamRuleConfig,
+    StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel, WebSearchConfig,
+    WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 pub use mcp::McpSourcesConfig;
@@ -251,7 +251,7 @@ pub fn config() -> &'static Config {
     if let Some(reason) = reload_reason {
         crate::logging::info(&format!("CONFIG_RELOAD {}", reason));
         // A config reload can change config-derived system prompt sections
-        // (feature toggles, sponsors, ...), which legitimately invalidates the
+        // (feature toggles, ...), which legitimately invalidates the
         // KV cache prefix of warm sessions. Document it so a subsequent
         // harness-attributed cache miss is surfaced with this cause instead of
         // as an unexplained prompt mutation.
@@ -413,12 +413,6 @@ pub struct Config {
 
     /// Auto-judge configuration
     pub autojudge: AutoJudgeConfig,
-
-    /// Partner discovery configuration. Skipped when it matches the shipped
-    /// default so saving config never bakes today's default into the file (see
-    /// [`sponsors_is_default`]).
-    #[serde(skip_serializing_if = "sponsors_is_default")]
-    pub sponsors: SponsorsConfig,
 
     /// `[desktop.*]` tables owned by HoronAgent Desktop (voice, workspace,
     /// appearance, ...). The CLI never interprets them, but it must round-trip
@@ -1193,8 +1187,6 @@ mod mcp;
 mod messages;
 mod server;
 mod skills;
-mod sponsors_default;
-use sponsors_default::sponsors_is_default;
 mod tool_selection;
 
 pub use self::server::{DEFAULT_IDLE_HIBERNATION_SECS, ServerConfig};

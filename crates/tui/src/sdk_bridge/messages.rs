@@ -10,8 +10,9 @@ use crate::context::ContextReport;
 /// `PartialEq` because the protocol type does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    /// Send a user message to the attached session.
-    Text(String),
+    /// Send a user message to the attached session, with the images its
+    /// `[Image #N]` markers name as `(media type, base64)`.
+    Text(String, Vec<(String, String)>),
     /// Cancel the running turn.
     Cancel,
     /// Answer a parked approval.
@@ -40,6 +41,8 @@ pub enum Command {
     },
     /// Read stored token usage for the attached session.
     Stats,
+    /// Read the attached session's details: identity, model, messages, tokens.
+    SessionInfo,
     /// Clear or compact the model context of the session the bridge follows.
     Context(crate::commands::ContextCommand),
     /// Switch to the model named.
@@ -74,7 +77,12 @@ pub enum Command {
     /// notes rather than losing them.
     CheckSessions(Vec<String>),
     /// Create a session and follow it; the directory is where it starts.
-    NewSession { working_dir: Option<String> },
+    /// `delete` names the session just left, deleted once the new one is
+    /// attached (a daemon refuses to delete a session a client is attached to).
+    NewSession {
+        working_dir: Option<String>,
+        delete: Option<String>,
+    },
     /// Attach to another session; the bridge follows it from then on.
     Attach(String),
     /// Fork the attached session into a read-only child and ask it a question.
@@ -195,6 +203,8 @@ pub enum Incoming {
     SendFailed { text: String, message: String, lost: bool },
     /// Output from a command, drawn as information rather than a warning.
     Info(String),
+    /// The `/session` report, drawn as a panel over the conversation.
+    SessionInfo(String),
     /// The `/context` breakdown, drawn as a panel rather than its JSON text.
     Context(Box<ContextReport>),
     /// Another runtime command's structured answer, drawn as labelled rows.
@@ -311,4 +321,43 @@ pub enum Incoming {
     SideFailed { id: u64, message: String },
     /// The connection ended; the string says why.
     Closed(String),
+}
+
+/// How a command's failure is worded in the transcript.
+pub(super) fn describe(command: &Command) -> &'static str {
+    match command {
+        Command::Text(..) => "could not send the message",
+        Command::Runtime { .. } => "could not run the command",
+        Command::PackageCommand { .. } => "could not run the package command",
+        Command::Stats => "could not read session token usage",
+        Command::SessionInfo => "could not read the session details",
+        Command::Context(crate::commands::ContextCommand::Clear) => "could not clear model context",
+        Command::Context(crate::commands::ContextCommand::Compact) => "could not compact model context",
+        Command::Model(_) => "could not switch the model",
+        Command::Effort(_) => "could not set the reasoning effort",
+        Command::Models => "could not list the models",
+        Command::Sessions { .. } => "could not list the sessions",
+        Command::Tools => "could not list the session tools",
+        Command::Forks => "could not list the recorded messages",
+        Command::Archive { archived: true, .. } => "could not archive the session",
+        Command::Archive { archived: false, .. } => "could not restore the session",
+        Command::CheckSessions(_) => "could not check the noted sessions",
+        Command::Swarm => "could not list the swarm children",
+        Command::Skills { .. } => "could not list the skills",
+        Command::BackgroundJobs => "could not list the background jobs",
+        Command::Export { .. } => "could not write the HTML report",
+        Command::CancelBackgroundTerminal(_) => "could not cancel the background terminal",
+        Command::DaemonSettings => "could not read the daemon settings",
+        Command::Steer(_) => "could not send the queued messages into the turn",
+        Command::SetTodoStatus { .. } => "could not change the todo list",
+        Command::NewSession { .. } => "could not start a new session",
+        Command::Attach(_) => "could not attach to the session",
+        Command::SideQuestion { .. } => "could not start the side question",
+        Command::Fork(_) => "could not fork the session",
+        Command::Rename(_) => "could not rename the session",
+        Command::Cancel => "could not cancel the turn",
+        Command::Retry => "could not continue the failed turn",
+        Command::Approval { .. } => "could not answer the approval",
+        Command::Ask { .. } => "could not answer the question",
+    }
 }

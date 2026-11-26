@@ -80,21 +80,11 @@ pub(crate) fn visual_blocks_enabled(settings: &Settings) -> bool {
 /// look having to carry state that belongs to the transcript.
 pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::Frame<'_>>) -> Vec<Indented> {
     match item {
-        Item::User(text) => prefixed(
-            Span::styled("> ", Style::default().fg(look.theme.core.accent)),
-            text,
-            Style::default().fg(look.theme.transcript.user_text),
-        ),
-        // A queued message is accepted but not sent yet, so it is drawn dim
-        // and worded as waiting: the same color as a notice, because nothing
-        // is wrong with it.
-        Item::Queued(text) => prefixed(
-            Span::styled("queued: ", Style::default().fg(look.theme.transcript.notice)),
-            text,
-            Style::default()
-                .fg(look.theme.transcript.user_text)
-                .add_modifier(Modifier::DIM),
-        ),
+        Item::User(text) => user_box(text, look),
+        // A queued message is drawn above the input while it waits, so it does
+        // not scroll away with the conversation; it joins the transcript as the
+        // message it is when the turn before it ends.
+        Item::Queued(_) => Vec::new(),
         Item::Assistant(text) => answer(text, look),
         Item::Tool(call) => {
             if hidden(call, expand) {
@@ -292,6 +282,29 @@ const INDENT_PAD: &str = const {
     assert!(INDENT == 2);
     "  "
 };
+
+/// A message the user sent, drawn as a filled box the width of the pane.
+///
+/// The box has a blank row above and below the text, the way the reader
+/// expects a turn of their own to stand apart from the answer under it.
+fn user_box(text: &str, look: &Look<'_>) -> Vec<Indented> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let fill = Style::default().bg(look.theme.status.status_bg);
+    let sides = wrap::Sides { edge: " ", style: fill };
+    let style = fill.fg(look.theme.transcript.user_text);
+    let blank = || Indented::boxed(Line::from(Span::styled(" ", fill)), 0, sides);
+    let mut rows = vec![blank()];
+    rows.extend(text.lines().map(|line| {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        // An empty line still takes a row of the box.
+        let line = if line.is_empty() { " " } else { line };
+        Indented::boxed(Line::from(Span::styled(line.to_string(), style)), 0, sides)
+    }));
+    rows.push(blank());
+    rows
+}
 
 /// One line per logical line, the first under `prefix` and the rest under it.
 fn prefixed(prefix: Span<'static>, text: &str, style: Style) -> Vec<Indented> {

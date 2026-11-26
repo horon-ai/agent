@@ -1076,3 +1076,14 @@ fn a_valid_regex_is_used_unchanged() {
     assert_eq!(query, r"fn\s+auth_(\w+)\{2\}");
     assert_eq!(note, None);
 }
+
+#[test]
+fn a_rendered_line_longer_than_the_bound_is_cut() {
+    let long = format!("- section {}", "A".repeat(6_000));
+    let capped = cap_line_lengths(ToolOutput::new(format!("short line\n{long}\nlast")));
+    let lines: Vec<&str> = capped.output.lines().collect();
+    assert_eq!(lines[0], "short line");
+    assert!(lines[1].ends_with(" [line cut]"), "{}", lines[1]);
+    assert_eq!(lines[1].len(), 240 + " [line cut]".len());
+    assert_eq!(lines[2], "last");
+}

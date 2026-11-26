@@ -397,7 +397,7 @@ async fn no_context_files_drops_agents_md_but_keeps_the_base_prompt() {
     assert!(output.status.success(), "{}", text(&output.stderr));
     let request = skipped.request_text();
     assert!(!request.contains(CONTEXT_MARKER), "AGENTS.md is skipped");
-    assert!(request.contains("You are HoronAgent"), "the base prompt still applies");
+    assert!(request.contains("You are Horon,"), "the base prompt still applies");
     assert!(
         text(&output.stderr).contains("launch override: --no-context-files skips project AGENTS.md"),
         "{}",

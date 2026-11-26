@@ -23,6 +23,23 @@ impl App {
         // turn left on the terminal tab has been seen, so it goes before this
         // key changes the state the next report carries.
         self.note_user_attention();
+        // With text selected, `ctrl+c` or `cmd+c` copies it instead of
+        // cancelling, the scroll keys keep it (it follows the text it covers),
+        // and any other key moves on from it.
+        if let Some(pressed) = Key::from_event(key)
+            && self.selection.is_some()
+        {
+            if pressed.code == keys::Code::Char('c') && (pressed.ctrl || pressed.cmd) && self.copy_mouse_selection() {
+                return None;
+            }
+            let scrolls = self
+                .bindings
+                .resolve(keys::Scope::App, &pressed)
+                .is_some_and(|id| id.starts_with("app.scroll_"));
+            if !scrolls {
+                self.selection = None;
+            }
+        }
         // The popup is read against the draft on screen, before this key
         // changes it, and brought up to date again after it: a key that moved
         // the draft leaves a list that belongs to the text it left behind. A
@@ -65,6 +82,14 @@ impl App {
         // is opened from the draft, where no list can be open.
         if self.side.is_some() {
             return self.side_key(key);
+        }
+        // A report panel owns every key too; closing it reveals the
+        // conversation as it was.
+        if let Some(info) = self.info.as_mut() {
+            if info.on_key(key) == crate::overlays::info::Outcome::Closed {
+                self.info = None;
+            }
+            return None;
         }
         // The queue list is a list whose rows are edited rather than chosen,
         // so it is answered before the generic picker that would read `enter`
@@ -219,6 +244,18 @@ impl App {
                         self.complete();
                         return None;
                     }
+                    // `enter` on a row the draft has not spelled out yet takes
+                    // that row, as `tab` does; a draft that already names the
+                    // chosen command is sent as typed.
+                    keys::ids::APP_SUBMIT
+                        if self
+                            .slash
+                            .selected_name()
+                            .is_some_and(|name| Some(name) != self.slash.needle()) =>
+                    {
+                        self.complete_selected();
+                        return None;
+                    }
                     _ => {}
                 }
             }
@@ -248,16 +285,23 @@ impl App {
                     self.input.newline();
                     return None;
                 }
-                let text = self.input.take();
+                let typed = self.input.take();
                 // A backslash at the end of the draft asks for another line
                 // rather than a send: the escape comes off and the draft breaks
                 // there. Nothing is remembered or queued, because the message
                 // is not finished and the next Enter is the one that sends it.
-                if let Some(kept) = continued_draft(&text) {
+                if let Some(kept) = continued_draft(&typed) {
                     self.input.set_text(&kept);
                     self.input.newline();
                     return None;
                 }
+                // The blocks the draft carries are written into the line: the
+                // skill as its address and each image as its marker.
+                let text = if self.attachments.is_empty() {
+                    typed
+                } else {
+                    self.attachments.compose(&typed)
+                };
                 if text.trim().is_empty() {
                     return None;
                 }
@@ -380,7 +424,16 @@ impl App {
             // with the entry the walk started from.
             Some(keys::ids::EDITOR_BACKSPACE) => {
                 self.history.reset();
+                // At the start of the draft the key takes the last block off
+                // instead: the blocks sit before the first character.
+                if self.input.cursor() == 0 && self.attachments.pop() {
+                    return None;
+                }
                 self.input.backspace();
+            }
+            Some(keys::ids::EDITOR_PASTE_IMAGE) => {
+                let image = crate::attachments::clipboard_image().and_then(crate::attachments::Image::from_bytes);
+                self.attach_image(image);
             }
             Some(keys::ids::EDITOR_DELETE) => {
                 self.history.reset();
@@ -417,7 +470,12 @@ impl App {
             }
         }
         match key.code {
-            KeyCode::Char(character) if !control => {
+            // An Alt chord is a shortcut, not text. A macOS terminal sends
+            // Option-← and Option-→ as `alt+b` and `alt+f`, and an unbound one
+            // would otherwise type its letter into the draft. A character the
+            // terminal composed with Option (`∫`, `ƒ`) arrives without the Alt
+            // modifier and is still typed.
+            KeyCode::Char(character) if !control && !key.modifiers.contains(KeyModifiers::ALT) => {
                 self.history.reset();
                 self.input.insert(character);
             }
@@ -434,10 +492,28 @@ impl App {
     /// keystrokes would be. Otherwise the whole text lands in the draft as one
     /// edit, with its line breaks kept.
     pub fn on_paste(&mut self, text: &str) {
-        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() || self.side.is_some() {
+        if self.prompt.is_some()
+            || self.overlay.is_some()
+            || self.picker.is_some()
+            || self.side.is_some()
+            || self.info.is_some()
+        {
             return;
         }
         self.history.reset();
+        // A file dropped onto the terminal arrives as its path, and a paste of
+        // a clipboard that holds only an image arrives empty: both become an
+        // image block rather than text.
+        if let Some(path) = crate::attachments::image_path(text) {
+            self.attach_image(crate::attachments::read_image_file(&path));
+            return;
+        }
+        if text.is_empty() {
+            if let Ok(bytes) = crate::attachments::clipboard_image() {
+                self.attach_image(crate::attachments::Image::from_bytes(bytes));
+            }
+            return;
+        }
         self.input.insert_text(text);
     }
 
@@ -454,6 +530,8 @@ impl App {
             keys::ids::APP_SCROLL_UP => self.scroll.up(1),
             keys::ids::APP_SCROLL_DOWN => self.scroll.down(1),
             keys::ids::APP_SCROLL_BOTTOM => self.scroll.to_bottom(),
+            // The next frame clamps the offset to the first row.
+            keys::ids::APP_SCROLL_TOP => self.scroll.up(usize::MAX),
             _ => return false,
         }
         self.select_tool_in_view();
@@ -540,14 +618,45 @@ impl App {
     /// the cell it covered on the last frame; a click elsewhere on screen has
     /// nothing to mean.
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        if self.mouse_scroll
+            && let Some(info) = self.info.as_mut()
+        {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => info.scroll_up(1),
+                MouseEventKind::ScrollDown => info.scroll_down(1),
+                _ => {}
+            }
+            return;
+        }
         if !self.mouse_scroll || self.overlay.is_some() || self.picker.is_some() || self.side.is_some() {
             return;
         }
         match mouse.kind {
             MouseEventKind::ScrollUp => self.scroll.up(scroll::WHEEL_ROWS),
             MouseEventKind::ScrollDown => self.scroll.down(scroll::WHEEL_ROWS),
+            // The capture that reports the wheel also takes the terminal's own
+            // drag selection, so the client selects: a press starts a range in
+            // the conversation, a drag extends it (past an edge it scrolls),
+            // and the release keeps it on screen for `ctrl+c` to copy.
             MouseEventKind::Down(MouseButton::Left) => {
                 self.input.place_caret(mouse.column, mouse.row);
+                self.selection = (mouse.row < self.pane.top + u16::try_from(self.pane.rows).unwrap_or(u16::MAX))
+                    .then(|| crate::selection::Selection::start(self.pane.locate(mouse.column, mouse.row).0));
+                return;
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let (point, edge) = self.pane.locate(mouse.column, mouse.row);
+                if let Some(selection) = self.selection.as_mut() {
+                    selection.extend(point, edge);
+                }
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(selection) = self.selection.as_mut()
+                    && !selection.finish()
+                {
+                    self.selection = None;
+                }
                 return;
             }
             _ => return,

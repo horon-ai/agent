@@ -15,9 +15,9 @@ The handoff has three conditions, all checked before the process is replaced (`s
 
 - stdin and stdout must both be terminals. A pipe, a file or a closed stream keeps headless mode, because scripts and CI read its output.
 - `HORON_NO_TUI` must be unset. Setting it to any value forces headless mode on a terminal.
-- `horon-tui` must be a file next to the running executable. A launcher that is a symbolic link is retried at its real location, which matters on macOS.
+- A `horon-tui` file must be found. The one next to the running executable comes first, and a launcher that is a symbolic link is retried at its real location, which matters on macOS. An executable with none beside it, such as a repo build in `target/debug`, uses the client beside the installed `current` or `stable` build, and then the first `horon-tui` on `PATH`. A source install (`/rebuild`, auto-update) builds the client with the agent and stages it in the new version directory, or carries over the client the active version has when it did not build.
 
-Because this check runs before checking or starting the daemon (`src/cli/dispatch.rs`), a failed check starts no background server. When a condition fails, the command prints a sentence that names the condition (`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, or `no horon-tui beside this binary`), the one remedy that answers it, and the headless fallback, then exits with code `1`. Only a missing client is answered by installing (`horon-agent install-release`): a pipe or `HORON_NO_TUI` happens with the client already in place, so the sentence names a terminal or the variable instead. Starting `horon-tui` directly skips the handoff decision, checks that both `stdin` and `stdout` are terminals before entering the alternate screen (printing an error and exiting `1` on a pipe or redirect), and renders `"terminal too small"` when the terminal area is smaller than `20x6`.
+Because this check runs before checking or starting the daemon (`src/cli/dispatch.rs`), a failed check starts no background server. When a condition fails, the command prints a sentence that names the condition (`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, or `no horon-tui beside this binary`), the one remedy that answers it, and the headless fallback (`horon serve` or `horon run`), then exits with code `1`. Only a missing client is answered by installing (`horon install-release`): a pipe or `HORON_NO_TUI` happens with the client already in place, so the sentence names a terminal or the variable instead. Starting `horon-tui` directly skips the handoff decision, checks that both `stdin` and `stdout` are terminals before entering the alternate screen (printing an error and exiting `1` on a pipe or redirect), and renders `"terminal too small"` when the terminal area is smaller than `20x6`.
 
 A resumed session is handed over as well. `horon --resume <id>` passes `--session <id>` to the client, so the client attaches to that session instead of creating one. The socket is not passed on the command line: it is already exported as `HORON_AGENT_SOCKET`, and the client resolves the harness API socket itself.
 
@@ -129,7 +129,7 @@ The table follows the settings registry (`crates/tui/src/settings/registry.rs`),
 
 `statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
-`editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
+`editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Because the capture also takes the terminal's own drag selection, the client selects text itself: a left-button drag highlights the conversation text it covers, and releasing the button keeps the highlight without copying. The range is held on the conversation rows, not on screen cells, so it stays on the same text while the wheel or the scroll keys move the view, and dragging past the top or bottom edge of the conversation keeps scrolling that way, one row at a time, while the range grows. `ctrl+c` (or `cmd+c` where the terminal reports it) copies the range, rows scrolled off screen included, through the same clipboard path as `/copy` instead of cancelling; any key other than a scroll key, or a new click, clears it. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
 
 Set `transcript.work_notes = true` for up to four live work notes during each turn and a final count of tool calls, completed background jobs and omitted notes. These notes stay in the TUI.
 
@@ -214,7 +214,7 @@ The file maps an action id to the keys it answers. An entry replaces every defau
 
 An action id is a dotted name, so it must be written as a quoted key. `"app.interrupt" = [...]` names the action; the unquoted `app.interrupt = [...]` is a nested table, which the client reports as unknown action `app` and ignores, leaving every default in place.
 
-A key is written with the modifiers `ctrl`, `alt` and `shift` in any order before the key name (`Control+J` and `ctrl+j` are the same key). Character keys carry their shift in the character, so `A` and `shift+a` are one binding; every other key keeps shift, which makes `shift+enter` distinct from `enter`. A key the terminal reports with extra modifiers still answers a binding with the same key: `alt+left` moves the cursor like `left`.
+A key is written with the modifiers `ctrl`, `alt`, `shift` and `cmd` (also `super`) in any order before the key name (`Control+J` and `ctrl+j` are the same key). Character keys carry their shift in the character, so `A` and `shift+a` are one binding; every other key keeps shift, which makes `shift+enter` distinct from `enter`. A key the terminal reports with extra modifiers still answers a binding with the same key: `alt+left` moves the cursor like `left`.
 
 Mistakes are warnings, not refusals. An unknown action id, a value that is not an array, a key name that cannot be read, and two actions in one scope claiming one key each produce a line in the transcript. The first action in declaration order keeps a contested key.
 
@@ -248,7 +248,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_page_down` | `pagedown` | Move the transcript one page back towards the end |
 | `app.scroll_up` | `shift+up` | Hold the transcript one row higher |
 | `app.scroll_down` | `shift+down` | Move the transcript one row back towards the end |
-| `app.scroll_bottom` | `ctrl+end` | Follow the end of the conversation again |
+| `app.scroll_top` | `cmd+up`, `ctrl+home` | Jump to the first message of the session |
+| `app.scroll_bottom` | `cmd+down`, `ctrl+end` | Follow the end of the conversation again |
 | `app.expand_tool` | `ctrl+o` | Expand or fold the selected retained tool result |
 | `app.toggle_tool_activity` | `alt+t` | Show or hide completed tool activity for this session |
 | `app.copy_code` | `alt+c` | Copy the newest code block in the latest answer |
@@ -270,15 +271,16 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.right` | `right`, `ctrl+f` | Move the cursor one grapheme cluster right |
 | `editor.home` | `home`, `ctrl+a` | Move the cursor to the start of its line |
 | `editor.end` | `end`, `ctrl+e` | Move the cursor to the end of its line |
-| `editor.word_left` | `alt+left` | Move to the start of the word before the cursor |
-| `editor.word_right` | `alt+right` | Move past the word after the cursor |
+| `editor.word_left` | `alt+left`, `alt+b` | Move to the start of the word before the cursor |
+| `editor.word_right` | `alt+right`, `alt+f` | Move past the word after the cursor |
 | `editor.history_prev` | `up` | Step back through earlier drafts, then into the lines of the draft |
 | `editor.history_next` | `down` | Step forward again, back to the draft being typed |
 | `editor.newline` | `shift+enter`, `alt+enter`, `ctrl+j` | Start a new line without sending the draft |
 | `editor.kill_to_start` | `ctrl+u` | Delete from the start of the line to the cursor |
 | `editor.kill_to_end` | `ctrl+k` | Delete from the cursor to the end of the line |
 | `editor.delete_word` | `ctrl+w`, `alt+backspace` | Delete the word before the cursor |
-| `editor.complete` | `tab` | Fill the popup's selected command, or complete the command or workspace-path prefix |
+| `editor.complete` | `tab` | Take the popup's selected command, or complete the command or workspace-path prefix |
+| `editor.paste_image` | `ctrl+v` | Attach the image on the clipboard to the draft |
 | `editor.accept_suggestion` | `ctrl+right` | Add the visible suggestion to the draft |
 | `editor.history_search` | `ctrl+r` | Search the drafts sent before this one |
 | `editor.external` | `ctrl+g` | Edit the draft in `VISUAL` or `EDITOR` |
@@ -290,6 +292,10 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`, each action with the scope it belongs to.
 
+Command-↑ and Command-↓ jump to the first message of the session and back to its end. They arrive only from a terminal that reports the Command key to the program (Ghostty, kitty, WezTerm with the kitty keyboard protocol); elsewhere `ctrl+home` and `ctrl+end` do the same.
+
+A macOS terminal sends Option-← and Option-→ as the readline `alt+b` and `alt+f`, which is why both spellings move by word. An `alt` chord that no action names is dropped rather than typed, so an unbound Option shortcut never leaves its letter in the draft; a character the terminal composes with Option (`∫`, `ƒ`) arrives without `alt` and is typed as usual.
+
 In its legacy mode a terminal sends Shift-Enter as a plain Enter, which submits. The client therefore asks a terminal that speaks the kitty keyboard protocol (kitty, Ghostty, WezTerm, foot, iTerm2 with the protocol on, recent Alacritty) to report modified keys unambiguously while it runs, and there `shift+enter` starts a new line. The request is made only after the terminal says it supports the protocol, and it is undone on every way out, including a panic, a signal and the hand-over to the external editor. In a terminal without the protocol (Apple Terminal, tmux without `extended-keys`) Shift-Enter still arrives as Enter, and `alt+enter` and `ctrl+j` are the newline keys.
 
 `up` and `down` move between draft lines and enter history at the first or last line. `shift+up`, `shift+down` and the page keys scroll the transcript. `shift+tab` steps the reasoning effort. Plain Tab completes a slash command name or a local path. An open prompt receives its own input before the composer handles keys.
@@ -297,6 +303,8 @@ In its legacy mode a terminal sends Shift-Enter as a plain Enter, which submits.
 ## The editor
 
 With the default local endpoint, Tab completes paths relative to the session's working directory. Add `@` to insert a file mention. Names with spaces are quoted, and repeated Tab cycles matching filenames. Slash commands take priority. An explicit socket disables this local lookup.
+
+A skill taken from the slash popup and an attached image are blocks rather than characters of the draft. A skill is drawn as `✦ name` and an image as `📷 #N` between the prompt marker and the text, and `backspace` at the start of the draft takes the last block off, the newest image first. An image is attached by `ctrl+v`, which reads the system clipboard (`osascript` on macOS, `wl-paste` or `xclip` on Linux; Windows has no clipboard reader and takes a dropped file instead), by a paste that arrives empty because the clipboard holds only an image, or by pasting or dropping the path of a `.png`, `.jpg` or `.jpeg` file. While the draft carries images, a card per image sits above the status line with its number, a picture drawn in half-block cells, and its size in pixels. Sending writes the blocks into the line: the skill as `/skill:<name>` and each image as an `[Image #N]` marker before the text, and the images those markers name travel with the message. An image wider or taller than 2000 pixels, or larger than 3.5 MB, is scaled and sent as PNG.
 
 With `editor.suggestions = true`, the composer can show a continuation from messages you already sent in the current session. Ctrl+Right adds it to the draft and Esc dismisses it. Editing the prefix withdraws a stale suggestion. The suggestion provider runs locally and sends no request.
 
@@ -318,7 +326,13 @@ The cursor moves between grapheme clusters, so a flag emoji or a syllable made o
 
 ## The transcript
 
-A tool call is drawn as a card: a box the width of the pane with a title row on top, the call's body inside, and a closing row at the bottom. The title carries the outcome's glyph (`◐` running, `✓` done, `✕` failed), the call's name and a short argument summary. The summary is the first interesting field of the call's own JSON, taken in the order `command`, `file_path`, `path`, `pattern`, `query`, `url`, `name`, `prompt`. It stays in the title only when all of it fits there, because a cut command reads as a different command: an argument that does not fit, or that runs over several lines, is drawn under the title instead (a `command` under a `$ ` prompt), at most six lines with `… +N lines` for the rest, and an `Output` divider separates it from what the call returned. The closing row carries the outcome in words and the elapsed time (`done 1.4s`, `failed 2m 05s`, `running`); a call the approval gate refused and nobody has decided yet closes with `needs approval` and no time, because it neither ran nor failed. A failed or denied call is boxed in the error colour, so a failure can be found by its edges. The `ascii` symbol preset draws the box with `+`, `-` and `|`.
+A tool call is drawn as a card: a box the width of the pane with a title row on top, the call's body inside, and a closing row at the bottom. The title carries the outcome's glyph (`◐` running, `✓` done, `✕` failed), the call's `intent` as a heading when the model wrote one (`Running the tests · bash`), the call's name and a short argument summary. A `toolbox run` is drawn as the tool it ran, with that tool's arguments, so a deferred `agentgrep` reads `agentgrep greet` rather than `toolbox`. The summary is the first interesting field of the call's own JSON, taken in the order `command`, `file_path`, `path`, `pattern`, `query`, `url`, `name`, `prompt`. It stays in the title only when all of it fits there, because a cut command reads as a different command: an argument that does not fit, or that runs over several lines, is drawn under the title instead (a `command` under a `$ ` prompt), at most six lines with `… +N lines` for the rest, and an `Output` divider separates it from what the call returned. The closing row of a finished call carries only its elapsed time (`1.4s`) in muted grey, because the title's tick already says it finished; any other outcome is named in words in its own colour (`failed 2m 05s`, `running`); a call the approval gate refused and nobody has decided yet closes with `needs approval` and no time, because it neither ran nor failed. A failed or denied call is boxed in the error colour, so a failure can be found by its edges. The `ascii` symbol preset draws the box with `+`, `-` and `|`.
+
+A skill read is drawn as `✓ Read skill://<name>`: the verb in the title style and the address in the warning colour, with no intent or tool name in front of it. This covers `read` with a `skill://` address and `skill_manage` loading a skill by name, called directly or through `toolbox`.
+
+Text inside a card, and inside the filled box of a message you sent, keeps two blank columns from each edge. A tool card, an answer, its reasoning, an interactive card and a message you sent each start one blank row below the block above them, so a border never touches the text or the card next to it; a run of notices stays packed as one list, and the first block of the conversation has no blank row above it.
+
+Every row the pane draws is rebuilt from the cells it measured: a tab becomes spaces to the next four-column stop, and any other control character (a carriage return, an escape) is dropped. A terminal acts on those instead of printing them, so a tool's output that carried a tab or a `\r` used to push or overwrite a card's edges.
 
 Results are matched to calls by call id, so two calls that ran in parallel cannot swap their results, and a result whose start this client never saw gets a card of its own instead of being attached to another call's. A finished call keeps a preview of its output inside its card: three rows by default, each cut to 160 cells, and `+N lines` for the rows the preview does not show. A row longer than the card wraps inside it, and every row is padded to the card's width so its right edge lines up, wide characters included. A failure puts its message on its own row instead of in the title, because the message is usually longer than the pane and would push the argument off the right edge.
 
@@ -332,7 +346,7 @@ Set `transcript.turn_usage = true` to show elapsed time after each turn you star
 
 The client marks avoidable prompt cache misses after the request that caused them. A marker shows the cause and the approximate number of tokens resent, without prompt text or cache identifiers. A model or provider switch, expiry, or a documented invalidation leaves no marker. Set `[features] kv_cache_miss_notices = false` in the daemon's `config.toml` to turn off the reports.
 
-The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, `ctrl+end` returns to the end, and the mouse wheel moves three rows a notch while `transcript.mouse_scroll` holds the capture, which is the default. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
+A message you sent is drawn as a filled box the width of the pane, with a blank row above and below its text. The rightmost column of the conversation is a scrollbar: its thumb shows where the view sits once the conversation is taller than the pane and has been measured, which a scroll does. The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, `ctrl+end` returns to the end, and the mouse wheel moves the view while `transcript.mouse_scroll` holds the capture, which is the default. Each wheel event moves one row, as the terminal's own scrollback does: the terminal sends one event per row a trackpad travels and several per notch of a wheel, and the events that arrive before the next frame are drawn together, so the view follows the hand instead of trailing behind it. A tool card that grows after newer items arrived (its result, its preview) is measured again, so the view still reaches the first message. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
 
 Scroll to an older retained tool result and press Ctrl+O to expand or fold it. Alt+T hides or restores the cards of completed tool calls. Running calls and pending approvals remain visible.
 
@@ -352,15 +366,15 @@ Notes are the reader's own file: no command sends them, they never join the conv
 
 ## Session todos
 
-The `Todos` panel shows the attached session's saved tasks, starting with the active item and then blocked items. A label shows each item's group and a blocked item includes its reason. The heading counts completed items and reports how many open items are outside the visible rows. On a short terminal the panel yields space to the conversation and input.
+The `Todos` panel shows the attached session's saved tasks in the order they were written: `✓` and struck through for a completed item, `✕` and struck through for a cancelled one, a bold `◐` for the active item, `⊘` for a blocked item with its reason, and `○` for one still pending. A label shows each item's group. The heading draws a progress bar, counts completed items, and reports how many items are outside the visible rows; a panel too short for the list gives up finished rows first. On a short terminal the panel yields space to the conversation and input.
 
 The client loads the list when you attach and reads it again after a saved change. Switching sessions clears the old list. A daemon or bridge without live todo support leaves the panel hidden.
 
 ## Turn state
 
-One turn runs at a time. Enter during a running turn queues the text instead of sending it: the transcript shows it as a `queued: <text>` row, and the message is sent when the running turn ends, in the order the messages were typed. Cancelling the turn keeps the queue, because the queue belongs to the next turn rather than to the one that stopped.
+One turn runs at a time. Enter during a running turn queues the text instead of sending it: it is drawn as a `⏳ queued  <text>` row pinned above the status line (up to three rows, the last counting the rest), so it stays in view while the conversation scrolls, and the message is sent when the running turn ends, in the order the messages were typed. Cancelling the turn keeps the queue, because the queue belongs to the next turn rather than to the one that stopped.
 
-`esc` sends the queued messages into the running turn instead of stopping it: each `queued: <text>` row becomes the message the model received, in the order the messages were typed, and a notice says `sent into the running turn`. With nothing queued there is nothing to hand over, so `esc` interrupts the turn; it does nothing when the client is idle, so a stray key cannot end the session. One steer waits at a time, so a second `esc` while the answer to the first is still outstanding interrupts instead of stacking messages the client could not tell apart later. A refusal is one warning line, `could not send the queued messages into the turn` followed by the harness's own sentence, and the messages go back in front of the queue in their own order. A steer still unanswered when the client moves to another session does not hold the new session's `esc`, so the first `esc` there steers again; its answer is still handled when it arrives, where an acceptance changes nothing on screen and a refusal is one warning with the harness's wording and puts nothing back, because that text belongs to the session the client left. `ctrl+c` cancels the turn when one is running and leaves when none is, and `ctrl+d` always leaves.
+`esc` sends the queued messages into the running turn instead of stopping it: each queued row becomes the message the model received, in the order the messages were typed, and a notice says `sent into the running turn`. With nothing queued there is nothing to hand over, so `esc` interrupts the turn; it does nothing when the client is idle, so a stray key cannot end the session. One steer waits at a time, so a second `esc` while the answer to the first is still outstanding interrupts instead of stacking messages the client could not tell apart later. A refusal is one warning line, `could not send the queued messages into the turn` followed by the harness's own sentence, and the messages go back in front of the queue in their own order. A steer still unanswered when the client moves to another session does not hold the new session's `esc`, so the first `esc` there steers again; its answer is still handled when it arrives, where an acceptance changes nothing on screen and a refusal is one warning with the harness's wording and puts nothing back, because that text belongs to the session the client left. `ctrl+c` cancels the turn when one is running and leaves when none is, and `ctrl+d` always leaves.
 
 A turn that ends while the daemon still holds something sent into it says `the turn ended before reading everything sent into it; the next turn carries the rest`. The notice names no count and no key, because what the daemon counts is every item it holds for the session: a steer of several messages is one item, and a background result or another client's message is one each.
 
@@ -384,7 +398,7 @@ Prompts are withdrawn when their turn is cancelled, when the turn ends (question
 
 ## The slash popup and `/help`
 
-Typing `/` opens a list of the commands the typed letters match: the same commands `/help` lists, skills included, ranked best match first, with their descriptions. The filter is a subsequence match, so `/mdl` finds `model` and `/rvw` finds `review`, and a name that still starts with the typed letters ranks above one the letters only resemble. The selected row is marked with the input line's own marker in the left column, and the characters the letters matched in the name are underlined on top of the row style. The list shows at most eight rows and moves its window with the selection; `up` and `down` move it, `tab` fills the selected command, and `esc` closes it. The popup is the topmost surface, so the first `esc` always closes the popup and only a second one acts on the turn. While the popup is open the completion hint is not drawn, because the list already says what the hint would. The list closes itself only once a row's name is exactly what was typed and no other matching row's name starts with it: `resume` and `resume_all` still leave a choice, while a row the letters only resemble is no choice at all and does not keep a finished name open.
+Typing `/` opens a list of the commands the typed letters match: the same commands `/help` lists, skills included, ranked best match first, with their descriptions. The filter is a subsequence match, so `/mdl` finds `model` and `/rvw` finds `review`, and a name that still starts with the typed letters ranks above one the letters only resemble. The selected row is marked with the input line's own marker in the left column, and the characters the letters matched in the name are underlined on top of the row style. The list shows at most eight rows and moves its window with the selection; `up` and `down` move it, `tab` takes the selected command, `enter` takes a row the draft has not spelled out yet and otherwise sends the draft, and `esc` closes it. A command is taken with a space after it, which closes the list and leaves the caret where its arguments go; a skill becomes a `✦ name` block before the draft. The popup is the topmost surface, so the first `esc` always closes the popup and only a second one acts on the turn. While the popup is open the completion hint is not drawn, because the list already says what the hint would. A name typed out in full keeps the list open with that command as the first, selected row, so its description stays in view until the line is sent.
 
 `/help` prints the commands grouped by where they come from, with the description column aligned, then the keys. The key list is built from the key map in force rather than from the shipped defaults, so a rebound key shows its new binding and an action a file turned off shows as `(unbound)`. `/help <command>` prints one command instead of the whole listing: its name with the argument hint the command declares, its description, the group it comes from, and, for a command file the built-in shadows, the note that the built-in runs rather than the file. A leading slash is accepted, so `/help /model` reads the same as `/help model`, and a name nothing answers to is reported as an unknown command that points at `/help`. `/keys` prints the key half alone: the keys in force and what each action does, in the order `ACTIONS` declares, with an unbound action marked `(unbound)`.
 
@@ -408,13 +422,13 @@ The effort list is the ladder the client offers, `none`, `minimal`, `low`, `medi
 
 Set `models.shortlist` to the model IDs you want to cycle. Ctrl+P moves forward and Ctrl+Alt+P moves backward, wrapping at either end. The client asks the daemon for its model catalog before cycling and skips unlisted IDs.
 
-`/switch` and `/resume` open the stored sessions under different titles, newest first. Each row carries the session's title (or its first user line, or its id) and the time it last changed, flush with the row's right edge so the times read down the list; a conversation too narrow for both keeps the name. The session in force is marked `(current)`. The preview opens with the directory and the time and follows with the newest six messages as `you: …` and `assistant: …` lines, taken from the newest twenty stored messages; an injected `<system-reminder>` message is left out, because the user never wrote it. A session the daemon cannot read back shows its title, or its id when it has none, and a head-only preview.
+`/resume` opens the stored sessions, newest first. Each row carries the session's title (or its first user line, or its id) and the time it last changed, flush with the row's right edge so the times read down the list; a conversation too narrow for both keeps the name. The session in force is marked `(current)`. The preview opens with the directory and the time and follows with the newest six messages as `you: …` and `assistant: …` lines, taken from the newest twenty stored messages; an injected `<system-reminder>` message is left out, because the user never wrote it. A session the daemon cannot read back shows its title, or its id when it has none, and a head-only preview.
 
 In the session picker, Ctrl+P pins or unpins the selected row. Pinned sessions appear first, with newest sessions first within each group. `/pin [id]` and `/unpin [id]` act on the attached session when the ID is omitted. Pins are saved locally for the connected daemon and survive a client restart.
 
-Choosing a row, or typing `/switch <id>` or `/resume <id>`, attaches at once, and the daemon also accepts a unique prefix of six or more characters. Attaching clears the screen of the old session, replays the stored conversation as user and assistant messages, adds `started a new session <id>` or `resumed <id>`, and takes the model, provider, effort and title from the new session's identity, so the status line keeps showing `provider/model`. `/new` asks for a session in this directory and moves to it the same way; the session that was left stays stored, and the client drops the events of every session it has left, so neither conversation's rows reach the other. A session change waits while a turn runs or a model or effort change is still being applied, and a new session left without a message cannot be resumed, because the daemon does not keep it.
+Choosing a row, or typing `/resume <id>`, attaches at once, and the daemon also accepts a unique prefix of six or more characters. Attaching clears the screen of the old session, replays the stored conversation as user and assistant messages, adds `started a new session <id>` or `resumed <id>`, and takes the model, provider, effort and title from the new session's identity, so the status line keeps showing `provider/model`. `/new` asks for a session in this directory and moves to it the same way; the session that was left stays stored, and the client drops the events of every session it has left, so neither conversation's rows reach the other. A session change waits while a turn runs or a model or effort change is still being applied, and a new session left without a message cannot be resumed, because the daemon does not keep it.
 
-In `/switch` or `/resume`, select a saved session and press Ctrl+A to archive it. Leave the current session before archiving it. `/archived` lists archived sessions in the current directory. Press Enter on a row to restore it to the recent list.
+In `/resume`, select a saved session and press Ctrl+A to archive it. Leave the current session before archiving it. `/archived` lists archived sessions in the current directory. Press Enter on a row to restore it to the recent list.
 
 `/skills` lists the skills the harness reported for this session: the name, the harness's description in the second column, and a preview naming the file the skill was read from and the tools it may use, ending with the line that says `enter` puts the invocation in the draft. Choosing a row writes `/skill:<name>` and a trailing space into the editor without sending it, so the request after it is the user's to type.
 
@@ -431,15 +445,17 @@ The bottom line is assembled from named segments. A segment with no data draws n
 | Segment | Shows |
 | --- | --- |
 | `status` | What the turn is doing: the client's own `idle`, `running`, `requires_action` or `disconnected`, or the session status the daemon reported |
-| `model` | `provider/model` with the reasoning effort after it, or whichever of the two the daemon reported |
+| `model` | The model's own name, the last part of its id (`magpie/group/deepseek-v4.1-flash` reads `deepseek-v4.1-flash`), with the reasoning effort after it; the provider alone when the daemon reported no model |
 | `session` | The session id, shortened |
 | `path` | The working directory, with the home directory shortened to `~` and long paths cut at a segment boundary |
 | `tokens` | Input and output tokens of the last request, as `↑in ↓out` |
-| `context_pct` | Share of the context window used, where `statusline.context_window` overrides the window the runtime reports; hidden when neither is known |
+| `context_pct` | Share of the context window used with the window beside it, as `4%\|1M`, where `statusline.context_window` overrides the window the runtime reports; hidden when neither is known |
 | `usage` | Tokens the whole session has spent, as `Σ↑in ↓out`; opt-in, and only the metrics the runtime recorded are drawn |
 | `cost` | The daemon's own spend estimate as `$0.00`; opt-in, and hidden when the daemon publishes none |
 | `time` | Local wall-clock time as `HH:MM` |
 | `pending` | A parked approval or question |
+| `elapsed` | How long the running turn has taken, or how long the last turn this client sent took; hidden before the first one |
+| `branch` | The git branch of the working directory as `⑂ name`, or the short commit of a detached head; read from the repository's `HEAD` file, never by starting `git`, and hidden outside a repository |
 
 `status` is the one segment whose words are not all the client's own. It writes `idle`, `running`, `requires_action` while a prompt waits, and `disconnected` when the connection is gone; it draws the daemon's `generating` as `running` and its `cancelled` restatement of a stopped turn as `idle`; and it shows any other non-empty session status as the daemon sent it, so a word this page does not list can appear there. `attached`, right after the client attaches to a session, is one of those.
 
@@ -447,7 +463,7 @@ The bottom line is assembled from named segments. A segment with no data draws n
 
 | Preset | Left | Right |
 | --- | --- | --- |
-| `default` | `status`, `model`, `path` | `tokens`, `context_pct`, `time` |
+| `default` | `status`, `elapsed`, `model`, `path`, `branch` | `tokens`, `context_pct` |
 | `minimal` | `model` | `status` |
 | `custom` | Whatever `statusline.left` names | Whatever `statusline.right` names |
 
@@ -457,7 +473,9 @@ The `model` segment carries the reasoning effort the daemon reported for the mod
 
 Use `/stats` to show the attached session's recorded input, output and cache tokens, request count, and estimated cost in the transcript. The command reads the same harness report as the status line. Missing figures are shown as `unknown`.
 
-When the line does not fit the terminal, the least important segment is dropped first. Priority runs from `time` (dropped first), `session`, `tokens`, `cost`, `context_pct`, `usage`, `path`, `pending`, `status`, to `model` (dropped last). The last remaining segment stays even when it is wider than the pane, because a clipped model is more useful than an empty line, and what it gives up first is the effort, so the cut lands inside the model name instead of after a separator that names nothing.
+`/session` (or `/session info`) opens a Session Info panel over the conversation (arrow and page keys or the wheel scroll it, `esc`, `q` or `enter` closes it and the conversation is shown as it was) with the attached session in one report: its id, title, folder and status; the provider, model (and the model that served the last answer when a fallback did), reasoning effort and credential; the count of user and assistant messages and tool calls; and the same token and cost lines as `/stats`. A part the daemon cannot answer says so instead of failing the report. `/session delete` starts a new session in the same folder, then permanently deletes the one it left; the daemon refuses to delete a session a client is attached to, so the new session comes first, and a running turn refuses the command. `/session pin` answers that this build keeps no OAuth accounts to pin.
+
+When the line does not fit the terminal, the least important segment is dropped first. Priority runs from `time` (dropped first), `session`, `tokens`, `cost`, `usage`, `branch`, `elapsed`, `context_pct`, `path`, `pending`, `status`, to `model` (dropped last). The last remaining segment stays even when it is wider than the pane, because a clipped model is more useful than an empty line, and what it gives up first is the effort, so the cut lands inside the model name instead of after a separator that names nothing.
 
 ## Commands
 
@@ -500,8 +518,9 @@ A package command answers as `/id:command`, where `id` is the package id and `co
 | `/side <question>` | Ask a separate read-only session a question |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/stats` | Show the attached session's recorded token usage |
+| `/session` | Show the attached session's details; `/session delete` deletes it and starts a new one |
 | `/swarm` | Browse the attached session's direct children and return to a parent |
-| `/switch [id]` | Move to another stored session, or pick one from the list |
+| `/switch [model]` | Switch to the model named, or pick one from the list (same as `/model`) |
 | `/todo` | Open the attached session's full todo list and update a selected item |
 | `/tools` | Browse the current session's enabled tools without running them |
 | `/unpin [id]` | Remove a session from the pinned group |
@@ -578,7 +597,7 @@ built-in commands:
   /skills              list the skills the harness reports, and put one in the draft
   /stats               show the attached session's recorded token usage
   /swarm               list this session's swarm children and the parent it returns to, and attach to one
-  /switch              move to another stored session, or pick one from the list
+  /switch              switch the model, or pick one from the list (same as /model)
   /todo                show every todo in the session and mark one done, open or cancelled
   /tools               browse the current session's enabled tools without running them
   /unpin               take a session out of the pinned group
@@ -593,7 +612,7 @@ Which harness names appear, and how many, is whatever the attached build answers
 
 Command files appear in `/help` with their argument hint and description. With no command files at all, `/help` says where to put one.
 
-`/switch` moves to another stored session, and a model choice is `/model`, with the name or with the list `alt+p` opens as well. omp's `/switch` changes the model instead; here the two are separate commands and `/switch` never touches the model of the session it leaves.
+`/switch` changes the model, as it does in omp: it is `/model` under a second name, opening the model list or switching to the model named after it, and `alt+p` opens the same list. Moving to another stored session is `/resume`.
 
 `/skills` lists what the harness reported for this session. A listed name answers as `/skill:<name>` and, where no built-in, harness command or command file already owns that name, as its bare name too. The line expands before it is sent: to `Read skill://<name> and follow its instructions.` with nothing after the name, and to `Read skill://<name> and follow its instructions for this request: <text>` when words follow it. The harness API has no call that activates a skill, so a chosen skill is sent as that read request and works as far as the session can read the address. omp loads the skill text itself and sends it; this client asks for it instead.
 

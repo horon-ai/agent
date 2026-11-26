@@ -73,8 +73,9 @@ impl App {
             Local::Copy => self.copy_command(arguments),
             // No argument asks for the list the picker draws; a name still
             // switches straight away, or waits for the turn to end, which is
-            // what a script or a habit uses.
-            Local::Model => match arguments.trim() {
+            // what a script or a habit uses. `/switch` is the same command
+            // under the name other agents use for changing the model.
+            Local::Model | Local::Switch => match arguments.trim() {
                 "" => self.open_models(),
                 name => self.ask_model(name),
             },
@@ -94,6 +95,7 @@ impl App {
             // them when it comes.
             Local::Skills => self.open_skills(),
             Local::Stats => Some(Action::Stats),
+            Local::Session => self.run_session(arguments),
             Local::Tools => self.open_tools(),
             Local::Mcp => {
                 if self.disconnected {
@@ -124,11 +126,10 @@ impl App {
             // `/jobs` reads the live list from the daemon: a job that started
             // or ended on another client is not in this transcript.
             Local::Jobs => self.open_jobs(),
-            // `/switch` and `/resume` are one flow under two names: the list
-            // when no id is given, the session itself when one is.
+            // `/resume` lists the stored sessions when no id is given and
+            // moves to the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),
             Local::Archived => self.open_archived_sessions(),
-            Local::Switch => self.change_session("switch", "Switch session", arguments),
             Local::Rename => self.rename_session(arguments),
             // `/swarm` opens this session's children; an argument after it still
             // reaches the harness's own report, so the built-in takes the bare

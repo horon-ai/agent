@@ -50,8 +50,8 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use horon_agent_message_types::{Message, ToolDefinition, messages_with_dynamic_system_context};
 use horon_agent_provider_core::{
-    EventStream, ModelRoute, Provider, ProviderRequestContext, shared_http_client,
-    transport::send_with_initial_response_timeout,
+    EventStream, ModelCatalogRefreshSummary, ModelRoute, Provider, ProviderRequestContext, shared_http_client,
+    summarize_model_catalog_refresh, transport::send_with_initial_response_timeout,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -115,6 +115,10 @@ pub struct OpenAiCompatibleProvider {
     prompt_cache_memo: Mutex<Option<PromptCacheKeyMemo>>,
     model: Mutex<String>,
     models: Vec<String>,
+    /// The models the endpoint's own `/models` list named on the last explicit
+    /// refresh. Shared with forks, so a session that refreshed is not the only
+    /// one that can see them.
+    discovered: Arc<std::sync::RwLock<Vec<String>>>,
     reasoning_effort: Mutex<Option<String>>,
     service_tier: Mutex<Option<&'static str>>,
     /// Reasoning effort each model declares in its profile entry. Selecting a
@@ -171,6 +175,7 @@ impl OpenAiCompatibleProvider {
             prompt_cache_memo: Mutex::new(None),
             model: Mutex::new(default_model),
             models,
+            discovered: Arc::default(),
             reasoning_effort: Mutex::new(None),
             service_tier: Mutex::new(None),
             model_reasoning_efforts: BTreeMap::new(),
@@ -318,6 +323,16 @@ impl OpenAiCompatibleProvider {
     /// Fetch model IDs on explicit request using this profile's HTTP authentication.
     pub async fn fetch_models(&self) -> Result<Vec<String>> {
         model_list::fetch(self).await
+    }
+
+    /// The models this profile offers: the configured ones in their order,
+    /// then every model the last refresh found that the configuration does
+    /// not already name.
+    fn listed_models(&self) -> Vec<String> {
+        let discovered = self.discovered.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut listed = self.models.clone();
+        listed.extend(discovered.iter().filter(|model| !self.models.contains(model)).cloned());
+        listed
     }
 
     /// The configured base URL, without the request path.
@@ -828,7 +843,7 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     fn available_models_display(&self) -> Vec<String> {
-        self.models.clone()
+        self.listed_models()
     }
 
     fn ready_models_display(&self) -> Option<Vec<String>> {
@@ -836,15 +851,15 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     fn available_models_for_switching(&self) -> Vec<String> {
-        self.models.clone()
+        self.listed_models()
     }
 
     fn model_routes(&self) -> Vec<ModelRoute> {
         let detail = self.profile_id.clone().unwrap_or_else(|| self.base_url.clone());
-        self.models
-            .iter()
+        self.listed_models()
+            .into_iter()
             .map(|model| ModelRoute {
-                model: model.clone(),
+                model,
                 provider: self.display_name.clone(),
                 api_method: self.wire.api_method().to_string(),
                 available: true,
@@ -853,6 +868,27 @@ impl Provider for OpenAiCompatibleProvider {
                 usage: None,
             })
             .collect()
+    }
+
+    /// Read the endpoint's `/models` list and offer every model it names
+    /// beside the configured ones.
+    ///
+    /// Only this explicit refresh asks the endpoint: starting or attaching a
+    /// session makes no request, so a one-shot run stays off the network. A
+    /// wire with no OpenAI model list keeps the configured catalog.
+    async fn refresh_model_catalog(&self) -> Result<ModelCatalogRefreshSummary> {
+        let before_models = self.listed_models();
+        let before_routes = self.model_routes();
+        if matches!(self.wire, WireProtocol::ChatCompletions | WireProtocol::Responses) {
+            let fetched = normalize_models(self.fetch_models().await?);
+            *self.discovered.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = fetched;
+        }
+        Ok(summarize_model_catalog_refresh(
+            before_models,
+            self.listed_models(),
+            before_routes,
+            self.model_routes(),
+        ))
     }
 
     fn reasoning_effort(&self) -> Option<String> {
@@ -954,6 +990,7 @@ impl OpenAiCompatibleProvider {
             prompt_cache_memo: Mutex::new(None),
             model: Mutex::new(self.model()),
             models: self.models.clone(),
+            discovered: Arc::clone(&self.discovered),
             reasoning_effort: Mutex::new(self.reasoning_effort()),
             service_tier: Mutex::new(self.service_tier_override()),
             model_reasoning_efforts: self.model_reasoning_efforts.clone(),

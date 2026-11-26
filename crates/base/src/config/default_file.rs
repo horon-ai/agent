@@ -774,16 +774,6 @@ prevent_sleep_while_streaming = true
 # Desktop notifications via notify-send (default: true)
 desktop_notifications = true
 
-# [sponsors]
-# Integration discovery (enabled by default; set enabled = false to opt out).
-# When enabled, the agent gains an `integration_tools` tool listing third-party
-# developer tools from HoronAgent's hosted integration directory. These providers
-# have integrated with the agent to make setup and use seamless. Some providers
-# may share revenue with HoronAgent when a referred user becomes a customer, but
-# commercial relationships never influence recommendations.
-# See https://horon-agent.sh/discovery-tools
-# enabled = true
-# endpoint = "https://api.horon-agent.sh/v1/discovery"
 	"##;
         default_content.to_string()
     }

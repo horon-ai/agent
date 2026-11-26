@@ -424,6 +424,7 @@ fn history_page(
             content: flatten_content(&value["content"]),
             answer: answer_without_reasoning(&value["content"]),
             message_id: Some(message.message.id.clone()),
+            tool: None,
         });
     }
     let event = ApiEvent::SessionHistoryPage {

@@ -420,7 +420,7 @@ fn the_raw_mode_draws_the_source_as_typed() {
 }
 
 #[test]
-fn a_user_line_keeps_its_prefix_and_indent() {
+fn a_user_line_is_a_box_with_its_text_as_typed() {
     let theme = Theme::default();
     let look = item_lines::Look {
         theme: &theme,
@@ -432,8 +432,8 @@ fn a_user_line_keeps_its_prefix_and_indent() {
     let item = Item::User("a **user** line".to_string());
     let rows = item_lines::lines(&item, &look, None);
     // Markdown is for the model's text only: the user's own words are as typed.
-    assert_eq!(texts(&rows), vec!["> a **user** line"]);
-    assert_eq!(rows[0].indent(), 2);
+    assert_eq!(texts(&rows), vec![" ", "a **user** line", " "]);
+    assert!(rows.iter().all(|row| row.sides().is_some()), "a row left the box");
 }
 
 /// An app whose transcript can be filled and drawn, with no daemon behind it.
@@ -514,7 +514,7 @@ fn a_turn_starts_below_a_blank_row() {
     let rows: Vec<&str> = drawn.lines().collect();
     let at = rows
         .iter()
-        .position(|row| row.contains("> second"))
+        .position(|row| row.contains("second"))
         .expect("the second turn is on screen");
     assert!(at > 0, "the second turn has no row above it:\n{drawn}");
     // The backend draws each row inside a pair of quotes, so a row that holds

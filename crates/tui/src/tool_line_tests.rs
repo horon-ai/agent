@@ -177,7 +177,10 @@ fn a_finished_line_shows_elapsed_and_the_preview() {
     let inside: Vec<String> = rows[1..rows.len() - 1].iter().map(card_text).collect();
     assert_eq!(inside, ["a", "b", "c", "+1 lines"]);
     let foot = row_text(&rows[rows.len() - 1]);
-    assert!(foot.starts_with("╰─ done 1.5s ─"), "{foot:?}");
+    assert!(
+        foot.starts_with("╰─ 1.5s ─"),
+        "a finished call closes with its time alone: {foot:?}"
+    );
     // Every row is the pane's width, so the right side of the card lines up.
     for row in &rows {
         assert_eq!(row_text(row).width(), 80, "{:?}", row_text(row));
@@ -224,7 +227,7 @@ fn a_failure_that_its_output_repeats_is_drawn_once() {
 fn a_narrow_pane_drops_the_summary_rather_than_the_name() {
     let theme = Theme::default();
     let symbols = Symbols::default();
-    let rows = lines(&call(r#"{"command":"ls -la"}"#), &theme, symbols, 12);
+    let rows = lines(&call(r#"{"command":"ls -la"}"#), &theme, symbols, 14);
     let title = row_text(&rows[0]);
     assert!(title.contains("bash"), "{title:?}");
     assert!(!title.contains("ls -la"), "{title:?}");
@@ -462,7 +465,7 @@ fn row_text(row: &ratatui::text::Line<'static>) -> String {
 fn card_text(row: &ratatui::text::Line<'static>) -> String {
     let text = row_text(row);
     let inside = text
-        .strip_prefix("│ ")
+        .strip_prefix("│  ")
         .and_then(|inside| inside.strip_suffix('│'))
         .unwrap_or_else(|| panic!("{text:?} is not inside a card"));
     inside.trim_end().to_string()
@@ -584,4 +587,57 @@ fn a_decided_gate_call_states_the_answer_and_never_says_failed() {
     let mut denied = call("");
     denied.state = ToolState::Settled(Decision::Denied, refusal("req_1"));
     assert!(drawn(&lines(&denied, &theme, symbols, 100)).contains(symbols.tool_error));
+}
+
+#[test]
+fn a_toolbox_run_is_drawn_as_the_tool_it_ran_under_its_intent() {
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let mut ran = call(r#"{"action":"run","tool":"agentgrep","args":{"pattern":"greet","intent":"Finding greet"}}"#);
+    ran.name = "toolbox".to_string();
+    ran.state = ToolState::Done;
+    let title = row_text(&lines(&ran, &theme, symbols, 80)[0]);
+    assert!(title.starts_with("╭─ ✓ Finding greet · agentgrep greet "), "{title:?}");
+    assert!(!title.contains("toolbox"), "{title:?}");
+
+    // The intent on the call itself leads the title of a direct call too.
+    let direct = call(r#"{"command":"cargo test","intent":"Running the tests"}"#);
+    let title = row_text(&lines(&direct, &theme, symbols, 80)[0]);
+    assert!(
+        title.starts_with("╭─ ◐ Running the tests · bash cargo test "),
+        "{title:?}"
+    );
+
+    // A listing call names no tool and stays a toolbox card.
+    let mut listing = call(r#"{"action":"list"}"#);
+    listing.name = "toolbox".to_string();
+    assert!(row_text(&lines(&listing, &theme, symbols, 80)[0]).starts_with("╭─ ◐ toolbox"));
+}
+
+#[test]
+fn a_skill_read_is_drawn_as_read_and_its_address() {
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let mut read = call(r#"{"file_path":"skill://hyper-deploy","intent":"Reading the deploy skill"}"#);
+    read.name = "read".to_string();
+    read.state = ToolState::Done;
+    let row = &lines(&read, &theme, symbols, 80)[0];
+    let title = row_text(row);
+    assert!(title.starts_with("╭─ ✓ Read skill://hyper-deploy "), "{title:?}");
+    let address = row
+        .spans
+        .iter()
+        .find(|span| span.content == "skill://hyper-deploy")
+        .expect("the address is its own span");
+    assert_eq!(address.style.fg, Some(theme.core.warning));
+
+    // Loading by name through skill_manage, even through toolbox, reads the same.
+    let mut loaded = call(r#"{"action":"run","tool":"skill_manage","args":{"name":"hyper-deploy"}}"#);
+    loaded.name = "toolbox".to_string();
+    assert!(row_text(&lines(&loaded, &theme, symbols, 80)[0]).starts_with("╭─ ◐ Read skill://hyper-deploy "));
+
+    // A plain file read keeps the ordinary card.
+    let mut file = call(r#"{"file_path":"src/main.rs"}"#);
+    file.name = "read".to_string();
+    assert!(row_text(&lines(&file, &theme, symbols, 80)[0]).starts_with("╭─ ◐ read src/main.rs "));
 }

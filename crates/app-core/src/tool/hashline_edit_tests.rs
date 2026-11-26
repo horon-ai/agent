@@ -778,3 +778,26 @@ async fn undo_reverses_a_delete() {
 
     assert_eq!(std::fs::read_to_string(&file).expect("restored"), original);
 }
+
+/// A client that fills every field sends `""` for `move_to` and `end_anchor`;
+/// the call edits the one line in place instead of being refused.
+#[tokio::test]
+async fn hashline_edit_reads_empty_move_to_and_end_anchor_as_omitted() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let original = "alpha\nbeta\n";
+    let file = seed(dir.path(), "fill.txt", original);
+    let ctx = context(dir.path(), "hashline-empty-fields", "hashline-1");
+    HashlineEditTool::new()
+        .execute(
+            json!({
+                "file_path": "fill.txt",
+                "move_to": "",
+                "delete": false,
+                "ops": [{"start_anchor": anchor(original, 1), "end_anchor": "", "new_text": "ALPHA", "kind": "replace"}]
+            }),
+            ctx,
+        )
+        .await
+        .expect("empty optional fields are omitted");
+    assert_eq!(std::fs::read(&file).expect("read after edit"), b"ALPHA\nbeta\n");
+}

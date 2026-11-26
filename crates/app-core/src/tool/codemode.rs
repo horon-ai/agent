@@ -84,11 +84,26 @@ impl Host for RegistryHost {
                 other => return Err(format!("arguments must be an object, got {other}")),
             };
             match registry.execute(&name, args, sub_ctx).await {
+                // "Failures throw an Error": a call the tool itself judged
+                // failed, or a command that exited non-zero, is a failure the
+                // script must see, not a string that reads like success.
+                Ok(output) if call_failed(&output) => Err(output.output),
                 Ok(output) => Ok(horon_agent_codemode::decode_tool_output(&output.output)),
                 Err(err) => Err(crate::util::format_error_chain(&err)),
             }
         })
     }
+}
+
+/// Whether a tool call that returned output still failed.
+fn call_failed(output: &ToolOutput) -> bool {
+    output.verdict == Some(horon_agent_tool_types::ToolVerdict::Failed)
+        || output
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.pointer("/exit_status/exit_code"))
+            .and_then(Value::as_i64)
+            .is_some_and(|code| code != 0)
 }
 
 /// Whether the opt-in codemode tool is enabled in config.

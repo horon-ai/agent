@@ -46,7 +46,7 @@ struct Section<'a> {
 #[async_trait]
 impl Tool for HoronAgentDocsTool {
     fn name(&self) -> &str {
-        "horon_agent_docs"
+        "documentation"
     }
 
     fn description(&self) -> &str {

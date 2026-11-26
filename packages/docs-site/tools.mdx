@@ -54,8 +54,8 @@ never moves a tool between tiers mid-session.
 ## The listing index
 
 A listing `core` session's system prompt gains an `# Additional tools` section:
-one instruction line — `Call one with toolbox: action "run", tool "<name>", args {}.`
-— then one `- <name>: <description>` row per tool. A row carries only the first
+one instruction line telling the model to call `toolbox` with `{"action":"run","tool":"<name>","args":{...}}`, the tool's own arguments inside `args`,
+then one `- <name>: <description>` row per tool. A row carries only the first
 sentence of the tool description's first non-empty line, capped at 60 characters
 including the trailing `...`; the model fetches parameters with `toolbox describe`.
 Some descriptions open with a sentence that fits the row; the rest are cut at the

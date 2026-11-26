@@ -12,7 +12,7 @@ use ratatui::backend::TestBackend;
 use super::*;
 use crate::app::Action;
 use crate::prompts::Prompt;
-use crate::scroll::{self, Mark, Scroll};
+use crate::scroll::{Mark, Scroll};
 
 fn app() -> App {
     let (_sender, receiver) = std::sync::mpsc::channel();
@@ -51,8 +51,21 @@ fn draw_at(app: &mut App, width: u16, height: u16) -> String {
 }
 
 /// The first `count` rows of a drawn screen, where the transcript sits.
+/// The first `count` rows of the conversation, without the scrollbar column:
+/// the thumb moves with the height, and these compare the rows the view shows.
 fn top_rows(screen: &str, count: usize) -> String {
-    screen.lines().take(count).collect::<Vec<_>>().join("\n")
+    screen
+        .lines()
+        .take(count)
+        .map(|row| {
+            let mut characters: Vec<char> = row.chars().collect();
+            if characters.len() >= 2 && characters.last() == Some(&'"') {
+                characters.remove(characters.len() - 2);
+            }
+            characters.into_iter().collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -108,13 +121,13 @@ fn scroll_clamps_against_the_rows_it_finds() {
     let mut scroll = Scroll::new();
     scroll.up(50);
     // Twelve rows in a ten-row pane: the view can only be two rows above the end.
-    assert_eq!(scroll.measure(80, 12, [0, 0], 10, |_| 1), 12);
+    assert_eq!(scroll.measure(80, 12, None, [0, 0], 10, |_| 1), 12);
     assert_eq!(scroll.offset(), 2);
 
     // Content that fits the pane has nothing above it to show.
     let mut fits = Scroll::new();
     fits.up(4);
-    assert_eq!(fits.measure(80, 5, [0, 0], 10, |_| 1), 5);
+    assert_eq!(fits.measure(80, 5, None, [0, 0], 10, |_| 1), 5);
     assert!(fits.is_following());
 }
 
@@ -123,19 +136,19 @@ fn scroll_reuses_the_rows_it_already_counted() {
     let mut counted = 0usize;
     let mut scroll = Scroll::new();
     scroll.up(2);
-    scroll.measure(80, 4, [0, 0], 3, |_| {
+    scroll.measure(80, 4, None, [0, 0], 3, |_| {
         counted += 1;
         2
     });
     assert_eq!(counted, 4);
     // The newest item is measured again, because a running tool call keeps
     // changing it; the three before it are not wrapped a second time.
-    scroll.measure(80, 4, [0, 0], 3, |_| {
+    scroll.measure(80, 4, None, [0, 0], 3, |_| {
         counted += 1;
         2
     });
     assert_eq!(counted, 5, "a frame re-wrapped the conversation it had measured");
-    scroll.measure(80, 5, [0, 0], 3, |_| {
+    scroll.measure(80, 5, None, [0, 0], 3, |_| {
         counted += 1;
         2
     });
@@ -144,7 +157,7 @@ fn scroll_reuses_the_rows_it_already_counted() {
         "the item that arrived was measured, and the newest one again"
     );
     // A width change moves every row boundary, so everything is counted again.
-    scroll.measure(40, 5, [0, 0], 3, |_| {
+    scroll.measure(40, 5, None, [0, 0], 3, |_| {
         counted += 1;
         2
     });
@@ -157,10 +170,10 @@ fn a_shrinking_block_below_the_view_pulls_the_offset_back() {
     scroll.up(2);
     // A running tool line is replaced by a shorter summary: two rows went away
     // below the view, so the offset follows them and the view stays put.
-    assert_eq!(scroll.measure(80, 4, [0, 0], 3, |_| 2), 8);
+    assert_eq!(scroll.measure(80, 4, None, [0, 0], 3, |_| 2), 8);
     scroll.up(1);
     assert_eq!(
-        scroll.measure(80, 4, [0, 0], 3, |index| if index == 3 { 0 } else { 2 }),
+        scroll.measure(80, 4, None, [0, 0], 3, |index| if index == 3 { 0 } else { 2 }),
         6
     );
     // Three rows below the view, two of them gone: one row is still below, so
@@ -171,15 +184,15 @@ fn a_shrinking_block_below_the_view_pulls_the_offset_back() {
 #[test]
 fn scroll_only_follows_growth_while_the_view_is_held() {
     let mut scroll = Scroll::new();
-    scroll.measure(80, 2, [0, 0], 3, |_| 2);
+    scroll.measure(80, 2, None, [0, 0], 3, |_| 2);
     // Two more rows arrived while the view was at the end: it stays at the end.
-    scroll.measure(80, 3, [0, 0], 3, |_| 2);
+    scroll.measure(80, 3, None, [0, 0], 3, |_| 2);
     assert!(scroll.is_following(), "growth moved a view that was at the end");
 
     scroll.up(1);
     // Two rows arrived below the held view: the offset follows them, so the rows
     // on screen stay where they were.
-    assert_eq!(scroll.measure(80, 4, [0, 0], 3, |_| 2), 8);
+    assert_eq!(scroll.measure(80, 4, None, [0, 0], 3, |_| 2), 8);
     assert_eq!(scroll.offset(), 3);
     assert!(scroll.has_fresh_output());
 }
@@ -192,7 +205,7 @@ fn a_hold_request_starts_the_newest_item_at_the_top() {
     // view that starts there has four rows below its bottom edge.
     scroll.hold_newest();
     assert_eq!(
-        scroll.measure(80, 3, [0, 0], 6, |index| if index == 2 { 10 } else { 1 }),
+        scroll.measure(80, 3, None, [0, 0], 6, |index| if index == 2 { 10 } else { 1 }),
         12
     );
     assert_eq!(scroll.offset(), 4);
@@ -210,7 +223,7 @@ fn a_hold_request_for_a_list_that_fits_leaves_the_view_following() {
     // nothing is held and the next item still arrives in view.
     scroll.hold_newest();
     assert_eq!(
-        scroll.measure(80, 2, [0, 0], 6, |index| if index == 1 { 4 } else { 1 }),
+        scroll.measure(80, 2, None, [0, 0], 6, |index| if index == 1 { 4 } else { 1 }),
         5
     );
     assert!(scroll.is_following());
@@ -225,7 +238,7 @@ fn a_hold_request_counts_the_open_rows_below_the_item() {
     // Counting the item alone would leave the view following.
     scroll.hold_newest();
     assert_eq!(
-        scroll.measure(80, 2, [3, 2], 6, |index| if index == 1 { 4 } else { 1 }),
+        scroll.measure(80, 2, None, [3, 2], 6, |index| if index == 1 { 4 } else { 1 }),
         10
     );
     assert_eq!(scroll.offset(), 3);
@@ -235,12 +248,12 @@ fn a_hold_request_counts_the_open_rows_below_the_item() {
 fn a_hold_request_is_spent_by_the_frame_that_measures_it() {
     let mut scroll = Scroll::new();
     scroll.hold_newest();
-    scroll.measure(80, 3, [0, 0], 6, |index| if index == 2 { 10 } else { 1 });
+    scroll.measure(80, 3, None, [0, 0], 6, |index| if index == 2 { 10 } else { 1 });
     assert_eq!(scroll.offset(), 4);
     // One more one-row line: a held view keeps the rows it shows, so the offset
     // grows by the row that landed. A request still pending would instead jump
     // to the new line's first row, which is the end of the content.
-    assert_eq!(scroll.measure(80, 4, [0, 0], 6, |_| 1), 13);
+    assert_eq!(scroll.measure(80, 4, None, [0, 0], 6, |_| 1), 13);
     assert_eq!(scroll.offset(), 5);
 }
 
@@ -251,10 +264,10 @@ fn a_hold_request_recounts_rows_measured_at_another_width() {
     // draws at forty, where every row boundary moved, so it counts them again
     // instead of placing the view against the wider counts.
     scroll.up(1);
-    scroll.measure(80, 2, [0, 0], 6, |index| if index == 1 { 4 } else { 1 });
+    scroll.measure(80, 2, None, [0, 0], 6, |index| if index == 1 { 4 } else { 1 });
     let mut counted = 0usize;
     scroll.hold_newest();
-    let height = scroll.measure(40, 2, [0, 0], 6, |index| {
+    let height = scroll.measure(40, 2, None, [0, 0], 6, |index| {
         counted += 1;
         if index == 1 { 12 } else { 2 }
     });
@@ -271,7 +284,7 @@ fn going_back_to_the_end_spends_a_pending_hold_request() {
     // so the next held frame scrolls like any other.
     scroll.to_bottom();
     scroll.up(2);
-    assert_eq!(scroll.measure(80, 10, [0, 0], 6, |_| 1), 10);
+    assert_eq!(scroll.measure(80, 10, None, [0, 0], 6, |_| 1), 10);
     assert_eq!(scroll.offset(), 2);
 }
 
@@ -284,7 +297,7 @@ fn scrolling_back_to_the_end_spends_a_pending_hold_request() {
     scroll.down(10);
     assert!(scroll.is_following());
     assert_eq!(
-        scroll.measure(80, 10, [0, 0], 6, |index| if index == 9 { 10 } else { 1 }),
+        scroll.measure(80, 10, None, [0, 0], 6, |index| if index == 9 { 10 } else { 1 }),
         19
     );
     assert!(
@@ -299,13 +312,13 @@ fn leaving_the_bottom_drops_the_stale_height() {
     // A held frame, then back to the end: the height that frame measured is the
     // only baseline there is, and it goes stale the moment the view follows.
     scroll.up(2);
-    scroll.measure(80, 2, [0, 0], 3, |_| 2);
+    scroll.measure(80, 2, None, [0, 0], 3, |_| 2);
     scroll.to_bottom();
     scroll.following_frame();
 
     // Sixteen rows landed while the view followed, then a page key.
     scroll.up(9);
-    assert_eq!(scroll.measure(80, 10, [0, 0], 3, |_| 2), 20);
+    assert_eq!(scroll.measure(80, 10, None, [0, 0], 3, |_| 2), 20);
     assert_eq!(
         scroll.offset(),
         9,
@@ -321,13 +334,13 @@ fn leaving_the_bottom_drops_the_stale_height() {
 fn one_row_from_the_bottom_after_growth_moves_one_row() {
     let mut scroll = Scroll::new();
     scroll.up(1);
-    scroll.measure(80, 1, [0, 0], 3, |_| 1);
+    scroll.measure(80, 1, None, [0, 0], 3, |_| 1);
     scroll.to_bottom();
     scroll.following_frame();
 
     // Thirty rows arrived while the view followed; one row up must move one row.
     scroll.up(1);
-    assert_eq!(scroll.measure(80, 30, [0, 0], 3, |_| 1), 30);
+    assert_eq!(scroll.measure(80, 30, None, [0, 0], 3, |_| 1), 30);
     assert_eq!(scroll.offset(), 1);
     assert!(!scroll.has_fresh_output());
 }
@@ -586,14 +599,14 @@ fn the_wheel_scrolls_only_when_the_setting_holds_the_capture() {
 
     app.mouse_scroll = true;
     app.on_mouse(wheel(MouseEventKind::ScrollUp));
-    assert_eq!(app.scroll.offset(), scroll::WHEEL_ROWS);
+    assert_eq!(app.scroll.offset(), 1, "one wheel event moves one row");
 
     // The setting going off drops the events a captured terminal still sends.
     app.mouse_scroll = false;
     app.on_mouse(wheel(MouseEventKind::ScrollUp));
-    assert_eq!(app.scroll.offset(), scroll::WHEEL_ROWS);
+    assert_eq!(app.scroll.offset(), 1);
     app.on_mouse(wheel(MouseEventKind::ScrollDown));
-    assert_eq!(app.scroll.offset(), scroll::WHEEL_ROWS);
+    assert_eq!(app.scroll.offset(), 1);
 }
 
 #[test]
@@ -642,4 +655,80 @@ fn clear_while_held_returns_to_an_empty_pane() {
     );
     assert!(!screen.contains("rows below"), "{screen}");
     assert!(screen.contains("Send a message to start"), "{screen}");
+}
+
+#[test]
+fn an_older_card_that_grew_in_place_still_lets_the_view_reach_the_top() {
+    let mut scroll = Scroll::new();
+    scroll.up(1);
+    assert_eq!(scroll.measure(80, 5, None, [0, 0], 3, |_| 2), 10);
+    // The second item's result lands after three newer items: it grows to six
+    // rows, above the rows on screen, so the view stays where it was.
+    assert_eq!(
+        scroll.measure(80, 5, Some(1), [0, 0], 3, |index| if index == 1 { 6 } else { 2 }),
+        14
+    );
+    assert_eq!(scroll.offset(), 1);
+    // Scrolling all the way up reaches the first row of the grown content.
+    scroll.up(usize::MAX);
+    scroll.measure(80, 5, None, [0, 0], 3, |index| if index == 1 { 6 } else { 2 });
+    assert_eq!(scroll.offset(), 11);
+}
+
+#[test]
+fn an_older_card_that_grew_below_the_view_pushes_the_offset() {
+    let mut scroll = Scroll::new();
+    scroll.up(1);
+    assert_eq!(scroll.measure(80, 5, None, [0, 0], 3, |_| 2), 10);
+    // The fourth item sits under the rows on screen; its three new rows land
+    // below the view, so the offset follows them and the view stays put.
+    assert_eq!(
+        scroll.measure(80, 5, Some(3), [0, 0], 3, |index| if index == 3 { 5 } else { 2 }),
+        13
+    );
+    assert_eq!(scroll.offset(), 4);
+}
+
+#[test]
+fn a_result_that_lands_under_newer_items_keeps_the_first_message_reachable() {
+    let mut app = app();
+    app.transcript.push_user("first message");
+    app.transcript.tool_start("call-1", "bash");
+    for index in 0..30 {
+        app.transcript.push_notice(format!("line {index:04}"));
+    }
+    draw_at(&mut app, 60, 12);
+    app.on_key(key(KeyCode::PageUp));
+    draw_at(&mut app, 60, 12);
+    let output = (0..8).map(|row| format!("out {row}")).collect::<Vec<_>>().join("\n");
+    app.transcript.tool_done("call-1", "bash", Some(&output), None);
+    draw_at(&mut app, 60, 12);
+    app.on_key(control(KeyCode::Home));
+    let screen = draw_at(&mut app, 60, 12);
+    assert!(screen.contains("first message"), "{screen}");
+}
+
+#[test]
+fn cards_are_separated_by_a_blank_row_and_pad_their_text() {
+    let mut app = app();
+    for call in ["c1", "c2"] {
+        app.transcript.tool_start(call, "bash");
+        app.transcript.tool_done(call, "bash", Some("ok"), None);
+    }
+    let screen = draw_at(&mut app, 40, 14);
+    let rows: Vec<&str> = screen.lines().collect();
+    let closing = rows
+        .iter()
+        .position(|row| row.contains('╰'))
+        .expect("the first card closes");
+    assert_eq!(
+        rows[closing + 1].trim_matches(|c: char| c == '"' || c.is_whitespace()),
+        "",
+        "{screen}"
+    );
+    assert!(rows[closing + 2].contains('╭'), "{screen}");
+    assert!(
+        rows.iter().any(|row| row.contains("│  ok")),
+        "card text keeps two columns from the edge: {screen}"
+    );
 }

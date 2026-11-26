@@ -475,6 +475,17 @@ class HistoryMessage(TypedDict, total=False):
     # asked for stored message ids and the daemon rendered the row from one.
     # Absent on rows from a daemon that reports none, and on synthetic rows.
     message_id: str
+    # On a ``tool`` row: the stored call it shows. ``content`` keeps the result.
+    tool: HistoryToolCall
+
+
+class HistoryToolCall(TypedDict, total=False):
+    call_id: str
+    name: str
+    # The call's arguments, as the JSON text the model sent.
+    input: str
+    # Present and true only when the stored result was an error.
+    is_error: bool
 
 
 class UsageSession(TypedDict, total=False):

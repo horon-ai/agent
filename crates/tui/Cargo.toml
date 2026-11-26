@@ -68,6 +68,9 @@ time = { version = "0.3.55", default-features = false, features = ["local-offset
 # list draws its last lines. The workspace already locks this version for the
 # root crate's tool output, so no package is added.
 base64 = "0.22"
+# A pasted image is decoded for its thumbnail card and sent as PNG or JPEG.
+# The same version and features as `horon-agent-base`, so no package is added.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # Private temporary files for draft editing and recording.
 tempfile = "3"
 # An editor value is a command line, and `shlex` is its POSIX word syntax:

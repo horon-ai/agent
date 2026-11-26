@@ -71,7 +71,7 @@ There are three actions.
 
 - `list`: shows the names and one-line descriptions of tools deferred or indexed for this session. It leaves out itself and the MCP surface (`mcp__*`, plus the eagerly sent `mcp_search`/`mcp_call`), and lists only tools reachable in this session, in name order (`toolbox.rs:282` `list`).
 - `describe`: normalizes the name and returns the description and input schema as text (`toolbox.rs:318` `describe`). This is how the model learns parameters on providers whose tool list does not carry the schema.
-- `run`: executes the target tool through `Registry::execute` (`toolbox.rs:336` `run`). `toolbox` itself cannot be run, and `args` must be a JSON object.
+- `run`: executes the target tool through `Registry::execute` (`toolbox.rs:336` `run`). `toolbox` itself cannot be run, and `args` must be a JSON object. A model that slips is met halfway: `args` written as JSON text is read as the object, fields spread beside `action` become the arguments, and a target that requires nothing runs with `{}`. Otherwise the refusal names the required fields, the call to make and the target's schema, so the next call can be corrected instead of repeated into the loop guard.
 
 #### Policy applies once, to the target tool
 
@@ -110,6 +110,8 @@ The `acp`, `minimal` and `none` profiles keep their own explicit lists. `full` k
 ### Why there is no promote
 
 `toolbox` only loads a schema by reference. It does not edit the session's tool definitions, does not write to the transcript, and does not promote a deferred tool into the eager set. A promotion would change the tool list mid-session, invalidate the prompt cache, and make the `full` profile's deferred layout pointless. Hence the three actions `list`, `describe`, and `run`, and no `promote`.
+
+One case changes the list on its own: a `run` without `args` for a tool that takes arguments. Some models never fill the free-form `args` object, repeating the same call while saying they sent it, until the loop guard ends the turn. Such a call (refused when the tool has required fields, run with `{}` otherwise) asks the session's agent to send that tool with its own schema from the next request, and the refusal says so. The list is rebuilt once for that tool, which costs one prompt-cache miss and only in a session whose model dropped `args` (`toolbox.rs` `request_direct`, `Agent::promote_requested_tools`).
 
 ## Tool effects, plan mode, and approval tiers
 
@@ -316,6 +318,12 @@ The journal never touches files itself. It returns the bytes to restore, and the
 - A failure after preflight is external I/O: files written before it stay written, and the result states how many changed so it cannot be mistaken for a preflight refusal. That result carries `partial` when at least one file changed and `failed` otherwise.
 - A protected delete path is refused during preflight too, keeping the issue #604 policy on this route.
 
+The Codex envelope (`*** Begin Patch`) is preflighted the same way (`crates/app-core/src/tool/apply_patch.rs`):
+
+- Every update is computed and every delete checked before the first write, against the content earlier hunks of the same patch leave behind, so a file updated twice sees its first update. One hunk that does not apply fails the whole patch with `✗ <path>`, `No files changed: the patch failed preflight.` and the `failed` verdict.
+- A file keeps its own line endings and its final newline or the lack of one: a uniformly CRLF file is matched and rewritten with CRLF, and in a file with mixed endings the lines the patch did not change keep their exact bytes while added lines use LF. An empty file gains a final newline with its first lines.
+- A write that fails after the preflight passed (an I/O error) leaves the files listed before it written and carries the `failed` verdict.
+
 ### hashline anchors
 
 Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{body}` (`crates/app-core/src/tool/read.rs:165`). The tag is the first two bytes of the line's SHA-256 written as four lowercase hex digits (`crates/edit-safety/src/hashline.rs:27` `tag_for`). A 16-bit value is not a cryptographic commitment; it is a cheap marker for the line the model read.
@@ -324,7 +332,7 @@ Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{bod
 - `hashline_edit` is registered when `[tools] hashline_edit = true`, which is the default. A `core` session reaches it through `toolbox`; `[tools.load_mode] hashline_edit = "essential"` sends it eagerly instead.
 - Input is `file_path` plus an `ops` array. Each op has `start_anchor`, an optional `end_anchor`, and `new_text`.
 - `ops` may be omitted when the call names a file-level effect: `delete: true` removes the file, and `move_to: "<path>"` writes the file's final content to that path and then removes the source. Both run after any line ops, in the same call and the same mutation unit, so one `undo` restores the old content and the old path.
-- A move refuses an existing destination instead of overwriting it; `apply_patch` remains the way to replace a destination deliberately. `move_to` and `delete` cannot be combined.
+- A move refuses an existing destination instead of overwriting it; `apply_patch` remains the way to replace a destination deliberately. `move_to` and `delete` cannot be combined. An empty `move_to` or `end_anchor` (`""` or only spaces) is read as omitted.
 - The path policy and the generated-file guard apply to the source and to the move destination, and `delete` also passes the protected-path check.
 - Every anchor is checked against the current on-disk content first. One stale anchor refuses the whole call and writes nothing (`crates/app-core/src/tool/hashline_edit.rs:249` `resolve_ops`).
 - Line numbers start at 1, spans move downward only, and overlapping spans are refused.
@@ -570,9 +578,9 @@ Where skills come from and what happens when names collide is in the "Skills" se
 
 - `skill://<name>` returns that skill's body. The result starts with `## Skill: <name>` and `Base directory: <skill folder>`; frontmatter is dropped.
 - `skill://<name>/<path>` reads a file relative to the skill folder. When the name carries a namespace (`claude/review`), the longest registered prefix becomes the name and the rest is the path.
-- Line selectors (`skill://qa-skill/references/a.md:20-40`) and `offset`/`limit` behave as in a file read.
+- Without a selector or range, a skill read returns the whole text with no line numbers (the `:raw` rendering, still within the 256 KiB read budget): a skill is followed, not edited, so one call reads it and no number column is spent. Line selectors (`skill://qa-skill/references/a.md:20-40`) and `offset`/`limit` page with numbers as in a file read.
 - The name is resolved against this session's effective list, which is user skills plus the skills in that session's working folder, so project skills from another repository are invisible.
-- The path is canonicalized and must lie inside the canonical skill folder. `..`, absolute paths, and outward symlinks fail with `skill:// path resolves outside the skill directory`. An unknown skill fails with `skill:// names no installed skill`.
+- The path is canonicalized and must lie inside the canonical skill folder. `..`, absolute paths, and outward symlinks fail with `skill:// path resolves outside the skill directory`. An unknown skill fails with `skill:// names no installed skill: <name>. Available: <names>` (the first 40 names, sorted), so the next call can use a real name without listing skills first.
 
 ### Relationship to path policy
 
@@ -747,6 +755,12 @@ MCP server definitions are merged in the order given by `crates/base/src/mcp/sou
 | 2 | horon-agent | `~/.horon/mcp.json` | Always |
 | 3 | Claude Code | `~/.claude.json` (this project's entry > global `mcpServers`) > `~/.claude/mcp.json` | `[mcp] claude_user = true` |
 | 4 | Codex CLI | `[mcp_servers.*]` in `~/.codex/config.toml` | `[mcp] codex_user = true` |
+
+Every file takes the server map under `mcpServers` (the Claude Code key) or `servers`. An entry with a `url` and no `command` is a remote server; `"type": "http"` (MCP Streamable HTTP, falling back to SSE) is the default for it, and `headers` sends a static `Authorization`. A local gateway hub is one entry:
+
+```json
+{ "mcpServers": { "hub": { "type": "http", "url": "http://127.0.0.1:3425/mcp/hub" } } }
+```
 
 - There is one exception. When the same name has a local stdio definition and a remote (HTTP, SSE) definition, the stdio definition survives regardless of source order and a line is logged. A remote twin of a working local server usually needs its own login (issue #653).
 - User settings from other hosts (Claude Code, Codex) are off by default. Those servers were reviewed elsewhere, and loading them starts processes here. When an off file holds servers, each process logs one line with the count and the switch that turns it on. `HORON_AGENT_DISABLE_CLAUDE_MCP` keeps the Claude source unread even with `claude_user` on.
@@ -1023,6 +1037,8 @@ The `lsp` tool asks the project's language server what the compiler knows, and c
 
 `file` is resolved against the working directory, `line` and `character` are 1-based, and with `character` omitted the first occurrence of `symbol` on that line is used.
 
+A call needs two things on the machine: the language server itself on `PATH` and the toolchain the server loads from the project. `typescript-language-server` refuses to start with `Could not find a valid TypeScript installation` until the project has `typescript` installed (`npm i -D typescript`), and `~/.cargo/bin/rust-analyzer` is a rustup proxy that exits with `Unknown binary 'rust-analyzer'` until `rustup component add rust-analyzer` installs the real binary. When a server fails to start, stops responding or times out, the error quotes the last lines it wrote to stderr (up to 8 lines, 300 characters each), which is where these causes appear.
+
 ### rename
 
 `rename` takes `new_name` and `apply` (default `false`).
@@ -1056,7 +1072,9 @@ them only by naming them (`crates/base/src/config/tool_selection.rs`).
 - `checkpoint` takes no arguments. One checkpoint is active per session; a second
   call while one is active is refused, and so is a second call in the same turn.
 - `rewind` takes a non-empty `report`: what the abandoned branch established, why
-  it was abandoned, and what the next attempt should do differently.
+  it was abandoned, and what the next attempt should do differently. With
+  `dry_run: true` it runs the same checks, says how many messages it would fold
+  and keep, and queues nothing; no report is needed then.
 
 A call only records the intent (`crates/app-core/src/tool/checkpoint.rs`). A tool
 round cannot rebuild its own transcript: the assistant message that called the

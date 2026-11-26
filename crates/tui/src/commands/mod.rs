@@ -124,7 +124,8 @@ pub enum Local {
     Tools,
     /// List trusted MCP servers or explicitly probe one by name.
     Mcp,
-    /// Switch to another session, by id or from the list.
+    /// `/model` under the name other agents use: open the model picker, or
+    /// switch to the model named.
     Switch,
     /// Attach, edit, list or remove a local note on a transcript message.
     Note,
@@ -142,6 +143,8 @@ pub enum Local {
     Jobs,
     /// Show stored token usage for the attached session.
     Stats,
+    /// Show the attached session's details, or delete it and start a new one.
+    Session,
     /// Record the visible conversation to a local file, or stop.
     Record,
     /// Write the conversation to a standalone offline HTML report.
@@ -206,6 +209,7 @@ impl Local {
             "links" => Some(Self::Links),
             "jobs" => Some(Self::Jobs),
             "stats" => Some(Self::Stats),
+            "session" => Some(Self::Session),
             "record" => Some(Self::Record),
             "export" => Some(Self::Export),
             "replay" => Some(Self::Replay),
@@ -256,6 +260,7 @@ impl Local {
             Self::Links => "links",
             Self::Jobs => "jobs",
             Self::Stats => "stats",
+            Self::Session => "session",
             Self::Record => "record",
             Self::Export => "export",
             Self::Replay => "replay",
@@ -860,6 +865,7 @@ const LOCAL_NAMES: &[&str] = &[
     "replay",
     "resume",
     "retry",
+    "session",
     "settings",
     "side",
     "skills",

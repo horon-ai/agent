@@ -690,7 +690,11 @@ fn parse_bing_html_results(html: &str, max_results: usize) -> Vec<SearchResult> 
         let Some(link) = link_re.captures(&block[1]) else {
             continue;
         };
-        let url = html_decode(&link[1]);
+        let href = html_decode(&link[1]);
+        // Bing wraps every organic result in a `bing.com/ck/a` click-tracking
+        // redirect carrying the target as `u=a1<base64url>`. Read the target
+        // from it; any other bing.com link (an ad) is still skipped.
+        let url = bing_click_target(&href).unwrap_or(href);
         if !url.starts_with("http") || url.contains("bing.com") {
             continue;
         }
@@ -703,6 +707,27 @@ fn parse_bing_html_results(html: &str, max_results: usize) -> Vec<SearchResult> 
     }
 
     results
+}
+
+/// The page a Bing `/ck/a` click-tracking link points to.
+fn bing_click_target(href: &str) -> Option<String> {
+    use base64::Engine as _;
+    if !href.contains("bing.com/ck/a") {
+        return None;
+    }
+    let query = href.split_once('?')?.1;
+    let encoded = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("u="))?
+        .strip_prefix("a1")?;
+    // A target that does not decode is no target: the link is skipped.
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(encoded.trim_end_matches('=')) else {
+        return None;
+    };
+    let Ok(url) = String::from_utf8(bytes) else {
+        return None;
+    };
+    Some(url)
 }
 
 fn parse_ddg_results(html: &str, max_results: usize) -> Vec<SearchResult> {

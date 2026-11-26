@@ -238,7 +238,7 @@ python3 scripts/ci/check_headless_graph.py
 
 `docs/diagram/`은 현재 브랜치 코드를 그린 손수 작성 SVG 다이어그램을 담으며, 영어 라벨 `NN-name.svg`와 한국어 라벨 `NN-name.ko.svg` 쌍을 이루고, `docs/diagram/README.md`(와 한국어 짝)가 각각의 근거 파일과 함께 한 페이지에 모은다. 스타일은 `docs/assets/architecture.svg`를 따른다. 자체 완결적이고 스크립트나 외부 참조가 없으며 `prefers-color-scheme`으로 라이트·다크 색상을 지원한다.
 
-`docs/` 아래(하위 폴더 포함)의 모든 영어 마크다운 파일과 루트 `README.md`는 바이너리에 컴파일되어 `horon_agent_docs` 도구가 제공한다(`crates/app-core/build.rs`). `.ko.md` 파일은 번들되지 않는다. 루트 `PHILOSOPHY.md` 쌍은 README와 함께 쌍 검사를 받지만 번들되지는 않는다. 문서를 옮기거나 지웠으면 코드·스크립트·테스트에 낡은 경로가 남지 않게 한다. `docs/README.md`가 색인이므로 같은 변경에서 함께 갱신한다.
+`docs/` 아래(하위 폴더 포함)의 모든 영어 마크다운 파일과 루트 `README.md`는 바이너리에 컴파일되어 `documentation` 도구가 제공한다(`crates/app-core/build.rs`). `.ko.md` 파일은 번들되지 않는다. 루트 `PHILOSOPHY.md` 쌍은 README와 함께 쌍 검사를 받지만 번들되지는 않는다. 문서를 옮기거나 지웠으면 코드·스크립트·테스트에 낡은 경로가 남지 않게 한다. `docs/README.md`가 색인이므로 같은 변경에서 함께 갱신한다.
 
 **문서는 코드를 따른다.** 문서가 설명하는 동작을 바꾸는 변경은 같은 PR 안에서 해당 문서, 한국어 짝, 관련 다이어그램까지 함께 고치고 후속 작업으로 미루지 않는다. 문서가 여전히 예전 동작을 적고 있으면 변경은 끝난 것이 아니다. 해당 페이지를 찾는 방법은 다음과 같다.
 

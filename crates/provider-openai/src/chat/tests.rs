@@ -1131,3 +1131,45 @@ fn openai_provider_for_effort(model: &str) -> OpenAiCompatibleProvider {
     )
     .expect("provider")
 }
+
+/// A profile lists only its configured models until an explicit refresh reads
+/// the endpoint's `/models`; after it, every listed model can be switched to,
+/// configured ones first and the discovered ones in name order, and a fork
+/// sees the same catalog.
+#[tokio::test]
+async fn an_explicit_refresh_adds_the_endpoints_models_after_the_configured_ones() {
+    let server = MockServer::start(Reply::status(
+        200,
+        r#"{"data":[{"id":"group/deepseek-v4.1-flash"},{"id":"auto/claude-sonnet-5-5"},{"id":"claude/claude-sonnet-5-5"}]}"#,
+    ));
+    let provider = OpenAiCompatibleProvider::new(
+        format!("{}/v1", server.url),
+        ChatAuth::Bearer,
+        Some(TEST_KEY.to_string()),
+        "auto/claude-sonnet-5-5",
+        vec!["auto/claude-sonnet-5-5".to_string()],
+    )
+    .expect("provider");
+    assert_eq!(provider.available_models_for_switching(), ["auto/claude-sonnet-5-5"]);
+    assert!(server.requests().is_empty(), "building the provider asked the endpoint");
+
+    let summary = provider.refresh_model_catalog().await.expect("refresh");
+    assert_eq!(summary.models_added, 2);
+    let expected = [
+        "auto/claude-sonnet-5-5",
+        "claude/claude-sonnet-5-5",
+        "group/deepseek-v4.1-flash",
+    ];
+    assert_eq!(provider.available_models_for_switching(), expected);
+    assert_eq!(
+        provider
+            .model_routes()
+            .iter()
+            .map(|route| route.model.as_str())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(server.requests().len(), 1);
+    assert_eq!(server.requests()[0].path, "/v1/models");
+    assert_eq!(provider.fork().available_models_for_switching(), expected);
+}
