@@ -14,7 +14,7 @@
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme::changes::RowStyle;
 
@@ -60,6 +60,48 @@ mod built {
 #[cfg(test)]
 pub(crate) use built::{built_rows, reset as reset_built};
 
+/// The two sides a boxed line is drawn between.
+///
+/// A card's rows are its text with an edge and one blank column on each side.
+/// The sides take their columns out of the pane's width before the text is
+/// broken, and every row is padded to that width, so the right edge lines up
+/// down the whole card however the text inside it wrapped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sides {
+    /// The glyph drawn at both edges of every row.
+    pub edge: &'static str,
+    /// The style the edges are drawn in.
+    pub style: Style,
+}
+
+impl Sides {
+    /// Columns the text of a row gets inside a pane `width` columns wide.
+    fn inner(&self, width: usize) -> usize {
+        width.saturating_sub(2 * (self.edge.width() + 1)).max(1)
+    }
+
+    /// `row` between the two edges, padded out to `inner` columns.
+    fn enclose(&self, row: Line<'static>, inner: usize) -> Line<'static> {
+        let used: usize = row.spans.iter().map(|span| span.content.width()).sum();
+        let mut spans: Vec<Span<'static>> = Vec::with_capacity(row.spans.len() + 4);
+        spans.push(Span::styled(self.edge, self.style));
+        spans.push(Span::raw(" "));
+        spans.extend(row.spans);
+        spans.push(Span::raw(" ".repeat(inner.saturating_sub(used) + 1)));
+        spans.push(Span::styled(self.edge, self.style));
+        Line {
+            style: row.style,
+            alignment: row.alignment,
+            spans,
+        }
+    }
+}
+
+/// The width a line with `sides` is broken at inside a pane `width` wide.
+fn bounds(sides: Option<Sides>, width: usize) -> usize {
+    sides.map_or(width, |sides| sides.inner(width))
+}
+
 /// A rendered line and the columns its continuation rows keep.
 ///
 /// Wrapping alone would start every row at the first column, so a message under
@@ -70,17 +112,36 @@ pub(crate) use built::{built_rows, reset as reset_built};
 pub struct Indented {
     line: Line<'static>,
     indent: usize,
+    sides: Option<Sides>,
 }
 
 impl Indented {
     /// A line whose continuation rows start at the first column.
     pub fn plain(line: Line<'static>) -> Self {
-        Self { line, indent: 0 }
+        Self {
+            line,
+            indent: 0,
+            sides: None,
+        }
     }
 
     /// A line whose continuation rows keep `indent` columns.
     pub fn new(line: Line<'static>, indent: usize) -> Self {
-        Self { line, indent }
+        Self {
+            line,
+            indent,
+            sides: None,
+        }
+    }
+
+    /// A line drawn inside a card: every row it breaks into sits between
+    /// `sides`, and its continuation rows keep `indent` columns inside them.
+    pub fn boxed(line: Line<'static>, indent: usize, sides: Sides) -> Self {
+        Self {
+            line,
+            indent,
+            sides: Some(sides),
+        }
     }
 
     /// The line before it is wrapped.
@@ -91,6 +152,11 @@ impl Indented {
     /// Columns the continuation rows keep.
     pub fn indent(&self) -> usize {
         self.indent
+    }
+
+    /// The sides every row of the line is drawn between, if it is boxed.
+    pub fn sides(&self) -> Option<Sides> {
+        self.sides
     }
 }
 
@@ -128,13 +194,18 @@ pub fn wrap_indented(line: &Line<'static>, width: usize, indent: usize) -> Vec<L
     rows
 }
 
-/// Wrap a rendered block, keeping every line's own indent.
+/// Wrap a rendered block, keeping every line's own indent and sides.
 #[cfg(test)]
 pub fn wrap_rows(lines: Vec<Indented>, width: u16) -> Vec<Line<'static>> {
     let width = usize::from(width);
     let mut rows: Vec<Line<'static>> = Vec::new();
     for line in lines {
-        rows.extend(wrap_indented(line.line(), width, line.indent()));
+        let inner = bounds(line.sides(), width);
+        let wrapped = wrap_indented(line.line(), inner, line.indent());
+        match line.sides() {
+            Some(sides) => rows.extend(wrapped.into_iter().map(|row| sides.enclose(row, inner))),
+            None => rows.extend(wrapped),
+        }
     }
     rows
 }
@@ -169,21 +240,22 @@ impl FromEnd {
 pub enum Source<'a> {
     /// Every line is built already.
     Built(Vec<Indented>),
-    /// `head` rows, then one line per row of `text`, each `prefix`ed in its
-    /// row style and keeping `indent` columns on its continuation rows.
+    /// `head` rows, then one line per row of `text`, each in its row style and
+    /// keeping `indent` columns on its continuation rows.
     Output {
         /// The rows above the output: a tool call's head, and a failure.
         head: Vec<Indented>,
         /// The output itself, one row per line.
         text: &'a str,
-        /// Columns every row of the output starts with.
-        prefix: &'static str,
         /// The style every row of the output is drawn in, or the styles that
         /// tell an added line and a removed one apart.
         style: RowStyle,
         /// Columns a continuation row of the output keeps.
         indent: usize,
-        /// Lines under the output: a reader's note sits here.
+        /// The sides every row of the output is drawn between, when the
+        /// output sits inside a card.
+        sides: Option<Sides>,
+        /// Lines under the output: the card's closing row, and a reader's note.
         tail: Vec<Indented>,
     },
 }
@@ -219,17 +291,18 @@ impl<'a> Source<'a> {
             Self::Output {
                 head,
                 text,
-                prefix,
                 style,
                 indent,
+                sides,
                 tail,
             } => {
                 let above: usize = head.iter().map(|line| line_height(&mut cells, line, width)).sum();
+                let inner = bounds(*sides, width);
                 let rows: usize = text
                     .lines()
                     .map(|row| {
-                        fill_row(&mut cells, prefix, style.of(row), row);
-                        break_rows(&cells, width, *indent, |_| {})
+                        fill_row(&mut cells, style.of(row), row);
+                        break_rows(&cells, inner, *indent, |_| {})
                     })
                     .sum();
                 let below: usize = tail.iter().map(|line| line_height(&mut cells, line, width)).sum();
@@ -252,9 +325,6 @@ impl<'a> Source<'a> {
         }
         let mut skip = want.skip;
         let mut cells: Cells = Vec::new();
-        // An output row is a line of its own with no style of its own, so the
-        // row it breaks into carries the default line style and alignment.
-        let plain = Line::default();
         match self {
             Self::Built(lines) => {
                 for line in lines.iter().rev() {
@@ -262,16 +332,16 @@ impl<'a> Source<'a> {
                         break;
                     }
                     fill(&mut cells, line.line());
-                    let window = take_from_line(&cells, line.line(), width, line.indent(), &mut skip, &mut take);
+                    let window = take_from_line(&cells, line, width, &mut skip, &mut take);
                     rows.extend(window.into_iter().rev());
                 }
             }
             Self::Output {
                 head,
                 text,
-                prefix,
                 style,
                 indent,
+                sides,
                 tail,
             } => {
                 for line in tail.iter().rev() {
@@ -279,15 +349,23 @@ impl<'a> Source<'a> {
                         break;
                     }
                     fill(&mut cells, line.line());
-                    let window = take_from_line(&cells, line.line(), width, line.indent(), &mut skip, &mut take);
+                    let window = take_from_line(&cells, line, width, &mut skip, &mut take);
                     rows.extend(window.into_iter().rev());
                 }
+                // An output row is a line of its own with no style of its own,
+                // so the row it breaks into carries the default line style and
+                // alignment.
+                let output = Indented {
+                    line: Line::default(),
+                    indent: *indent,
+                    sides: *sides,
+                };
                 for row in text.lines().rev() {
                     if take == 0 {
                         break;
                     }
-                    fill_row(&mut cells, prefix, style.of(row), row);
-                    let window = take_from_line(&cells, &plain, width, *indent, &mut skip, &mut take);
+                    fill_row(&mut cells, style.of(row), row);
+                    let window = take_from_line(&cells, &output, width, &mut skip, &mut take);
                     rows.extend(window.into_iter().rev());
                 }
                 for line in head.iter().rev() {
@@ -295,7 +373,7 @@ impl<'a> Source<'a> {
                         break;
                     }
                     fill(&mut cells, line.line());
-                    let window = take_from_line(&cells, line.line(), width, line.indent(), &mut skip, &mut take);
+                    let window = take_from_line(&cells, line, width, &mut skip, &mut take);
                     rows.extend(window.into_iter().rev());
                 }
             }
@@ -310,16 +388,17 @@ impl<'a> Source<'a> {
 ///
 /// Answers the rows in the line's own order. `skip` and `take` carry the window
 /// across lines, so the caller walks lines from the block's end and stops when
-/// `take` reaches zero.
+/// `take` reaches zero. A boxed line is broken inside its sides, and every row
+/// it keeps is drawn between them.
 fn take_from_line(
     cells: &[Cell],
-    line: &Line<'static>,
+    line: &Indented,
     width: usize,
-    indent: usize,
     skip: &mut usize,
     take: &mut usize,
 ) -> Vec<Line<'static>> {
-    let height = break_rows(cells, width, indent, |_| {});
+    let inner = bounds(line.sides, width);
+    let height = break_rows(cells, inner, line.indent, |_| {});
     if *skip >= height {
         *skip -= height;
         return Vec::new();
@@ -327,9 +406,13 @@ fn take_from_line(
     let end = height - *skip;
     let start = end.saturating_sub(*take);
     let mut rows: Vec<Line<'static>> = Vec::with_capacity(end - start);
-    break_rows(cells, width, indent, |row| {
+    break_rows(cells, inner, line.indent, |row| {
         if (start..end).contains(&row.index) {
-            rows.push(row_of(&cells[row.start..row.end], line, row.lead));
+            let built = row_of(&cells[row.start..row.end], &line.line, row.lead);
+            rows.push(match line.sides {
+                Some(sides) => sides.enclose(built, inner),
+                None => built,
+            });
         }
     });
     *take -= rows.len();
@@ -340,7 +423,7 @@ fn take_from_line(
 /// Rows one built line occupies, counted without building them.
 fn line_height(cells: &mut Cells, line: &Indented, width: usize) -> usize {
     fill(cells, line.line());
-    break_rows(cells, width, line.indent(), |_| {})
+    break_rows(cells, bounds(line.sides, width), line.indent(), |_| {})
 }
 
 /// Every cell of `line` in the order it is drawn.
@@ -353,14 +436,11 @@ fn fill(cells: &mut Cells, line: &Line<'static>) {
     }));
 }
 
-/// Every cell of one output row: its prefix and then the row itself, in one
-/// style.
-fn fill_row(cells: &mut Cells, prefix: &str, style: Style, text: &str) {
+/// Every cell of one output row, in one style.
+fn fill_row(cells: &mut Cells, style: Style, text: &str) {
     cells.clear();
     cells.extend(
-        prefix
-            .chars()
-            .chain(text.chars())
+        text.chars()
             .map(|character| (character, UnicodeWidthChar::width(character).unwrap_or(0), style)),
     );
 }
@@ -650,22 +730,28 @@ mod tests {
     #[test]
     fn an_output_window_is_the_tail_of_its_own_lines() {
         let style = Style::default().fg(Color::Yellow);
+        let sides = Sides {
+            edge: "│",
+            style: Style::default().fg(Color::Gray),
+        };
         let text = String::from("first row\n\n  a row that wraps over the pane's width\n한글한글한글\nlast");
         let head = Indented::plain(Line::from("head"));
+        let foot = Indented::plain(Line::from("foot"));
         let source = Source::Output {
             head: vec![head.clone()],
             text: &text,
-            prefix: "  ",
             style: RowStyle::Plain(style),
             indent: 2,
-            tail: Vec::new(),
+            sides: Some(sides),
+            tail: vec![foot.clone()],
         };
         // The same block with its output rows built: what the pane used to draw.
         let mut eager = vec![head];
         for row in text.lines() {
-            let line = Line::from(Span::styled(format!("  {row}"), style));
-            eager.push(Indented::new(line, 2));
+            let line = Line::from(Span::styled(row.to_string(), style));
+            eager.push(Indented::boxed(line, 2, sides));
         }
+        eager.push(foot);
         for width in [4, 14, 20, 40] {
             let full = wrap_rows(eager.clone(), width);
             assert_eq!(source.height(width), full.len(), "height at width {width}");
@@ -698,7 +784,7 @@ mod tests {
         let mut output = Source::Output {
             head: vec![Indented::plain(Line::from("head"))],
             text: &text,
-            prefix: "",
+            sides: None,
             style: RowStyle::Plain(Style::default()),
             indent: 0,
             tail: Vec::new(),
@@ -739,9 +825,9 @@ mod tests {
         let source = Source::Output {
             head: vec![Indented::plain(Line::from("head"))],
             text: &text,
-            prefix: "  ",
             style: RowStyle::Plain(Style::default()),
             indent: 2,
+            sides: None,
             tail: Vec::new(),
         };
         assert_eq!(source.height(120), 2001);

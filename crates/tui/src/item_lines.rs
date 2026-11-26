@@ -104,13 +104,7 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
                 Some(expand) => expand.retained(&call.call_id),
                 None => tool_line::Retained::default(),
             };
-            indented(tool_line::lines_with(
-                call,
-                look.theme,
-                look.symbols,
-                look.width,
-                retained,
-            ))
+            tool_line::lines_with(call, look.theme, look.symbols, look.width, retained)
         }
         Item::Notice(text) => notice(text, look),
         Item::Warning(text) => prefixed(Span::raw("! "), text, Style::default().fg(look.theme.core.error)),
@@ -221,38 +215,25 @@ pub(crate) fn source<'a>(item: &Item, look: &Look<'_>, expand: Option<&tool_expa
         None => tool_line::Retained::default(),
     };
     match tool_line::rows_with(call, look.theme, look.symbols, look.width, retained) {
-        tool_line::CallRows::Built(rows) => wrap::Source::built(indented(rows)),
-        tool_line::CallRows::Expanded { head, text, style } => wrap::Source::Output {
-            head: indented(head),
+        tool_line::CallRows::Built(rows) => wrap::Source::built(rows),
+        tool_line::CallRows::Expanded {
+            head,
             text,
-            prefix: tool_line::OUTPUT_PREFIX,
             style,
-            indent: INDENT,
+            sides,
+            foot,
+        } => wrap::Source::Output {
+            head,
+            text,
+            style,
+            indent: 0,
+            sides: Some(sides),
             // A note never lands on a tool row: only user and assistant
-            // messages can be addressed, so there is nothing below the output.
-            tail: Vec::new(),
+            // messages can be addressed, so the card's closing row is the
+            // only line below the output.
+            tail: vec![foot],
         },
     }
-}
-
-/// A tool call's rows as lines.
-///
-/// The head row introduces the call; every row under it (the failure text, the
-/// output preview, the count of rows the preview hides) is written after a
-/// two-column pad, so a wrapped row has to stay under that text rather than
-/// slide back to the first column.
-fn indented(lines: Vec<Line<'static>>) -> Vec<Indented> {
-    lines
-        .into_iter()
-        .enumerate()
-        .map(|(index, line)| {
-            if index == 0 {
-                Indented::plain(line)
-            } else {
-                Indented::new(line, INDENT)
-            }
-        })
-        .collect()
 }
 
 /// The reader's note on one message, drawn under it.

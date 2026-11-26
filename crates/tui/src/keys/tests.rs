@@ -487,11 +487,21 @@ fn typed(app: &mut App, text: &str) {
 }
 
 #[test]
+fn shift_enter_starts_a_new_line_instead_of_sending() {
+    // The key a kitty-protocol terminal reports once the client asks for
+    // disambiguated keys: a new line in the draft, never a send.
+    let mut app = app();
+    typed(&mut app, "one");
+    assert_eq!(app.on_key(modified(KeyCode::Enter, KeyModifiers::SHIFT)), None);
+    typed(&mut app, "two");
+    assert_eq!(app.input.text(), "one\ntwo");
+}
+
+#[test]
 fn editor_keys_build_and_cut_a_multi_line_draft() {
     let mut app = app();
     typed(&mut app, "one");
-    // `alt+enter` is the newline a terminal can deliver: plain shift+enter
-    // arrives as a bare Enter from most of them.
+    // `alt+enter` is the newline every terminal can deliver.
     assert_eq!(app.on_key(modified(KeyCode::Enter, KeyModifiers::ALT)), None);
     typed(&mut app, "two");
     assert_eq!(app.input.text(), "one\ntwo");

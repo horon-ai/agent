@@ -403,6 +403,11 @@ where
     if let Err(error) = crate::paste::enable() {
         app.warn(format!("paste: {error}"));
     }
+    // The hand-over popped the key reports with the rest of the modes; the
+    // screen is ours again, so they go back on the stack it keeps.
+    if let Err(error) = crate::keyboard::enable() {
+        app.warn(format!("keyboard: {error}"));
+    }
     if title.enabled() {
         title.forget_label();
         let state_supported = title.state_supported();
