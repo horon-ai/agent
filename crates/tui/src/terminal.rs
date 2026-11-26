@@ -1,12 +1,14 @@
 //! Putting the terminal back the way the client found it.
 //!
-//! The client turns on bracketed paste, takes the alternate screen, and asks
-//! for mouse reporting unless the setting is off; it also pushes the shell's
-//! window title. Every way out it runs itself restores those: the normal exit,
-//! the error path and the panic hooks. A signal is not an exit it runs. The
-//! default disposition replaces the process, so a client killed by `SIGTERM`
-//! or `SIGHUP` left the next program in a terminal that still reported pastes
-//! as one event and delivered mouse escapes as text (#431).
+//! The client turns on bracketed paste, takes the alternate screen, asks a
+//! terminal that speaks the kitty keyboard protocol for unambiguous key
+//! reports, and asks for mouse reporting unless the setting is off; it also
+//! pushes the shell's window title. Every way out it runs itself restores
+//! those: the normal exit, the error path and the panic hooks. A signal is not
+//! an exit it runs. The default disposition replaces the process, so a client
+//! killed by `SIGTERM` or `SIGHUP` left the next program in a terminal that
+//! still reported pastes as one event and delivered mouse escapes as text
+//! (#431).
 //!
 //! The Unix half below runs the same restore sequence from those signals and
 //! then re-raises, so the exit status still reports the signal.
@@ -17,7 +19,7 @@
 //! before the client gives up on a terminal it cannot start is here, because it
 //! needs the real terminal and the app state at once.
 
-use crate::{app::App, draw, paste, scroll, title};
+use crate::{app::App, draw, keyboard, paste, scroll, title};
 
 /// Put the terminal back the way the client found it.
 ///
@@ -89,6 +91,9 @@ where
 /// Undo the modes the client turned on, or only step off the screen.
 fn release(pop_title: bool) {
     paste::disable();
+    // Popped before the screen is left: the alternate screen keeps its own
+    // stack of key-report flags, and the push went onto that one.
+    keyboard::disable();
     // The stack entry goes back with the screen: the title the shell set is the
     // one the next prompt should be in. A hand-over keeps it, because the client
     // still owns the window and only the screen is lent out.

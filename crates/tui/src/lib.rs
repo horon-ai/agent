@@ -23,6 +23,7 @@ pub mod help;
 pub mod history;
 pub mod input;
 mod item_lines;
+pub mod keyboard;
 pub mod keys;
 mod links;
 mod loop_io;
@@ -535,12 +536,19 @@ fn run_interactive(
     // not leave a mode on, or the window named after a session that is gone, for
     // the next program in this terminal.
     paste::guard_panics();
+    keyboard::guard_panics();
     scroll::guard_panics();
     progress::guard_panics();
     // A terminal that refuses the mode is not a reason to stop: a paste then
     // arrives as ordinary keystrokes, which the editor already handles.
     if let Err(error) = paste::enable() {
         app.warn(format!("paste: {error}"));
+    }
+    // Pushed inside the alternate screen, which keeps its own flag stack, so the
+    // pop on the way out lands on the stack this push went to. A terminal that
+    // refuses keeps its plain keys, where `alt+enter` still starts a new line.
+    if let Err(error) = keyboard::enable() {
+        app.warn(format!("keyboard: {error}"));
     }
     let title_enabled = reloader.settings().boolean("title.enabled").unwrap_or(true);
     let mut title = title::WindowTitle::stdout(title_enabled);

@@ -290,7 +290,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 이 표가 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`이고, 동작마다 속한 범위가 붙는다.
 
-대부분의 터미널은 Shift-Enter를 평범한 Enter로 보내고, 그것은 전송이다. 그래서 믿을 만한 새 줄 키는 `alt+enter`와 `ctrl+j`이고, `shift+enter`는 터미널이 시프트 붙은 형태를 보고할 때만 응답한다.
+터미널은 기본(레거시) 모드에서 Shift-Enter를 평범한 Enter로 보내고, 그것은 전송이다. 그래서 클라이언트는 실행 중에 kitty 키보드 프로토콜을 지원하는 터미널(kitty, Ghostty, WezTerm, foot, 프로토콜을 켠 iTerm2, 최신 Alacritty)에 수정자가 붙은 키를 구별해 보고하도록 요청하고, 그런 터미널에서는 `shift+enter`가 새 줄을 시작한다. 요청은 터미널이 프로토콜을 지원한다고 답한 뒤에만 보내고, 패닉, 시그널, 외부 편집기로 넘길 때를 포함해 빠져나가는 모든 길에서 되돌린다. 프로토콜이 없는 터미널(Apple 터미널, `extended-keys`를 끈 tmux)에서는 Shift-Enter가 여전히 Enter로 오므로 `alt+enter`와 `ctrl+j`가 새 줄 키다.
 
 `up`과 `down`은 초안의 줄 사이를 이동하고 첫 줄이나 마지막 줄을 지나면 입력 기록으로 이동한다. `shift+up`, `shift+down`과 페이지 키로 전사 화면을 움직인다. `shift+tab`은 추론 단계를 바꾼다. 일반 Tab은 슬래시 명령 이름이나 로컬 경로를 완성한다. 질문이 열려 있으면 질문에서 키 입력을 먼저 받는다.
 
