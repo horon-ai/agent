@@ -203,10 +203,10 @@ fn streams_text_and_finishes_turn() {
         screen.contains("Hello, world"),
         "assistant text missing from:\n{screen}"
     );
-    // The lead mark is the theme's glyph now, not a hardcoded asterisk.
+    // The card's title carries the outcome's glyph from the theme's preset.
     assert!(
-        screen.contains(&format!("{} bash", app.symbols.tool_lead)),
-        "tool line missing from:\n{screen}"
+        screen.contains(&format!("{} bash", app.symbols.tool_done)),
+        "tool card missing from:\n{screen}"
     );
     assert!(screen.contains("done"), "tool outcome missing from:\n{screen}");
     assert!(!app.pending_turn);
@@ -889,24 +889,15 @@ fn a_tool_preview_wraps_under_its_own_column() {
         }),
     };
     let rows = item_lines::lines(&crate::transcript::Item::Tool(call), &look, None);
-    assert_eq!(rows.len(), 2, "the preview gained a row");
-    assert_eq!(rows[0].indent(), 0, "the head row starts at the first column");
-    assert_eq!(
-        rows[1].indent(),
-        2,
-        "a wrapped preview row does not keep the column of the preview's text"
-    );
-    // The visual rows the pane draws: the second one is the wrap, and it starts
-    // where the preview row's own text does.
+    assert_eq!(rows.len(), 3, "the title, the preview row and the closing row");
+    assert!(rows[1].sides().is_some(), "the preview row is outside the card");
+    // The visual rows the pane draws: the third one is the wrap, and it stays
+    // inside the card's sides rather than sliding back to the first column.
     let wrapped = wrap::wrap_rows(rows, 40);
-    assert!(wrapped.len() > 2, "the preview row did not wrap");
+    assert!(wrapped.len() > 3, "the preview row did not wrap");
     let second: String = wrapped[2].spans.iter().map(|span| span.content.as_ref()).collect();
-    assert_eq!(
-        second.len() - second.trim_start().len(),
-        2,
-        "the wrapped row slid back to the first column: {second:?}"
-    );
-    assert!(second.trim_start().starts_with("than"), "{second:?}");
+    assert!(second.starts_with("│ than"), "{second:?}");
+    assert!(second.ends_with(" │"), "{second:?}");
 }
 
 #[test]
