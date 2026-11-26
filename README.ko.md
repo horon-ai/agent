@@ -215,9 +215,9 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 �
 
 | 기능 | 설명 |
 | --- | --- |
-| 핵심 도구 18개 | `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`. core 세션은 이 중 일곱 개와 `toolbox`를 처음부터 보내고, 나머지 열한 개는 시스템 프롬프트에 이름만 적어 `toolbox`로 부르게 하므로 첫 요청이 작다. 프로필은 `core`(기본), `full`, `acp`, `minimal`, `none`이다([문서](docs/runtime/TOOLS.ko.md)). |
+| 기본으로 모든 내장 도구 | core 세션은 내장 도구에 모두 닿는다. 자주 쓰는 열한 개(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`, `todo`, `bg`, `websearch`, `webfetch`)와 `toolbox`, 그리고 `PATH`에 Python이 있으면 `eval`을 처음부터 보내고, 나머지는 시스템 프롬프트에 이름만 적어 `toolbox`로 부르게 하므로 첫 요청이 작다. 스위치를 `false`로 두면 도구가 빠진다. 프로필은 `core`(기본), `full`, `acp`, `minimal`, `none`이다([문서](docs/runtime/TOOLS.ko.md)). |
 | 추가만 하는 세션 | 이력은 `<홈>/sessions/<id>/events.jsonl` 이벤트 로그이고, 큰 페이로드는 내용 주소 blob에 둔다. 보관, 압축, 되감기는 기록을 덧붙일 뿐 원본을 지우지 않는다. `horon session` 하위 명령이 그 저장소를 조회·점검·내보내기·가져오기·이전·복구·보관·복원하고, 파괴적인 명령은 `delete <id> --yes` 하나뿐이며 실행 중인 데몬이 열고 있는 세션은 거부한다([문서](docs/protocol/SESSION_STORE.ko.md)). |
-| 편집 안전 장치 | 저널이 파일 편집의 `undo`를 받쳐 주고, `redo`와 hashline 앵커는 켜야 쓴다([문서](docs/runtime/TOOLS.ko.md)). |
+| 편집 안전 장치 | 저널이 파일 편집의 `undo`를 받쳐 주고, `redo`와 hashline 앵커는 기본으로 켜져 있다([문서](docs/runtime/TOOLS.ko.md)). |
 | 목표 예산 | 이어 가는 목표에 `budget_tokens`를 둘 수 있다. 세션 지출이 그 값에 닿으면 목표가 `budget_limited`가 되고, 지금까지의 결과를 기록하라고 모델에 알리는 마무리 턴을 한 번 준 뒤 멈춘다. 예산을 올리고 목표를 `active`로 되돌리는 일은 운영자가 정한다([문서](docs/runtime/TURNS.ko.md)). |
 | MCP와 스킬 | `horon mcp`가 설정된 MCP 서버를 나열하고 원격 서버의 OAuth 자격 증명을 관리한다. 스킬은 `skill://`로 읽고 `skill_manage`로 관리한다. |
 | 무인 실행 | 턴 복구, 영속 대기 입력을 다루는 `horon runtime-state`, 사람을 기다리다 멈춘 실행에 사람의 판정을 기록하는 `horon approvals`가 사람이 자리에 없는 실행을 받친다([문서](docs/safety/SAFETY.ko.md)). |

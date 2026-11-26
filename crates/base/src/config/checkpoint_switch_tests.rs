@@ -1,16 +1,16 @@
-//! `[tools] checkpoint`: the switch is off by default, parses when set, and is
+//! `[tools] checkpoint`: the switch is on by default, parses when set, and is
 //! documented in the generated default config.
 
 use super::{Config, ToolConfig};
 
 #[test]
-fn checkpoint_switch_is_off_by_default() {
+fn checkpoint_switch_is_on_by_default() {
     assert!(
-        !ToolConfig::default().checkpoint,
-        "the pair is opt-in: a default install registers neither tool"
+        ToolConfig::default().checkpoint,
+        "the pair is part of the open default surface"
     );
     assert!(
-        !Config::default().tools.checkpoint,
+        Config::default().tools.checkpoint,
         "the whole-config default agrees with the tool config"
     );
 }
@@ -19,8 +19,17 @@ fn checkpoint_switch_is_off_by_default() {
 fn checkpoint_switch_parses_when_set() {
     let parsed: Config = toml::from_str("[tools]\ncheckpoint = true\n").expect("the switch parses");
     assert!(parsed.tools.checkpoint);
-    let off: Config = toml::from_str("[tools]\ncheckpoint = false\n").expect("an explicit false parses");
+    let off: Config =
+        toml::from_str("[tools]\nprofile = \"core\"\ncheckpoint = false\n").expect("an explicit false parses");
     assert!(!off.tools.checkpoint);
+    let allowed = off
+        .tools
+        .selection_with_ambient(&crate::config::AmbientConfig::default())
+        .allowed_tools
+        .expect("core is an allow-list");
+    for name in crate::config::CHECKPOINT_TOOLS {
+        assert!(!allowed.contains(*name), "the switch off removes {name}");
+    }
 }
 
 #[test]
@@ -39,7 +48,7 @@ fn generated_default_config_documents_the_checkpoint_switch() {
     }
 
     assert!(
-        content.contains("checkpoint = false"),
-        "the generated default config documents the switch as off"
+        content.contains("checkpoint = true"),
+        "the generated default config documents the switch as on"
     );
 }

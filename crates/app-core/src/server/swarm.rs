@@ -1714,11 +1714,7 @@ pub(super) async fn run_swarm_task(
         ],
     );
 
-    let mut allowed: HashSet<String> = registry.tool_names().await.into_iter().collect();
-    for blocked in ["subagent", "task", "swarm", "todo", "session_search"] {
-        allowed.remove(blocked);
-    }
-    crate::config::config().tools.apply_to_allowed_set(&mut allowed);
+    let allowed = super::swarm_tools::worker_allow_list(&registry).await;
 
     let mut worker = Agent::new_with_session(provider, registry, session, Some(allowed));
     crate::agent_result_cache::publish_running(&child_session_id, &parent_session_id, "running");

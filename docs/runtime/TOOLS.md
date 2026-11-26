@@ -6,7 +6,7 @@ This covers tool loading tiers, effects and approval tiers, edit safety, the anc
 
 ## Tool discovery and deferred loading
 
-The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree. In a listing `core` session the eight eager schemas (the seven tools and `toolbox`) serialize to 8,975 bytes, and the static system prompt of a session with no prompt files is 1,322 bytes; both are measured by the `prefix` and `prompt` rows of the structural gate ([`../performance/BENCHMARK.md`](../performance/BENCHMARK.md)).
+The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile reaches every built-in tool as well: it sends the eleven frequently used tools and `toolbox` with schemas, and names the rest in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree. The `prefix` and `prompt` rows of the structural gate measure the eager schemas and the static prompt of a listing `core` session ([`../performance/BENCHMARK.md`](../performance/BENCHMARK.md)).
 
 ### Three tiers
 
@@ -30,22 +30,23 @@ memory = "essential"
 
 ### Default layout
 
-- The seven tools in `ESSENTIAL_TOOLS` (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`) are `essential` in every profile (`config.rs:680` `ESSENTIAL_TOOLS`). Almost every coding turn touches them, so their schemas stay in the cached prefix.
-- `CORE_TOOLS` holds eighteen entries and is the allow-list of the `core` profile (`config.rs:653` `CORE_TOOLS`). The list sets reachability; whether tools are sent eagerly depends on whether the session is a listing session. `swarm`, `todo` and `session_search` joined last; an SDK-driven session keeps `session_search` and `swarm` off unless its `enabled` list names them (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
-- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs:628`, `config.rs:1093` `ToolConfig::toolbox_reachable`). That session sends only the seven tools and `toolbox` with schemas, and the other eleven core tools (`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`) become `discoverable` and are named in the index (`config.rs:764` `ToolLoadTiers::tier`).
-- Sessions that are not listing sessions send every core tool as `essential`. This covers `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, an SDK `enabled` list, and an allow-list passed to `new_with_session`. Their tool lists and tiers are unchanged and they have no index. When an SDK `enabled` list is attached to a listing `core` session, the client has named tools exactly, so listing mode turns off and every named tool is sent eagerly (`crates/app-core/src/agent/turn_execution.rs:751` `apply_builtin_load_tiers`).
-- `mcp_search` and `mcp_call` are sent eagerly by default (`config.rs:736` `ALWAYS_EAGER_TOOLS`). They are the path that discovers MCP schemas, so the provider-native deferred route still sends them eagerly. On providers without native deferred loading, a listing `core` session that has no active MCP server configured when it locks its first tool list does not send the two tools eagerly; they go into the index and are called through `toolbox`. With at least one server they are sent eagerly as before. This decision also never changes mid-session. A session pinned to a native provider has neither tool in its frozen index, so switching to a non-native provider later leaves both tools eager (so as not to advertise a name the index does not carry). The closing sentence of `mcp list`, of connection results, and of new-MCP-tool announcements that trims the rest past 32 items points at `toolbox` only in sessions where the two tools are in the index, and otherwise announces a direct call (`turn_execution.rs:598` `freeze_mcp_surface`, `turn_execution.rs:631` `mcp_surface_listed`). With `mcp_tools = "eager"` per-server definitions are shipped and this rule does not apply.
-- `toolbox` is always `essential`. An explicit `discoverable` entry is promoted to `essential`, and an `off` entry removes the tool (`config.rs:764` `ToolLoadTiers::tier`).
-- Deferred defaults turn on only when the explicit `full` profile has no allow-list. `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, and an unset profile send the tools that pass eagerly (`config.rs:1066` `ToolConfig::load_tiers`).
+- The eleven tools in `ESSENTIAL_TOOLS` (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`, `todo`, `bg`, `websearch`, `webfetch`) are `essential` in every profile (`config.rs` `ESSENTIAL_TOOLS`). Almost every coding turn touches them, so their schemas stay in the cached prefix.
+- The default surface is open. `CORE_TOOLS` holds the eighteen tools that have always been reachable, and `CORE_DISCOVERABLE_TOOLS` adds every other built-in tool this build constructs (`config.rs` `CORE_TOOLS`, `CORE_DISCOVERABLE_TOOLS`). The `core` allow-list is those two lists plus `toolbox`; `irc`, `checkpoint` and `rewind` join through their own switches. Each tool is still gated by the switch that registers it, by `[tools] disabled`, and by `[tools.load_mode]`, so any one of them can be removed alone.
+- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs` `build_base`, `config.rs` `ToolConfig::toolbox_reachable`). That session sends only the eleven tools and `toolbox` with schemas. Every other reachable tool becomes `discoverable` and is named in the index, including `irc`, `checkpoint` and `rewind` when their switches are on (`config.rs` `ToolLoadTiers::tier`).
+- `eval` is the one conditional eager tool: a listing `core` session sends its schema only when a Python interpreter is on an absolute `PATH` entry (`crates/app-core/src/agent.rs` `build_base`, `crates/app-core/src/tool/eval.rs` `interpreter_on_path`). The PATH scan reads metadata only, never starts a process, and is cached for the life of the process. Without one, `eval` stays listed in the index, and a cell that runs reports that Python 3.10 or later is missing.
+- Sessions that are not listing sessions send every allowed tool as `essential`. This covers `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, an SDK `enabled` list, and an allow-list passed to `new_with_session`. Their tool lists are unchanged and they have no index. When an SDK `enabled` list is attached to a listing `core` session, the client has named tools exactly, so listing mode turns off and every named tool is sent eagerly (`crates/app-core/src/agent/turn_execution.rs` `apply_builtin_load_tiers`).
+- `mcp_search` and `mcp_call` are sent eagerly by default (`config.rs` `ALWAYS_EAGER_TOOLS`). They are the path that discovers MCP schemas, so the provider-native deferred route still sends them eagerly. On providers without native deferred loading, a listing `core` session that has no active MCP server configured when it locks its first tool list does not send the two tools eagerly; they go into the index and are called through `toolbox`. With at least one server they are sent eagerly as before. This decision also never changes mid-session. A session pinned to a native provider has neither tool in its frozen index, so switching to a non-native provider later leaves both tools eager (so as not to advertise a name the index does not carry). The closing sentence of `mcp list`, of connection results, and of new-MCP-tool announcements that trims the rest past 32 items points at `toolbox` only in sessions where the two tools are in the index, and otherwise announces a direct call (`turn_execution.rs` `freeze_mcp_surface`, `mcp_surface_listed`). With `mcp_tools = "eager"` per-server definitions are shipped and this rule does not apply.
+- `toolbox` is always `essential`. An explicit `discoverable` entry is promoted to `essential`, and an `off` entry removes the tool (`config.rs` `ToolLoadTiers::tier`).
+- Deferred defaults turn on only when the explicit `full` profile has no allow-list. `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, and an unset profile send the tools that pass eagerly (`config.rs` `ToolConfig::load_tiers`).
 - A session fixes its tiers once at start. Reloading configuration never moves a tool between the eager and deferred sets mid-session.
 
-`irc` is a tool outside the core set. With `[tools] irc = true` it joins a non-empty allow-list such as `core`, `acp`, `minimal`, or an explicit `enabled` list, and a `full` session without an allow-list sees it as it always did. With the switch off the registration stays but execution is refused, so it is unusable even in a `full` session. An empty allow-list (`none`) stays empty even with the switch on. Mailbox behaviour and configuration are in [`IRC.md`](IRC.md).
+`irc` is the agent-to-agent bus. `[tools] irc = true`, the default, joins it to the `core` profile's list, and a `full` session without an allow-list sees it as it always did. `acp`, `minimal`, `none` and an explicit `enabled` list stay exactly as written, so they reach `irc` only by naming it. `[tools] irc = false` takes it out of the `core` list, and the registration that stays under `full` refuses to run. Mailbox behaviour and configuration are in [`IRC.md`](IRC.md).
 
 #### Forcing a tool back to eager
 
 - Writing `[tools.load_mode] ask = "essential"` ships that tool with its schema even in a listing session. An explicit entry outranks the default layout.
 - `monitor = "off"` removes that tool from both the request and the index.
-- `toolbox = "off"`, or adding `toolbox` to `[tools] disabled`, turns listing mode off and puts all eighteen core tools back on the eager surface. The point is to avoid creating a tool with no way to reach it.
+- `toolbox = "off"`, or adding `toolbox` to `[tools] disabled`, turns listing mode off and puts every reachable tool back on the eager surface. The point is to avoid creating a tool with no way to reach it.
 
 ### The listing index
 
@@ -56,7 +57,7 @@ The static part of a listing `core` session's system prompt gains an `# Addition
 - The index freezes once, when the first tool list is locked. A warm-up request before MCP servers register does not freeze it; it is rebuilt once at lock time and then pinned. Unlocking tools, compaction, MCP connections, provider switches, and configuration reloads afterwards do not change it (`turn_execution.rs:790` `ensure_listed_tools_index`).
 - Only a session restore resets the index and rebuilds it for the new session. Clearing the conversation with `/clear` is the same session, so the index survives (`crates/app-core/src/agent.rs:1131` `reset_listed_tools_index`).
 - When the SDK replaces the system prompt wholesale, the index is appended after it (`crates/app-core/src/agent/prompting.rs:291-296`). An overridden session still keeps the names of listed tools.
-- A row uses only the first sentence of the tool description and cuts at 60 characters with an ellipsis when that sentence is longer. Index rows and `toolbox list` rows share one helper, so both lists show the same wording (`one_line_description` in `crates/base/src/prompt.rs`). A model that picks a tool from the index gets its schema with `toolbox describe` and runs it with `toolbox run`. Each listed core tool opens its description with a sentence that fits, so no row stops mid-word; `todo` is the one row still cut, because its model-visible text is kept as written.
+- A row uses only the first sentence of the tool description and cuts at 60 characters with an ellipsis when that sentence is longer. Index rows and `toolbox list` rows share one helper, so both lists show the same wording (`one_line_description` in `crates/base/src/prompt.rs`). A model that picks a tool from the index gets its schema with `toolbox describe` and runs it with `toolbox run`. Some descriptions open with a sentence short enough to fit the row; the rest are cut at the cap, so a row is a hint and `toolbox describe` is the full text.
 - The `todo` guidance sentence is appended for every session whose allow-list contains `todo` (`core` and `acp`), and is omitted when an SDK `enabled` list leaves `todo` out (`prompting.rs:376` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
 
 ### toolbox
@@ -89,15 +90,19 @@ In a listing `core` daemon, listed tools such as `replace`, `webfetch`, and `ask
 
 Model requests go straight to the endpoint the profile's `type` names, and no wire carries hosted tools in the body, so nothing attaches OpenAI's hosted `web_search`. `websearch` works only as a local tool.
 
-### Why core stays closed
+### Why the default surface is open
 
-`core` is an allow-list. It pins the default `core` surface to the eighteen core tools plus `toolbox`, keeps the other modules in the tree, and leaves them unexposed. The allow-list is as closed as it was; only the delivery changed. Seven tools come with schemas, eleven are reached through the index and `toolbox`. The most recent additions, `swarm`, `todo` and `session_search`, keep their schemas out of the prefix the same way. The choice preserves three things.
+`core` reaches every built-in tool this build constructs. The allow-list is `CORE_TOOLS` plus `CORE_DISCOVERABLE_TOOLS` plus `toolbox`, with `irc`, `checkpoint` and `rewind` joining through their switches, so no tool is left in the tree and unreachable. What the listing buys is delivery, not reach: eleven tools and `toolbox` come with schemas, and everything else is one `toolbox describe` and one `toolbox run` away, named in the system prompt.
 
-- The default surface's size does not change, so the request prefix and the prompt cache stay stable.
-- The default permission envelope, writes and shell included, stays predictable.
-- New tools do not quietly widen the default `core` surface.
+The split follows how often a tool is called, not how safe it is. A tool that almost every turn touches earns its schema in the cached prefix; a tool a session uses once does not, and paying for its schema on every request is the worse trade. Three properties keep that split useful.
 
-Widening it takes an explicit `--tool-profile full`, `HORON_AGENT_TOOL_PROFILE=full`, or `[tools] profile = "full"`.
+- The eager set is small and fixed, so the request prefix and the prompt cache stay stable across turns.
+- A tool outside the eager set is named in the index, which is part of the same frozen static prefix, so adding or removing one never invalidates the cache mid-session.
+- Approval is orthogonal: every call takes the tier `[tools] approval_mode`, `bash_patterns` and `restricted_paths` give it, whether its schema was eager or listed. Opening the surface adds reach, not authority.
+
+A tool is removed the same way its switch would: `[tools] <switch> = false`, `[tools] disabled = ["<name>"]`, or `[tools.load_mode] <name> = "off"`. `toolbox = "off"` returns every reachable tool to the eager surface.
+
+The `acp`, `minimal` and `none` profiles keep their own explicit lists. `full` keeps every tool and defers the non-core ones unless an allow-list or an SDK list narrows it. A launch that wants the old eager-everything shape on the default profile writes `[tools.load_mode] <name> = "essential"`, or selects `--tool-profile full`.
 
 ### Why there is no promote
 
@@ -286,7 +291,7 @@ The journal never touches files itself. It returns the bytes to restore, and the
 
 ### redo
 
-`redo` is registered only when `[tools] redo = true` (`crates/app-core/src/tool/undo.rs:133` `redo_enabled`). The default is `false`. Even registered, it must pass the profile's allow-list to reach the model, so in the `core` profile it also needs `full` or an explicit allow-list.
+`redo` is registered when `[tools] redo = true`, which is the default (`crates/app-core/src/tool/undo.rs` `redo_enabled`). In the `core` profile it is reachable through `toolbox`, and `[tools.load_mode] redo = "essential"` makes it eager. Setting the switch to `false` removes it.
 
 - It rewrites the after state of the unit the last `undo` moved.
 - It first checks that each file's current bytes equal the unit's before state. On a mismatch it refuses; with `force: true` it overwrites and lists the paths.
@@ -313,7 +318,7 @@ The journal never touches files itself. It returns the bytes to restore, and the
 Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{body}` (`crates/app-core/src/tool/read.rs:165`). The tag is the first two bytes of the line's SHA-256 written as four lowercase hex digits (`crates/edit-safety/src/hashline.rs:27` `tag_for`). A 16-bit value is not a cryptographic commitment; it is a cheap marker for the line the model read.
 
 - A line longer than 2000 bytes is cut and receives the `----` tag (`read_selector.rs:15` `MAX_LINE_LEN`). That anchor names no content, so it cannot be used for an edit.
-- `hashline_edit` is registered only when `[tools] hashline_edit = true`. The default is `false`, and it is outside the core set.
+- `hashline_edit` is registered when `[tools] hashline_edit = true`, which is the default. A `core` session reaches it through `toolbox`; `[tools.load_mode] hashline_edit = "essential"` sends it eagerly instead.
 - Input is `file_path` plus an `ops` array. Each op has `start_anchor`, an optional `end_anchor`, and `new_text`.
 - `ops` may be omitted when the call names a file-level effect: `delete: true` removes the file, and `move_to: "<path>"` writes the file's final content to that path and then removes the source. Both run after any line ops, in the same call and the same mutation unit, so one `undo` restores the old content and the old path.
 - A move refuses an existing destination instead of overwriting it; `apply_patch` remains the way to replace a destination deliberately. `move_to` and `delete` cannot be combined.
@@ -344,17 +349,16 @@ The crate never reads the file system, so it cannot detect outside changes by it
 
 ```toml
 [tools]
-profile = "full"
 eval = true
 ```
 
-The default is `eval = false`. With an explicit `enabled` list, include `eval` and keep `eval = true`. The closed `core`, `acp` and `minimal` profiles do not add it automatically. The session's tool load mode and allow-list still apply.
+`eval = true` is the default. A listing `core` session sends the schema eagerly when a Python interpreter is on `PATH`, and lists it in the system-prompt index otherwise. `acp`, `minimal` and `none` keep their own lists. `[tools.load_mode] eval = "off"` removes the tool even where the switch is on, and `eval = false` removes it everywhere.
 
 When the session can call `eval`, the default system prompt explains when to use Python cells and how to call the bridge. A discoverable `eval` can be invoked through `toolbox run`. Sessions where the tool is disabled or unreachable omit this guidance.
 
 Send `code` as a Python string. `timeout` accepts 1 to 3600 seconds and defaults to 30. Use `reset = true` to discard the previous kernel before executing the cell. Top-level `await`, stdout, stderr and the last expression's value are supported. A timeout, cancellation, directory change, session close or idle sweep discards the kernel. The next cell in that session starts with fresh state.
 
-Each cell needs explicit approval before it runs, including in `yolo` and `off`. Approved Python can read files, connect to the network and start processes with the agent's OS permissions. See the [security guide](../safety/SECURITY.md#python-eval) for the execution boundary.
+A cell takes the same approval tier as `bash`. The tool declares process, write and network effects, so `yolo` and `off` approve a cell without asking, `write` and `all` ask, and a scoped grant answers a cell the mode would otherwise ask about. `[tools.bash_patterns]` inspects a `bash` command, so it does not reach code inside a cell, and neither do `restricted_paths`, which match the paths a call names. Python that a cell runs can read files, connect to the network and start processes with the agent's OS permissions. See the [security guide](../safety/SECURITY.md#python-eval) for the execution boundary.
 
 Tool output has a 50 KiB maximum inline size. Read longer retained output with `read` and the returned `artifact://` address. Collection keeps at most 4 MiB and marks output above that limit.
 
@@ -1039,11 +1043,12 @@ An applied edit goes through the same path as `edit`: path policy and the genera
 ## Model checkpoints and rewind
 
 `checkpoint` and `rewind` let the model mark a point of its own session and later
-fold everything after it into a report it writes itself. They are registered only
-while `[tools] checkpoint` is on; the pair shares one switch because a checkpoint
-nothing can rewind to, or a rewind with no checkpoint, is useless alone. Both are
-absent from every default profile and are joined into a closed allow-list only by
-that switch (`crates/base/src/config/tool_selection.rs`).
+fold everything after it into a report it writes itself. They are registered
+while `[tools] checkpoint` is on, which is the default; the pair shares one switch
+because a checkpoint nothing can rewind to, or a rewind with no checkpoint, is
+useless alone. The switch joins both into the `core` profile's list, where they
+are listed rather than eager; `acp`, `minimal` and an explicit `enabled` list reach
+them only by naming them (`crates/base/src/config/tool_selection.rs`).
 
 - `checkpoint` takes no arguments. One checkpoint is active per session; a second
   call while one is active is refused, and so is a second call in the same turn.
@@ -1084,7 +1089,7 @@ report that replaces the branch, and undo.
 
 ## Capability-gated A2UI tool (`a2ui`)
 
-`a2ui` is intentionally outside `CORE_TOOLS` and every default profile (`crates/app-core/src/tool/a2ui.rs`, `crates/tool-types/src/a2ui.rs`). It registers per session only when the attached client negotiates `A2uiSessionCapabilities`, keeping the default `core` tool count at eighteen, eager schemas at 8,975 bytes, and the static prompt at 1,322 bytes unchanged for all unnegotiated sessions.
+`a2ui` is intentionally outside `CORE_TOOLS`, `CORE_DISCOVERABLE_TOOLS` and every default profile (`crates/app-core/src/tool/a2ui.rs`, `crates/tool-types/src/a2ui.rs`). It registers per session only when the attached client negotiates `A2uiSessionCapabilities`, so a session that does not negotiate it keeps the same eager schemas and static prompt it sends without this page.
 
 - **Accepted inputs**: `envelopes` (non-empty array of A2UI v1.0 `agent_to_renderer` envelopes such as `createSurface`, `updateComponents`, `updateDataModel`, `deleteSurface`, or allowed `callRendererFunction`), optional `fallback_text`, optional `final_response` (finishes the assistant turn after emitting), and optional `intent`.
 - **Validation and self-correction**: Every batch checks envelope size (at most 256 KiB), JSON depth (at most 32), batch length (at most 64 envelopes), per-surface component count (at most 500), catalog allow-lists (defaulting to `https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json`), required `root` component presence and acyclic component graphs, and safe URI schemes (rejecting `javascript:`, `data:`, `file:`, and `vbscript:`). Validation errors return to the model before anything leaves the daemon so the model can self-correct without emitting broken envelopes.

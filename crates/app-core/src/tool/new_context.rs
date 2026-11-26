@@ -62,7 +62,7 @@ impl Tool for NewContextTool {
     }
 
     fn description(&self) -> &str {
-        "Roll this session's context over at the end of this turn: keep the working notes and the latest user message, drop the rest, and leave the full transcript at history://current."
+        "Start a fresh context at turn end; working notes stay."
     }
 
     /// The rollover moves the session's compaction boundary, so plan mode and

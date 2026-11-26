@@ -1,4 +1,6 @@
-use super::{CORE_TOOL_PROFILE, CORE_TOOLS, ESSENTIAL_TOOLS, LoadMode, TOOLBOX_TOOL, ToolConfig};
+use super::{
+    CORE_DISCOVERABLE_TOOLS, CORE_TOOL_PROFILE, CORE_TOOLS, ESSENTIAL_TOOLS, LoadMode, TOOLBOX_TOOL, ToolConfig,
+};
 use crate::config::Config;
 use std::collections::BTreeMap;
 
@@ -38,8 +40,8 @@ fn core_profile_without_listing_keeps_every_allowed_tool_essential() {
     assert!(!tiers.core_listed(), "the flag is stored as the caller resolved it");
     assert_eq!(
         allowed.len(),
-        CORE_TOOLS.len() + 1,
-        "core is the kept set plus the dispatcher"
+        18 + 17 + 3 + 1,
+        "core is the open set plus irc, the checkpoint pair, and the dispatcher"
     );
     for name in &allowed {
         assert_eq!(tiers.tier(name), LoadMode::Essential, "{name} must stay eager");
@@ -48,12 +50,12 @@ fn core_profile_without_listing_keeps_every_allowed_tool_essential() {
 
 /// A `core`-listed session keeps only the essential tools in the cached prefix.
 #[test]
-fn core_profile_lists_the_core_tools_it_does_not_send_eagerly() {
+fn core_profile_lists_the_tools_it_does_not_send_eagerly() {
     let cfg = core_config();
     let allowed = cfg.allowed_tools().expect("core is an allow-list");
     let tiers = cfg.load_tiers(Some(&allowed), true);
 
-    assert_eq!(ESSENTIAL_TOOLS.len(), 7, "the eager core set is seven tools");
+    assert_eq!(ESSENTIAL_TOOLS.len(), 11, "the eager core set is eleven tools");
     assert!(tiers.core_listed());
     assert_eq!(tiers.default_tier(), LoadMode::Essential);
     for name in ESSENTIAL_TOOLS {
@@ -77,11 +79,19 @@ fn core_profile_lists_the_core_tools_it_does_not_send_eagerly() {
         LoadMode::Discoverable,
         "swarm is a listed core tool, so the listing defers it like the rest"
     );
-    for name in ["batch", "memory"] {
+    for name in CORE_DISCOVERABLE_TOOLS {
+        let expected = if ESSENTIAL_TOOLS.contains(name) {
+            LoadMode::Essential
+        } else {
+            LoadMode::Discoverable
+        };
+        assert_eq!(tiers.tier(name), expected, "{name} is on the open surface");
+    }
+    for name in ["irc", "checkpoint", "rewind"] {
         assert_eq!(
             tiers.tier(name),
-            LoadMode::Essential,
-            "{name} is outside the core set, so the listing does not reach it"
+            LoadMode::Discoverable,
+            "{name} joins through its switch and is listed, not eager"
         );
     }
 }
@@ -233,7 +243,15 @@ fn acp_profile_never_widens_and_stays_eager() {
     for name in &allowed {
         assert_eq!(tiers.tier(name), LoadMode::Essential);
     }
-    for name in ["webfetch", "websearch", "skill_manage", "toolbox", "swarm"] {
+    for name in [
+        "webfetch",
+        "websearch",
+        "skill_manage",
+        "toolbox",
+        "swarm",
+        "eval",
+        "lsp",
+    ] {
         assert!(!allowed.contains(name), "the resolver must never add {name} to acp");
     }
 }
@@ -350,4 +368,87 @@ gmail = "off"
     assert!(cfg.tools.disabled.iter().any(|name| name == "gmail"));
     assert_eq!(cfg.tools.load_mode.get("gmail"), Some(&LoadMode::Off));
     assert!(cfg.tools.selection().allowed_tools.is_none());
+}
+
+#[test]
+fn tool_config_core_profile_reaches_every_builtin_tool() {
+    let cfg = ToolConfig {
+        profile: CORE_TOOL_PROFILE.to_string(),
+        ..ToolConfig::default()
+    };
+    // Default ambient switches, not a developer's `~/.horon`: plan mode,
+    // clientless approvals, IRC and checkpoints each join a restricted list.
+    let allowed = cfg
+        .selection_with_ambient(&crate::config::AmbientConfig::default())
+        .allowed_tools
+        .expect("core profile is an allow-list");
+
+    // The kept set: file, shell, search, web, skill, mcp, monitor, undo, ask.
+    for kept in [
+        "bash",
+        "read",
+        "write",
+        "edit",
+        "replace",
+        "apply_patch",
+        "undo",
+        "ask",
+        "agentgrep",
+        "ls",
+        "webfetch",
+        "websearch",
+        "skill_manage",
+        "mcp",
+        "monitor",
+        "todo",
+        "session_search",
+        "swarm",
+    ] {
+        assert!(allowed.contains(kept), "core profile must keep {kept}");
+    }
+    assert!(
+        allowed.contains("skill_manage") && allowed.contains("mcp"),
+        "core profile must keep the skill and mcp tools registered"
+    );
+
+    // The open surface: everything else this build constructs, reached through
+    // the dispatcher, plus the pair and bus their switches join.
+    for kept in [
+        "ast_edit",
+        "ast_grep",
+        "batch",
+        "bg",
+        "checkpoint",
+        "codemode",
+        "context_notes",
+        "conversation_search",
+        "eval",
+        "generate_image",
+        "goal",
+        "hashline_edit",
+        "horon_agent_docs",
+        "integration_tools",
+        "irc",
+        "lsp",
+        "memory",
+        "new_context",
+        "redo",
+        "rewind",
+        "toolbox",
+    ] {
+        assert!(allowed.contains(kept), "the default core surface must reach {kept}");
+    }
+
+    // Mode-only and internal tools stay out until their own condition holds.
+    for off in ["schedule", "invalid", "request_permission", "submit_plan"] {
+        assert!(!allowed.contains(off), "core profile must exclude {off}");
+    }
+
+    // Counted so a stray addition cannot widen the default silently: the two
+    // constant lists, the switch-joined irc and checkpoint pair, the dispatcher.
+    assert_eq!(
+        allowed.len(),
+        18 + 17 + 3 + 1,
+        "core profile is the two tool lists plus irc, checkpoint/rewind, and the dispatcher"
+    );
 }

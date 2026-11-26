@@ -46,7 +46,7 @@ impl Tool for ContextNotesTool {
     }
 
     fn description(&self) -> &str {
-        "Read, replace, or delete this session's working notes. The notes are small and reappear in every request."
+        "Read, replace, or delete this session's working notes."
     }
 
     fn effects(&self) -> ToolEffects {

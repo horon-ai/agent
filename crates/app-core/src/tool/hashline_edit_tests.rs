@@ -453,7 +453,7 @@ fn runtime() -> tokio::runtime::Runtime {
 }
 
 #[test]
-fn hashline_edit_stays_off_by_default_and_joins_no_core_profile() {
+fn hashline_edit_is_on_by_default_and_outside_core_tools() {
     let _env = crate::storage::lock_test_env();
     let home = tempfile::tempdir().expect("home");
     let _guard = HomeGuard::new(home.path());
@@ -462,17 +462,21 @@ fn hashline_edit_stays_off_by_default_and_joins_no_core_profile() {
         let registry =
             Registry::new(std::sync::Arc::new(MockProvider) as std::sync::Arc<dyn crate::provider::Provider>).await;
         assert!(
-            !crate::config::ToolConfig::default().hashline_edit,
-            "hashline_edit must default to off"
+            crate::config::ToolConfig::default().hashline_edit,
+            "hashline_edit is part of the default surface"
         );
         let names = registry.tool_names().await;
         assert!(
-            !names.iter().any(|name| name == "hashline_edit"),
-            "hashline_edit must stay unregistered by default, got {names:?}"
+            names.iter().any(|name| name == "hashline_edit"),
+            "hashline_edit must be registered by default, got {names:?}"
         );
         assert!(
             !crate::config::CORE_TOOLS.contains(&"hashline_edit"),
-            "hashline_edit must never join CORE_TOOLS"
+            "hashline_edit is listed on the open surface, not in CORE_TOOLS"
+        );
+        assert!(
+            crate::config::CORE_DISCOVERABLE_TOOLS.contains(&"hashline_edit"),
+            "a core session must still reach it through toolbox"
         );
     });
 }

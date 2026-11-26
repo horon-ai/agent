@@ -64,8 +64,8 @@ impl Tool for IrcTool {
     }
 
     fn description(&self) -> &str {
-        "Send IRC messages to peers in this swarm, wait for replies, read buffered mail, and \
-         list who is reachable. Delivery is non-blocking and follows the target's state: a \
+        "Message peer agents in this swarm. Send messages, wait for replies, read buffered mail, \
+         and list who is reachable. Delivery is non-blocking and follows the target's state: a \
          waiting peer takes it at once, a busy one at the next step boundary, and an idle one in \
          a new turn. `to` accepts a session id, a unique handle, or `all` from a root session; \
          only the same swarm is visible. Answer with reply_to and mark interim acknowledgements \

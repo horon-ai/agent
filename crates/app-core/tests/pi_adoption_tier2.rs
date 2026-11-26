@@ -1069,7 +1069,7 @@ async fn a_decision_written_to_disk_by_another_process_releases_the_call() {
 async fn lsp_is_registered_only_when_the_switch_is_on() {
     let _env = TEST_ENV.lock().await;
 
-    let off = IsolatedEnv::new("lsp-off", "profile = \"full\"\n");
+    let off = IsolatedEnv::new("lsp-off", "profile = \"full\"\nlsp = false\n");
     let without = registry().await;
     let names: Vec<String> = without
         .definitions(None)

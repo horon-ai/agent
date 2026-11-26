@@ -5,8 +5,8 @@
 //! groups were written for the sections they cover and only moved, unchanged.
 
 use super::{
-    AmbientConfig, CLIENTLESS_APPROVAL_TOOL, CORE_TOOL_PROFILE, CORE_TOOLS, CustomWebSearchConfig,
-    CustomWebSearchMethod, ToolConfig, WebSearchConfig, WebSearchEngine, config,
+    AmbientConfig, CLIENTLESS_APPROVAL_TOOL, CORE_DISCOVERABLE_TOOLS, CORE_TOOL_PROFILE, CORE_TOOLS,
+    CustomWebSearchConfig, CustomWebSearchMethod, ToolConfig, WebSearchConfig, WebSearchEngine, config,
 };
 
 #[test]
@@ -69,8 +69,8 @@ fn clientless_approval_joins_the_core_allow_list() {
         .expect("core is an allow-list");
     assert_eq!(
         off.len(),
-        CORE_TOOLS.len() + 1,
-        "the default core surface is the kept set plus the dispatcher"
+        CORE_TOOLS.len() + CORE_DISCOVERABLE_TOOLS.len() + 4,
+        "the default core surface is the open set plus irc, the checkpoint pair, and the dispatcher"
     );
     assert!(!off.contains(CLIENTLESS_APPROVAL_TOOL));
 
@@ -84,7 +84,7 @@ fn clientless_approval_joins_the_core_allow_list() {
     );
     assert_eq!(
         on.len(),
-        CORE_TOOLS.len() + 2,
+        CORE_TOOLS.len() + CORE_DISCOVERABLE_TOOLS.len() + 5,
         "exactly one tool joins the core surface"
     );
     assert_eq!(CORE_TOOLS.len(), 18, "CORE_TOOLS itself grows to eighteen");

@@ -79,6 +79,7 @@ mod swarm;
 mod swarm_labels;
 mod swarm_mutation_state;
 mod swarm_persistence;
+pub(crate) mod swarm_tools;
 mod swarm_watchdog;
 mod tool_cancel;
 mod util;

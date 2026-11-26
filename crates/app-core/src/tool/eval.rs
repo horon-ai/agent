@@ -17,9 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-pub(super) const NAME: &str = "eval";
-pub(super) const APPROVAL_REASON: &str =
-    "Python cells run with the agent's OS permissions and require explicit approval";
+pub(crate) const NAME: &str = "eval";
 const MAX_TIMEOUT: u64 = 3600;
 const DEFAULT_TIMEOUT: u64 = 30;
 
@@ -114,6 +112,24 @@ pub(super) fn enabled() -> bool {
     crate::config::config().tools.eval
 }
 
+/// Whether a Python interpreter is reachable on PATH.
+///
+/// A session resolves `eval`'s eager tier from this: its schema is worth its
+/// place in the cached prefix only when a cell can actually start. The scan is
+/// the same PATH walk a cell uses before it runs — metadata reads only, no
+/// process is spawned — and it is cached for the life of the process because
+/// PATH does not change under a running daemon.
+pub(crate) fn interpreter_on_path() -> bool {
+    static FOUND: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        let Some(path) = std::env::var_os("PATH") else {
+            return false;
+        };
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        host::find_python_sync(&cwd, &path).is_ok()
+    });
+    *FOUND
+}
+
 pub(super) async fn working_dir(ctx: &ToolContext) -> Result<PathBuf> {
     if inside_bridge(&ctx.tool_call_id) {
         return Err(ToolRejected("Python tool calls cannot start another Python cell.".into()).into());
@@ -140,7 +156,7 @@ impl Tool for EvalTool {
     }
 
     fn description(&self) -> &str {
-        "Run a Python cell after explicit approval. State is kept in the session until reset, timeout or kernel shutdown. Python runs with the agent's OS permissions."
+        "Run a Python cell; state persists until reset or timeout."
     }
 
     fn parameters_schema(&self) -> Value {

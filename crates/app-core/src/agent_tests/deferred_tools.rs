@@ -330,9 +330,9 @@ async fn late_mcp_announcement_uses_original_names_for_sanitized_aliases() {
     assert!(text.contains("server: yc  tool: hiring.create_job"), "{text}");
 }
 
-/// `swarm`, `todo` and `session_search` are part of the `core` surface, and the
-/// surface still sends only the seven essential schemas plus the dispatcher:
-/// the new tools are listed by name and reached through `toolbox`.
+/// `swarm`, `todo` and `session_search` are part of the `core` surface: `todo`
+/// is called often enough to ride eagerly, while `swarm` and `session_search`
+/// are listed by name and reached through `toolbox`.
 #[tokio::test]
 async fn core_surface_lists_todo_and_session_search() {
     let _guard = crate::storage::lock_test_env();
@@ -340,24 +340,22 @@ async fn core_surface_lists_todo_and_session_search() {
     let mut agent = super::tool_tiers::agent_with_mcp_management_tool().await;
 
     let definitions = agent.tool_definitions().await;
-    for name in ["swarm", "todo", "session_search"] {
+    for (name, listed) in [("swarm", true), ("todo", false), ("session_search", true)] {
         let definition = definitions
             .iter()
             .find(|definition| definition.name == name)
             .unwrap_or_else(|| panic!("{name} must be part of the core surface"));
-        assert!(definition.defer_loading, "{name} is listed, never eager");
+        assert_eq!(definition.defer_loading, listed, "{name}");
     }
-    let eager = eager_names(&definitions);
-    assert_eq!(
-        eager.len(),
-        crate::config::ESSENTIAL_TOOLS.len() + 1,
-        "only the essential tools and the dispatcher stay eager: {eager:?}"
-    );
 
     let listed = agent.listed_tools_section().expect("a core session lists its tools");
-    for name in ["swarm", "todo", "session_search"] {
+    for name in ["swarm", "session_search"] {
         assert!(listed.contains(name), "the index names {name}: {listed}");
     }
+    assert!(
+        !listed.contains("\n- todo: "),
+        "an eager tool is not listed again: {listed}"
+    );
     assert!(
         agent.system_prompt_for_debug().contains(crate::prompt::TODO_HINT),
         "todo is callable, so the prompt carries the hint"
@@ -433,7 +431,8 @@ async fn eval_guidance_follows_session_tool_visibility() {
         ("full", true, "essential", Some(false)),
         ("full", false, "essential", None),
         ("full", true, "off", None),
-        ("core", true, "essential", None),
+        ("core", true, "essential", Some(false)),
+        ("core", false, "essential", None),
     ] {
         let config =
             format!("[tools]\nprofile = '{profile}'\neval = {enabled}\n[tools.load_mode]\neval = '{load_mode}'\n");
@@ -463,7 +462,6 @@ async fn eval_guidance_follows_session_tool_visibility() {
         );
         assert_eq!(system.contains("# Python cells (`eval`)"), expected.is_some());
         if let Some(discoverable) = expected {
-            assert!(system.contains("explicit approval"));
             assert!(system.contains("await tool.read(file_path="));
             assert!(system.contains("64 bridge calls") && system.contains("256 KiB"));
             assert_eq!(system.contains("action: \"run\"`, `tool: \"eval\""), discoverable);

@@ -556,7 +556,7 @@ fn listed_paths_have_no_control_characters() {
 }
 
 #[test]
-fn tool_scope_grant_covers_tool_in_workspace_until_revoked_and_refuses_eval_or_high_urgency() {
+fn tool_scope_grant_covers_tool_in_workspace_until_revoked_and_refuses_high_urgency() {
     let sandbox = Sandbox::new();
     let workspace = sandbox.workspace();
     let other_dir = tempfile::tempdir().expect("other workspace");
@@ -597,8 +597,8 @@ fn tool_scope_grant_covers_tool_in_workspace_until_revoked_and_refuses_eval_or_h
             now,
             7,
         )
-        .is_none(),
-        "eval must never persist an always-allow grant"
+        .is_some(),
+        "a Python cell takes a tool grant exactly like a shell command"
     );
 
     let mut high = request(

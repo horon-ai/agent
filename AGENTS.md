@@ -213,16 +213,18 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   only narrow the policy (`allow_shared_children`, `allowed_mcp_servers`), and a
   `mode` key there is ignored with one warning, because a tenant can write its
   own config (`docs/architecture/HOSTING.md`, `docs/safety/SECURITY.md`).
-- Core tool profile, the default when a launch selects none (18 tools): `bash`, `read`, `write`,
-  `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
-  `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`.
-  `skill_manage` and `mcp` stay registered. A `core` session sends seven of them
-  eagerly (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`)
-  plus `toolbox`, names the other eleven in the system prompt, and the model
-  reaches them through `toolbox` (`docs/runtime/TOOLS.md`). An SDK-driven
-  session keeps `session_search` and `swarm` off unless its `enabled` list names
-  them. `horon-agent acp` is the exception to the default: with no explicit
-  profile it applies `[acp] tool_profile`, which is `acp`.
+- Core tool profile, the default when a launch selects none: every built-in tool
+  this build registers is reachable. The allow-list is `CORE_TOOLS` plus
+  `CORE_DISCOVERABLE_TOOLS` plus `toolbox`, and `irc`, `checkpoint`, and `rewind`
+  join through their own switches. A `core` session sends eleven of them eagerly
+  (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`, `todo`,
+  `bg`, `websearch`, `webfetch`) plus `toolbox`, and `eval` when a Python
+  interpreter is on PATH. It names the rest in the system prompt, and the model
+  reaches them through `toolbox` (`docs/runtime/TOOLS.md`). `skill_manage` and
+  `mcp` stay registered. An SDK-driven session keeps `session_search` and
+  `swarm` off unless its `enabled` list names them. `horon-agent acp` is the
+  exception to the default: with no explicit profile it applies
+  `[acp] tool_profile`, which is `acp`.
 
 ## Repository layout and crate boundaries
 
@@ -264,12 +266,13 @@ Boundaries, each with the gate that enforces it:
 |---|---|---|
 |Tool profile (`--tool-profile`, `HORON_AGENT_TOOL_PROFILE`, `[tools] profile`)|`core`|`full`, `acp`, `minimal`/`lite`, `none`|
 |`[acp] profile`|`standard`|`extended`, `full`|
-|`[tools] redo`, `hashline_edit`|`false`|`true`|
+|`[tools] redo`, `hashline_edit`|`true`|`false` removes the tool|
+|`[tools] ast_tools`, `lsp`, `context_notes`, `managed_skills`, `codemode`|`true`|`false` removes the tool|
 |`[tools] ask_policy`|`recommended`|`error`|
 |`[tools] bash_pty`|`auto`|`off`, `always`|
-|`[tools] irc`|`false`|`true`; `HORON_AGENT_IRC` overrides it for one process|
+|`[tools] irc`, `checkpoint`|`true`|`false` removes the tool; `HORON_AGENT_IRC` overrides `irc` for one process|
 |`[irc] mailbox_cap`, `max_body_bytes`, `wait_max_secs`, `broadcast_concurrency`|`100`, `65536`, `300`, `16`|any value ≥ 1|
-|`[tools] eval`|`false`|`true` with Python 3.10+, a profile that permits `eval`, and explicit cell approval|
+|`[tools] eval`|`true`|`false` removes the tool; a cell needs Python 3.10 or later on PATH and asks for approval exactly like `bash`|
 |`[features] crash_bundles`|`true`|`false`|
 |`[features] turn_recovery`|`conservative`|`aggressive`, `off`|
 |`[features] foreign_rules`, `stream_rules`, `repeat_guard`|`false`|`true`|
@@ -308,15 +311,16 @@ pre-wiki `memory/*.json` files are a migration source only
 directory, not by the caller's path spelling, and every `memory` action and the
 prompt-injection path read and write that store.
 
-Tools outside the core set (memory, irc) stay in the tree but off.
-`irc` is agent-to-agent messaging inside one daemon; `[tools] irc = true` adds
-it to every non-empty allow list, and with the switch off it refuses to run
-even under `full` (`docs/runtime/IRC.md`). Under `full`, the optional tools
-load as deferred definitions behind `toolbox`
+Every built-in tool is reachable by default; a switch set to `false`,
+`[tools] disabled`, or `[tools.load_mode] <name> = "off"` removes one.
+`irc` is agent-to-agent messaging inside one daemon; `[tools] irc = true`, the
+default, adds it to the `core` list (other lists reach it by naming it), and with the switch off it
+refuses to run even under `full` (`docs/runtime/IRC.md`). Under `full`, the
+optional tools load as deferred definitions behind `toolbox`
 (`docs/runtime/TOOLS.md`). `[tools.load_mode]` overrides one tool's tier
-(`essential`, `discoverable`, `off`). `ask = "essential"` sends a listed core
-tool eagerly again, and `toolbox = "off"` turns listing off so all 18 core
-tools are eager. Sessions under `acp`, `minimal`, and `none`, one with an
+(`essential`, `discoverable`, `off`). `ask = "essential"` sends a listed
+tool eagerly again, and `toolbox = "off"` turns listing off so every reachable
+tool is eager. Sessions under `acp`, `minimal`, and `none`, one with an
 explicit `enabled` list, and a `core` session with an SDK `enabled` list send
 every tool they allow eagerly and get no index. Under `full`, an SDK list keeps
 deferring the non-core tools.

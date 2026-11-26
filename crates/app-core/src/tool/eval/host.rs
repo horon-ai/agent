@@ -539,7 +539,7 @@ async fn find_python(cwd: &Path) -> Result<PathBuf> {
         .context("search PATH for Python interpreter")?
 }
 
-fn find_python_sync(cwd: &Path, path: &std::ffi::OsStr) -> Result<PathBuf> {
+pub(super) fn find_python_sync(cwd: &Path, path: &std::ffi::OsStr) -> Result<PathBuf> {
     let suffix = std::env::consts::EXE_SUFFIX;
     let (py3, py): (Cow<'static, str>, Cow<'static, str>) = if suffix.is_empty() {
         (Cow::Borrowed("python3"), Cow::Borrowed("python"))

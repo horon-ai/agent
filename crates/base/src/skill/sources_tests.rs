@@ -509,13 +509,16 @@ fn an_identical_copy_from_another_source_is_one_skill() {
 #[test]
 fn managed_skills_load_only_when_switched_on_and_never_replace_an_authored_skill() {
     let _env_guard = crate::storage::lock_test_env();
-    let sandbox = Sandbox::with_config("");
+    let sandbox = Sandbox::with_config("[tools]\nmanaged_skills = false\n");
     write_skill(&sandbox.agent("skills"), "authored");
     write_skill_with_body(&sandbox.agent("managed-skills"), "authored", "A body the model wrote.");
     write_skill(&sandbox.agent("managed-skills"), "model-written");
 
     let off = SkillRegistry::load_global().expect("load global skills");
-    assert!(off.get("model-written").is_none(), "managed skills are off by default");
+    assert!(
+        off.get("model-written").is_none(),
+        "the switch turned off skips managed skills"
+    );
 
     std::fs::write(
         sandbox.home.path().join("config.toml"),
