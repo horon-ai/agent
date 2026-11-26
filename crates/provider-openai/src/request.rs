@@ -463,6 +463,10 @@ pub fn build_responses_input_with_logger(
                 }
             }
             Role::Assistant => {
+                // Outputs this pass supplies itself (a result recorded before
+                // its call, or the missing-output marker) wait until every
+                // call of the turn is out, so one turn's calls stay one run.
+                let mut turn_outputs: Vec<Value> = Vec::new();
                 for block in &msg.content {
                     match block {
                         ContentBlock::ProviderNative { provider, item } => {
@@ -533,7 +537,7 @@ pub fn build_responses_input_with_logger(
                             }));
 
                             if let Some(output) = pending_outputs.remove(id.as_str()) {
-                                items.push(serde_json::json!({
+                                turn_outputs.push(serde_json::json!({
                                     "type": "function_call_output",
                                     "call_id": sanitize_tool_id(id),
                                     "output": output
@@ -546,7 +550,7 @@ pub fn build_responses_input_with_logger(
                                     open_calls.insert(id.clone());
                                 } else {
                                     injected_missing += 1;
-                                    items.push(serde_json::json!({
+                                    turn_outputs.push(serde_json::json!({
                                         "type": "function_call_output",
                                         "call_id": sanitize_tool_id(id),
                                         "output": missing_output.clone()
@@ -558,6 +562,7 @@ pub fn build_responses_input_with_logger(
                         _ => {}
                     }
                 }
+                items.extend(turn_outputs);
             }
         }
     }
@@ -720,16 +725,35 @@ pub fn build_responses_input_with_logger(
     let mut rewritten_orphans = 0usize;
     let mut skipped_empty_orphans = 0usize;
 
-    for item in normalized {
-        let kind = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        let is_call = matches!(kind, "function_call" | "custom_tool_call");
-        if is_call {
-            let call_id = item.get("call_id").and_then(|v| v.as_str()).map(|v| v.to_string());
+    // Calls the model made in one turn arrive as consecutive call items. They
+    // stay consecutive here, with their outputs following the whole run in
+    // call order: interleaving each output right after its call would read as
+    // one call per turn, which a Chat Completions endpoint receives as several
+    // assistant messages and a session-aware gateway as a rewritten history.
+    let is_call_item = |item: &Value| {
+        matches!(
+            item.get("type").and_then(|v| v.as_str()),
+            Some("function_call") | Some("custom_tool_call")
+        )
+    };
+    let mut normalized = normalized.into_iter().peekable();
+    while let Some(item) = normalized.next() {
+        if is_call_item(&item) {
+            let run_start = ordered.len();
             ordered.push(item);
-            if let Some(call_id) = call_id {
+            while let Some(next) = normalized.next_if(is_call_item) {
+                ordered.push(next);
+            }
+            for index in run_start..ordered.len() {
+                let Some(call_id) = ordered[index]
+                    .get("call_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
                 if let Some(output_item) = output_map.get(&call_id) {
                     ordered.push(output_item.clone());
-                    used_outputs.insert(call_id);
                 } else {
                     injected_ordered += 1;
                     ordered.push(serde_json::json!({
@@ -737,11 +761,12 @@ pub fn build_responses_input_with_logger(
                         "call_id": call_id,
                         "output": missing_output.clone()
                     }));
-                    used_outputs.insert(call_id);
                 }
+                used_outputs.insert(call_id);
             }
             continue;
         }
+        let kind = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         if kind == "function_call_output" {
             if let Some(call_id) = item.get("call_id").and_then(|v| v.as_str())

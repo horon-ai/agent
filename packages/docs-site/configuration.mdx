@@ -49,6 +49,7 @@ input = ["text", "image"]
 | `extra_body` | Top-level JSON object merged into the request body, for backend-only fields. |
 | `requires_api_key` | Set `false` where there is no key, as with a local endpoint. |
 | `prompt_cache_key` | `true` always sends a lineage-stable key, `false` never; empty sends it only for `api.openai.com` and `openrouter.ai` hosts. |
+| `session_header` | HTTP header, such as `x-session-affinity`, that carries the session id on every request, for a gateway that keeps one upstream conversation per session; empty sends none. |
 
 The request URL is `base_url` with the path of the profile's `type` appended,
 and tool definitions travel in the same request body as `tools`. Nothing relays

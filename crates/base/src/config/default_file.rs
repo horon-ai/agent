@@ -440,6 +440,9 @@ tool_profile = "acp"
 #   prompt_cache_key = true                   # lineage-stable cache key: true, false, or omitted
 #                                             # (omitted sends it only to api.openai.com and openrouter.ai;
 #                                             #  the OpenAI wires send it, Anthropic and Gemini do not)
+#   session_header = "x-session-affinity"     # header carrying the session id on every request,
+#                                             # for a gateway that keeps one upstream conversation
+#                                             # per session (omitted sends no session header)
 #   [[providers.myprofile.models]]
 #   id = "my-model"
 # Every model request posts to the endpoint of that profile's `type` with the

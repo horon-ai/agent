@@ -1075,6 +1075,22 @@ async fn stalled_profile_stream(initial_events: &str, first: u32, idle: u32) -> 
         .expect("fixture returns response headers")
 }
 
+#[test]
+fn profile_session_header_must_be_a_valid_header_name() {
+    let config = toml::from_str(
+        "base_url = 'http://127.0.0.1:9/v1'\nauth = 'none'\ndefault_model = 'fixture'\nsession_header = 'bad header'",
+    )
+    .expect("parse profile");
+    let error = external::build_named_openai_compatible_runtime("fixture", &config)
+        .err()
+        .expect("an invalid header name is refused");
+    assert!(
+        error
+            .to_string()
+            .contains("session_header 'bad header' is not a valid HTTP header name")
+    );
+}
+
 #[tokio::test]
 async fn profile_first_event_timeout_ignores_keepalives_and_role_only_chunks() {
     use futures::StreamExt;
