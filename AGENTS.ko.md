@@ -67,7 +67,7 @@
 - 모델 경로는 하나. 에이전트는 `[provider] default_provider`나 `--provider-profile`이 가리키는 프로파일의 엔드포인트로 POST 요청을 보내며, 프로파일의 `type`이 통신 규약을 고른다. 방식은 넷이다. `openai-compatible`(Chat Completions, `POST {base_url}/chat/completions`, 기본값), `openai-responses`(`POST {base_url}/responses`), `anthropic-compatible`(Anthropic Messages, `POST {base_url}/messages`), `gemini-compatible`(Gemini generateContent, `POST {base_url}/models/{model}:streamGenerateContent?alt=sse`). 이미 해당 경로로 끝나는 `base_url`은 그대로 쓰고, `open-router`는 런타임에 네 값을 나열하는 메시지로 거부한다. 프로파일은 `type`, `base_url`, `api_key_env` 또는 `env_file`, `auth`, `default_model`, 선택적 `[[providers.<name>.models]]`를 담는 `[providers.<name>]` 테이블이다. `auth`를 비우면 타입 기본값을 적용한다. 두 OpenAI 계열은 `Authorization: Bearer`, Anthropic은 `x-api-key`, Gemini는 `x-goog-api-key`이며, 명시된 `auth`가 항상 이긴다. 모델 호출은 하나의 공급자 런타임을 거쳐 엔드포인트에 직접 닿는다. 그 경로에 라우터나 공급자 플러그인을 두지 않는다. 외부 도구는 MCP와 사용자 설치 Rust 패키지(`docs/runtime/PACKAGES.ko.md`)로 들어온다. 활성 프로파일이 `roles.image`를 정해 두면 선택 도구 `generate_image`가 같은 프로파일의 같은 기본 URL, 자격 증명, `extra_body`로 `/images/generations`와 `/images/edits`에 POST한다. 이는 런타임이 아니라 통신 규약 옆의 경로이며 `[tools] generate_image = true`가 아니면 꺼져 있다. 따라서 `image` 역할은 모델이 Chat Completions를 말하지 않는 유일한 역할이고, `openai-compatible`이나 `openai-responses` 프로파일만 지원하며, 텍스트 폴백이 없는 유일한 역할이다.
 - 사용자 설치 Rust 패키지가 구현됐다(`docs/runtime/PACKAGES.ko.md`). 확장(extension)은 Rust 실행 파일(`extension.toml`)을 선언하고, 플러그인(plugin)은 하나의 `extension.toml`과 선언된 리소스(`plugin.toml`)를 함께 묶는다. 둘 다 `horon package install|list|verify|disable|remove`나 `$HORON_HOME/packages/inbox/<id>/`(실행 중인 데몬이 조정)를 쓴다. 설치는 동의에 해당한다. `PackageStore`는 선언과 네이티브 타깃을 검증하고 `extension.toml`의 SHA-256을 기록하며, 열린 세션의 다음 턴 경계에서 새 카탈로그 세대를 적용하고, 자식 프로세스를 띄우기 전에 그 SHA-256을 다시 검증한다. 실행 파일 호출, 패키지 MCP 표준 입출력 서버, 관찰자(observer)는 모두 기존 도구 정책과 호스팅 정책 게이트(`crates/base/src/packages/child_gate.rs`)를 거쳐 사용자 OS 계정 아래의 별도 자식 프로세스에서 실행된다. 프로세스 내 플러그인 로딩은 계속 금지하고 고정 요구사항을 지킨다.
 - 호스팅은 `HORON_AGENT_HOSTING_MODE`(`per-user-container` 또는 `shared-worker`)로 선택 활성화한다. 없으면 운영자 본인의 홈을 뜻하며, 다른 값은 둘을 나열한 시작 오류가 된다. 호스팅 프로세스는 `HORON_AGENT_TENANT_ID`를 검증된 감사 라벨과 디렉터리 이름으로만 쓰고 세션 조회 키로 쓰지 않는다. `per-user-container`는 `HORON_HOME`이 `~/.horon`이 아닌 소유자 전용 디렉터리이고, 런타임 디렉터리가 홈 밖의 절대 경로·소유자 전용이며, TCP 게이트웨이가 꺼져 있고, 테넌트 ID가 유효하지 않으면 시작을 거부한다. `shared-worker`는 시작되지만 `HostingPolicy::allows_shared_children()`이 거짓이다. `per-user-container`는 자체 MCP 표준 입출력 서버와 패키지 자식을 유지하고, `shared-worker`는 단일 게이트(`crates/base/src/mcp/hosted.rs`)로 모든 MCP 표준 입출력 서버, 에디터 제공 서버, 풀 연결, 원격 연결을 거부하며 거부당 `HOSTED_POLICY` 감사 기록 하나를 남긴다. 테넌트가 자신의 설정을 쓸 수 있으므로 `config.toml`의 `[hosting]`은 정책을 좁히기만(`allow_shared_children`, `allowed_mcp_servers`) 할 수 있고, 거기 있는 `mode` 키는 경고 하나와 함께 무시된다(`docs/architecture/HOSTING.ko.md`, `docs/safety/SECURITY.ko.md`).
-- 핵심(`core`) 도구 프로필은 실행 시 프로필을 고르지 않았을 때의 기본값(도구 18개)이다. `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`. `skill_manage`와 `mcp`는 등록된 상태를 유지한다. `core` 세션은 일곱 개(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`)와 `toolbox`만 즉시 보내고, 나머지 열한 개는 시스템 프롬프트에 이름만 적어 모델이 `toolbox`로 꺼내 쓰게 한다(`docs/runtime/TOOLS.ko.md`). SDK로 구동하는 세션은 `enabled` 목록에 이름을 넣지 않으면 `session_search`와 `swarm`을 끄고 둔다. `horon-agent acp`는 기본값의 예외로서, 명시적 프로필이 없으면 `[acp] tool_profile`인 `acp`를 적용한다.
+- 핵심(`core`) 도구 프로필은 실행 시 프로필을 고르지 않았을 때의 기본값이며, 이 빌드가 등록하는 내장 도구에 모두 닿는다. 허용 목록은 `CORE_TOOLS`, `CORE_DISCOVERABLE_TOOLS`, `toolbox`이고 `irc`, `checkpoint`, `rewind`는 각자의 스위치로 합류한다. `core` 세션은 열한 개(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`, `todo`, `bg`, `websearch`, `webfetch`)와 `toolbox`, 그리고 `PATH`에 Python 인터프리터가 있으면 `eval`을 즉시 보낸다. 나머지는 시스템 프롬프트에 이름만 적어 모델이 `toolbox`로 꺼내 쓰게 한다(`docs/runtime/TOOLS.ko.md`). `skill_manage`와 `mcp`는 등록된 상태를 유지한다. SDK로 구동하는 세션은 `enabled` 목록에 이름을 넣지 않으면 `session_search`와 `swarm`을 끄고 둔다. `horon-agent acp`는 기본값의 예외로서, 명시적 프로필이 없으면 `[acp] tool_profile`인 `acp`를 적용한다.
 
 ## 저장소 구조와 크레이트 경계
 
@@ -97,12 +97,13 @@
 |---|---|---|
 |도구 프로필(`--tool-profile`, `HORON_AGENT_TOOL_PROFILE`, `[tools] profile`)|`core`|`full`, `acp`, `minimal`/`lite`, `none`|
 |`[acp] profile`|`standard`|`extended`, `full`|
-|`[tools] redo`, `hashline_edit`|`false`|`true`|
+|`[tools] redo`, `hashline_edit`|`true`|`false`면 도구가 빠진다|
+|`[tools] ast_tools`, `lsp`, `context_notes`, `managed_skills`, `codemode`|`true`|`false`면 도구가 빠진다|
 |`[tools] ask_policy`|`recommended`|`error`|
 |`[tools] bash_pty`|`auto`|`off`, `always`|
-|`[tools] irc`|`false`|`true`. `HORON_AGENT_IRC`가 단일 프로세스에 대해 덮어쓴다|
+|`[tools] irc`, `checkpoint`|`true`|`false`면 도구가 빠진다. `HORON_AGENT_IRC`가 단일 프로세스에 대해 `irc`를 덮어쓴다|
 |`[irc] mailbox_cap`, `max_body_bytes`, `wait_max_secs`, `broadcast_concurrency`|`100`, `65536`, `300`, `16`|1 이상의 값|
-|`[tools] eval`|`false`|`true`(Python 3.10+, `eval`을 허용하는 프로필, 명시적 셀 승인 필요)|
+|`[tools] eval`|`true`|`false`면 도구가 빠진다. 셀은 `PATH`에 Python 3.10 이상이 있어야 하고 `bash`와 똑같이 승인을 묻는다|
 |`[features] crash_bundles`|`true`|`false`|
 |`[features] turn_recovery`|`conservative`|`aggressive`, `off`|
 |`[features] foreign_rules`, `stream_rules`, `repeat_guard`|`false`|`true`|
@@ -125,7 +126,7 @@
 
 메모리는 `$HORON_HOME/memory` 아래 사용자별 마크다운 위키(메모리당 마크다운 페이지 하나 + 그 페이지에서 재구축하는 SQLite 색인)에 저장하며, 위키 이전 `memory/*.json` 파일은 마이그레이션 원본으로만 쓴다(`docs/runtime/MEMORY.ko.md`). 프로젝트 메모리는 호출자가 적은 경로 표기가 아니라 정규화된 프로젝트 디렉터리로 키를 매기며, 모든 `memory` 동작과 프롬프트 주입 경로가 이 저장소를 읽고 쓴다.
 
-핵심 세트 밖의 도구(`memory`, `irc`)는 트리 안에 있지만 기본적으로 꺼져 있다. `irc`는 한 데몬 안의 에이전트 간 메시징이며, `[tools] irc = true`를 켜면 비어 있지 않은 모든 허용 목록에 추가되고 스위치가 꺼져 있으면 `full`에서도 실행을 거부한다(`docs/runtime/IRC.ko.md`). `full` 아래에서 선택 도구는 `toolbox` 뒤의 지연 정의로 로드된다(`docs/runtime/TOOLS.ko.md`). `[tools.load_mode]`는 도구 하나의 단계(`essential`, `discoverable`, `off`)를 덮어쓴다. `ask = "essential"`은 목록에 있던 핵심 도구를 다시 즉시 전송하고, `toolbox = "off"`는 목록화를 꺼서 18개 핵심 도구를 모두 즉시 보낸다. `acp`, `minimal`, `none` 세션, 명시적 `enabled` 목록을 가진 세션, 그리고 SDK `enabled` 목록을 가진 `core` 세션은 허용하는 모든 도구를 즉시 보내며 색인을 쓰지 않는다. `full`에서 SDK 목록은 비핵심 도구를 계속 지연 로드한다.
+내장 도구는 기본으로 모두 닿고, 스위치를 `false`로 두거나 `[tools] disabled`, `[tools.load_mode] <이름> = "off"`로 하나씩 뺀다. `irc`는 한 데몬 안의 에이전트 간 메시징이며, 기본값인 `[tools] irc = true`이면 `core` 목록에 추가되고(다른 목록은 이름을 적어야 닿는다) 스위치가 꺼져 있으면 `full`에서도 실행을 거부한다(`docs/runtime/IRC.ko.md`). `full` 아래에서 선택 도구는 `toolbox` 뒤의 지연 정의로 로드된다(`docs/runtime/TOOLS.ko.md`). `[tools.load_mode]`는 도구 하나의 단계(`essential`, `discoverable`, `off`)를 덮어쓴다. `ask = "essential"`은 목록에 있던 도구를 다시 즉시 전송하고, `toolbox = "off"`는 목록화를 꺼서 닿는 도구를 모두 즉시 보낸다. `acp`, `minimal`, `none` 세션, 명시적 `enabled` 목록을 가진 세션, 그리고 SDK `enabled` 목록을 가진 `core` 세션은 허용하는 모든 도구를 즉시 보내며 색인을 쓰지 않는다. `full`에서 SDK 목록은 비핵심 도구를 계속 지연 로드한다.
 
 두 설정은 환경변수로만 제어한다. `HORON_AGENT_JOBS_ARTIFACT_RETENTION`은 기본값 `rotate`로 예산이 차면 가장 오래된 백그라운드 작업 아티팩트를 회수하고, `preserve`는 대신 새 작업 시작을 거부한다. `HORON_AGENT_WORKSPACE_TRUST`는 단일 프로세스에 대해 `trust`나 `deny`를 받는다. 프로젝트 로컬 MCP 설정은 다이제스트가 신뢰되기 전까지 건너뛰며 `--trust-workspace`가 결정을 기록한다(`docs/safety/SECURITY.ko.md`).
 

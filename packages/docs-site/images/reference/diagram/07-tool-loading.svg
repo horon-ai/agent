@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 930" width="960" height="930" role="img" aria-labelledby="t d">
-<title id="t">Tool loading by profile</title><desc id="d">A session resolves one load tier per tool at start and never changes it mid-session. The untouched default core profile is a listing session: it is an allow-list of the eighteen CORE_TOOLS plus toolbox, it sends seven tools eagerly (read, write, edit, apply_patch, bash, ls, agentgrep) together with toolbox, and the other eleven (replace, webfetch, websearch, skill_manage, mcp, monitor, undo, ask, todo, session_search, swarm) become discoverable and are named in an Additional tools section of the system prompt. The full profile without an allow-list makes every non-essential tool discoverable instead, and optional tools sit behind toolbox. acp, minimal, none, an explicit enabled list and an unset profile keep every allowed tool eager and have no index: acp allows twelve tools, minimal allows eight, none allows none. An explicit [tools.load_mode] entry outranks the profile, except that toolbox itself can never be deferred, and an off entry removes the tool. toolbox = "off" or a disabled entry turns listing mode off and puts all eighteen core tools back on the eager surface. The irc tool sits outside the core set and joins a non-empty allow-list when [tools] irc = true. The eleven listed tool names come from the difference between CORE_TOOLS and ESSENTIAL_TOOLS in crates/base/src/config.rs. Which tier an operator's own profile ends up in when several switches disagree is inferred from ToolLoadTiers::tier.</desc>
+<title id="t">Tool loading by profile</title><desc id="d">A session resolves one load tier per tool at start and never changes it mid-session. The untouched default core profile is a listing session that reaches every built-in tool: its allow-list is CORE_TOOLS plus CORE_DISCOVERABLE_TOOLS plus toolbox, with irc, checkpoint and rewind joining through their switches. It sends eleven tools eagerly (read, write, edit, apply_patch, bash, ls, agentgrep, todo, bg, websearch, webfetch) together with toolbox, and eval as well when a Python interpreter is on PATH; every other reachable tool becomes discoverable and is named in an Additional tools section of the system prompt. The full profile without an allow-list makes every non-essential tool discoverable instead, and optional tools sit behind toolbox. acp, minimal, none, an explicit enabled list and an unset profile keep every allowed tool eager and have no index: acp allows twelve tools, minimal allows eight, none allows none. An explicit [tools.load_mode] entry outranks the profile, except that toolbox itself can never be deferred, and an off entry removes the tool. toolbox = "off" or a disabled entry turns listing mode off and puts every reachable tool back on the eager surface. A switch set to false removes its tool. The listed tool names come from CORE_TOOLS, CORE_DISCOVERABLE_TOOLS and ESSENTIAL_TOOLS in crates/base/src/config.rs. Which tier an operator's own profile ends up in when several switches disagree is inferred from ToolLoadTiers::tier.</desc>
 <style>
 :root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
 @media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
@@ -13,10 +13,10 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 
 <rect x="30" y="48" width="176" height="196" rx="10" fill="var(--panel)" stroke="var(--line)"/>
 <text x="46" y="72" font-size="12.5" class="mono" font-weight="600">core (default)</text>
-<text x="46" y="94" font-size="11.5">allow: 18 + toolbox</text>
-<text x="46" y="112" font-size="11.5">eager: 7 + toolbox</text>
+<text x="46" y="94" font-size="11.5">allow: every built-in</text>
+<text x="46" y="112" font-size="11.5">eager: 11 + toolbox</text>
 <text x="46" y="134" font-size="11" class="m">listing session</text>
-<text x="46" y="150" font-size="11" class="m">11 indexed, no schema</text>
+<text x="46" y="150" font-size="11" class="m">the rest indexed</text>
 <text x="46" y="172" font-size="11" class="m">two wire forms:</text>
 <text x="46" y="188" font-size="11" class="m">toolbox list / describe /</text>
 <text x="46" y="204" font-size="11" class="m">run</text>
@@ -29,7 +29,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="238" y="134" font-size="11" class="m">no allow-list: every</text>
 <text x="238" y="150" font-size="11" class="m">other tool deferred</text>
 <text x="238" y="172" font-size="11" class="m">behind toolbox, and</text>
-<text x="238" y="188" font-size="11" class="m">the 7 + toolbox stay</text>
+<text x="238" y="188" font-size="11" class="m">the 11 + toolbox stay</text>
 <text x="238" y="204" font-size="11" class="m">eager</text>
 <text x="238" y="220" font-size="10.5" class="m">irc joins a full session</text>
 <text x="238" y="235" font-size="10.5" class="m">eval requires explicit opt-in</text>
@@ -74,25 +74,25 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="30" y="404" font-size="13" class="m">2. Inside one listing core session</text>
 
 <rect x="30" y="420" width="286" height="212" rx="10" fill="var(--panel)" stroke="var(--line)"/>
-<text x="46" y="442" font-size="12.5" font-weight="600">eager schemas (8)</text>
+<text x="46" y="442" font-size="12.5" font-weight="600">eager schemas (12, 13 with eval)</text>
 <text x="46" y="462" font-size="11" class="m">the schemas travel in the cached prefix</text>
 <rect x="44" y="472" width="258" height="30" rx="7" fill="var(--bg)" stroke="var(--line)"/>
-<text x="58" y="491" font-size="11" class="mono">read write edit apply_patch</text>
+<text x="58" y="491" font-size="11" class="mono">read write edit apply_patch bash</text>
 <rect x="44" y="508" width="258" height="30" rx="7" fill="var(--bg)" stroke="var(--line)"/>
-<text x="58" y="527" font-size="11" class="mono">bash ls agentgrep toolbox</text>
-<text x="46" y="558" font-size="10.5" class="m">these seven are ESSENTIAL_TOOLS in every</text>
-<text x="46" y="572" font-size="10.5" class="m">profile; toolbox is pinned essential so the</text>
+<text x="58" y="527" font-size="11" class="mono">ls agentgrep todo bg websearch</text>
+<text x="46" y="558" font-size="10.5" class="m">plus webfetch and toolbox; eval joins when</text>
+<text x="46" y="572" font-size="10.5" class="m">Python is on PATH; toolbox is pinned so the</text>
 <text x="46" y="586" font-size="10.5" class="m">window onto the rest is never itself deferred</text>
 <text x="46" y="606" font-size="10.5" class="m">mcp_search and mcp_call are eager whenever the</text>
 <text x="46" y="620" font-size="10.5" class="m">session has an MCP server; with none they are indexed</text>
 
 <rect x="330" y="420" width="300" height="200" rx="10" fill="var(--panel)" stroke="var(--line)"/>
-<text x="346" y="442" font-size="12.5" font-weight="600">named in the prompt (11)</text>
+<text x="346" y="442" font-size="12.5" font-weight="600">named in the prompt (the rest)</text>
 <text x="346" y="462" font-size="11" class="m">one row each, first sentence, 60 characters</text>
 <rect x="344" y="472" width="272" height="88" rx="7" fill="var(--bg)" stroke="var(--line)"/>
-<text x="358" y="489" font-size="11" class="mono">replace webfetch websearch</text>
-<text x="358" y="505" font-size="11" class="mono">skill_manage mcp monitor undo</text>
-<text x="358" y="521" font-size="11" class="mono">ask todo session_search swarm</text>
+<text x="358" y="489" font-size="11" class="mono">replace skill_manage mcp monitor</text>
+<text x="358" y="505" font-size="11" class="mono">undo ask session_search swarm</text>
+<text x="358" y="521" font-size="11" class="mono">batch memory goal lsp redo ...</text>
 <text x="358" y="543" font-size="10.5" class="m">a # Additional tools section follows one</text>
 <text x="358" y="556" font-size="10.5" class="m">guidance sentence about toolbox run</text>
 <text x="346" y="580" font-size="10.5" class="m">rows are filtered like toolbox list: no mcp__*</text>
@@ -121,8 +121,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 
 <rect x="490" y="668" width="440" height="92" rx="10" fill="var(--panel)" stroke="var(--line)"/>
 <text x="506" y="690" font-size="12" font-weight="600">listing off, and the irc switch</text>
-<text x="506" y="710" font-size="11" class="m">toolbox removed: all 18 core tools come back eager, none stranded</text>
-<text x="506" y="726" font-size="11" class="m">[tools] irc = true joins a non-empty allow-list; off refuses execution</text>
+<text x="506" y="710" font-size="11" class="m">toolbox removed: every reachable tool comes back eager</text>
+<text x="506" y="726" font-size="11" class="m">[tools] irc = true by default; false removes it from the lists</text>
 <text x="506" y="742" font-size="11" class="m">tiers are resolved once at start; a reload never moves a tool</text>
 
 <text x="30" y="800" font-size="13" class="m">4. Tools a package declares</text>
