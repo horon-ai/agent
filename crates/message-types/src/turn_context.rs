@@ -15,6 +15,12 @@ const TURN_CONTEXT_HEADING: &str = "# Turn context";
 
 const SYSTEM_REMINDER_OPEN: &str = "<system-reminder>\n";
 
+/// Everything a turn-context reminder carries before its body.
+const TURN_CONTEXT_OPEN: &str = "<system-reminder>\n# Turn context\nThis replaces any earlier turn context.\n\n";
+
+/// Everything a turn-context reminder carries after its body.
+const TURN_CONTEXT_CLOSE: &str = "\n</system-reminder>";
+
 /// The heading line of a `<system-reminder>` text: its first line inside the tag.
 fn reminder_heading(text: &str) -> Option<&str> {
     let body = text.strip_prefix(SYSTEM_REMINDER_OPEN)?;
@@ -49,16 +55,26 @@ pub fn reminder_update(messages: &[Message], reminder: &str) -> Option<Message> 
 /// context, so the model does not keep acting on a stale one.
 pub fn turn_context_update(messages: &[Message], system_dynamic: &str) -> Option<Message> {
     let body = system_dynamic.trim();
-    if body.is_empty() && latest_reminder(messages, TURN_CONTEXT_HEADING).is_none() {
+    let latest = latest_reminder(messages, TURN_CONTEXT_HEADING);
+    if body.is_empty() && latest.is_none() {
         return None;
     }
     let body = if body.is_empty() { "(none)" } else { body };
-    reminder_update(
-        messages,
-        &format!(
-            "{SYSTEM_REMINDER_OPEN}{TURN_CONTEXT_HEADING}\nThis replaces any earlier turn context.\n\n{body}\n</system-reminder>"
-        ),
-    )
+    // Compared in place: an unchanged context, the common case, is answered
+    // without building the reminder it would have sent.
+    let unchanged = latest.is_some_and(|text| {
+        text.strip_prefix(TURN_CONTEXT_OPEN)
+            .and_then(|rest| rest.strip_suffix(TURN_CONTEXT_CLOSE))
+            == Some(body)
+    });
+    if unchanged {
+        return None;
+    }
+    let mut reminder = String::with_capacity(TURN_CONTEXT_OPEN.len() + body.len() + TURN_CONTEXT_CLOSE.len());
+    reminder.push_str(TURN_CONTEXT_OPEN);
+    reminder.push_str(body);
+    reminder.push_str(TURN_CONTEXT_CLOSE);
+    Some(Message::user(&reminder))
 }
 
 #[cfg(test)]
