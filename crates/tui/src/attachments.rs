@@ -356,7 +356,9 @@ fn rule(open: &'static str, close: &'static str, label: &str, edge: Style) -> Ve
 /// The image file a paste names, when the pasted text is one path to one.
 ///
 /// A file dropped onto a terminal arrives as its path: quoted, escaped with
-/// backslashes, or as a `file://` URL depending on the terminal.
+/// backslashes, or as a `file://` URL depending on the terminal. Only a
+/// backslash before a character a shell would read specially is an escape;
+/// any other one is a Windows path separator and stays.
 pub fn image_path(text: &str) -> Option<PathBuf> {
     let trimmed = text.trim();
     if trimmed.is_empty() || trimmed.contains('\n') {
@@ -369,17 +371,26 @@ pub fn image_path(text: &str) -> Option<PathBuf> {
         .unwrap_or(trimmed);
     let unquoted = unquoted.strip_prefix("file://").unwrap_or(unquoted);
     let mut path = String::with_capacity(unquoted.len());
-    let mut characters = unquoted.chars();
+    let mut characters = unquoted.chars().peekable();
     while let Some(character) = characters.next() {
-        match character {
-            '\\' => path.extend(characters.next()),
-            _ => path.push(character),
+        if character == '\\'
+            && let Some(&escaped) = characters.peek()
+            && SHELL_ESCAPED.contains(escaped)
+        {
+            path.push(escaped);
+            characters.next();
+        } else {
+            path.push(character);
         }
     }
     let path = PathBuf::from(path.replace("%20", " "));
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     (IMAGE_EXTENSIONS.contains(&extension.as_str()) && path.is_file()).then_some(path)
 }
+
+/// Characters a shell-escaped drop puts a backslash before. A backslash itself
+/// is left out, so `\\server\share` and `C:\dir` keep every separator.
+const SHELL_ESCAPED: &str = " '\"()[]{}&;$!*?#~=%<>|`,";
 
 /// Read an image file for the draft.
 pub fn read_image_file(path: &Path) -> Result<Image, ImageError> {
