@@ -99,7 +99,7 @@ FULL_FALLBACK_PATTERNS = (
     "Cargo.lock",
     "rust-toolchain.toml",
     ".cargo/*",
-    "examples/packages/*",
+    "tests/fixtures/package-example/*",
 )
 
 

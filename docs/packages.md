@@ -31,4 +31,4 @@ A folder dropped into `<home>/packages/inbox/<id>/` is installed by a running da
 
 ## Writing one
 
-Use the author SDK crate `horon-agent-extension-sdk`; `examples/packages/example` in the source repository is a complete package. The protocol, targets, signing and limits are in the developer reference at https://agent.horon.ai/reference/runtime/packages.
+Use the author SDK crate `horon-agent-extension-sdk`; `tests/fixtures/package-example` in the source repository is a complete package. The protocol, targets, signing and limits are in the developer reference at https://agent.horon.ai/reference/runtime/packages.

@@ -57,7 +57,7 @@ serde_json = "1"
 프로그램은 핸들러 하나와 호출 하나다. `main`은 호스트가 첫 인자로 넘긴 패키지 루트를
 읽고, 선언을 적재하고, 코드와 선언이 같은 표면을 이름 짓는지 확인한 뒤 stdio로
 서비스한다. 예제의 도구, 실행형 명령, 사건 관찰자는
-[src/main.rs](https://github.com/horon-ai/agent/blob/dev/examples/packages/example/src/main.rs)에 있다.
+[src/main.rs](https://github.com/horon-ai/agent/blob/dev/tests/fixtures/package-example/src/main.rs)에 있다.
 
 ```rust
 use std::process::ExitCode;
@@ -168,7 +168,7 @@ package/                     플러그인 루트
 ```sh
 cargo build --locked --release -p horon-package-example --target aarch64-apple-darwin
 mkdir -p package/bin/aarch64-apple-darwin
-cp examples/packages/example/layouts/extension.toml package/
+cp tests/fixtures/package-example/layouts/extension.toml package/
 cp target/aarch64-apple-darwin/release/horon-package-example package/bin/aarch64-apple-darwin/
 ```
 
@@ -177,8 +177,8 @@ cp target/aarch64-apple-darwin/release/horon-package-example package/bin/aarch64
 ```sh
 mkdir -p plugin
 cp -R package plugin/extension
-cp examples/packages/example/layouts/plugin.toml plugin/
-cp -R examples/packages/example/layouts/resources plugin/
+cp tests/fixtures/package-example/layouts/plugin.toml plugin/
+cp -R tests/fixtures/package-example/layouts/resources plugin/
 ```
 
 설치기는 호스트 대상만이 아니라 선언한 모든 대상을 검사하므로, 준비한 패키지는 위 표의
@@ -296,7 +296,7 @@ Review $1 and report what you find.
 
 ## 예제
 
-`examples/packages/example`이 예제다. 도구(`greet`), 실행형 명령(`hello`),
+`tests/fixtures/package-example`이 예제다. 도구(`greet`), 실행형 명령(`hello`),
 Markdown 명령(`greeting`), `turn.start`와 `turn.end` 관찰자, 두 레이아웃의 플러그인
 자원을 담는다. 시험은 실제 파이프 위에서 레이아웃마다 빌드된 바이너리를 시작한다.
 
