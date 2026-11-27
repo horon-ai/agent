@@ -44,7 +44,11 @@ fn created_ms(session_id: &str) -> Option<u64> {
     let rest = session_id.strip_prefix("session_")?;
     let (head, _random) = rest.rsplit_once('_')?;
     let (_name, millis) = head.rsplit_once('_')?;
-    millis.parse::<u64>().ok().filter(|millis| *millis < 1 << 48)
+    // An id whose time field is not a 48-bit number keeps the digest there.
+    match millis.parse::<u64>() {
+        Ok(millis) if millis < 1 << 48 => Some(millis),
+        Ok(_) | Err(_) => None,
+    }
 }
 
 fn is_uuid(value: &str) -> bool {

@@ -35,7 +35,9 @@ const MIN_TEXT_COLUMNS: usize = 3;
 /// up to this wide pads every row without allocating.
 const PADDING: &str = match std::str::from_utf8(&[b' '; 512]) {
     Ok(spaces) => spaces,
-    Err(_) => panic!("spaces are UTF-8"),
+    // Unreachable: ASCII spaces are UTF-8. An empty string would only send
+    // every row to the allocating fallback below.
+    Err(_) => "",
 };
 
 /// `columns` blank columns, borrowed from [`PADDING`] whenever they fit in it.
