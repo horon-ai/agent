@@ -434,11 +434,17 @@ async fn request_snapshot_reuse() {
         assert_case_effects(case, &streaming_payloads[0]);
 
         let cache_event = cache_event.unwrap_or_else(|| panic!("{}: no cache request event", case.name));
-        let signature_messages = if case.timestamps {
+        let mut signature_messages = if case.timestamps {
             Message::with_timestamps(&transcript)
         } else {
             transcript.clone()
         };
+        if case.memory {
+            // A persisted memory summary is stored as it is sent, so the next
+            // request starts with it and the signature covers it as well.
+            let memory = streaming_payloads[0].last().expect("the request carries messages");
+            signature_messages.push(memory.clone());
+        }
         let baseline_event = kv_cache_request_event(&signature_messages, &[], "", &[]);
         assert_eq!(
             transcript_cache_fields(&cache_event),

@@ -135,13 +135,16 @@ fn primary(input: &str) -> Option<(&'static str, String)> {
     if input.trim().is_empty() {
         return None;
     }
-    let found = if let Ok(serde_json::Value::Object(fields)) = serde_json::from_str::<serde_json::Value>(input) {
-        PRIMARY_KEYS.iter().find_map(|key| match fields.get(*key) {
-            Some(serde_json::Value::String(value)) => Some((*key, value.clone())),
-            Some(serde_json::Value::Number(_) | serde_json::Value::Bool(_) | serde_json::Value::Null)
-            | Some(serde_json::Value::Array(_) | serde_json::Value::Object(_))
-            | None => None,
-        })
+    let found = if let Ok(serde_json::Value::Object(mut fields)) = serde_json::from_str::<serde_json::Value>(input) {
+        // The parsed map is dropped here, so the value is moved out of it
+        // rather than copied.
+        PRIMARY_KEYS
+            .iter()
+            .find(|key| matches!(fields.get(**key), Some(serde_json::Value::String(_))))
+            .and_then(|key| match fields.remove(*key) {
+                Some(serde_json::Value::String(value)) => Some((*key, value)),
+                _ => None,
+            })
     } else {
         PRIMARY_KEYS
             .iter()
@@ -448,7 +451,12 @@ impl Card {
             spans.push(Span::raw(" "));
         }
         let fill = self.width.saturating_sub(used) / line.width().max(1);
-        spans.push(Span::styled(format!("{}{close}", line.repeat(fill)), self.edge));
+        let mut closing = String::with_capacity(line.len() * fill + close.len());
+        for _ in 0..fill {
+            closing.push_str(line);
+        }
+        closing.push_str(close);
+        spans.push(Span::styled(closing, self.edge));
         Indented::plain(Line::from(spans))
     }
 }

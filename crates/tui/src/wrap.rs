@@ -31,6 +31,23 @@ type Cells = Vec<Cell>;
 /// it gives way instead: the alignment is worth less than the words.
 const MIN_TEXT_COLUMNS: usize = 3;
 
+/// Blank columns a boxed row borrows its right-hand padding from, so a pane
+/// up to this wide pads every row without allocating.
+const PADDING: &str = match std::str::from_utf8(&[b' '; 512]) {
+    Ok(spaces) => spaces,
+    // Unreachable: ASCII spaces are UTF-8. An empty string would only send
+    // every row to the allocating fallback below.
+    Err(_) => "",
+};
+
+/// `columns` blank columns, borrowed from [`PADDING`] whenever they fit in it.
+fn padding(columns: usize) -> Span<'static> {
+    match PADDING.get(..columns) {
+        Some(spaces) => Span::raw(spaces),
+        None => Span::raw(" ".repeat(columns)),
+    }
+}
+
 #[cfg(test)]
 mod built {
     use std::cell::Cell;
@@ -87,7 +104,7 @@ impl Sides {
         spans.push(Span::styled(self.edge, self.style));
         spans.push(Span::raw(" "));
         spans.extend(row.spans);
-        spans.push(Span::raw(" ".repeat(inner.saturating_sub(used) + 1)));
+        spans.push(padding(inner.saturating_sub(used) + 1));
         spans.push(Span::styled(self.edge, self.style));
         Line {
             style: row.style,
