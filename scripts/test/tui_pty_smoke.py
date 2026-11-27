@@ -104,11 +104,12 @@ APPROVAL_PROMPT = "approval needed"
 # The client draws a tool call as its name and status, not its output, so the
 # approved retry is proven by the status line plus the file the command writes
 # (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
-# The status line draws `provider/model` from `ApiEvent::ModelInfo`, which the
-# harness sends over the session event stream once the bridge is serving this
-# client, so seeing it means the client is past its first frame and talking to
+# The status line draws the model's own name (without its provider) from
+# `ApiEvent::ModelInfo`, which the harness sends over the session event stream
+# once the bridge is serving this client, so seeing it, followed by the next
+# segment's separator, means the client is past its first frame and talking to
 # a live bridge.
-SESSION_READY = "mock/mock-model"
+SESSION_READY = "mock-model ·"
 # `Preset::Default` places `Status` before `Model` separated by `" · "`
 # (`SymbolPreset::Unicode`), so an idle turn at 120x40 renders this prefix on
 # the live status row on both POSIX and Windows.
