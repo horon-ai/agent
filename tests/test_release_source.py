@@ -143,9 +143,18 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         gh = directory / "gh"
         gh.write_text('#!/bin/sh\n[ "${GH_FAIL:-0}" = 0 ] || exit 1\nif [ "$2" = view ]; then printf "%s" "$GH_DRAFT"; else printf "%s" "$GH_RELEASES"; fi\n')
         gh.chmod(0o755)
+        # The published list includes prereleases, so the guard must order them
+        # by semver rather than crash on the suffix: an older alpha that sorts
+        # below the requested tag is fine, and anything above it is a downgrade.
         for draft, releases, fail, succeeds in (("true", [], "0", True), ("false", [], "0", False),
                  ("true", [{"tagName": "v0.97.0"}], "0", False),
                  ("true", [{"tagName": "v0.95.0"}, {"tagName": "v0.96.0"}], "0", True),
+                 ("true", [{"tagName": "v0.96.0-alpha"}], "0", True),
+                 ("true", [{"tagName": "v0.96.0-alpha.1"}, {"tagName": "v0.96.0-alpha.2"}], "0", True),
+                 ("true", [{"tagName": "v0.96.0"}, {"tagName": "v0.96.0-alpha.9"}], "0", True),
+                 # An alpha that opened the next line never blocks a stable
+                 # patch of the current one.
+                 ("true", [{"tagName": "v0.95.0"}, {"tagName": "v0.97.0-alpha"}], "0", True),
                  ("true", [], "1", False)):
             with self.subTest(draft=draft, releases=releases, fail=fail):
                 env = dict(os.environ, PATH=f"{directory}:{os.environ['PATH']}", GH_DRAFT=draft,
@@ -153,6 +162,49 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
                 result = subprocess.run(["python3", str(SCRIPT), "--check-public-state", "v0.96.0"],
                                         cwd=self.directory, env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, succeeds, result.stderr)
+
+    def test_public_state_refuses_an_alpha_a_newer_release_already_passed(self):
+        # `v0.2.0-alpha` is below `v0.2.0` and below `v0.2.0-alpha.1`, so
+        # publishing it after either one is a downgrade the guard must refuse.
+        directory = self.directory / "commands-alpha"
+        directory.mkdir()
+        gh = directory / "gh"
+        gh.write_text('#!/bin/sh\nif [ "$2" = view ]; then printf "true"; else printf "%s" "$GH_RELEASES"; fi\n')
+        gh.chmod(0o755)
+        for tag, releases, succeeds in (
+                ("v0.2.0-alpha", [{"tagName": "v0.1.24"}], True),
+                ("v0.2.0-alpha.1", [{"tagName": "v0.2.0-alpha"}], True),
+                ("v0.2.0-alpha", [{"tagName": "v0.2.0-alpha.1"}], False),
+                ("v0.2.0-alpha", [{"tagName": "v0.2.0"}], False),
+                ("v0.2.0-alpha.1", [{"tagName": "v0.2.1-alpha"}], False)):
+            with self.subTest(tag=tag, releases=releases):
+                env = dict(os.environ, PATH=f"{directory}:{os.environ['PATH']}",
+                           GH_RELEASES=json.dumps(releases))
+                result = subprocess.run(["python3", str(SCRIPT), "--check-public-state", tag],
+                                        cwd=self.directory, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, succeeds, result.stderr)
+
+    def test_a_prerelease_publishes_without_moving_latest(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        # The tag shape admits a suffix and refuses build metadata.
+        self.assertIn(
+            "[[ \"$RELEASE_TAG\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z]+(\\.[0-9A-Za-z]+)*)?$ ]]",
+            workflow)
+        # The draft carries the prerelease bit before publication, so the
+        # pre-publication verifier sees the flag the tag names.
+        draft = workflow.split("      - name: Create draft release if missing\n", 1)[1]
+        draft = draft.split("\n  build-linux-macos:", 1)[0]
+        self.assertIn("prerelease=(--prerelease)", draft)
+        # Publication must never use a bare `--latest`: the API rejects
+        # `make_latest` on a prerelease, and `Latest` has to stay stable.
+        publish = workflow.split("      - name: Publish completed release\n", 1)[1]
+        publish = publish.split("      - name: Verify public assets", 1)[0]
+        self.assertEqual(publish.count("--draft=false --prerelease --latest=false\n"), 1)
+        self.assertEqual(publish.count("--draft=false --latest\n"), 1)
+        # An alpha does not deliver `horon-agent update`, so it closes nothing.
+        self.assertIn(
+            "if: github.event_name != 'workflow_dispatch' && needs.create-release.outputs.prerelease != 'true'",
+            workflow)
 
     def test_windows_signing_predicate(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
@@ -338,6 +390,61 @@ class PrepareSourceTests(unittest.TestCase):
         self.assertIn(b"\r\n", (self.repo / "Cargo.toml").read_bytes())
         result = self.run_prepare()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class PrereleasePreparationTests(unittest.TestCase):
+    """A prerelease tag prepares a build from a synthetic repository.
+
+    Built here rather than from the archived history so the rule runs in every
+    clone: the alpha shares its commit with the stable release it precedes, and
+    the commit's `Cargo.toml` still reads the previous line.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir=os.environ.get("HORON_AGENT_SCRATCH_DIR"))
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name) / "repo"
+        self.repo.mkdir()
+        for helper in HELPERS:
+            path = self.repo / helper
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("#!/bin/sh\nexit 0\n")
+            path.chmod(0o755)
+        (self.repo / "Cargo.toml").write_text(
+            '[package]\nname = "horon-agent"\nversion = "0.1.0"\nedition = "2024"\n')
+        for args in (("init", "-q", "-b", "main"), ("config", "user.name", "Fixture"),
+                     ("config", "user.email", "fixture@example.invalid"),
+                     ("config", "tag.gpgsign", "false"), ("config", "commit.gpgsign", "false")):
+            self.git(*args)
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "release source")
+        self.sha = self.git("rev-parse", "HEAD")
+
+    def git(self, *args):
+        return subprocess.check_output(["git", "-C", str(self.repo), *args],
+                                       stderr=subprocess.PIPE).decode().strip()
+
+    def prepare(self, tag):
+        self.git("tag", tag)
+        return subprocess.run(["python3", str(SCRIPT), tag, self.sha], cwd=self.repo,
+                              capture_output=True, text=True)
+
+    def test_an_alpha_prepares_the_commit_that_still_names_the_previous_line(self):
+        result = self.prepare("v0.2.0-alpha")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads((self.repo / "release-provenance.json").read_text())
+        self.assertEqual(data["tag"], "v0.2.0-alpha")
+        self.assertEqual(data["tag_commit"], self.sha)
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.sha)
+
+    def test_a_later_alpha_of_the_same_series_prepares(self):
+        self.assertEqual(self.prepare("v0.2.0-alpha.1").returncode, 0)
+
+    def test_an_alpha_that_skips_a_line_is_refused(self):
+        # Only the next minor at patch 0 may open a line without a Cargo bump.
+        for tag in ("v0.2.1-alpha", "v0.3.0-alpha", "v1.0.0-alpha", "v0.2.0+build"):
+            with self.subTest(tag=tag):
+                self.assertNotEqual(self.prepare(tag).returncode, 0)
 
 
 if __name__ == "__main__":

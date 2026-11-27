@@ -15,7 +15,7 @@
 |컨테이너 이미지|`scripts/release/Containerfile`|헤드리스 모드의 데몬|`release-tag.yml`이 `ghcr.io/horon-ai/agent`로 푸시한다|
 |호스티드 테넌트별 이미지|`scripts/hosting/Containerfile`|`/data` 홈 볼륨을 가진 고객당 1 컨테이너|같은 릴리스 아카이브로 빌드한다. 공개 배포하지 않으며 컨트롤 플레인이 시작한다(`packages/docs-site/ko/reference/architecture/hosting.mdx`)|
 
-- **하나의 릴리스.** 두 바이너리는 같은 태그 커밋(`vMAJOR.MINOR.PATCH`)에서 같은 `release.yml` 실행으로 빌드되고, `install-release`가 둘을 `builds/versions/<version>/` 한 디렉터리에 배치해 한 단위로 활성화한다. TUI 전용 릴리스나 채널은 없다. 버전 문자열은 서로 다르다. `horon-agent --version`은 태그(`crates/build-meta`)에서, `horon-tui --version`은 `crates/tui` 패키지 버전에서 온다. npm 버전은 앞의 `v`를 뺀 태그다(`packages/docs-site/ko/reference/release/npm.mdx`).
+- **하나의 릴리스.** 두 바이너리는 같은 태그 커밋(`vMAJOR.MINOR.PATCH`, GitHub 프리릴리스용 `v0.2.0-alpha.1` 같은 `-PRERELEASE` 태그 포함)에서 같은 `release.yml` 실행으로 빌드되고, `install-release`가 둘을 `builds/versions/<version>/` 한 디렉터리에 배치해 한 단위로 활성화한다. TUI 전용 릴리스나 채널은 없다. 버전 문자열은 서로 다르다. `horon-agent --version`은 태그(`crates/build-meta`)에서, `horon-tui --version`은 `crates/tui` 패키지 버전에서 온다. npm 버전은 앞의 `v`를 뺀 태그다(`packages/docs-site/ko/reference/release/npm.mdx`).
 - **용어.** "헤드리스(headless)"는 모드 이름일 뿐 다른 뜻은 없다. 패키지, 바이너리, 엔진, 제품 자체를 "headless"라 부르지 말고 "에이전트 바이너리 `horon-agent`"와 "TUI 바이너리 `horon-tui`"라고 쓴다. 클라이언트가 붙지 않은 세션(swarm 워커, ambient 재개)은 *무인 세션(unattended session)*이라 부른다. 아직 `headless`가 남은 코드 식별자, 파일 이름, 설정 값(`check_headless_graph.py`, `is_headless`, `spawn_mode = "headless"`)은 별도 승인을 받아 이름을 바꾸기 전까지 그대로 둔다.
 
 ## 고정 요구사항

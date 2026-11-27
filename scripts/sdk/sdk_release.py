@@ -21,6 +21,7 @@ Commands, each one called by the workflow, `ci.yml` or
 `scripts/sdk/publish_preflight.sh`:
 
   tag-version TAG             print the SDK version a release tag names
+  dist-tag TAG_OR_VERSION     print the npm dist-tag it publishes under
   check-committed             assert the committed SDK version and pins agree
   stamp VERSION               write VERSION into the SDK manifest (runner only)
   check-packages DIR VERSION  assert the seven prepared packages agree
@@ -51,6 +52,7 @@ from release_npm_version import (  # noqa: E402  (path-dependent import)
     FIXTURE_VERSION,
     MANIFEST_PLATFORM,
     SEMVER,
+    dist_tag,
     tag_version,
 )
 
@@ -240,6 +242,9 @@ def main(argv: list[str] | None = None) -> int:
     tag = commands.add_parser("tag-version", help="print the SDK version a release tag names")
     tag.add_argument("tag")
 
+    dist = commands.add_parser("dist-tag", help="print the npm dist-tag the release publishes under")
+    dist.add_argument("tag_or_version")
+
     committed = commands.add_parser("check-committed", help="assert the committed SDK manifest agrees")
     committed.add_argument("--sdk", type=Path, default=SDK_MANIFEST)
     committed.add_argument("--cargo", type=Path, default=CARGO_MANIFEST)
@@ -267,6 +272,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "tag-version":
         try:
             print(tag_version(args.tag))
+        except ValueError as error:
+            print(f"::error::{error}" if _in_actions() else error, file=sys.stderr)
+            return 1
+        return 0
+
+    if args.command == "dist-tag":
+        try:
+            print(dist_tag(args.tag_or_version))
         except ValueError as error:
             print(f"::error::{error}" if _in_actions() else error, file=sys.stderr)
             return 1

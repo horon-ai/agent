@@ -33,14 +33,42 @@ repo_slug() {
 REPO="$(repo_slug)"
 
 # Without an explicit previous tag, use the nearest ancestor tag, falling back
-# to the next lower version tag in the tag list.
+# to the highest tagged version below this one.
 if [[ -z "$PREV_TAG" ]]; then
     if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
         PREV_TAG="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
     fi
     if [[ -z "$PREV_TAG" ]]; then
-        PREV_TAG="$(git tag -l 'v*' --sort=-v:refname \
-            | grep -A1 -Fx "$TAG" | tail -n +2 | head -1 || true)"
+        # `--sort=-v:refname` ranks every tag in the repository, and a
+        # prerelease series needs semver order rather than its ASCII order, so
+        # the base tag is chosen here: the highest release tag that sorts
+        # strictly below the one being released (`v0.2.0-alpha` <
+        # `v0.2.0-alpha.1` < `v0.2.0`). That keeps the previous entry on this
+        # tag's own line and never picks an unrelated newer tag.
+        PREV_TAG="$(git tag -l 'v*' | python3 -c '
+import re
+import sys
+
+pattern = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*))?$")
+
+def key(tag):
+    match = pattern.match(tag)
+    if match is None:
+        return None
+    major, minor, patch, prerelease = match.groups()
+    if prerelease is None:
+        return ((int(major), int(minor), int(patch)), 1, ())
+    identifiers = tuple(
+        (0, int(part), "") if part.isdigit() else (1, 0, part)
+        for part in prerelease.split(".")
+    )
+    return ((int(major), int(minor), int(patch)), 0, identifiers)
+
+target = key(sys.argv[1])
+lower = [(key(tag), tag) for tag in sys.stdin.read().split() if key(tag) is not None]
+lower = [(k, tag) for k, tag in lower if target is None or k < target]
+print(max(lower)[1] if lower else "")
+' "$TAG")"
     fi
 fi
 

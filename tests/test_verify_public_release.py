@@ -165,6 +165,21 @@ class PublicReleaseTests(unittest.TestCase):
         self.assertIn('grep -qx LICENSE', workflow[gate:attach])
         self.assertNotIn("continue-on-error", workflow[gate:attach])
 
+    def test_a_prerelease_tag_expects_the_prerelease_flag(self):
+        # An alpha tag names a prerelease, so a release without the flag would
+        # let `/releases/latest` offer it to a stable user.
+        tag = "v0.98.1-alpha"
+        data = metadata()
+        data["tag_name"] = tag
+        data["prerelease"] = True
+        verifier.verify_metadata(data, tag)
+        data["prerelease"] = False
+        with self.assertRaises(ValueError):
+            verifier.verify_metadata(data, tag)
+        # And a stable tag must not claim to be a prerelease.
+        with self.assertRaises(ValueError):
+            verifier.verify_metadata({**metadata(), "prerelease": True}, TAG)
+
     def test_incomplete_metadata_rejected(self):
         for field, value in (("draft", True), ("prerelease", True), ("tag_name", "v0.98.0")):
             with self.subTest(field=field):

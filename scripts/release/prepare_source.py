@@ -16,30 +16,83 @@ import subprocess
 
 RELEASE_HELPERS = ("scripts/ci/install_justrust.sh", "scripts/release/build_linux_compat.sh")
 
+# A release tag is `vMAJOR.MINOR.PATCH` with an optional semver prerelease
+# suffix (`v0.2.0-alpha.1`). Build metadata (`v0.1.0+build`) is refused: the tag
+# names one release, and one release names one artifact set.
+RELEASE_TAG = re.compile(
+    r"v(?P<major>[0-9]+)\.(?P<minor>[0-9]+)\.(?P<patch>[0-9]+)"
+    r"(?:-(?P<prerelease>[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*))?"
+)
+
+CORE_VERSION = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
+
 
 def git(*args):
     return subprocess.check_output(["git", *args]).decode().strip()
 
 
+def parse_release_tag(tag):
+    """`(major, minor, patch, prerelease)` for a release tag, or None.
+
+    `prerelease` is the suffix without its `-`, or None for a stable tag.
+    """
+    match = RELEASE_TAG.fullmatch(tag)
+    if match is None:
+        return None
+    return (int(match["major"]), int(match["minor"]), int(match["patch"]), match["prerelease"])
+
+
+def semver_key(tag):
+    """Total order over release tags, per semver §11.
+
+    A prerelease sorts below its own release, numeric identifiers compare
+    numerically, alphanumeric ones by ASCII, and a shorter identifier list is
+    lower when it is a prefix of the longer one: `v0.2.0-alpha` <
+    `v0.2.0-alpha.1` < `v0.2.0-alpha.2` < `v0.2.0`. Raises ValueError for a name
+    that is not a release tag.
+    """
+    parsed = parse_release_tag(tag)
+    if parsed is None:
+        raise ValueError(f"Not a release tag: {tag!r}")
+    major, minor, patch, prerelease = parsed
+    if prerelease is None:
+        return ((major, minor, patch), 1, ())
+    identifiers = tuple(
+        (0, int(identifier), "") if identifier.isdigit() else (1, 0, identifier)
+        for identifier in prerelease.split(".")
+    )
+    return ((major, minor, patch), 0, identifiers)
+
+
 def tag_fits_version(tag, version):
     """True when `tag` may release the source whose Cargo version is `version`.
 
-    The Cargo version names the release line and its lowest patch; later
-    patches on the same MAJOR.MINOR line are numbered by tags (see
-    next_version.py), so the tag must share MAJOR.MINOR and not go below the
-    Cargo patch.
+    A stable tag keeps the line rule: the Cargo version names the release line
+    and its lowest patch; later patches on the same MAJOR.MINOR line are
+    numbered by tags (see next_version.py), so the tag must share MAJOR.MINOR
+    and not go below the Cargo patch.
+
+    A prerelease may additionally open the next minor line of the same major at
+    patch 0 (`v0.2.0-alpha` over Cargo 0.1.x), because the prerelease announces
+    the line that Cargo.toml has not taken yet. Any other minor or major
+    change still needs the root version bumped first.
     """
-    parts = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", version)
-    if parts is None:
+    parsed = parse_release_tag(tag)
+    have = CORE_VERSION.fullmatch(version)
+    if parsed is None or have is None:
         return False
-    wanted = tuple(map(int, tag[1:].split(".")))
-    have = tuple(map(int, parts.groups()))
-    return wanted[:2] == have[:2] and wanted[2] >= have[2]
+    major, minor, patch, prerelease = parsed
+    cargo = tuple(map(int, have.groups()))
+    if prerelease is None:
+        return (major, minor) == cargo[:2] and patch >= cargo[2]
+    if (major, minor) == cargo[:2]:
+        return patch >= cargo[2]
+    return major == cargo[0] and minor == cargo[1] + 1 and patch == 0
 
 
 def prepare(tag, workflow_sha):
-    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
-        raise ValueError("Release tag must be vMAJOR.MINOR.PATCH")
+    if parse_release_tag(tag) is None:
+        raise ValueError("Release tag must be vMAJOR.MINOR.PATCH[-PRERELEASE]")
     if not re.fullmatch(r"[0-9a-f]{40}", workflow_sha):
         raise ValueError("Workflow commit must be a full SHA")
     commit = git("rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}")
@@ -68,15 +121,22 @@ def prepare(tag, workflow_sha):
 
 
 def check_public_state(tag):
-    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
+    if parse_release_tag(tag) is None:
         raise ValueError("Invalid release tag")
     draft = subprocess.check_output(["gh", "release", "view", tag, "--json", "isDraft", "--jq", ".isDraft"]).decode().strip()
     if draft != "true":
         raise ValueError("Re-running a release requires an existing draft release")
     releases = json.loads(subprocess.check_output(["gh", "release", "list", "--exclude-drafts", "--limit", "1000", "--json", "tagName"]))
-    def version(name):
-        return tuple(map(int, name[1:].split(".")))
-    if any(re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", item["tagName"]) and version(item["tagName"]) > version(tag) for item in releases):
+    # Prereleases are public releases in this list, so the guard has to order
+    # them: an older alpha that crawled in after a newer release is a downgrade.
+    # A stable tag is compared with stable releases only, so an alpha that
+    # opened the next line (`v0.2.0-alpha`) never blocks a later patch of the
+    # current line (`v0.1.25`); `Latest` only ever moves between stable tags.
+    stable = parse_release_tag(tag)[3] is None
+    published = [semver_key(item["tagName"]) for item in releases
+                 if (parsed := parse_release_tag(item["tagName"])) is not None
+                 and (not stable or parsed[3] is None)]
+    if any(key > semver_key(tag) for key in published):
         raise ValueError("Refusing a release that would downgrade a newer public release")
 
 

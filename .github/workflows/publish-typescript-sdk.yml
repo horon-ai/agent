@@ -88,6 +88,7 @@ jobs:
     outputs:
       source: ${{ steps.source.outputs.source }}
       version: ${{ steps.source.outputs.version }}
+      dist_tag: ${{ steps.source.outputs.dist_tag }}
       mode: ${{ steps.source.outputs.mode }}
       tag: ${{ steps.source.outputs.tag }}
       ref: ${{ steps.source.outputs.ref }}
@@ -189,13 +190,19 @@ jobs:
           fi
           mode="$allowed"
 
+          # A prerelease published without `--tag` fails in npm, and a
+          # prerelease must never move `latest`, so the dist-tag is resolved
+          # once here for every publish step.
+          dist_tag="$(python3 scripts/sdk/sdk_release.py dist-tag "$version")"
+
           emit skip false
           emit source "$source"
           emit version "$version"
+          emit dist_tag "$dist_tag"
           emit mode "$mode"
           emit tag "$tag"
           emit ref "$ref"
-          echo "source=${source} version=${version} mode=${mode}"
+          echo "source=${source} version=${version} dist_tag=${dist_tag} mode=${mode}"
 
   dry-run:
     name: Package and dry-run publish
@@ -208,6 +215,7 @@ jobs:
     env:
       SOURCE: ${{ needs.plan.outputs.source }}
       VERSION: ${{ needs.plan.outputs.version }}
+      DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
       RELEASE_TAG: ${{ needs.plan.outputs.tag }}
     steps:
       - name: Check out repository
@@ -350,7 +358,15 @@ jobs:
             # Platform packages first, the SDK last: the SDK's optional
             # dependencies resolve by name, so an SDK published early would
             # offer an install whose runtime does not exist yet.
-            npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --dry-run
+            # The fixture run stays on its own tag; a release tag publishes
+            # under the dist-tag its plan resolved, so the dry run exercises
+            # the same registry slot as the publish and `latest` stays put for
+            # a prerelease.
+            if [ "$SOURCE" = "release_tag" ]; then
+              npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --dry-run --tag "$DIST_TAG"
+            else
+              npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --dry-run --tag fixture
+            fi
             echo "::endgroup::"
           done
           after="$(versions)"
@@ -377,6 +393,7 @@ jobs:
     env:
       SOURCE: ${{ needs.plan.outputs.source }}
       VERSION: ${{ needs.plan.outputs.version }}
+      DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
       RELEASE_TAG: ${{ needs.plan.outputs.tag }}
     steps:
       - name: Check out repository
@@ -477,7 +494,7 @@ jobs:
             packed="$(cd "$package_dir" && npm pack --pack-destination "$RUNNER_TEMP/npm-pack")"
             tarball="$(printf '%s\n' "$packed" | tail -n 1)"
             echo "::group::$name@$version"
-            npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance
+            npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --tag "$DIST_TAG"
             echo "::endgroup::"
           done
 

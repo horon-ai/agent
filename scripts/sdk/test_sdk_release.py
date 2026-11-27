@@ -233,7 +233,12 @@ class FixtureAndTagTests(unittest.TestCase):
 
     def test_the_tag_rule_is_the_npm_one(self) -> None:
         self.assertEqual(helper.tag_version("v0.1.6"), "0.1.6")
-        for tag in ("0.1.6", "v0.1", "v0.1.6-rc.1"):
+        # A prerelease tag names a prerelease SDK version published under its
+        # own dist-tag, so the SDK never moves `latest` for an alpha.
+        self.assertEqual(helper.tag_version("v0.1.6-rc.1"), "0.1.6-rc.1")
+        self.assertEqual(helper.dist_tag("v0.1.6-rc.1"), "rc")
+        self.assertEqual(helper.dist_tag("v0.1.6"), "latest")
+        for tag in ("0.1.6", "v0.1", "v0.1.6+build"):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 helper.tag_version(tag)
 

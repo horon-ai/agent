@@ -49,9 +49,12 @@ keep in step, and no dispatch input can substitute a different run.
 Each run does the same six things:
 
 1. Resolve the version from the tag (`scripts/sdk/sdk_release.py tag-version`),
-   which refuses anything that is not `vMAJOR.MINOR.PATCH`. The `plan` job also
-   decides the mode through the same helper, so the rule the unit tests prove is
-   the rule a release runs.
+   which accepts `vMAJOR.MINOR.PATCH` and `vMAJOR.MINOR.PATCH-PRERELEASE` and
+   refuses anything else, build metadata included. A prerelease tag publishes
+   the SDK under its own dist-tag (`alpha` for `v0.2.0-alpha.1`), so `latest`
+   still names the last stable release. The `plan` job also decides the mode and
+   the dist-tag through the same helper, so the rules the unit tests prove are
+   the rules a release runs.
 2. Install the SDK in `packages/sdk/typescript` (`bun install --frozen-lockfile`) against
    the committed manifest. A dry run then also validates it with `bun run
    check`; a publish run does not build anything here, because it is already
