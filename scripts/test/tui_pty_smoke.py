@@ -31,6 +31,7 @@ cases through a ConPTY with `pywinpty`, which the Windows job installs.
 from __future__ import annotations
 
 import argparse
+import codecs
 from collections.abc import Callable
 import hashlib
 import json
@@ -684,6 +685,10 @@ class PosixTerminal:
         self.home = env.get("HORON_HOME", "")
         self.runtime_dir = env.get("HORON_AGENT_RUNTIME_DIR", "")
         self.transcript = ""
+        # One decoder for the whole stream: a read can end inside a multi-byte
+        # character, and decoding each chunk alone turns its halves into two
+        # replacement characters that no wait can match.
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self.screen = TerminalScreen(rows=40, cols=120)
         self.master, slave = pty.openpty()
         # A fresh PTY reports a 0x0 window, and a full-screen client draws
@@ -705,6 +710,10 @@ class PosixTerminal:
         self.transcript += text
         self.screen.feed(text)
 
+    def feed(self, chunk: bytes) -> None:
+        """Append raw PTY output, keeping a character split across reads whole."""
+        self.append(self._decoder.decode(chunk))
+
     def _drain_master(self, window: float = 0.05) -> None:
         while True:
             readable, _, _ = select.select([self.master], [], [], window)
@@ -716,7 +725,7 @@ class PosixTerminal:
                 break
             if not chunk:
                 break
-            self.append(chunk.decode("utf-8", "replace"))
+            self.feed(chunk)
 
     def _read_until(
         self,
@@ -740,7 +749,7 @@ class PosixTerminal:
                     break
                 if not chunk:
                     break
-                self.append(chunk.decode("utf-8", "replace"))
+                self.feed(chunk)
             early_exit = self.process.poll()
             if early_exit is not None:
                 self._drain_master(0.05)
@@ -782,7 +791,7 @@ class PosixTerminal:
                 return
             if not chunk:
                 return
-            self.append(chunk.decode("utf-8", "replace"))
+            self.feed(chunk)
             quiet_since = time.monotonic()
 
     def send(self, keys: str) -> None:
@@ -806,7 +815,7 @@ class PosixTerminal:
                         master_open = False
                     else:
                         if chunk:
-                            self.append(chunk.decode("utf-8", "replace"))
+                            self.feed(chunk)
                         else:
                             master_open = False
             else:
@@ -825,7 +834,7 @@ class PosixTerminal:
                         break
                     if not chunk:
                         break
-                    self.append(chunk.decode("utf-8", "replace"))
+                    self.feed(chunk)
                 return code
         self.process.kill()
         raise Failure(
@@ -1344,7 +1353,7 @@ def todo_edit_smoke(terminal: Terminal, home: str) -> None:
             chunk = os.read(terminal.master, 65536)
             if not chunk:
                 break
-            terminal.append(chunk.decode("utf-8", "replace"))
+            terminal.feed(chunk)
     updated = json.loads(todo.read_text(encoding="utf-8"))[0]
     if updated["status"] != "completed" or updated["content"] != "externally updated todo":
         raise Failure(f"the refreshed edit did not preserve the updated todo: {updated!r}")
@@ -1508,7 +1517,7 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
         readable, _, _ = select.select([terminal.master], [], [], 0.05)
         if readable:
             chunk = os.read(terminal.master, 65536)
-            terminal.append(chunk.decode("utf-8", "replace"))
+            terminal.feed(chunk)
     else:
         raise Failure(f"the local player did not receive the requested text\n--- transcript ---\n{terminal.transcript}")
     if request_count() != count:
