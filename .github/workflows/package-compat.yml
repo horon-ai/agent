@@ -36,7 +36,7 @@ on:
       - "crates/platform-windows/src/lib.rs"
       - "src/cli/packages.rs"
       - "src/cli/packages/**"
-      - "examples/packages/example/**"
+      - "tests/fixtures/package-example/**"
       - "tests/package_end_to_end.rs"
       - "tests/package_end_to_end/**"
       - "scripts/ci/package_compat.py"
@@ -64,7 +64,7 @@ on:
       - "crates/platform-windows/src/lib.rs"
       - "src/cli/packages.rs"
       - "src/cli/packages/**"
-      - "examples/packages/example/**"
+      - "tests/fixtures/package-example/**"
       - "tests/package_end_to_end.rs"
       - "tests/package_end_to_end/**"
       - "scripts/ci/package_compat.py"
@@ -192,7 +192,7 @@ jobs:
               "crates/extension-types/",
               "crates/platform",
               "src/cli/packages",
-              "examples/packages/example/",
+              "tests/fixtures/package-example/",
               "tests/package_end_to_end",
               "scripts/ci/package_compat.py",
               "scripts/ci/test_package_compat.py",

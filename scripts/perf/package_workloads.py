@@ -70,7 +70,7 @@ CALL_PROMPT = f"{mm.PACKAGE_MARKER} Greet one name with the installed package to
 # How much of the host's answer to a failed call the report keeps.
 RESULT_EXCERPT_CHARS = 200
 
-DEFAULT_PACKAGE_SOURCE = "examples/packages/example/layouts"
+DEFAULT_PACKAGE_SOURCE = "tests/fixtures/package-example/layouts"
 PACKAGE_ID = "hello"
 PACKAGE_TOOL = "greet"
 

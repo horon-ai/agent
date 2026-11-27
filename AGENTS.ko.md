@@ -57,7 +57,7 @@
 4. ACP v1/v2, SDK, 저장된 세션을 깨뜨리지 않는다.
 5. 지운 표면을 다른 이름으로 되살리지 않는다.
 
-사용자 설치 Rust 패키지 구현에는 3번 그래프 제한에 한 가지 예외가 적용된다. 공용 데이터 계약 크레이트 `extension-types`(`crates/extension-types`, 패키지 `horon-agent-extension-types`)는 기존 워크스페이스 의존성 집합만 가져다 쓰며 외부 런타임 의존성을 새로 더하지 않고, 작성자용 `horon-agent-extension-sdk`(`crates/extension-sdk`)와 `horon-package-example`(`examples/packages/example`)은 `horon-agent` 바이너리 그래프 밖에 남는다. 패키지가 없을 때의 성능과 바이너리 크기 기준선을 지키고, 구조 게이트의 오버헤드 0 `packages` 상한을 바이너리 크기 검사와 함께 유지하면서 표면을 확장하고, ACP v1/v2, SDK, TUI 의존성 경계, 저장된 세션 호환성을 지킨다.
+사용자 설치 Rust 패키지 구현에는 3번 그래프 제한에 한 가지 예외가 적용된다. 공용 데이터 계약 크레이트 `extension-types`(`crates/extension-types`, 패키지 `horon-agent-extension-types`)는 기존 워크스페이스 의존성 집합만 가져다 쓰며 외부 런타임 의존성을 새로 더하지 않고, 작성자용 `horon-agent-extension-sdk`(`crates/extension-sdk`)와 `horon-package-example`(`tests/fixtures/package-example`)은 `horon-agent` 바이너리 그래프 밖에 남는다. 패키지가 없을 때의 성능과 바이너리 크기 기준선을 지키고, 구조 게이트의 오버헤드 0 `packages` 상한을 바이너리 크기 검사와 함께 유지하면서 표면을 확장하고, ACP v1/v2, SDK, TUI 의존성 경계, 저장된 세션 호환성을 지킨다.
 
 하지 않는 일은 강제 도구 호출 단계, 스트리밍 dry-run, `report_issue` 도구, 도구별 `family@rev` 버전, KDL 모델 카탈로그, `anyhow`나 `SmallVec` 전면 교체, 외부 계약(ACP v1, harness API v1, 저장된 세션)의 컷오버다. 이유와 출처는 `PHILOSOPHY.ko.md`에 있다.
 

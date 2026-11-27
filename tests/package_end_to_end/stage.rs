@@ -13,7 +13,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 /// The layouts and resources the example ships.
-const LAYOUTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/packages/example/layouts");
+const LAYOUTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/package-example/layouts");
 
 /// The declaration an extension ships at its root and a plugin bundles.
 const DECLARATION: &str = "extension.toml";

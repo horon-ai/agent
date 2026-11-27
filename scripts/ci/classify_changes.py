@@ -201,7 +201,7 @@ FULL_MATRIX_PATTERNS = (
     ".cargo/*",
     "build.rs",
     "crates/*/build.rs",
-    "examples/packages/*",
+    "tests/fixtures/package-example/*",
 )
 
 PLATFORM_MACOS_PATTERNS = (

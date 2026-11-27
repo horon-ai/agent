@@ -132,7 +132,7 @@ The user-installed Rust package implementation exercises one exception to item
 (`crates/extension-types`, package `horon-agent-extension-types`) draws only
 from the existing workspace dependency set and adds no new external runtime
 dependencies, while `horon-agent-extension-sdk` (`crates/extension-sdk`) and
-`horon-package-example` (`examples/packages/example`) stay outside the
+`horon-package-example` (`tests/fixtures/package-example`) stay outside the
 `horon-agent` binary graph. Keep the no-package performance and binary size
 baselines, enforce the zero-overhead `packages` bounds in the structural gate
 alongside a binary-size check when extending the surface, and keep ACP v1/v2,
