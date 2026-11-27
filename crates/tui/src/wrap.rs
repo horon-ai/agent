@@ -48,6 +48,16 @@ fn padding(columns: usize) -> Span<'static> {
     }
 }
 
+/// Columns ratatui draws `text` in.
+///
+/// ratatui drops every control character when it draws a span, and the
+/// breaker counts them as zero columns, but `str::width` counts each as one.
+/// A row padded by `str::width` would stop one column short per tab or
+/// newline, so the right edge of a card would no longer line up.
+pub(crate) fn drawn_width(text: &str) -> usize {
+    text.split(char::is_control).map(UnicodeWidthStr::width).sum()
+}
+
 #[cfg(test)]
 mod built {
     use std::cell::Cell;
@@ -93,13 +103,13 @@ pub struct Sides {
 
 impl Sides {
     /// Columns the text of a row gets inside a pane `width` columns wide.
-    fn inner(&self, width: usize) -> usize {
+    pub(crate) fn inner(&self, width: usize) -> usize {
         width.saturating_sub(2 * (self.edge.width() + 1)).max(1)
     }
 
     /// `row` between the two edges, padded out to `inner` columns.
     fn enclose(&self, row: Line<'static>, inner: usize) -> Line<'static> {
-        let used: usize = row.spans.iter().map(|span| span.content.width()).sum();
+        let used: usize = row.spans.iter().map(|span| drawn_width(&span.content)).sum();
         let mut spans: Vec<Span<'static>> = Vec::with_capacity(row.spans.len() + 4);
         spans.push(Span::styled(self.edge, self.style));
         spans.push(Span::raw(" "));
@@ -545,7 +555,7 @@ fn row_of(cells: &[Cell], line: &Line<'static>, lead: usize) -> Line<'static> {
     built::note();
     let mut spans: Vec<Span<'static>> = Vec::new();
     if lead > 0 {
-        spans.push(Span::raw(" ".repeat(lead)));
+        spans.push(padding(lead));
     }
     let mut text = String::new();
     let mut style: Option<Style> = None;

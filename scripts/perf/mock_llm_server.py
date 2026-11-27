@@ -217,14 +217,23 @@ def _is_reminder(message: dict) -> bool:
     """A user message the harness wrote: a stored turn context, memory summary or nudge.
 
     horon appends these to the transcript, so they can follow a tool result or
-    the prompt; they never start a turn and never answer a tool call.
+    the prompt; they never start a turn and never answer a tool call. horon
+    stores each one as its own message, so a message that also carries other
+    text is a prompt, whatever block it opens with.
     """
-    content = message.get("content")
-    if isinstance(content, list) and any(
-        isinstance(block, dict) and block.get("type") == "tool_result" for block in content
-    ):
+    if message.get("role") != "user":
         return False
-    return message.get("role") == "user" and _text_of(content).lstrip().startswith("<system-reminder>")
+    content = message.get("content")
+    if not isinstance(content, list):
+        return _text_of(content).lstrip().startswith("<system-reminder>")
+    if not content:
+        return False
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_result":
+            return False
+        if not _text_of([block]).lstrip().startswith("<system-reminder>"):
+            return False
+    return True
 
 
 def has_tool_result(kind: str, body: dict) -> bool:

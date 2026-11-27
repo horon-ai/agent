@@ -118,14 +118,15 @@ pub(super) fn enabled() -> bool {
 /// place in the cached prefix only when a cell can actually start. The scan is
 /// the same PATH walk a cell uses before it runs — metadata reads only, no
 /// process is spawned — and it is cached for the life of the process because
-/// PATH does not change under a running daemon.
+/// PATH does not change under a running daemon. It excludes no directory: the
+/// daemon's own cwd (often `/` under a service manager) is not a session's
+/// working directory, and each cell still applies its own exclusion.
 pub(crate) fn interpreter_on_path() -> bool {
     static FOUND: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
         let Some(path) = std::env::var_os("PATH") else {
             return false;
         };
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-        host::find_python_sync(&cwd, &path).is_ok()
+        host::find_python_sync(None, &path).is_ok()
     });
     *FOUND
 }

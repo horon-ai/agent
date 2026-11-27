@@ -319,14 +319,19 @@ fn is_agentgrep_zero_match(content: &str) -> bool {
 /// A `<system-reminder>` message (a stored turn context or memory summary) is
 /// the harness speaking inside a turn, not the start of one.
 pub fn is_turn_start(message: &Message) -> bool {
-    let first_text = message.content.iter().find_map(|block| match block {
+    is_turn_start_content(&message.role, &message.content)
+}
+
+/// [`is_turn_start`] over a role and its blocks, so a stored message is judged
+/// by the same rule.
+pub fn is_turn_start_content(role: &Role, content: &[ContentBlock]) -> bool {
+    let first_text = content.iter().find_map(|block| match block {
         ContentBlock::Text { text, .. } => Some(text.as_str()),
         _ => None,
     });
-    matches!(message.role, Role::User)
+    matches!(role, Role::User)
         && first_text.is_some_and(|text| !text.trim_start().starts_with("<system-reminder>"))
-        && !message
-            .content
+        && !content
             .iter()
             .any(|block| matches!(block, ContentBlock::ToolResult { .. }))
 }

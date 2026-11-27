@@ -677,9 +677,16 @@ fn dynamic_system_context_message(system_dynamic: &str) -> Option<Message> {
 
 /// Insert dynamic system context after the latest fresh user prompt without
 /// disturbing the stable cached history prefix.
-pub fn messages_with_dynamic_system_context(messages: &[Message], system_dynamic: &str) -> Vec<Message> {
+///
+/// With nothing to insert the transcript is borrowed as it is: the turn loops
+/// keep the turn context in the transcript, so this is the common case on
+/// every request and must not copy every message.
+pub fn messages_with_dynamic_system_context<'a>(
+    messages: &'a [Message],
+    system_dynamic: &str,
+) -> std::borrow::Cow<'a, [Message]> {
     let Some(dynamic_message) = dynamic_system_context_message(system_dynamic) else {
-        return messages.to_vec();
+        return std::borrow::Cow::Borrowed(messages);
     };
 
     let mut out = messages.to_vec();
@@ -689,7 +696,7 @@ pub fn messages_with_dynamic_system_context(messages: &[Message], system_dynamic
         .map(|idx| idx + 1)
         .unwrap_or(out.len());
     out.insert(insert_at, dynamic_message);
-    out
+    std::borrow::Cow::Owned(out)
 }
 
 /// Sanitize a tool ID so it matches the pattern `^[a-zA-Z0-9_-]+$`.
