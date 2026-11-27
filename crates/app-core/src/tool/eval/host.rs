@@ -374,6 +374,13 @@ impl Kernel {
                     .iter()
                     .filter_map(|key| std::env::var_os(key).map(|value| (key, value))),
             )
+            .envs(
+                // The same scratch folder the bash tool hands its commands, so a
+                // cell finds the `HORON_AGENT_SCRATCH_DIR` the guidance names.
+                crate::tool::bash::tool_scratch_dir()
+                    .into_iter()
+                    .flat_map(|dir| [("TMPDIR", dir.clone()), ("HORON_AGENT_SCRATCH_DIR", dir)]),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

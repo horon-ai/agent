@@ -3,8 +3,6 @@ title: "턴"
 description: "턴 상태와 복구, 실행 중 메시지 삽입, 구조화된 런타임 명령, --resume 동작을 다룬다."
 ---
 
-{/* Generated from docs/runtime/TURNS.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 턴 상태와 복구, 실행 중 메시지 삽입, 구조화된 런타임 명령, `--resume` 동작을 다룬다.
 
 ## 턴 복구와 턴 상태
@@ -69,7 +67,7 @@ description: "턴 상태와 복구, 실행 중 메시지 삽입, 구조화된 �
 | `judge` 모델을 해석하지 못함, 응답이 규격을 벗어남, 백엔드 실패, `[autojudge] attempt_timeout_ms` 초과 | 페일 오픈. `RecoveryMode`가 정하고 실패는 1분에 최대 한 번 기록한다. |
 | `BudgetTruncated`, `UnclosedStructure` | 판단하지 않는다. 증명 가능한 분류라 판단은 결과를 바꾸지 못하고 요청만 쓴다. |
 
-판단은 `judge` 역할의 모델로 실행하고(`docs/provider/MODEL.ko.md`) 시도는 한 번이며 내부 재시도가 없다. 예상 밖 종료 하나에 판단은 최대 한 번이므로 한 실행의 판단은 `MAX_AUTO_CONTINUATIONS + 1`을 넘지 않는다. 예산은 모델 선택, 요청, 파싱을 모두 포함한 시도 전체에 적용되며 네트워크 대기에만 걸리지 않는다.
+판단은 `judge` 역할의 모델로 실행하고(`packages/docs-site/ko/reference/provider/model.mdx`) 시도는 한 번이며 내부 재시도가 없다. 예상 밖 종료 하나에 판단은 최대 한 번이므로 한 실행의 판단은 `MAX_AUTO_CONTINUATIONS + 1`을 넘지 않는다. 예산은 모델 선택, 요청, 파싱을 모두 포함한 시도 전체에 적용되며 네트워크 대기에만 걸리지 않는다.
 
 `attempt_timeout_ms` 기본값은 3000이고 `0`은 기한을 없애는 대신 기본값을 뜻하며 30초를 넘는 값은 30초로 자른다. 기한 없는 값은 일부러 두지 않았다. 판단은 판정 대상 턴을 붙잡으므로 응답하지 않는 제공자에 턴이 멈추는 것이야말로 이 예산이 막으려는 실패다. 설정 키는 `[autojudge] attempt_timeout_ms`이고 `HORON_AGENT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS`가 프로세스 하나에 한해 덮어쓴다.
 
@@ -89,7 +87,7 @@ CLI는 안내를 출력하고 ACP와 하네스 API는 TUI 같은 클라이언트
 
 ### 소프트 인터럽트는 재시작을 견딘다
 
-턴 도중 들어온 메시지는 세션별 저장소에 남고, 세션이 다시 로드될 때 복원된다(`crates/base/src/soft_interrupt_store.rs`). 복원 지점은 `crates/app-core/src/agent/turn_execution.rs:1170`이고, 세션을 닫을 때 저장되는 경로는 `crates/app-core/src/agent_tests.rs:2016` 테스트가 고정한다. 주입 방식 자체는 [`docs/runtime/TURNS.ko.md`](/ko/reference/runtime/turns)에서 설명한다.
+턴 도중 들어온 메시지는 세션별 저장소에 남고, 세션이 다시 로드될 때 복원된다(`crates/base/src/soft_interrupt_store.rs`). 복원 지점은 `crates/app-core/src/agent/turn_execution.rs:1170`이고, 세션을 닫을 때 저장되는 경로는 `crates/app-core/src/agent_tests.rs:2016` 테스트가 고정한다. 주입 방식 자체는 [`packages/docs-site/ko/reference/runtime/turns.mdx`](/ko/reference/runtime/turns)에서 설명한다.
 
 ### 확인 방법
 

@@ -3,7 +3,8 @@
 
 `bench_docs.py render` calls this module with the per-OS `compare.json` files
 that `bench_compare.py` wrote, and commits the result to
-`docs/performance/charts/` next to RESULTS.md. Every chart is one metric with
+the documentation site's `images/reference/performance/charts/` (or a `charts/`
+folder beside a Markdown results page). Every chart is one metric with
 three stacked panels (Linux, macOS, Windows) of horizontal bars; horon's bar is
 blue and the rest are grey. A summary chart puts horon's value and rank for
 every metric and OS on one page.

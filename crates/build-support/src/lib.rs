@@ -100,8 +100,47 @@ pub fn install_binary_at_version(source: &std::path::Path, version: &str) -> Res
         std::fs::copy(source, &dest)?;
     }
     crate::platform_support::set_permissions_executable(&dest)?;
+    stage_tui_beside(source, &dest_dir)?;
 
     Ok(dest)
+}
+
+/// File name of the interactive client that bare `horon` hands over to.
+fn tui_binary_name() -> String {
+    format!("horon-tui{}", std::env::consts::EXE_SUFFIX)
+}
+
+/// Put the interactive client beside a freshly installed agent.
+///
+/// Bare `horon` looks for `horon-tui` beside the binary it runs, so a version
+/// directory without one leaves the command at the headless message. The
+/// client built next to `source` is taken when there is one; a build that only
+/// produced the agent keeps the client of the version `current` points at, so
+/// installing a source build never takes the client away.
+fn stage_tui_beside(source: &Path, dest_dir: &Path) -> Result<()> {
+    let dest = dest_dir.join(tui_binary_name());
+    let built = source.parent().map(|dir| dir.join(tui_binary_name()));
+    // No active channel, or one that does not resolve, only means there is no
+    // client to carry over.
+    let active = match current_binary_path().map(std::fs::canonicalize) {
+        Ok(Ok(real)) => real.parent().map(|dir| dir.join(tui_binary_name())),
+        Ok(Err(_)) | Err(_) => None,
+    };
+    let Some(from) = [built, active]
+        .into_iter()
+        .flatten()
+        .find(|candidate| candidate.is_file() && *candidate != dest)
+    else {
+        return Ok(());
+    };
+    if dest.exists() {
+        std::fs::remove_file(&dest)?;
+    }
+    if std::fs::hard_link(&from, &dest).is_err() {
+        std::fs::copy(&from, &dest)?;
+    }
+    crate::platform_support::set_permissions_executable(&dest)?;
+    Ok(())
 }
 
 fn read_binary_version_report(binary: &Path) -> Result<BinaryVersionReport> {

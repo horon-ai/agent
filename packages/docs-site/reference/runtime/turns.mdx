@@ -3,8 +3,6 @@ title: "Turns"
 description: "Turn recovery, mid-run message insertion, the prewalk handoff, goal continuation, runtime commands and --resume."
 ---
 
-{/* Generated from docs/runtime/TURNS.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 This covers turn state and recovery, message injection during a running turn, structured runtime commands, and `--resume` behaviour.
 
 ## Turn recovery and turn state
@@ -69,7 +67,7 @@ The default is `conservative`. Only provable truncation and unclosed structure a
 | No `judge` model resolves, the reply leaves the contract, the backend fails, or the attempt outlasts `[autojudge] attempt_timeout_ms` | Fail open: `RecoveryMode` decides, and the failure is logged at most once a minute. |
 | `BudgetTruncated` or `UnclosedStructure` | Never judged. These are provable, and a judgment could only cost a request without changing the outcome. |
 
-A judgment runs on the `judge` role's model (`docs/provider/MODEL.md`), one attempt, no internal retry, and at most one judgment per unexpected stop, so a run spends no more than `MAX_AUTO_CONTINUATIONS + 1` judgments. The budget covers the whole attempt — model selection, the request and parsing — not only the network wait.
+A judgment runs on the `judge` role's model (`packages/docs-site/reference/provider/model.mdx`), one attempt, no internal retry, and at most one judgment per unexpected stop, so a run spends no more than `MAX_AUTO_CONTINUATIONS + 1` judgments. The budget covers the whole attempt — model selection, the request and parsing — not only the network wait.
 
 `attempt_timeout_ms` defaults to 3000, `0` means the default rather than no deadline, and anything above 30 s is clamped. There is deliberately no unbounded value: a judgment holds up the turn it is judging, so a provider that never answers would stall that turn, which is the failure the budget exists to bound. The machine-readable setting is `[autojudge] attempt_timeout_ms`; `HORON_AGENT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS` overrides it for one process.
 
@@ -89,7 +87,7 @@ The CLI prints the notice, and ACP and the harness API forward it to clients suc
 
 ### Soft interrupts survive a restart
 
-A message that arrives during a turn is kept in a per-session store and restored when the session is loaded again (`crates/base/src/soft_interrupt_store.rs`). The restore point is `crates/app-core/src/agent/turn_execution.rs:1170`, and the path saved when a session closes is pinned by the test in `crates/app-core/src/agent_tests.rs:2016`. The injection mechanism itself is described in [`docs/runtime/TURNS.md`](/reference/runtime/turns).
+A message that arrives during a turn is kept in a per-session store and restored when the session is loaded again (`crates/base/src/soft_interrupt_store.rs`). The restore point is `crates/app-core/src/agent/turn_execution.rs:1170`, and the path saved when a session closes is pinned by the test in `crates/app-core/src/agent_tests.rs:2016`. The injection mechanism itself is described in [`packages/docs-site/reference/runtime/turns.mdx`](/reference/runtime/turns).
 
 ### How to verify
 

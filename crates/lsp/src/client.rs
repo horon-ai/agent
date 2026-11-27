@@ -6,7 +6,7 @@
 //! reaches ten idle minutes shuts itself down, and one whose process died is
 //! replaced on the next request.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -33,6 +33,12 @@ const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Time a shutting-down server gets to exit on its own.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+/// Lines of the server's stderr kept to explain a failure.
+const STDERR_TAIL_LINES: usize = 8;
+/// Characters of one stderr line kept; a stack trace line can be very long.
+const STDERR_LINE_CHARS: usize = 300;
+/// Time a dead server's stderr gets to drain before pending requests fail.
+const STDERR_SETTLE: Duration = Duration::from_millis(500);
 
 type PendingMap = Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>;
 type DiagnosticsMap = Mutex<HashMap<String, DiagnosticsState>>;
@@ -60,6 +66,10 @@ pub struct Client {
     opened: Mutex<HashMap<PathBuf, i32>>,
     next_id: AtomicU64,
     alive: Arc<AtomicBool>,
+    /// The last lines the server wrote to stderr. A server that cannot start
+    /// usually says why only there (a missing project toolchain, a rustup
+    /// proxy with no component), so failures quote it.
+    stderr_tail: Arc<StdMutex<VecDeque<String>>>,
     last_used_millis: AtomicU64,
 }
 
@@ -397,7 +407,11 @@ impl Client {
 
     async fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
         if !self.is_alive() {
-            bail!("language server '{}' is not running", self.spec.name);
+            bail!(
+                "language server '{}' is not running{}",
+                self.spec.name,
+                self.stderr_note()
+            );
         }
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -418,12 +432,34 @@ impl Client {
         match tokio::time::timeout(timeout, receiver).await {
             Ok(Ok(Ok(value))) => Ok(value),
             Ok(Ok(Err(message))) => Err(anyhow!("{method} failed: {message}")),
-            Ok(Err(_)) => Err(anyhow!("language server '{}' stopped responding", self.spec.name)),
+            Ok(Err(_)) => Err(anyhow!(
+                "language server '{}' stopped responding{}",
+                self.spec.name,
+                self.stderr_note()
+            )),
             Err(_) => {
                 self.pending.lock().await.remove(&id);
-                Err(anyhow!("{method} timed out after {}s", timeout.as_secs()))
+                Err(anyhow!(
+                    "{method} timed out after {}s{}",
+                    timeout.as_secs(),
+                    self.stderr_note()
+                ))
             }
         }
+    }
+
+    /// The server's recent stderr, as lines to append to an error, or nothing.
+    fn stderr_note(&self) -> String {
+        let tail = self.stderr_tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if tail.is_empty() {
+            return String::new();
+        }
+        let mut note = format!("\n{} stderr (last {} lines):", self.spec.name, tail.len());
+        for line in tail.iter() {
+            note.push_str("\n  ");
+            note.push_str(line);
+        }
+        note
     }
 
     async fn initialize(&self) -> Result<()> {
@@ -483,9 +519,11 @@ impl Client {
             params["initializationOptions"] = json!({ "checkOnSave": false });
         }
 
+        // The cause goes into the message itself: the tool prints the error's
+        // outermost line, and a bare context would hide the server's stderr.
         self.request("initialize", params, INITIALIZE_TIMEOUT)
             .await
-            .context("initialize request failed")?;
+            .map_err(|error| anyhow!("initialize request failed: {error:#}"))?;
         self.notify("initialized", json!({}))?;
         Ok(())
     }
@@ -578,18 +616,26 @@ impl Client {
             });
         }
 
-        {
+        let stderr_tail = Arc::new(StdMutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
+        let stderr_pump = {
             let name = spec.name;
+            let tail = Arc::clone(&stderr_tail);
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let trimmed = line.trim();
-                    if !trimmed.is_empty() {
-                        horon_agent_logging::debug(&format!("lsp [{name}] stderr: {trimmed}"));
+                    if trimmed.is_empty() {
+                        continue;
                     }
+                    horon_agent_logging::debug(&format!("lsp [{name}] stderr: {trimmed}"));
+                    let mut tail = tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    if tail.len() == STDERR_TAIL_LINES {
+                        tail.pop_front();
+                    }
+                    tail.push_back(trimmed.chars().take(STDERR_LINE_CHARS).collect());
                 }
-            });
-        }
+            })
+        };
 
         {
             let pending = Arc::clone(&pending);
@@ -623,6 +669,12 @@ impl Client {
                     }
                 }
                 alive.store(false, Ordering::SeqCst);
+                // A server that exits writes its reason to stderr just before
+                // closing stdout; the waiting requests fail once that reason is
+                // read, so their errors can quote it.
+                if tokio::time::timeout(STDERR_SETTLE, stderr_pump).await.is_err() {
+                    horon_agent_logging::debug(&format!("lsp [{name}]: stderr still open after stdout closed"));
+                }
                 pending.lock().await.clear();
                 if let Some(mut child) = take_child(&child_slot) {
                     let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
@@ -642,6 +694,7 @@ impl Client {
             opened: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             alive,
+            stderr_tail,
             last_used_millis: AtomicU64::new(now_millis()),
         };
         client.initialize().await?;

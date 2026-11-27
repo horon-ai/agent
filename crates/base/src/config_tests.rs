@@ -1533,64 +1533,6 @@ fn migrate_legacy_swarm_spawn_mode_noops_without_visible_value() {
 }
 
 #[test]
-fn sponsors_optout_survives_config_save_and_reload() {
-    let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_HOME");
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_HOME", dir.path());
-    Config::invalidate_cache();
-
-    let path = Config::path().expect("config path");
-    for endpoint in [
-        None,
-        Some("https://api.horon-agent.sh/v1/discovery"),
-        Some("https://api.solosystems.dev/v1/discovery"),
-        Some("https://api.horon-agent.sh/v1/discovery/"),
-        Some("https://discovery.internal/v1"),
-    ] {
-        let mut raw = String::from("[sponsors]\nenabled = false\n");
-        if let Some(endpoint) = endpoint {
-            raw.push_str(&format!("endpoint = {endpoint:?}\n"));
-        }
-        std::fs::write(&path, &raw).expect("write opt-out");
-        let expected_endpoint = endpoint.unwrap_or("https://api.horon-agent.sh/v1/discovery");
-
-        for round in 0..3 {
-            let loaded = Config::load();
-            assert!(
-                !loaded.sponsors.enabled,
-                "explicit opt-out must survive load {round}: {raw}"
-            );
-            assert_eq!(loaded.sponsors.endpoint, expected_endpoint);
-            loaded.save().expect("save config");
-
-            // Exercise the strict read-modify-write path used by preferences too.
-            Config::set_default_model_only(Some("test-model")).expect("update preference");
-            let reloaded = Config::load_strict().expect("reload config");
-            assert!(!reloaded.sponsors.enabled, "opt-out lost on round {round}: {raw}");
-            assert_eq!(reloaded.sponsors.endpoint, expected_endpoint);
-            assert_eq!(reloaded.provider.default_model.as_deref(), Some("test-model"));
-            let saved = std::fs::read_to_string(&path).expect("read saved config");
-            let saved: toml::Value = toml::from_str(&saved).expect("parse saved config");
-            assert_eq!(saved["sponsors"]["enabled"].as_bool(), Some(false));
-        }
-    }
-
-    restore_env_var("HORON_HOME", prev_home);
-    Config::invalidate_cache();
-}
-
-#[test]
-fn default_sponsors_section_is_not_written_back() {
-    let config = Config::default();
-    let rendered = toml::to_string_pretty(&config).expect("serialize");
-    assert!(
-        !rendered.contains("[sponsors]"),
-        "default discovery settings must not be baked into config.toml"
-    );
-}
-
-#[test]
 fn config_reload_generation_increments_on_cache_invalidation() {
     let before = crate::config::config_reload_generation();
     crate::config::invalidate_config_cache();

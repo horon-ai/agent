@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Draw the hand-written measurement records of RESULTS.md as SVG charts.
+"""Draw the hand-written measurement records of the results page as SVG charts.
 
 `bench_charts.py` draws the automatic measurement from the run's `compare.json`
-files. The records above it in `docs/performance/RESULTS.md` are hand-written:
+files. The records above it in the documentation site's results page
+(`packages/docs-site/reference/performance/results.mdx`) are hand-written:
 each plan left a few tables of before/after numbers, and those tables stay the
 record. This script turns the numbers those tables already state into pictures,
 one file per figure, so the page leads with what the numbers mean and the exact
 tables carry the precision.
 
-Every number here is copied from the record tables in `RESULTS.md` and
-`RESULTS-APPENDIX.md`; nothing is derived except the ratio labels, and each
+Every number here is copied from the record tables of that page and its Korean
+pair; nothing is derived except the ratio labels, and each
 figure lists the section it draws. `test_record_charts.py` fails when a number
 in `TOKENS` is no longer in those documents, and `--check` fails when a
 committed SVG differs from what this script produces, so the pictures cannot
 drift away from the record.
 
-    python3 scripts/perf/record_charts.py           # rewrite docs/performance/charts/record-*.svg
+    python3 scripts/perf/record_charts.py           # rewrite the site's record-*.svg charts
     python3 scripts/perf/record_charts.py --check   # exit 1 when a committed chart is stale
 
 The output is a pure function of the tables below: no clock, no network, no
@@ -35,7 +36,7 @@ from pathlib import Path
 import bench_charts as base
 
 ROOT = Path(__file__).resolve().parents[2]
-CHARTS = ROOT / "docs" / "performance" / "charts"
+CHARTS = ROOT / "packages" / "docs-site" / "images" / "reference" / "performance" / "charts"
 
 WIDTH, PAD = base.WIDTH, base.PAD
 INK, MUTED = base.INK, base.MUTED
@@ -48,7 +49,7 @@ LABELS: dict[str, dict[str, str]] = {
     "en": {
         "before": "before",
         "after": "after",
-        "source": "Source: docs/performance/RESULTS.md · {section}",
+        "source": "Source: agent.horon.ai/reference/performance/results · {section}",
         "lower": "lower is better",
         "scaled": "Each row is scaled to its own before value; read the numbers, not the bar lengths.",
         "na": "not measured",
@@ -58,7 +59,7 @@ LABELS: dict[str, dict[str, str]] = {
     "ko": {
         "before": "이전",
         "after": "이후",
-        "source": "출처: docs/performance/RESULTS.md · {section}",
+        "source": "출처: agent.horon.ai/ko/reference/performance/results · {section}",
         "lower": "낮을수록 좋음",
         "scaled": "행마다 이전 값을 기준으로 크기를 맞췄습니다. 막대 길이가 아니라 수치를 읽습니다.",
         "na": "측정 안 됨",

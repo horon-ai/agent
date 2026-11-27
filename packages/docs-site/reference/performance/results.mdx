@@ -4,8 +4,6 @@ sidebarTitle: "Measured results"
 description: "Measured results, how they were taken, and the limits of what they show."
 ---
 
-{/* Generated from docs/performance/RESULTS.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 This page has two parts: an **automatic three-OS comparison** of the latest `origin/main` commit against the newest stable releases of seven competing coding agents, followed by **historical same-machine A/B plan records** preserved from earlier optimization passes. Numbers from separate plans or different OS runners are never mixed in one table.
 
 - **Automatic measurement (top sections below):** [`.github/workflows/benchmark-docs.yml`](https://github.com/horon-ai/agent/blob/dev/.github/workflows/benchmark-docs.yml) dispatches [`benchmark.yml`](/reference/performance/benchmark) against `origin/main` across Linux (`ubuntu-24.04`), macOS (`macos-latest`), and Windows (`windows-latest`), dynamically resolves each competitor's newest stable release (`jcode` per platform; `Claude Code`, `Codex CLI`, `OpenCode`, `pi`, `omp`, `omo` via `npm dist-tag latest`), and updates `README.md`, `README.ko.md`, this page, [`RESULTS.ko.md`](/reference/performance/results), charts, and the docs-site mirror. The current snapshot replaces earlier `dev`-branch `v0.1.0-dev` / pinned-competitor runs with `origin/main` commit `882db5d7` (`horon-agent v0.1.23-dev (882db5d)`).
@@ -13,6 +11,7 @@ This page has two parts: an **automatic three-OS comparison** of the latest `ori
 
 ## Charts: latest automatic measurement
 
+{/* bench-charts:start */}
 
 `.github/workflows/benchmark-docs.yml` redraws these charts from the competitor comparison of the automatic measurement below. Do not edit this section by hand. Lower is better in every chart, and horon is the blue bar.
 
@@ -38,9 +37,11 @@ The interactive client is a second binary; these charts are drawn from the `tui`
 | TUI latency | [tui-01-latency.svg](/images/reference/performance/charts/tui-01-latency.svg) |
 | TUI memory and size | [tui-02-memory.svg](/images/reference/performance/charts/tui-02-memory.svg) |
 
+{/* bench-charts:end */}
 
 ## Versions in the latest automatic measurement
 
+{/* bench-versions:start */}
 
 Versions recorded by the comparison of `10f56ae46cb197cd596cecbd95c876957e52b4fd` at 2026-11-25 14:53 UTC. Each version is listed once across the runner artifacts.
 
@@ -76,6 +77,7 @@ jcode release identity per runner, from the `jcode-release.json` each job downlo
 
 [Run](https://github.com/horon-ai/agent/actions/runs/45634992098)
 
+{/* bench-versions:end */}
 
 ## Reading the eight-tool comparison
 
@@ -269,7 +271,7 @@ The first run was the `dev` push after the workflow merged ([run 43600180217](ht
 
 `queue_depth_high_water` is a high-water mark, not a final value: it records the deepest queue seen at any point, so a transient 1 is not retention. The 180-minute job timeout leaves more than an order of magnitude of headroom over the measured run.
 
-How to use the structural gate and the A/B runner, the required keys of the report template, and the procedure for raising a bound are in [`docs/performance/BENCHMARK.md`](/reference/performance/benchmark). The gate command is `python3 scripts/perf/check_structural.py` and the A/B runner is `scripts/perf/ab_perf.py`.
+How to use the structural gate and the A/B runner, the required keys of the report template, and the procedure for raising a bound are in [`packages/docs-site/reference/performance/benchmark.mdx`](/reference/performance/benchmark). The gate command is `python3 scripts/perf/check_structural.py` and the A/B runner is `scripts/perf/ab_perf.py`.
 
 ## Status
 
@@ -709,7 +711,7 @@ The candidate medians for all 14 cases in `bench_tools.py` equal or beat the bas
 
 - The runner differs per run, so the same baseline moved by several ms between runs (0 body, 1000 skills `skill_catalog` baseline 9.65 / 15.62 / 15.71 ms). Comparisons were only made between the two sides within the same run.
 - Cold start (an empty page cache) was not measured.
-- Windows has no ctime, so a skill file edited to the same size with its modification time restored may not show up on the next request (`docs/runtime/PROMPT.md`).
+- Windows has no ctime, so a skill file edited to the same size with its modification time restored may not show up on the next request (`packages/docs-site/reference/runtime/prompt.mdx`).
 
 ## Fewer fsyncs and the structural difference from jcode (#47)
 
@@ -853,6 +855,7 @@ PR #332 set the tool catalog ceiling to 9,151 B. Shortening the shared `intent` 
 
 When a commit on `main` passes both CI and the structural performance gate, and the agent code (`src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, `scripts/perf`) has changed since the previous measurement, `.github/workflows/benchmark-docs.yml` runs the full benchmark suite separately per OS on Linux, macOS and Windows and rewrites the section below on both `main` and `dev`. There is one section per OS, and one run writes both this file and `RESULTS.ko.md`, so the English and Korean blocks always name the same commit. `suites=all` covers every regular suite and never `install`, so no row below times an installation; install times come from a dispatch of the install suite, which measures a pinned published release rather than the measured commit. How the measurement works and what each suite means are in "Automatic measurement" in [`BENCHMARK.md`](/reference/performance/benchmark).
 
+{/* bench-auto:start commit=10f56ae46cb197cd596cecbd95c876957e52b4fd */}
 
 ## Headless (`horon-agent`)
 
@@ -2538,3 +2541,5 @@ Scroll bench (a separate measurement, not the frame cells above): 120 one-row sc
 | Held frame redraw without input (p95) | 0.5 ms | 0.5 ms–0.7 ms | 5 |
 
 Skipped: pty unavailable on Windows
+
+{/* bench-auto:end */}

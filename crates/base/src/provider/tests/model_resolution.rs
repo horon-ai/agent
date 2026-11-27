@@ -84,5 +84,25 @@ fn test_configured_direct_compatible_profiles_are_listed_without_openrouter_key(
         })
     });
 }
+
+#[test]
+fn a_bare_model_switch_on_a_named_profile_keeps_the_profile_as_the_session_key() {
+    // A gateway route id runs on the profile that discovered it, so a swarm
+    // worker inheriting the key rebuilds `magpie:<id>`, not `openai:<id>`.
+    assert_eq!(
+        MultiProvider::session_provider_key_after_model_switch(
+            "group/deepseek-v4.1-flash",
+            "OpenAI",
+            Some("openai"),
+            Some("magpie"),
+        ),
+        Some("magpie".to_string())
+    );
+    // With no profile active the runtime's own key stays.
+    assert_eq!(
+        MultiProvider::session_provider_key_after_model_switch("gpt-5.5", "OpenAI", Some("openai"), None),
+        Some("openai".to_string())
+    );
+}
 #[path = "model_metadata.rs"]
 mod model_metadata;

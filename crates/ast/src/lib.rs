@@ -15,6 +15,7 @@ use ast_grep_core::language::Language;
 use ast_grep_core::matcher::{Pattern, PatternBuilder, PatternError};
 use ast_grep_core::meta_var::MetaVariable;
 use ast_grep_core::tree_sitter::{LanguageExt, StrDoc, TSLanguage};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -99,6 +100,46 @@ impl Language for Lang {
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
         builder.build(|source| StrDoc::try_new(source, *self))
     }
+
+    /// Grammars whose identifiers reject `$` cannot parse a pattern verbatim,
+    /// so ast-grep swaps the sigil for a character the grammar accepts.
+    fn expando_char(&self) -> char {
+        match self {
+            // `µ` is a `XID_Start` letter, accepted by every grammar here.
+            Self::Rust | Self::Python | Self::Go => 'µ',
+            Self::TypeScript | Self::Tsx | Self::JavaScript => '$',
+        }
+    }
+
+    fn pre_process_pattern<'q>(&self, query: &'q str) -> Cow<'q, str> {
+        let expando = self.expando_char();
+        if expando == '$' {
+            return Cow::Borrowed(query);
+        }
+        pre_process_pattern(expando, query)
+    }
+}
+
+/// Rewrites metavariable sigils to `expando` where the grammar needs another
+/// character: `$A`, `$$A`, `$$$A` and the anonymous `$$$` all become `expando`
+/// sequences, while a `$` that is literal syntax (`"$HOME"`, `"${x}"`) stays.
+fn pre_process_pattern(expando: char, query: &str) -> Cow<'_, str> {
+    let mut output = String::with_capacity(query.len());
+    let mut dollars = 0usize;
+    for c in query.chars() {
+        if c == '$' {
+            dollars += 1;
+            continue;
+        }
+        let replace = matches!(c, 'A'..='Z' | '_') || dollars == 3;
+        let sigil = if replace { expando } else { '$' };
+        output.extend(std::iter::repeat_n(sigil, dollars));
+        dollars = 0;
+        output.push(c);
+    }
+    let sigil = if dollars == 3 { expando } else { '$' };
+    output.extend(std::iter::repeat_n(sigil, dollars));
+    Cow::Owned(output)
 }
 
 impl LanguageExt for Lang {
@@ -176,7 +217,10 @@ pub fn rewrite(source: &str, lang: Lang, pattern: &str, template: &str) -> Resul
     let doc = doc_for(source, lang)?;
     let mut replacements: Vec<(usize, usize, String)> = Vec::new();
     for found in doc.root().find_all(compiled.clone()) {
-        let range = found.range();
+        // The replaced range stops where the pattern's meaning stops, so a
+        // trailing terminator the pattern never named (`;`, `,`) survives the
+        // rewrite. Regenerating the whole matched node would delete it.
+        let range = ast_grep_core::replacer::Replacer::get_replaced_range(template, &found, &compiled);
         let text = ast_grep_core::replacer::Replacer::generate_replacement(template, &found);
         let text = String::from_utf8(text).map_err(|error| anyhow!("replacement is not UTF-8: {error}"))?;
         replacements.push((range.start, range.end, text));
@@ -296,11 +340,39 @@ mod tests {
     }
 
     #[test]
+    fn find_matches_metavariables_in_python_and_go() {
+        let python = "def f(a):\n    print(a)\n    print(1)\n";
+        let found = find(python, Lang::Python, "print($A)").unwrap();
+        let lines: Vec<(usize, &str)> = found.iter().map(|m| (m.start_line, m.text.as_str())).collect();
+        assert_eq!(lines, vec![(2, "print(a)"), (3, "print(1)")]);
+        assert_eq!(found[0].captures.get("A").map(String::as_str), Some("a"));
+
+        let go = "package main\n\nfunc f(a, b int) int {\n\treturn a - b\n}\n";
+        let found = find(go, Lang::Go, "return $A").unwrap();
+        let lines: Vec<(usize, &str)> = found.iter().map(|m| (m.start_line, m.text.as_str())).collect();
+        assert_eq!(lines, vec![(4, "return a - b")]);
+        assert_eq!(found[0].captures.get("A").map(String::as_str), Some("a - b"));
+    }
+
+    #[test]
     fn rewrite_replaces_every_match() {
         let source = "fn a() {\n    foo(1);\n    foo(2);\n}\n";
         let (rewritten, count) = rewrite(source, Lang::Rust, "foo($A)", "bar($A)").unwrap();
         assert_eq!(count, 2);
         assert_eq!(rewritten, "fn a() {\n    bar(1);\n    bar(2);\n}\n");
+    }
+
+    #[test]
+    fn rewrite_keeps_the_statement_terminator() {
+        let source = "function f(a: number, b: number): number {\n  return a - b;\n}\n";
+        let (rewritten, count) = rewrite(source, Lang::TypeScript, "return a - b;", "return a - b;").unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(rewritten, source);
+
+        // The pattern need not name the terminator for it to survive.
+        let (rewritten, count) = rewrite(source, Lang::TypeScript, "return $A", "return $A").unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(rewritten, source);
     }
 
     #[test]

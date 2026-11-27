@@ -287,7 +287,9 @@ pub fn authorize_project_config(project_root: &Path) -> ProjectConfigAccess {
         None if EXPLICIT_CLI.load(Ordering::Relaxed) => ProjectConfigAccess::Allowed { snapshot },
         None if cli_trust_workspace() => {
             if let Err(error) = record_snapshot(&snapshot, &snapshot.digest, TrustDecision::Trusted) {
-                eprintln!("MCP: workspace trust for {key} could not be recorded: {error}");
+                notice(&format!(
+                    "MCP: workspace trust for {key} could not be recorded: {error}"
+                ));
             }
             ProjectConfigAccess::Allowed { snapshot }
         }
@@ -365,7 +367,20 @@ fn warn_skipped(key: &str, digest: &str, reason: &str) {
         Err(poisoned) => poisoned.into_inner().insert(fingerprint),
     };
     if first {
-        eprintln!("MCP: project-local config skipped in {key}: {reason}");
+        notice(&format!("MCP: project-local config skipped in {key}: {reason}"));
+    }
+}
+
+/// Tell the operator on stderr, or in the log when stderr is gone.
+///
+/// A daemon whose terminal closed has no stderr, and `eprintln!` panics on a
+/// broken pipe: the config load runs inside a tool task (`mcp action=reload`),
+/// so the reload failed with "failed printing to stderr" the one time this
+/// warning was due.
+fn notice(message: &str) {
+    use std::io::Write as _;
+    if writeln!(std::io::stderr(), "{message}").is_err() {
+        crate::logging::warn(message);
     }
 }
 

@@ -465,7 +465,7 @@ fn commands_tab_completes_the_typed_prefix() {
 
     // Tab fills the command the popup has selected, which is the first match.
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/alpha");
+    assert_eq!(app.input.text(), "/alpha ");
     assert_eq!(app.completion_hint(), None, "a finished name has nothing to complete");
 
     // A unique match completes whole, and prose gets no hint.
@@ -474,7 +474,7 @@ fn commands_tab_completes_the_typed_prefix() {
         assert!(press(&mut app, KeyCode::Char(character)).is_none());
     }
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/quit");
+    assert_eq!(app.input.text(), "/quit ");
     app.input.clear();
     for character in "hi".chars() {
         assert!(press(&mut app, KeyCode::Char(character)).is_none());

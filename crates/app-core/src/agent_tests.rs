@@ -1553,7 +1553,7 @@ async fn horon_agent_docs_is_exposed_by_default_and_can_be_explicitly_disabled()
     let mut agent = Agent::new(provider, registry);
     let definitions = agent.tool_definitions().await;
     let tool_names = agent.tool_names().await;
-    let tool_name = "horon_agent_docs";
+    let tool_name = "horon";
 
     assert!(
         definitions.iter().any(|definition| definition.name == tool_name),
@@ -1565,7 +1565,7 @@ async fn horon_agent_docs_is_exposed_by_default_and_can_be_explicitly_disabled()
     );
     agent
         .validate_tool_allowed(tool_name)
-        .expect("horon_agent_docs must be executable in every session");
+        .expect("horon must be executable in every session");
 
     crate::env::set_var("HORON_AGENT_DISABLED_TOOLS", tool_name);
     crate::config::Config::invalidate_cache();
@@ -1586,7 +1586,7 @@ async fn horon_agent_docs_is_exposed_by_default_and_can_be_explicitly_disabled()
     );
     let err = agent
         .validate_tool_allowed(tool_name)
-        .expect_err("explicitly disabled horon_agent_docs must not be executable");
+        .expect_err("explicitly disabled horon must not be executable");
     assert!(err.to_string().contains("disabled"));
 
     if let Some(previous) = prev_home {

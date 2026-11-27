@@ -14,7 +14,7 @@ use crate::reader::{SourceLayout, sources};
 use crate::writer::lock_exclusive;
 use crate::{SessionId, SessionPaths, StoreError, StoreErrorCode};
 
-/// The per-session derived files (see `docs/protocol/SESSION_STORE.md`, "Layout").
+/// The per-session derived files (see `packages/docs-site/reference/protocol/session-store.mdx`, "Layout").
 const DERIVED_FILES: [&str; 4] = [
     "checkpoint.json",
     "sparse-index.jsonl",

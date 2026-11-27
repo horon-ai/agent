@@ -158,7 +158,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stats().added, 302);
+        // A patch with one hunk that does not apply writes nothing, so its
+        // added file is not counted either.
         crate::tool::apply_patch::ApplyPatchTool.execute(json!({"patch_text":"*** Begin Patch\n*** Add File: h\n+one\n*** Update File: absent\n@@\n-bad\n+new\n*** End Patch"}), ctx.clone()).await.unwrap();
+        assert_eq!(stats().added, 302);
+        crate::tool::apply_patch::ApplyPatchTool
+            .execute(
+                json!({"patch_text":"*** Begin Patch\n*** Add File: h\n+one\n*** End Patch"}),
+                ctx.clone(),
+            )
+            .await
+            .unwrap();
         assert_eq!(stats().added, 303);
         crate::tool::apply_patch::ApplyPatchTool
             .execute(

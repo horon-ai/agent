@@ -7,6 +7,7 @@ mod compact_handoff;
 mod consult;
 mod credentials;
 pub(crate) mod effective_settings;
+mod model_list;
 pub(crate) mod package_control;
 mod runtime_identity;
 mod search_artifacts;
@@ -2320,10 +2321,12 @@ impl BridgeState {
             }
             "available_models_updated" => {
                 self.note_models(event);
-                vec![
+                let mut frames = vec![
                     ServerFrame::event(self.model_info(session(self), event)),
                     ServerFrame::event(self.runtime_info()),
-                ]
+                ];
+                frames.extend(self.answer_waiting_model_lists());
+                frames
             }
             "todo_changed" => vec![ServerFrame::event(ApiEvent::TodoChanged {
                 session_id: session(self),
@@ -3632,6 +3635,7 @@ impl BridgeState {
                     content,
                     answer: answer_without_reasoning(&message["content"]),
                     message_id: message["id"].as_str().map(str::to_string),
+                    tool: None,
                 })
             })
             .take(limit)

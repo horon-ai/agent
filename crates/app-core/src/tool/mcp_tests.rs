@@ -297,3 +297,14 @@ async fn test_reload_empty_config() {
             || result.output.contains("Reloaded MCP config")
     );
 }
+
+#[test]
+fn a_listing_names_twenty_tools_and_counts_the_rest() {
+    let many: Vec<String> = (1..=25).map(|n| format!("t{n}")).collect();
+    let listed = listed_names(&many, ", ");
+    assert!(listed.starts_with("t1, t2, "), "{listed}");
+    assert!(listed.contains("t20, ... and 5 more"), "{listed}");
+    assert!(!listed.contains("t21"), "{listed}");
+    let few: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+    assert_eq!(listed_names(&few, ", "), "a, b, c");
+}

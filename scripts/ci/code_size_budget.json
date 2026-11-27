@@ -17,7 +17,6 @@
     "crates/app-core/src/tool/ambient.rs": 1483,
     "crates/app-core/src/tool/bash.rs": 2572,
     "crates/app-core/src/tool/communicate.rs": 3329,
-    "crates/app-core/src/tool/discover.rs": 2277,
     "crates/app-core/src/tool/mod.rs": 3191,
     "crates/app-core/src/tool/session_search.rs": 1821,
     "crates/app-core/src/tool/todo.rs": 2345,

@@ -30,6 +30,9 @@ pub struct Key {
     pub alt: bool,
     /// Shift was held on a key that does not carry the shift in its character.
     pub shift: bool,
+    /// Command (the `super` key) was held. Only a terminal that reports
+    /// disambiguated keys, such as Ghostty or kitty, delivers it.
+    pub cmd: bool,
 }
 
 /// The key itself, without modifiers.
@@ -70,8 +73,9 @@ pub enum Code {
 impl Key {
     /// Read a key name from the configuration file.
     ///
-    /// Modifiers come first in any order and are written `ctrl`, `alt` and
-    /// `shift`; they are reordered to the canonical `ctrl+alt+shift+key`.
+    /// Modifiers come first in any order and are written `ctrl`, `alt`,
+    /// `shift` and `cmd`; they are reordered to the canonical
+    /// `ctrl+alt+shift+cmd+key`.
     /// Matching is case-insensitive throughout, so `Control+J` and `ctrl+j`
     /// are one key.
     pub fn parse(text: &str) -> Result<Self, String> {
@@ -89,6 +93,7 @@ impl Key {
         let mut ctrl = false;
         let mut alt = false;
         let mut shift = false;
+        let mut cmd = false;
         for modifier in modifiers {
             match modifier.to_ascii_lowercase().as_str() {
                 "ctrl" | "control" => {
@@ -109,6 +114,12 @@ impl Key {
                     }
                     shift = true;
                 }
+                "cmd" | "command" | "super" | "meta" => {
+                    if cmd {
+                        return Err(format!("`{text}` names cmd twice"));
+                    }
+                    cmd = true;
+                }
                 other => return Err(format!("unknown modifier `{other}` in `{text}`")),
             }
         }
@@ -116,7 +127,13 @@ impl Key {
         // A character key carries its shift in the character itself, so the
         // modifier adds nothing and would split one binding into two.
         let shift = shift && !matches!(code, Code::Char(_));
-        Ok(Self { code, ctrl, alt, shift })
+        Ok(Self {
+            code,
+            ctrl,
+            alt,
+            shift,
+            cmd,
+        })
     }
 
     /// The key a terminal reported, in the same canonical form.
@@ -150,6 +167,7 @@ impl Key {
             ctrl: event.modifiers.contains(KeyModifiers::CONTROL),
             alt: event.modifiers.contains(KeyModifiers::ALT),
             shift,
+            cmd: event.modifiers.intersects(KeyModifiers::SUPER | KeyModifiers::META),
         })
     }
 
@@ -164,6 +182,7 @@ impl Key {
             && (!self.ctrl || event.ctrl)
             && (!self.alt || event.alt)
             && (!self.shift || event.shift)
+            && (!self.cmd || event.cmd)
     }
 }
 
@@ -177,6 +196,9 @@ impl fmt::Display for Key {
         }
         if self.shift {
             formatter.write_str("shift+")?;
+        }
+        if self.cmd {
+            formatter.write_str("cmd+")?;
         }
         formatter.write_str(&self.code.name())
     }

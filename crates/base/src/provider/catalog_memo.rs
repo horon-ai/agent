@@ -68,6 +68,29 @@ pub(super) fn next_catalog_scope() -> u64 {
 }
 
 impl MultiProvider {
+    /// The explicit catalog refresh, passed to the provider that serves the
+    /// session: one that reads a live catalog only on request (a named
+    /// OpenAI-compatible profile) does so here and not on every prefetch.
+    pub(super) async fn refresh_execution_catalog(
+        &self,
+    ) -> Result<horon_agent_provider_core::ModelCatalogRefreshSummary> {
+        let before_models = self.available_models_display();
+        let before_routes = self.model_routes();
+        if let Some(provider) = self.execution_provider() {
+            provider
+                .refresh_model_catalog()
+                .await
+                .map_err(|err| anyhow!("provider: {err}"))?;
+        }
+        self.invalidate_routes_memo_globally();
+        Ok(horon_agent_provider_core::summarize_model_catalog_refresh(
+            before_models,
+            self.available_models_display(),
+            before_routes,
+            self.model_routes(),
+        ))
+    }
+
     /// Drop this instance's route-catalog memo. Use for changes that are
     /// captured by [`Self::routes_memo_key`] (model/provider/profile switches):
     /// the shared memo stays valid because those instances key differently.

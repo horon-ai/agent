@@ -67,7 +67,7 @@ use stage::{Cli, Kind};
 ///
 /// A call the child never answers is ended by the host's own reply deadline,
 /// `WireLimits::reply_deadline` (30 s, `crates/app-core/src/extensions/wire.rs`;
-/// the Limits table in `docs/runtime/PACKAGES.md`), and the turn then finishes
+/// the Limits table in `packages/docs-site/reference/runtime/packages.mdx`), and the turn then finishes
 /// normally with an error tool result. So the run's `--max-time` must fire
 /// first: 20 s leaves room for process startup and the model round and still
 /// leaves 10 s before the wire gives up.

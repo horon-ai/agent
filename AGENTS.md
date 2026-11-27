@@ -22,7 +22,7 @@ this file, this file wins.
 |`@horon-ai/horon` and six platform packages|`packages/npm`, `scripts/npm`|both binaries through one launcher|`publish-npm.yml`; publishes on each `main` release once `NPM_PUBLISH` is `true` (and again on `release: published`, which heals a run that arrived while the release was a draft), and fails the run with the recovery command instead of dry-running silently when the switch is off|
 |SDKs|`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`|headless mode from code|TypeScript: `publish-typescript-sdk.yml`, gated by its own `SDK_NPM_PUBLISH`; Python: `publish-python-sdk.yml`, manual dispatch into the `pypi` environment; neither published yet|
 |Container image|`scripts/release/Containerfile`|the daemon in headless mode|`ghcr.io/horon-ai/agent`, pushed by `release-tag.yml`|
-|Hosted per-tenant image|`scripts/hosting/Containerfile`|one customer per container with a `/data` home volume|built from the same release archives; not published, started by the control plane (`docs/architecture/HOSTING.md`)|
+|Hosted per-tenant image|`scripts/hosting/Containerfile`|one customer per container with a `/data` home volume|built from the same release archives; not published, started by the control plane (`packages/docs-site/reference/architecture/hosting.mdx`)|
 
 - **One release.** Both binaries are built by the same `release.yml` run from
   the same tagged commit (`vMAJOR.MINOR.PATCH`), and `install-release` stages
@@ -30,7 +30,7 @@ this file, this file wins.
   unit. There is no separate TUI release or channel. The version strings
   differ: `horon-agent --version` comes from the tag (`crates/build-meta`),
   `horon-tui --version` from the `crates/tui` package version. The npm version is the tag
-  without its `v` (`docs/release/NPM.md`).
+  without its `v` (`packages/docs-site/reference/release/npm.mdx`).
 - **Terminology.** "Headless" names a mode, nothing else. Do not call the
   package, binary, engine or product "headless": say "the agent binary
   `horon-agent`" and "the TUI binary `horon-tui`". A session with no client
@@ -62,12 +62,12 @@ done, regardless of what else it fixes.
    `src/cli/acp/v2/negotiate.rs`, v1 answers from `src/cli/acp/util.rs` and
    pins to `ACP_PROTOCOL_VERSION = 1`. Never drop or break v1 while adding v2.
    The stdio contract, editor setup, and the v2 differences are in
-   `docs/protocol/ACP.md`.
+   `packages/docs-site/reference/protocol/acp.mdx`.
 3. **No measured performance regression.** On the same machine, build profile,
    and workload, a change must match or beat the recorded baseline. A change
    that makes a measured path slower than the baseline does not merge. How to
-   measure: `docs/performance/BENCHMARK.md`; recorded numbers and their limits:
-   `docs/performance/RESULTS.md`, which is the recorded baseline. Scope: the
+   measure: `packages/docs-site/reference/performance/benchmark.mdx`; recorded numbers and their limits:
+   `packages/docs-site/reference/performance/results.mdx`, which is the recorded baseline. Scope: the
    baseline and the jcode target below cover `horon-agent` workloads (headless
    mode), and those cells keep their definition unchanged now that a second
    binary exists. `horon-tui` is measured on its own, never mixed into a
@@ -94,13 +94,13 @@ direction (faster and smaller than jcode).
   is a tie, not a win.
 - **Find the cause before changing code**: split a run with
   `request_offsets_ms`, `log_tail`, `thread_names` and `live_heap_bytes`
-  (`docs/performance/BENCHMARK.md`), not by guessing.
+  (`packages/docs-site/reference/performance/benchmark.mdx`), not by guessing.
 - **Never** buy speed with durability or correctness: no dropped flush of an
   original (event log, blob, local state, runtime journal), no skipped
   validation, no weaker default, no benchmark-detecting branch, no change to
   the fixture or mock to favour horon. A flush may go only when a test proves
   a crash still loses nothing (precedent: the catalog dirty marker,
-  `docs/protocol/SESSION_STORE.md`). A cell jcode keeps for such a reason is
+  `packages/docs-site/reference/protocol/session-store.mdx`). A cell jcode keeps for such a reason is
   reported as a structural difference with that reason.
 
 ## Design principles
@@ -176,15 +176,15 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   and `x-goog-api-key` for Gemini; an explicit `auth` always wins. Model calls
   use one provider runtime and reach the endpoint directly. Keep routers and
   provider plugins out of that path. External tools come in over MCP and
-  user-installed Rust packages (`docs/runtime/PACKAGES.md`). When the active
+  user-installed Rust packages (`packages/docs-site/reference/runtime/packages.mdx`). When the active
   profile names `roles.image`, the optional `generate_image` tool POSTs
   `/images/generations` and `/images/edits` on that same profile, with the same
   base URL, credential and `extra_body`. It is a route beside the wires, not a
-  runtime, and it is off unless `[tools] generate_image = true`. The `image`
+  runtime; `[tools] generate_image` is `true` by default and the tool is registered only when the profile has an `image` role. The `image`
   role is therefore the one role whose model does not speak Chat Completions,
   it is served only by an `openai-compatible` or `openai-responses` profile,
   and it is the only role with no text fallback.
-- User-installed Rust packages are implemented (`docs/runtime/PACKAGES.md`). An
+- User-installed Rust packages are implemented (`packages/docs-site/reference/runtime/packages.mdx`). An
   extension declares a Rust executable (`extension.toml`); a plugin bundles one
   `extension.toml` and declared resources (`plugin.toml`). Both use
   `horon package install|list|verify|disable|remove` or
@@ -212,7 +212,7 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   `HOSTED_POLICY` audit record per refusal. `[hosting]` in `config.toml` may
   only narrow the policy (`allow_shared_children`, `allowed_mcp_servers`), and a
   `mode` key there is ignored with one warning, because a tenant can write its
-  own config (`docs/architecture/HOSTING.md`, `docs/safety/SECURITY.md`).
+  own config (`packages/docs-site/reference/architecture/hosting.mdx`, `packages/docs-site/reference/safety/security.mdx`).
 - Core tool profile, the default when a launch selects none: every built-in tool
   this build registers is reachable. The allow-list is `CORE_TOOLS` plus
   `CORE_DISCOVERABLE_TOOLS` plus `toolbox`, and `irc`, `checkpoint`, and `rewind`
@@ -220,7 +220,7 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`, `todo`,
   `bg`, `websearch`, `webfetch`) plus `toolbox`, and `eval` when a Python
   interpreter is on PATH. It names the rest in the system prompt, and the model
-  reaches them through `toolbox` (`docs/runtime/TOOLS.md`). `skill_manage` and
+  reaches them through `toolbox` (`packages/docs-site/reference/runtime/tools.mdx`). `skill_manage` and
   `mcp` stay registered. An SDK-driven session keeps `session_search` and
   `swarm` off unless its `enabled` list names them. `horon-agent acp` is the
   exception to the default: with no explicit profile it applies
@@ -233,10 +233,10 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
 |`src/`|the `horon-agent` package: agent loop, daemon, harness API bridge, ACP and RPC adapters, CLI dispatch|
 |`crates/`|the workspace crates; `crates/tui` is the `horon-tui` package, `crates/agent-sdk` the Rust SDK|
 |`tests/`, `crates/*/tests/`|integration targets|
-|`docs/`|behaviour documents in English/Korean pairs; the English files are compiled into the agent binary|
+|`docs/`|the agent-facing documentation, English only, flat topic pages; compiled into the agent binary and served at `horon://<page>` and by the `horon` tool|
 |`packages/sdk/typescript`, `packages/sdk/python`|the TypeScript and Python SDKs|
 |`packages/npm/horon`|the `@horon-ai/horon` launcher|
-|`packages/docs-site`|the agent.horon.ai site: a Mintlify project. `reference/`, `ko/reference/` and `images/reference/` are generated by `scripts/ci/sync_docs_site.py` from `docs/`, `PHILOSOPHY*.md` and the SDK and npm READMEs; every other page is hand-written. Mintlify deploys only the `deploy/docs` branch, which `docs-site-deploy.yml` alone fast-forwards to `main` when the folder changed there (`packages/docs-site/README.md`)|
+|`packages/docs-site`|the agent.horon.ai site, a Mintlify project, and the source of the developer reference: `reference/` (English), `ko/reference/` (Korean, same paths) and `images/reference/` are edited in place. Only `reference/philosophy`, `ko/reference/philosophy` and `reference/sdk/*` are generated, by `scripts/ci/sync_docs_site.py` from `PHILOSOPHY*.md` and the SDK and npm READMEs. Mintlify deploys only the `deploy/docs` branch, which `docs-site-deploy.yml` alone fast-forwards to `main` when the folder changed there (`packages/docs-site/README.md`)|
 |`scripts/ci`, `scripts/perf`, `scripts/release`, `scripts/install`, `scripts/npm`|gates, benchmarks, release, installer and packaging scripts|
 
 Boundaries, each with the gate that enforces it:
@@ -247,7 +247,7 @@ Boundaries, each with the gate that enforces it:
 - `horon-tui` is a client: its only workspace dependencies are
   `horon-agent-sdk` and the contract crate `horon-agent-tool-types`, never an
   engine crate, and it grows no engine of its own
-  (`crates/tui/Cargo.toml`, `docs/architecture/CRATES.md`; reviewed, no gate
+  (`crates/tui/Cargo.toml`, `packages/docs-site/reference/architecture/crates.mdx`; reviewed, no gate
   yet).
 - A `horon-agent-*-types` crate is a data contract. It never depends on the
   root package, `horon-agent-core`, or the runtime and provider crates listed
@@ -258,7 +258,7 @@ Boundaries, each with the gate that enforces it:
 - The Rust and TypeScript SDK surfaces stay in parity
   (`cargo test --locked -p horon-agent-sdk parity`).
 - Whether a type or helper leaves the root package is decided by the rules in
-  `docs/architecture/CRATES.md`, not case by case.
+  `packages/docs-site/reference/architecture/crates.mdx`, not case by case.
 
 ## Configuration that must keep its default
 
@@ -293,13 +293,13 @@ Boundaries, each with the gate that enforces it:
 power-loss durable (macOS `F_FULLFSYNC`) and `fast` is the cheapest
 crash-durable flush (plain `fsync` on macOS, the same as `full` elsewhere).
 Originals are confirmed with it and derived caches are rebuilt instead, which
-`docs/architecture/CRATES.md` states as the boundary. `pricing_refresh` off
+`packages/docs-site/reference/architecture/crates.mdx` states as the boundary. `pricing_refresh` off
 keeps a one-shot run off the network; a catalog already on disk is still read.
 
 `[server] idle_hibernation_secs` is the idle window before the daemon releases
 a session's derived caches and any opt-in Python kernel. The provider
 projection and tool-output index rebuild from resident state without a disk
-read. The next Python cell starts with fresh state. `docs/performance/MEMORY.md` lists
+read. The next Python cell starts with fresh state. `packages/docs-site/reference/performance/memory.mdx` lists
 what is released and what stays.
 `0` disables the sweep, and the daemon checks every ten seconds, so
 the release lands up to one tick after the threshold passes.
@@ -307,7 +307,7 @@ the release lands up to one tick after the threshold passes.
 Memory is stored in the per-user markdown wiki under `$HORON_HOME/memory` — one
 markdown page per memory plus a SQLite index rebuilt from those pages — and the
 pre-wiki `memory/*.json` files are a migration source only
-(`docs/runtime/MEMORY.md`). Project memory is keyed by the canonical project
+(`packages/docs-site/reference/runtime/memory.mdx`). Project memory is keyed by the canonical project
 directory, not by the caller's path spelling, and every `memory` action and the
 prompt-injection path read and write that store.
 
@@ -315,9 +315,9 @@ Every built-in tool is reachable by default; a switch set to `false`,
 `[tools] disabled`, or `[tools.load_mode] <name> = "off"` removes one.
 `irc` is agent-to-agent messaging inside one daemon; `[tools] irc = true`, the
 default, adds it to the `core` list (other lists reach it by naming it), and with the switch off it
-refuses to run even under `full` (`docs/runtime/IRC.md`). Under `full`, the
+refuses to run even under `full` (`packages/docs-site/reference/runtime/irc.mdx`). Under `full`, the
 optional tools load as deferred definitions behind `toolbox`
-(`docs/runtime/TOOLS.md`). `[tools.load_mode]` overrides one tool's tier
+(`packages/docs-site/reference/runtime/tools.mdx`). `[tools.load_mode]` overrides one tool's tier
 (`essential`, `discoverable`, `off`). `ask = "essential"` sends a listed
 tool eagerly again, and `toolbox = "off"` turns listing off so every reachable
 tool is eager. Sessions under `acp`, `minimal`, and `none`, one with an
@@ -330,7 +330,7 @@ Two settings are environment-only. `HORON_AGENT_JOBS_ARTIFACT_RETENTION` is
 budget is full; `preserve` refuses to start a new task instead.
 `HORON_AGENT_WORKSPACE_TRUST` accepts `trust` or `deny` for one process;
 project-local MCP config is skipped unless its digest was trusted, and
-`--trust-workspace` records the decision (`docs/safety/SECURITY.md`).
+`--trust-workspace` records the decision (`packages/docs-site/reference/safety/security.mdx`).
 
 ## Build, run, verify
 
@@ -377,7 +377,7 @@ CI gates and optional manual commands by changed area:
 |Anything|`scripts/ci/check_all.sh`: the Format and Quality Guardrails steps of `ci.yml`. `--skip-slow` leaves out `cargo check`, clippy and `cargo machete`; `--fix` formats and rebaselines the ratchets|
 |Rust code|the `cargo` lines above, with the tests of every crate touched|
 |`crates/tui`|`cargo clippy --locked --all-targets --all-features -p horon-tui -- -D warnings`|
-|`docs/`, README, `PHILOSOPHY*.md`|`python3 scripts/ci/check_docs_links.py`, `python3 scripts/ci/check_docs_pairs.py`, `python3 -m unittest scripts/ci/test_docs_install_claims.py`|
+|`docs/`, `packages/docs-site/`, README, `PHILOSOPHY*.md`|`python3 scripts/ci/check_docs_links.py`, `python3 scripts/ci/check_docs_pairs.py`, `python3 scripts/ci/sync_docs_site.py --check`, `python3 -m unittest scripts/ci/test_docs_install_claims.py`, and `cargo test -p horon-agent-app-core --lib horon_agent_docs` when `docs/` changed|
 |`.github/workflows`|`actionlint`|
 |After the push|`python3 scripts/ci/run_warnings.py <run-id>` on the finished run (next section)|
 
@@ -398,7 +398,7 @@ prefix too.
 
 Requirement 2 check: `cargo test -p horon-agent --lib acp` (ACP unit tests in
 `src/cli/acp.rs`). Requirement 3 check: the structural gate and A/B runner in
-`docs/performance/BENCHMARK.md`.
+`packages/docs-site/reference/performance/benchmark.mdx`.
 
 ## Tests
 
@@ -611,7 +611,7 @@ can lag the code `main` ships. They are refreshed without a release, as in
 `docs/` branch cut from `origin/main`, re-check every changed statement,
 pointer and diagram against `main`'s code, and keep `main`'s values where
 `dev` has changes `main` does not. Leave the generated blocks of
-`docs/performance/RESULTS.md` as they are on `main`. The pull request has base
+`packages/docs-site/reference/performance/results.mdx` as they are on `main`. The pull request has base
 `main`, carries documentation only, and is squash-merged with `[skip ci]` in
 the commit subject, so the push to `main` starts no CI run and
 `release-tag.yml` creates no tag. It starts no documentation site deploy
@@ -621,31 +621,33 @@ two copies.
 
 ## Docs
 
-`docs/` is grouped by topic into `architecture/`, `protocol/`, `runtime/`,
-`provider/`, `safety/`, `performance/`, `release/`, and `diagram/`. File names
-are uppercase (`docs/runtime/TOOLS.md`). Extend an existing doc before adding a
-new file. Docs are bilingual and English is the default: `X.md` is the
-canonical English text and `X.ko.md` is its Korean counterpart in the same
-folder, as with `README.md` and `README.ko.md`. Change both in the same commit.
-Each pair keeps the same headings, tables, code fences and links, and links
-between docs stay inside their own language. `python3 scripts/ci/check_docs_pairs.py`
-checks `README`, `PHILOSOPHY`, and `docs/` in the Quality Guardrails job (and
-links between `AGENTS.md` and `AGENTS.ko.md`, plus all root `.md` relative
-links, are checked by `python3 scripts/ci/check_docs_links.py`).
+There are two documentation sets with different readers.
 
-`docs/diagram/` holds hand-written SVG diagrams of the code on the branch they
-are on, each as `NN-name.svg` with English labels and `NN-name.ko.svg` with
-Korean labels, and `docs/diagram/README.md` (with its Korean pair) shows them on
-one page with the files each one is drawn from. They follow the style of
-`docs/assets/architecture.svg`: self-contained, no script or external
-reference, light and dark colours through `prefers-color-scheme`.
+|Set|Reader|Location|Language|Shape|
+|---|---|---|---|---|
+|Agent documentation|an agent running inside Horon, and its user|`docs/<topic>.md`, flat; `docs/README.md` is the index|English only (it is the bundled language)|case-oriented: which tool or command for which need, what happens in each case, defaults and fixes|
+|Developer reference|maintainers|`packages/docs-site/reference/<area>/<page>.mdx` and `packages/docs-site/ko/reference/<area>/<page>.mdx`|English and Korean pairs|design, contracts, `path:line` pointers, CI, benchmarks|
 
-Every English Markdown file under `docs/`, including subfolders, and the root
-`README.md` are compiled into the binary and served by the `horon_agent_docs`
-tool (`crates/app-core/build.rs`); `.ko.md` files are not bundled. The root
-`PHILOSOPHY.md` pair is checked like the READMEs but is not bundled.
-A moved or deleted doc must leave no stale path in code, scripts, or tests.
-`docs/README.md` is the index; update it in the same change.
+Every Markdown file under `docs/` is compiled into the binary
+(`crates/app-core/build.rs`) and served by the `horon` tool and
+`read horon://<page>`, with `docs/` as the root (`docs/tools.md` is
+`horon://tools.md`). It describes the running version without network access.
+Keep pages short and factual; link to the developer reference for depth.
+
+A developer reference page and its Korean pair change in the same commit and
+keep the same headings, tables, code fences and links;
+`python3 scripts/ci/check_docs_pairs.py` checks them together with the
+`README` and `PHILOSOPHY` pairs, and `python3 scripts/ci/check_docs_links.py`
+checks root and `docs/` links. Extend an existing page before adding one, and
+add a new page to `packages/docs-site/docs.json`.
+
+`packages/docs-site/reference/diagram/index.mdx` shows the hand-written SVG
+diagrams under `packages/docs-site/images/reference/diagram/` (`NN-name.svg`
+with English labels, `NN-name.ko.svg` with Korean labels). They follow the
+style of `packages/docs-site/images/reference/assets/architecture.svg`:
+self-contained, no script or external reference, light and dark colours
+through `prefers-color-scheme`. A moved or deleted page must leave no stale
+path in code, scripts, or tests.
 
 **Docs follow the code.** A change that alters behaviour a document describes
 updates that document, its Korean pair, and the diagram that draws it in the
@@ -653,7 +655,7 @@ same pull request, not in a follow-up. A change is not done while a document
 still states the old behaviour. To find the pages:
 
 1. Search for every changed file path, symbol, CLI flag, config key and
-   default: `rg -n '<path-or-name>' README.md README.ko.md AGENTS.md docs/`.
+   default: `rg -n '<path-or-name>' README.md README.ko.md AGENTS.md docs/ packages/docs-site/`.
    A page that names it describes it.
 2. Check the area table below for pages that describe the behaviour without
    naming the file.
@@ -664,38 +666,39 @@ still states the old behaviour. To find the pages:
 
 |Changed area|Documents to check|
 |---|---|
-|`src/cli/` commands, flags and dispatch, `src/main.rs`|`README.md`, `docs/release/INSTALL.md`, `docs/diagram/02-run-modes.svg`|
-|`src/cli/tui_handoff.rs`, `crates/tui/`|`docs/runtime/TUI.md`, `docs/diagram/02-run-modes.svg`|
-|`src/cli/acp/`, `src/cli/acp.rs`|`docs/protocol/ACP.md`, `docs/diagram/05-acp-negotiation.svg`|
-|`src/cli/rpc/`|`docs/protocol/RPC.md`|
-|`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`, `src/cli/api_credentials.rs`, `crates/base/src/harness_api.rs`, `crates/config-types/src/harness_api.rs`|`docs/protocol/HARNESS_API.md`|
-|`crates/app-core/src/server/`|`docs/architecture/SERVER.md`, `docs/runtime/TURNS.md`, `docs/diagram/03-turn-lifecycle.svg`|
-|`crates/base/src/hosting.rs`, `crates/config-types/src/hosting.rs`, `crates/app-core/src/server/hosted_tenant.rs`, `crates/agent-sdk/src/launch_hosted.rs`, `scripts/hosting/`|`docs/architecture/HOSTING.md`|
-|`crates/session-store/`, `crates/storage/`, `[storage] sync`|`docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/diagram/06-session-storage.svg`|
-|`crates/app-core/src/tool/`, `crates/tool-*`, `crates/edit-safety/`, tool profiles|`docs/runtime/TOOLS.md`, `docs/runtime/TOOL_SCHEDULING.md`, `docs/diagram/07-tool-loading.svg`, "What this build is" above|
-|`crates/extension-*`, `crates/base/src/packages/`, `crates/app-core/src/extensions/`, `src/cli/packages.rs`|`docs/runtime/PACKAGES.md`, "What this build is" above|
-|`crates/base/src/memory*`, `crates/memory-types/`, `horon memory migrate`, `horon volume`, `src/cli/volume.rs`|`docs/runtime/MEMORY.md`, `docs/runtime/TOOLS.md`, `docs/architecture/CRATES.md`, `docs/architecture/HOSTING.md`|
-|`crates/provider-*`, `crates/base/src/provider*`, `crates/config-types/`|`docs/provider/MODEL.md`, `docs/diagram/04-provider-wires.svg`, "What this build is" above|
-|`crates/irc-core/`, `crates/app-core/src/server/irc/`|`docs/runtime/IRC.md`|
-|`crates/plan/`, `crates/swarm-core/`|`docs/runtime/SWARM_TASK_GRAPH.md`|
-|approval, workspace trust, crash bundles, `scripts/ci/check_security.sh`|`docs/safety/SAFETY.md`, `docs/safety/SECURITY.md`|
-|`crates/platform*`, a crate added, removed or renamed in `Cargo.toml`|`docs/architecture/CRATES.md`, "Repository layout" above, `docs/diagram/01-system-overview.svg`|
-|`.github/workflows/`, `scripts/ci/classify_changes.py`, `scripts/release/`|"CI gates by change type" and "Release and branch sync" above, `docs/release/`, `docs/diagram/08-branch-release-flow.svg`|
-|`scripts/perf/`, `benchmark*.yml`, `scripts/perf/structural_budget.json`|`docs/performance/BENCHMARK.md`, `docs/performance/MEMORY.md`|
-|`packages/npm/`, `publish-*.yml`|`docs/release/NPM.md`, `docs/release/INSTALL.md`|
+|`src/cli/` commands, flags and dispatch, `src/main.rs`|`README.md`, `packages/docs-site/reference/release/install.mdx`, `packages/docs-site/images/reference/diagram/02-run-modes.svg`|
+|`src/cli/tui_handoff.rs`, `crates/tui/`|`packages/docs-site/reference/runtime/tui.mdx`, `packages/docs-site/images/reference/diagram/02-run-modes.svg`|
+|`src/cli/acp/`, `src/cli/acp.rs`|`packages/docs-site/reference/protocol/acp.mdx`, `packages/docs-site/images/reference/diagram/05-acp-negotiation.svg`|
+|`src/cli/rpc/`|`packages/docs-site/reference/protocol/rpc.mdx`|
+|`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`, `src/cli/api_credentials.rs`, `crates/base/src/harness_api.rs`, `crates/config-types/src/harness_api.rs`|`packages/docs-site/reference/protocol/harness-api.mdx`|
+|`crates/app-core/src/server/`|`packages/docs-site/reference/architecture/server.mdx`, `packages/docs-site/reference/runtime/turns.mdx`, `packages/docs-site/images/reference/diagram/03-turn-lifecycle.svg`|
+|`crates/base/src/hosting.rs`, `crates/config-types/src/hosting.rs`, `crates/app-core/src/server/hosted_tenant.rs`, `crates/agent-sdk/src/launch_hosted.rs`, `scripts/hosting/`|`packages/docs-site/reference/architecture/hosting.mdx`|
+|`crates/session-store/`, `crates/storage/`, `[storage] sync`|`packages/docs-site/reference/protocol/session-store.mdx`, `packages/docs-site/reference/architecture/crates.mdx`, `packages/docs-site/images/reference/diagram/06-session-storage.svg`|
+|`crates/app-core/src/tool/`, `crates/tool-*`, `crates/edit-safety/`, tool profiles|`packages/docs-site/reference/runtime/tools.mdx`, `packages/docs-site/reference/runtime/tool-scheduling.mdx`, `packages/docs-site/images/reference/diagram/07-tool-loading.svg`, "What this build is" above|
+|`crates/extension-*`, `crates/base/src/packages/`, `crates/app-core/src/extensions/`, `src/cli/packages.rs`|`packages/docs-site/reference/runtime/packages.mdx`, "What this build is" above|
+|`crates/base/src/memory*`, `crates/memory-types/`, `horon memory migrate`, `horon volume`, `src/cli/volume.rs`|`packages/docs-site/reference/runtime/memory.mdx`, `packages/docs-site/reference/runtime/tools.mdx`, `packages/docs-site/reference/architecture/crates.mdx`, `packages/docs-site/reference/architecture/hosting.mdx`|
+|`crates/provider-*`, `crates/base/src/provider*`, `crates/config-types/`|`packages/docs-site/reference/provider/model.mdx`, `packages/docs-site/images/reference/diagram/04-provider-wires.svg`, "What this build is" above|
+|`crates/irc-core/`, `crates/app-core/src/server/irc/`|`packages/docs-site/reference/runtime/irc.mdx`|
+|`crates/plan/`, `crates/swarm-core/`|`packages/docs-site/reference/runtime/swarm-task-graph.mdx`|
+|approval, workspace trust, crash bundles, `scripts/ci/check_security.sh`|`packages/docs-site/reference/safety/safety.mdx`, `packages/docs-site/reference/safety/security.mdx`|
+|`crates/platform*`, a crate added, removed or renamed in `Cargo.toml`|`packages/docs-site/reference/architecture/crates.mdx`, "Repository layout" above, `packages/docs-site/images/reference/diagram/01-system-overview.svg`|
+|`.github/workflows/`, `scripts/ci/classify_changes.py`, `scripts/release/`|"CI gates by change type" and "Release and branch sync" above, `packages/docs-site/reference/release/`, `packages/docs-site/images/reference/diagram/08-branch-release-flow.svg`|
+|`scripts/perf/`, `benchmark*.yml`, `scripts/perf/structural_budget.json`|`packages/docs-site/reference/performance/benchmark.mdx`, `packages/docs-site/reference/performance/memory.mdx`|
+|`packages/npm/`, `publish-*.yml`|`packages/docs-site/reference/release/npm.mdx`, `packages/docs-site/reference/release/install.mdx`|
 |a value in "Configuration that must keep its default"|that table and the page that documents the setting|
 
-The same rule covers `README.md`, this file, and `packages/docs-site` (see
-"Two documentation sets" below). A code pull request that needs no document
-change says so in its body with the reason.
+Each area also has an agent-facing page in `docs/` (the index in
+`docs/README.md` names it); a user-visible change updates that page too. The
+same rule covers `README.md`, this file, and the hand-written guides in
+`packages/docs-site`. A code pull request that needs no document change says
+so in its body with the reason.
 
 **Wording.** Follow the terminology in "Modes, binaries and release units":
 "headless" and "TUI" name the two modes, and the binaries are called the agent
-binary and the TUI binary. The `<!-- bench-charts -->` and `<!-- bench-auto -->`
-blocks of `docs/performance/RESULTS.md` are written by
-`scripts/perf/bench_docs.py` in `benchmark-docs.yml`; change the script, not the
-block. A statement that also appears on a `packages/docs-site` page is changed there
-in the same pull request.
+binary and the TUI binary. The `{/* bench-charts */}` and `{/* bench-auto */}`
+blocks of `packages/docs-site/reference/performance/results.mdx` (and its Korean
+pair) are written by `scripts/perf/bench_docs.py` in `benchmark-docs.yml`;
+change the script, not the block.
 
 ## Not without the owner's explicit request
 
@@ -718,13 +721,12 @@ in the same pull request.
 
 - **Wrong checkout.** A relative path used from the main checkout edits the
   main checkout, not the worktree. Check the path before every edit.
-- **Two documentation sets.** `docs/` is compiled into the binary and is the
-  source of truth for the site's Reference tab, together with `PHILOSOPHY.md`
-  (and its Korean pair) and the READMEs of `packages/sdk/typescript`,
-  `packages/sdk/python` and `packages/npm/horon`: edit the source, run
-  `python3 scripts/ci/sync_docs_site.py` and commit the result, never edit
-  `packages/docs-site/reference/`. The site's other pages are hand-written, so a
-  claim fixed in a source stays wrong in a guide until the guide is edited too.
+- **Two documentation sets.** `docs/` is the agent documentation and the only
+  set compiled into the binary; `packages/docs-site/reference/` is the
+  developer reference, edited in place. Only the philosophy and SDK/npm pages
+  are generated: edit `PHILOSOPHY*.md` or the package README, run
+  `python3 scripts/ci/sync_docs_site.py` and commit the result. A behaviour
+  change usually touches both sets and any hand-written guide that repeats it.
 - **Renamed heading.** It breaks `#anchor` links in both languages;
   `check_docs_pairs.py` reports them.
 - **Stale `Cargo.lock`.** It passes every job that does not pass `--locked` and

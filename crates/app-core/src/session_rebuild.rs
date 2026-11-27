@@ -41,7 +41,19 @@ fn run_release_build(repo_dir: &Path) -> Result<()> {
     if !status.success() {
         anyhow::bail!("Build failed - staying on current version");
     }
+    if !build_release_tui(repo_dir) {
+        eprintln!("Warning: horon-tui did not build; the installed client is kept.");
+    }
     Ok(())
+}
+
+/// Build the interactive client beside the agent.
+///
+/// It is its own package and a separate cargo invocation, the same split the
+/// release build keeps, so its feature set never unifies with the agent's. A
+/// failure is not fatal: the install keeps the client the active version has.
+fn build_release_tui(repo_dir: &Path) -> bool {
+    run_cargo_release_step(repo_dir, &["build", "--release", "-p", "horon-tui"]).is_ok_and(|status| status.success())
 }
 
 fn run_release_tests(repo_dir: &Path) -> Result<()> {
@@ -166,6 +178,9 @@ fn background_release_build(publisher: &BackgroundRebuildPublisher, repo_dir: &P
     if !status.success() {
         publisher.error("Build failed — staying on the current binary.");
         return false;
+    }
+    if !build_release_tui(repo_dir) {
+        publisher.status("horon-tui did not build; the installed client is kept.");
     }
     true
 }

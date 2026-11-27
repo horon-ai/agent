@@ -4,8 +4,6 @@ sidebarTitle: "측정 결과"
 description: "측정 결과와 측정 방법, 그 결과가 보여 주는 것의 한계를 기록한다."
 ---
 
-{/* Generated from docs/performance/RESULTS.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 이 페이지는 두 부분으로 구성된다. 위쪽은 최신 `origin/main` 커밋과 경쟁 코딩 에이전트 7종의 최신 안정 릴리스를 Linux·macOS·Windows에서 자동 비교한 결과이고, 아래쪽은 앞서 수행한 동일 기계 A/B 최적화 계획의 과거 기록이다. 서로 다른 계획이나 다른 OS 러너에서 잰 수치는 한 표에서 섞지 않는다.
 
 - **최신 자동 측정(위쪽 절):** [`.github/workflows/benchmark-docs.yml`](https://github.com/horon-ai/agent/blob/dev/.github/workflows/benchmark-docs.yml)이 `origin/main` 기준으로 [`benchmark.yml`](/ko/reference/performance/benchmark)을 Linux(`ubuntu-24.04`), macOS(`macos-latest`), Windows(`windows-latest`)에서 각각 실행하고, 경쟁 도구의 최신 안정 버전(`jcode`는 OS별 최신 릴리스, `Claude Code`·`Codex CLI`·`OpenCode`·`pi`·`omp`·`omo`는 `npm dist-tag latest`)을 매 회차 동적으로 해석한 뒤 `README.md`, `README.ko.md`, [`RESULTS.md`](/ko/reference/performance/results), 이 문서, 차트, 문서 사이트 미러를 갱신한다. 현재 기록은 이전 `dev` 브랜치 `v0.1.0-dev` 및 고정 버전 스냅샷을 `origin/main` 커밋 `882db5d7`(`horon-agent v0.1.23-dev (882db5d)`) 기준으로 바꾼 것이다.
@@ -13,6 +11,7 @@ description: "측정 결과와 측정 방법, 그 결과가 보여 주는 것의
 
 ## 차트: 최신 자동 측정
 
+{/* bench-charts:start */}
 
 이 구간은 `.github/workflows/benchmark-docs.yml` 이 아래 자동 측정의 경쟁 도구 비교로 다시 그립니다. 손으로 고치지 않습니다. 모든 차트는 낮을수록 좋고 파란 막대가 horon 입니다.
 
@@ -38,9 +37,11 @@ description: "측정 결과와 측정 방법, 그 결과가 보여 주는 것의
 | TUI 지연 | [tui-01-latency.ko.svg](/images/reference/performance/charts/tui-01-latency.ko.svg) |
 | TUI 메모리와 크기 | [tui-02-memory.ko.svg](/images/reference/performance/charts/tui-02-memory.ko.svg) |
 
+{/* bench-charts:end */}
 
 ## 최근 자동 측정의 버전
 
+{/* bench-versions:start */}
 
 `10f56ae46cb197cd596cecbd95c876957e52b4fd`의 비교 측정을 2026-11-25 14:53 UTC에 실행해 기록한 버전입니다. 여러 러너에서 같은 버전을 기록했으면 한 번만 표시합니다.
 
@@ -76,6 +77,7 @@ description: "측정 결과와 측정 방법, 그 결과가 보여 주는 것의
 
 [실행](https://github.com/horon-ai/agent/actions/runs/45634992098)
 
+{/* bench-versions:end */}
 
 ## 여덟 도구 비교 해석
 
@@ -269,7 +271,7 @@ HORON_AGENT_WORKSPACE_TRUST=trust \
 
 `queue_depth_high_water` 는 최종값이 아니라 최고 수위다. 어느 시점에든 관측된 가장 깊은 큐를 기록하므로 순간적인 1은 잔류가 아니다. 잡 타임아웃 180분은 측정된 실행보다 한 자릿수 이상 여유가 있다.
 
-구조 게이트와 A/B 실행기의 사용법, 리포트 템플릿의 필수 키, 경계를 올리는 절차는 [`docs/performance/BENCHMARK.ko.md`](/ko/reference/performance/benchmark) 에 있다. 게이트 명령은 `python3 scripts/perf/check_structural.py` 이고, A/B 는 `scripts/perf/ab_perf.py` 다.
+구조 게이트와 A/B 실행기의 사용법, 리포트 템플릿의 필수 키, 경계를 올리는 절차는 [`packages/docs-site/ko/reference/performance/benchmark.mdx`](/ko/reference/performance/benchmark) 에 있다. 게이트 명령은 `python3 scripts/perf/check_structural.py` 이고, A/B 는 `scripts/perf/ab_perf.py` 다.
 
 ## 상태
 
@@ -705,7 +707,7 @@ Linux의 차이는 힙이 아니라 실행 파일 상주 페이지다. 세션 1�
 
 - 실행마다 러너가 달라 같은 기준선도 실행 사이에 수 ms씩 움직였다(본문 0, 스킬 1000개 `skill_catalog` 기준선 9.65 / 15.62 / 15.71 ms). 비교는 같은 실행 안의 두 쪽끼리만 했다.
 - 콜드 시작(파일 캐시가 빈 상태)은 재지 않았다.
-- Windows는 ctime이 없어, 같은 크기로 고치고 수정 시각을 되돌린 스킬 파일은 다음 요청에 보이지 않을 수 있다(`docs/runtime/PROMPT.ko.md`).
+- Windows는 ctime이 없어, 같은 크기로 고치고 수정 시각을 되돌린 스킬 파일은 다음 요청에 보이지 않을 수 있다(`packages/docs-site/ko/reference/runtime/prompt.mdx`).
 
 ## fsync 감축과 jcode와의 구조적 차이 (#47)
 
@@ -849,6 +851,7 @@ PR #332에서 도구 목록 상한을 9,151 B로 낮췄다. `1dfdd06a`에서 도
 
 `main` 에 올라간 커밋이 CI 와 구조 성능 게이트를 모두 통과하고 직전 측정 이후 에이전트 코드(`src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, `scripts/perf`)가 바뀌었으면, `.github/workflows/benchmark-docs.yml` 이 Linux·macOS·Windows에서 전체 벤치마크 묶음을 OS마다 따로 돌리고 아래 구간을 `main` 과 `dev` 에서 함께 다시 쓴다. OS마다 절이 하나씩 있고, 한 번의 실행이 이 파일과 `RESULTS.ko.md`를 함께 쓰므로 영어와 한국어 구간은 늘 같은 커밋을 가리킨다. `suites=all`은 모든 정규 묶음을 뜻하고 `install`은 넣지 않으므로 아래 어느 줄도 설치 시간이 아니다. 설치 시간은 설치 묶음을 이름으로 지정한 실행에서 나오고, 그 묶음은 측정 중인 커밋이 아니라 고정한 배포 릴리스를 잰다. 측정 방법과 묶음별 뜻은 [`BENCHMARK.ko.md`](/ko/reference/performance/benchmark) 의 "자동 측정"에 있다.
 
+{/* bench-auto:start commit=10f56ae46cb197cd596cecbd95c876957e52b4fd */}
 
 ## 헤드리스 (`horon-agent`)
 
@@ -2534,3 +2537,5 @@ Scroll bench (a separate measurement, not the frame cells above): 120 one-row sc
 | Held frame redraw without input (p95) | 0.5 ms | 0.5 ms–0.7 ms | 5 |
 
 Skipped: pty unavailable on Windows
+
+{/* bench-auto:end */}

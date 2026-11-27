@@ -142,7 +142,7 @@ bing_market = "en-US"
 
 # Custom HTTP JSON search: set engine = "custom" above.
 # Set fallback_engines = [] above if private queries must not reach Bing on failure.
-# See docs/provider/INTEGRATIONS.md for GET/POST, authentication and JSON pointers.
+# See packages/docs-site/reference/provider/integrations.mdx for GET/POST, authentication and JSON pointers.
 # [websearch.custom]
 # endpoint = "https://search.example.org/api"
 # method = "GET"
@@ -774,16 +774,6 @@ prevent_sleep_while_streaming = true
 # Desktop notifications via notify-send (default: true)
 desktop_notifications = true
 
-# [sponsors]
-# Integration discovery (enabled by default; set enabled = false to opt out).
-# When enabled, the agent gains an `integration_tools` tool listing third-party
-# developer tools from HoronAgent's hosted integration directory. These providers
-# have integrated with the agent to make setup and use seamless. Some providers
-# may share revenue with HoronAgent when a referred user becomes a customer, but
-# commercial relationships never influence recommendations.
-# See https://horon-agent.sh/discovery-tools
-# enabled = true
-# endpoint = "https://api.horon-agent.sh/v1/discovery"
 	"##;
         default_content.to_string()
     }

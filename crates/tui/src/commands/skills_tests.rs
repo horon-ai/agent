@@ -289,14 +289,51 @@ fn the_slash_popup_offers_the_skills() {
     app.input.clear();
     assert_eq!(type_line(&mut app, "/skills"), Some(Action::Skills));
     assert!(press(&mut app, KeyCode::Esc).is_none(), "escape did not close the list");
-    // A full skill address submits too: no other row begins with it, so the
-    // popup's settled rule leaves the line alone.
+    // A full skill address submits too: the popup's selected row is the name
+    // the draft already spells, so `enter` sends it as typed.
     assert_eq!(
         type_line(&mut app, "/skill:demo-review"),
         Some(Action::Send(
             "Read skill://demo-review and follow its instructions.".to_string()
         ))
     );
+}
+
+#[test]
+fn tab_on_a_skill_row_makes_a_block_that_the_send_turns_into_its_address() {
+    let mut app = app_with(registry_with(&[]));
+    app.show_skills(vec![reported("demo-review", "review a diff")]);
+    for character in "/skill:demo".chars() {
+        assert!(press(&mut app, KeyCode::Char(character)).is_none());
+    }
+    assert_eq!(app.slash.selected_name(), Some("skill:demo-review"));
+    assert!(press(&mut app, KeyCode::Tab).is_none());
+    assert_eq!(
+        app.attachments.skill(),
+        Some("demo-review"),
+        "the skill did not become a block"
+    );
+    assert!(app.input.is_empty(), "the block left its address in the draft");
+    assert!(!app.slash.is_open());
+
+    // `backspace` at the start of the draft takes the block off.
+    assert!(press(&mut app, KeyCode::Backspace).is_none());
+    assert!(app.attachments.is_empty());
+
+    for character in "/skill:demo".chars() {
+        assert!(press(&mut app, KeyCode::Char(character)).is_none());
+    }
+    assert!(press(&mut app, KeyCode::Tab).is_none());
+    for character in "check main".chars() {
+        assert!(press(&mut app, KeyCode::Char(character)).is_none());
+    }
+    assert_eq!(
+        press(&mut app, KeyCode::Enter),
+        Some(Action::Send(
+            "Read skill://demo-review and follow its instructions for this request: check main".to_string()
+        ))
+    );
+    assert!(app.attachments.is_empty(), "the send left the block in the draft");
 }
 
 #[test]

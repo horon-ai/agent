@@ -468,3 +468,26 @@ async fn eval_guidance_follows_session_tool_visibility() {
         }
     }
 }
+
+/// A tool `toolbox` could not run for want of `args` is sent with its own
+/// schema from the next request, so a model that never fills the free-form
+/// object can still call it; the list changes once, not on every request.
+#[tokio::test]
+async fn a_tool_toolbox_could_not_run_without_args_becomes_a_direct_tool() {
+    let _guard = crate::storage::lock_test_env();
+    let _env = super::tool_tiers::ProfileEnv::new(crate::config::CORE_TOOL_PROFILE, None);
+    let mut agent = super::tool_tiers::agent_with_mcp_management_tool().await;
+    let before = agent.tool_definitions().await;
+    assert!(!eager_names(&before).contains(&"session_search".to_string()));
+
+    crate::tool::request_direct(&agent.session.id, "session_search");
+    let after = agent.tool_definitions().await;
+    assert!(
+        eager_names(&after).contains(&"session_search".to_string()),
+        "{:?}",
+        eager_names(&after)
+    );
+    assert!(!agent.promote_requested_tools(), "nothing is pending once promoted");
+    let again = agent.tool_definitions().await;
+    assert!(Arc::ptr_eq(&after, &again), "the promoted list stays locked");
+}

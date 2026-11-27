@@ -25,5 +25,5 @@
 <rect x="317.6" y="222.0" width="29.1" height="18" rx="3" fill="#0b84de"/>
 <text x="789.9" y="235.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">3.46 → 0.22 ms</text>
 <text x="32.0" y="262.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">행마다 이전 값을 기준으로 크기를 맞췄습니다. 막대 길이가 아니라 수치를 읽습니다.</text>
-<text x="32.0" y="288.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: docs/performance/RESULTS.md · `skill-mcp-loading-omp` 계획 측정</text>
+<text x="32.0" y="288.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: agent.horon.ai/ko/reference/performance/results · `skill-mcp-loading-omp` 계획 측정</text>
 </svg>

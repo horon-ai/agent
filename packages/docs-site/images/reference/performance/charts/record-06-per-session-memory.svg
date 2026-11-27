@@ -48,5 +48,5 @@
 <rect x="790.7" y="258.2" width="50.0" height="53.8" rx="2" fill="#d3d9e1"/>
 <text x="815.8" y="252.2" font-size="10.5" fill="#59636e" text-anchor="middle" font-weight="normal">0.26</text>
 <text x="815.8" y="330.0" font-size="11.5" fill="#1f2328" text-anchor="middle" font-weight="normal">threads / session, macOS</text>
-<text x="32.0" y="368.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: docs/performance/RESULTS.md · Measurements from the `jcode-parity-optimization` plan</text>
+<text x="32.0" y="368.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: agent.horon.ai/reference/performance/results · Measurements from the `jcode-parity-optimization` plan</text>
 </svg>

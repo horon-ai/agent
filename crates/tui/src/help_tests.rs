@@ -430,13 +430,13 @@ fn the_selection_stops_at_both_ends_and_tab_fills_it() {
     }
     assert_eq!(app.slash.selected(), 8, "down did not reach /review");
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/review");
+    assert_eq!(app.input.text(), "/review ");
     assert!(!app.slash.is_open(), "the popup stayed open after the fill");
     app.input.set_text("/re");
     app.sync_slash();
     assert!(app.slash.is_open(), "editing the draft did not bring the popup back");
     press(&mut app, KeyCode::Tab);
-    assert_eq!(app.input.text(), "/record", "the first row is the default");
+    assert_eq!(app.input.text(), "/record ", "the first row is the default");
 }
 
 #[test]
@@ -450,7 +450,7 @@ fn tab_fills_the_row_a_fuzzy_match_offers() {
         "the marker is not on the row Tab would fill"
     );
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/quit", "tab did not fill the offered row");
+    assert_eq!(app.input.text(), "/quit ", "tab did not fill the offered row");
     assert!(
         !app.slash.is_open(),
         "the popup stayed open over the command it had just filled"
@@ -477,7 +477,7 @@ fn a_finished_name_with_a_longer_sibling_keeps_the_list_open() {
     );
     assert_eq!(press(&mut app, KeyCode::Down), None);
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/resume_all");
+    assert_eq!(app.input.text(), "/resume_all ");
     assert!(!app.slash.is_open(), "the filled name left the popup open");
 }
 
@@ -492,19 +492,22 @@ fn the_underscore_sibling_offers_its_longer_name() {
     assert_eq!(app.slash.selected_name(), Some("subagent"));
     assert_eq!(press(&mut app, KeyCode::Down), None);
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/subagent_model");
+    assert_eq!(app.input.text(), "/subagent_model ");
 }
 
 #[test]
-fn a_finished_name_closes_the_list_even_with_fuzzy_rows() {
+fn a_finished_name_keeps_the_list_open_with_its_row_first() {
     let mut app = app();
     type_text(&mut app, "/review");
-    assert!(
-        !app.slash.is_open(),
-        "a row the letters only resemble kept a finished name open"
+    assert!(app.slash.is_open(), "a finished name hid its description");
+    assert_eq!(
+        app.slash.selected_name(),
+        Some("review"),
+        "the named command is not first"
     );
     press(&mut app, KeyCode::Tab);
-    assert_eq!(app.input.text(), "/review", "tab moved a finished name");
+    assert_eq!(app.input.text(), "/review ", "tab did not take the finished name");
+    assert!(!app.slash.is_open(), "the taken name left the popup open");
 }
 
 #[test]
@@ -611,6 +614,11 @@ fn a_submitted_line_closes_the_popup() {
     let mut app = app();
     type_text(&mut app, "/he");
     assert!(app.slash.is_open());
+    // `enter` on a row the draft has not spelled out takes the row first.
+    assert!(press(&mut app, KeyCode::Enter).is_none());
+    assert_eq!(app.input.text(), "/help ");
+    assert!(!app.slash.is_open(), "the popup stayed over the taken row");
+    // The next `enter` sends the line.
     assert!(press(&mut app, KeyCode::Enter).is_none());
     assert!(app.input.is_empty());
     assert!(!app.slash.is_open(), "the popup survived the send");
@@ -699,7 +707,7 @@ fn a_slash_popup_holds_nothing_before_a_draft_asks() {
 }
 
 #[test]
-fn a_draft_that_names_a_command_offers_nothing() {
+fn a_draft_that_names_a_command_still_offers_its_description() {
     let (_user, _project, state) = registry();
     let mut popup = SlashPopup::new();
     popup.sync(&state, "/he");
@@ -710,10 +718,8 @@ fn a_draft_that_names_a_command_offers_nothing() {
     );
     assert!(popup.is_open());
     popup.sync(&state, "/help");
-    assert!(
-        popup.is_empty(),
-        "a finished name offered a list of the one row it already names"
-    );
+    assert!(popup.is_open(), "a finished name hid its description");
+    assert_eq!(popup.selected_name(), Some("help"));
     popup.sync(&state, "/help ");
     assert!(popup.is_empty(), "the argument position offers nothing");
 }

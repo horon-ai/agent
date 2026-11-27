@@ -4,8 +4,6 @@ sidebarTitle: "Crates"
 description: "Crate ownership boundaries, platform adapters, storage durability and the TLS trust set."
 ---
 
-{/* Generated from docs/architecture/CRATES.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 > This document mentions "TUI". The `horon-agent` package has no terminal UI and no TUI crate in its dependency graph. The interactive terminal client is the separate `horon-tui` package and binary on `horon-agent-sdk`. The name is here to explain the boundary criteria.
 
 ## One engine, two binaries
@@ -44,7 +42,7 @@ live in `crates/base/src/packages/` and `crates/platform`. Manifest file paths u
 portable ASCII spelling. Display names and resource content can use Unicode.
 `horon package` (`src/cli/packages.rs`) validates and registers packages, open
 sessions capture the catalog generation at each turn boundary, and child
-processes pass `crates/base/src/packages/child_gate.rs` (`docs/runtime/PACKAGES.md`).
+processes pass `crates/base/src/packages/child_gate.rs` (`packages/docs-site/reference/runtime/packages.mdx`).
 
 ## Platform adapters
 
@@ -563,7 +561,7 @@ These boundaries hold when you move crates or widen the tool surface. Each item 
 ### A boundary's restoration manifest has one stored shape
 
 A compaction boundary may name the files and skills its covered prefix touched
-(`docs/protocol/SESSION_STORE.md`). Two producers write that list: the structured
+(`packages/docs-site/reference/protocol/session-store.mdx`). Two producers write that list: the structured
 summary, which collects it from the range it binds, and a handoff document,
 which collects it over exactly the range it covers. Both build
 `summary::RestorationManifest` and convert it with its one `to_stored` method, so

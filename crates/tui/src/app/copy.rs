@@ -174,7 +174,7 @@ impl App {
     }
 
     /// Queue one copy, or say why there is nothing to queue.
-    fn request_copy(&mut self, label: impl Into<String>, text: String) {
+    pub(crate) fn request_copy(&mut self, label: impl Into<String>, text: String) {
         let label = label.into();
         if text.trim().is_empty() {
             self.warn(format!("copy: {label} holds nothing to copy"));

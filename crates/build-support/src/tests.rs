@@ -663,3 +663,28 @@ fn launcher_update_never_replaces_an_unrelated_program_named_like_an_alias() {
         assert!(bin.join(format!("hrn{suffix}")).exists());
     });
 }
+
+#[test]
+fn a_source_install_keeps_the_interactive_client_beside_the_agent() {
+    with_temp_horon_agent_home(|| {
+        let suffix = std::env::consts::EXE_SUFFIX;
+        let with_client = tempfile::tempdir().expect("build dir");
+        let agent = with_client.path().join(binary_name());
+        std::fs::write(&agent, b"agent").expect("agent");
+        std::fs::write(with_client.path().join(format!("horon-tui{suffix}")), b"client one").expect("client");
+
+        let first = install_binary_at_version(&agent, "with-client").expect("install with client");
+        let staged = first.parent().expect("version dir").join(format!("horon-tui{suffix}"));
+        assert_eq!(std::fs::read(&staged).expect("staged client"), b"client one");
+        update_current_symlink("with-client").expect("current");
+
+        // A build that produced only the agent must not leave the new version
+        // without a client: the active version's client comes along.
+        let agent_only = tempfile::tempdir().expect("agent-only build dir");
+        let lone_agent = agent_only.path().join(binary_name());
+        std::fs::write(&lone_agent, b"agent two").expect("agent");
+        let second = install_binary_at_version(&lone_agent, "agent-only").expect("install agent only");
+        let carried = second.parent().expect("version dir").join(format!("horon-tui{suffix}"));
+        assert_eq!(std::fs::read(&carried).expect("carried client"), b"client one");
+    });
+}

@@ -12,14 +12,14 @@
 
 | # | 원칙 | 실제로 의미하는 것 | 확인할 곳 |
 |---|---|---|---|
-| 1 | 모든 칸에서 jcode를 이기고 회귀하지 않는다 | jcode가 가장 가까운 경쟁자입니다. horon은 모든 OS, 비교 벤치마크의 모든 칸에서 더 빠르고 더 작은 것을 목표로 합니다. 바닥은 기록된 기준선보다 느려지지 않는 것입니다. 최소–최대 구간이 겹치면 승리가 아니라 동률입니다 | `AGENTS.md`(고정 요구사항 3, 성능 목표), `docs/performance/BENCHMARK.md`, `docs/performance/RESULTS.md` |
+| 1 | 모든 칸에서 jcode를 이기고 회귀하지 않는다 | jcode가 가장 가까운 경쟁자입니다. horon은 모든 OS, 비교 벤치마크의 모든 칸에서 더 빠르고 더 작은 것을 목표로 합니다. 바닥은 기록된 기준선보다 느려지지 않는 것입니다. 최소–최대 구간이 겹치면 승리가 아니라 동률입니다 | `AGENTS.md`(고정 요구사항 3, 성능 목표), `packages/docs-site/reference/performance/benchmark.mdx`, `packages/docs-site/reference/performance/results.mdx` |
 | 2 | 측정은 CI에서만 한다 | 성능은 GitHub Actions의 `compare` 스위트로 잽니다. 같은 잡이 `dev` 기준선과 후보를 함께 빌드합니다. 보고하는 모든 수치에 측정 구간과 표본 수를 붙입니다 | `AGENTS.md`(성능 목표), `.github/workflows/benchmark.yml` |
-| 3 | 속도를 위해 내구성을 팔지 않는다 | 원본(이벤트 로그, blob, 로컬 상태, 런타임 저널)은 flush하고 파생 캐시는 다시 만듭니다. 그 이유로 jcode가 앞서는 칸은 숨기지 않고 구조적 차이로 보고합니다 | `AGENTS.md`(성능 목표, `[storage] sync`), `docs/protocol/SESSION_STORE.md` |
-| 4 | ACP v1과 v2를 모두 지원한다 | `initialize`에 양쪽이 지원하는 가장 높은 버전으로 답합니다. v2를 넣으면서 v1을 깨지 않습니다 | `AGENTS.md`(고정 요구사항 2), `docs/protocol/ACP.md` |
-| 5 | 모드는 둘, 엔진은 하나 | 헤드리스 모드와 TUI 모드는 같은 데몬과 세션을 움직입니다. 에이전트 바이너리의 의존성 그래프에는 터미널 스택이 없고, TUI 모드는 SDK 위의 별도 패키지로 같은 태그에서 릴리스됩니다 | `AGENTS.md`(Modes, binaries and release units, 고정 요구사항 1), `scripts/ci/check_headless_graph.py`, `docs/release/INSTALL.md` |
-| 6 | SDK가 먼저다 | harness API가 엔진과 모든 클라이언트(TUI와 서버 코드 포함) 사이의 계약입니다 | `docs/protocol/HARNESS_API.md`, `crates/agent-sdk` |
-| 7 | 도구는 토큰을 쓴다 | `core` 프로필은 내장 도구에 모두 닿지만 자주 쓰는 도구만 매 요청에 싣고 나머지는 `toolbox`로 꺼냅니다. 스키마 바이트는 공짜가 아니라 예산입니다 | `AGENTS.md`(이 빌드가 무엇인가), `docs/runtime/TOOLS.md` |
-| 8 | 모델 경로는 하나 | `[providers.<name>] type`이 Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent 중 하나를 고릅니다. 공급자 런타임 하나가 엔드포인트로 직접 요청합니다. 외부 도구는 MCP와 사용자 설치 Rust 패키지(`docs/runtime/PACKAGES.ko.md`)로 받으며, 패키지는 모델 경로 밖의 별도 프로세스에서 실행합니다 | `AGENTS.ko.md`(이 빌드가 무엇인가) |
+| 3 | 속도를 위해 내구성을 팔지 않는다 | 원본(이벤트 로그, blob, 로컬 상태, 런타임 저널)은 flush하고 파생 캐시는 다시 만듭니다. 그 이유로 jcode가 앞서는 칸은 숨기지 않고 구조적 차이로 보고합니다 | `AGENTS.md`(성능 목표, `[storage] sync`), `packages/docs-site/reference/protocol/session-store.mdx` |
+| 4 | ACP v1과 v2를 모두 지원한다 | `initialize`에 양쪽이 지원하는 가장 높은 버전으로 답합니다. v2를 넣으면서 v1을 깨지 않습니다 | `AGENTS.md`(고정 요구사항 2), `packages/docs-site/reference/protocol/acp.mdx` |
+| 5 | 모드는 둘, 엔진은 하나 | 헤드리스 모드와 TUI 모드는 같은 데몬과 세션을 움직입니다. 에이전트 바이너리의 의존성 그래프에는 터미널 스택이 없고, TUI 모드는 SDK 위의 별도 패키지로 같은 태그에서 릴리스됩니다 | `AGENTS.md`(Modes, binaries and release units, 고정 요구사항 1), `scripts/ci/check_headless_graph.py`, `packages/docs-site/reference/release/install.mdx` |
+| 6 | SDK가 먼저다 | harness API가 엔진과 모든 클라이언트(TUI와 서버 코드 포함) 사이의 계약입니다 | `packages/docs-site/reference/protocol/harness-api.mdx`, `crates/agent-sdk` |
+| 7 | 도구는 토큰을 쓴다 | `core` 프로필은 내장 도구에 모두 닿지만 자주 쓰는 도구만 매 요청에 싣고 나머지는 `toolbox`로 꺼냅니다. 스키마 바이트는 공짜가 아니라 예산입니다 | `AGENTS.md`(이 빌드가 무엇인가), `packages/docs-site/reference/runtime/tools.mdx` |
+| 8 | 모델 경로는 하나 | `[providers.<name>] type`이 Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent 중 하나를 고릅니다. 공급자 런타임 하나가 엔드포인트로 직접 요청합니다. 외부 도구는 MCP와 사용자 설치 Rust 패키지(`packages/docs-site/ko/reference/runtime/packages.mdx`)로 받으며, 패키지는 모델 경로 밖의 별도 프로세스에서 실행합니다 | `AGENTS.ko.md`(이 빌드가 무엇인가) |
 | 9 | 깨끗한 컷오버 | 자리를 잃은 표면은 별칭 뒤에 남기지 않고 모든 호출부를 옮긴 뒤 지웁니다. 홈 디렉터리는 호환 경로 없이 `~/.horon`으로 옮겼습니다 | 커밋 `738712a2`(#7), `d6a0f81b`(#9), `a3a70db7`(#88) |
 | 10 | CI 경고 0 | 경고가 있는 실행은 끝난 것이 아닙니다. 원인을 고치고 숨기지 않습니다 | `AGENTS.md`(CI 경고), `scripts/ci/run_warnings.py` |
 
@@ -47,7 +47,7 @@ omp2는 훨씬 큰 제품입니다(도입 계획서 작성 시점에 Rust 약 11
 | typed verdict | 모든 도구 결과가 텍스트와 함께 판정(ok, partial, truncated, withheld, rejected, failed, interrupted)을 가집니다. 모델에는 여전히 텍스트가 갑니다. 저장소, harness API, ACP, SDK 3종에 모두 들어갔고 단계마다 추가형으로 도입했습니다(`crates/tool-types/src/verdict.rs`) | #150 |
 | 관대한 인자 수리와 기록 | 수리된 호출이 원본 인자와 변경 목록을 남기고, 도구별로 세고, SDK 이벤트로 내보냅니다. 새 flush는 없습니다(`crates/session-types/src/repair_record.rs`) | #151 |
 | 저하 영수증 | 스키마를 줄이거나 요청 파라미터를 뺄 때마다 영수증(종류, 대상) 한 건을 남기고 SDK 이벤트로 내보냅니다. 저하가 없으면 바이트가 같습니다(`crates/harness-api-server/src/degradation_receipts.rs`) | #152 |
-| 정직한 장부 | 지는 칸은 이유와 함께 결과에 남깁니다(`docs/performance/RESULTS.ko.md`). 호환 결정과 그것을 지키는 상한도 적어 둡니다(`docs/architecture/CRATES.ko.md`의 "증가 래칫") | #148, #153 |
+| 정직한 장부 | 지는 칸은 이유와 함께 결과에 남깁니다(`packages/docs-site/ko/reference/performance/results.mdx`). 호환 결정과 그것을 지키는 상한도 적어 둡니다(`packages/docs-site/ko/reference/architecture/crates.mdx`의 "증가 래칫") | #148, #153 |
 | 경계의 타입 에러 | 공개 Rust SDK가 에러 enum을 반환하고 `horon-agent-sdk`가 `thiserror`를 직접 의존합니다(`crates/agent-sdk/src/errors.rs`) | #156 |
 | 측정으로 정하는 도구 자리 | todo와 세션 검색, swarm은 `core`에 들어 있고(`crates/base/src/config.rs`의 `CORE_TOOLS`), 항상 보내는 일곱 도구가 아니라 `toolbox` 뒤의 목록 단계에 있습니다. SDK 구동 세션은 `enabled` 목록에 이름을 넣지 않으면 세션 검색과 swarm을 끕니다 | #154, #155 |
 | 원칙을 글로 남기기 | 이 문서와 `AGENTS.md`의 짧은 절 | #149 |

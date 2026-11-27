@@ -93,6 +93,45 @@ where
     }
 }
 
+/// Deserialize an optional string where `""` (or only whitespace) means omitted.
+///
+/// Models often fill an unused optional string argument with `""` instead of
+/// leaving it out; reading that as "not given" keeps the call working instead
+/// of refusing it for an empty pattern, path or type.
+pub fn opt_string_empty_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<String> = Option::deserialize(deserializer)?;
+    Ok(value.filter(|text| !text.trim().is_empty()))
+}
+
+/// Deserialize a list of strings from one string or an array of them, with
+/// `""` entries and `null` read as nothing.
+pub fn strings_one_or_many<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    let items = match value {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::String(text)) => vec![text],
+        Some(serde_json::Value::Array(items)) => items
+            .into_iter()
+            .map(|item| match item {
+                serde_json::Value::String(text) => Ok(text),
+                other => Err(de::Error::custom(format!("expected a path string, got {other}"))),
+            })
+            .collect::<Result<_, _>>()?,
+        Some(other) => {
+            return Err(de::Error::custom(format!(
+                "expected a path or an array of paths, got {other}"
+            )));
+        }
+    };
+    Ok(items.into_iter().filter(|text| !text.trim().is_empty()).collect())
+}
+
 struct BoolOrString;
 
 impl<'de> de::Visitor<'de> for BoolOrString {

@@ -13,7 +13,16 @@ pub(super) fn multiprovider_model_routes(provider: &MultiProvider) -> Vec<ModelR
     provider.spawn_openai_catalog_refresh_if_needed();
 
     let mut routes = Vec::new();
-    let added_direct_openai_compatible_routes = append_openai_compatible_profile_routes(provider, &mut routes);
+    let mut added_direct_openai_compatible_routes = append_openai_compatible_profile_routes(provider, &mut routes);
+    // The runtime serving the session lists its own models too: the configured
+    // ones and those its last explicit refresh read from the endpoint's
+    // `/models`. The configuration alone would hide every model the endpoint
+    // offers that the profile does not name.
+    if let Some(execution) = provider.execution_provider() {
+        let live = execution.model_routes();
+        added_direct_openai_compatible_routes |= !live.is_empty();
+        routes.extend(live);
+    }
 
     let total_ms = routes_started.elapsed().as_millis();
     if total_ms >= 250 || std::env::var("HORON_AGENT_LOG_MODEL_PICKER_TIMING").is_ok() {

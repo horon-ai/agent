@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """No document may offer an install command for a package that is not published.
 
-`@horon-ai/horon` and the six platform packages exist on the npm registry only as
-the `0.0.0` placeholders that reserve the names, `@horon-ai/agent-sdk` answers
-404, and PyPI has no `horon-agent-sdk`. A reader who follows such a command gets
-a launcher with no runtime behind it, or a 404, after a successful-looking
-install step.
+`@horon-ai/agent-sdk` answers 404 on the npm registry and PyPI has no
+`horon-agent-sdk`. A reader who follows such a command gets a 404 after a
+successful-looking install step. (`@horon-ai/horon` and its six platform packages
+are published, so their install commands need no caveat.)
 
 The rule this gate holds: wherever the tree shows one of those install commands,
 the section it sits in says the package is unpublished. Publishing is a separate,
@@ -27,9 +26,6 @@ REPO = Path(__file__).resolve().parents[2]
 
 # The commands that only work once the registries carry the packages.
 UNPUBLISHED_COMMANDS = (
-    "npm i -g @horon-ai/horon",
-    "npm install -g @horon-ai/horon",
-    "npx @horon-ai/horon",
     "npm install @horon-ai/agent-sdk",
     "pip install horon-agent-sdk",
     "uv add horon-agent-sdk",
@@ -52,9 +48,11 @@ HEADING = re.compile(r"^#{1,6}\s")
 
 
 def documents() -> list[Path]:
-    """Markdown that a reader can reach from the repository root."""
+    """Markdown and site pages that a reader can reach from the repository root."""
     files = sorted(REPO.glob("*.md")) + sorted((REPO / "docs").rglob("*.md"))
     files += sorted((REPO / "packages").rglob("README.md"))
+    site = REPO / "packages" / "docs-site"
+    files += sorted(path for path in site.rglob("*.mdx") if "node_modules" not in path.parts)
     return [path for path in files if path.is_file()]
 
 
@@ -92,11 +90,15 @@ class UnpublishedInstallClaimTests(unittest.TestCase):
         self.assertEqual(problems, [])
 
     def test_a_bare_command_is_reported(self) -> None:
+        text = "## Install\n\n```bash\nnpm install @horon-ai/agent-sdk\n```\n"
+        self.assertEqual(offences(text), [(4, "npm install @horon-ai/agent-sdk")])
+
+    def test_the_published_launcher_needs_no_caveat(self) -> None:
         text = "## Install\n\n```bash\nnpm i -g @horon-ai/horon\n```\n"
-        self.assertEqual(offences(text), [(4, "npm i -g @horon-ai/horon")])
+        self.assertEqual(offences(text), [])
 
     def test_a_command_under_a_caveat_heading_is_accepted(self) -> None:
-        text = "## Installing from npm (not published yet)\n\n```bash\nnpm i -g @horon-ai/horon\n```\n"
+        text = "## Installing from npm (not published yet)\n\n```bash\nnpm install @horon-ai/agent-sdk\n```\n"
         self.assertEqual(offences(text), [])
 
     def test_a_caveat_in_an_earlier_section_does_not_count(self) -> None:
@@ -109,11 +111,11 @@ class UnpublishedInstallClaimTests(unittest.TestCase):
         self.assertEqual(offences(text), [(8, "pip install horon-agent-sdk")])
 
     def test_the_korean_caveat_counts(self) -> None:
-        text = "## npm에서 설치 (아직 게시되지 않음)\n\n```bash\nnpm i -g @horon-ai/horon\n```\n"
+        text = "## npm에서 설치 (아직 게시되지 않음)\n\n```bash\nuv add horon-agent-sdk\n```\n"
         self.assertEqual(offences(text), [])
 
     def test_a_blockquote_caveat_counts(self) -> None:
-        text = "## Install\n\n> **Not published yet.** The names are placeholders.\n\n```sh\nnpx @horon-ai/horon --help\n```\n"
+        text = "## Install\n\n> **Not published yet.** The names are placeholders.\n\n```sh\nnpm install @horon-ai/agent-sdk\n```\n"
         self.assertEqual(offences(text), [])
 
 

@@ -1,10 +1,13 @@
 use horon_agent_sdk::todo::TodoItem;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::theme::Theme;
 
-const MAX_ITEMS: usize = 5;
+/// The most items the panel draws under its heading.
+const MAX_ITEMS: usize = 8;
+/// Cells of the progress bar in the heading.
+const BAR_CELLS: usize = 12;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct TodoPanel {
@@ -49,7 +52,9 @@ pub struct TodoStatusRequest {
 
 #[derive(Debug, PartialEq, Eq)]
 struct TodoRow {
-    status: &'static str,
+    /// The item's stored status: `pending`, `in_progress`, `blocked`,
+    /// `completed` or `cancelled`.
+    status: String,
     text: String,
 }
 
@@ -69,30 +74,43 @@ impl TodoPanel {
             }
         }
         panel.open = panel.total - panel.completed;
-        for (filter, label) in [
-            ("in_progress", "Active"),
-            ("blocked", "Blocked"),
-            ("pending", "Pending"),
-        ] {
-            for item in items.iter().filter(|item| item.status == filter) {
-                if panel.rows.len() == MAX_ITEMS {
-                    return panel;
-                }
+        // The whole list in stored order, so the reader sees the plan as it was
+        // written with finished steps struck through. A list longer than the
+        // panel gives up its oldest finished rows first: the open work is what
+        // the panel is for.
+        let mut rows: Vec<TodoRow> = items
+            .iter()
+            .map(|item| {
                 let mut text = String::new();
                 if let Some(group) = item.group.as_deref().filter(|group| !group.trim().is_empty()) {
                     append_text(&mut text, group);
                     text.push_str(" / ");
                 }
                 append_text(&mut text, &item.content);
-                if filter == "blocked"
+                if item.status == "blocked"
                     && let Some(reason) = item.blocker.as_deref().filter(|reason| !reason.trim().is_empty())
                 {
                     text.push_str(" · ");
                     append_text(&mut text, reason);
                 }
-                panel.rows.push(TodoRow { status: label, text });
+                TodoRow {
+                    status: item.status.clone(),
+                    text,
+                }
+            })
+            .collect();
+        while rows.len() > MAX_ITEMS {
+            let finished = rows
+                .iter()
+                .position(|row| matches!(row.status.as_str(), "completed" | "cancelled"));
+            match finished {
+                Some(index) => {
+                    rows.remove(index);
+                }
+                None => rows.truncate(MAX_ITEMS),
             }
         }
+        panel.rows = rows;
         panel
     }
 
@@ -117,24 +135,65 @@ impl TodoPanel {
 
     pub(crate) fn lines<'a>(&'a self, height: u16, theme: &'a Theme) -> impl Iterator<Item = Line<'a>> {
         let shown = usize::from(height.saturating_sub(1));
-        let hidden = self.open.saturating_sub(shown);
-        let mut heading = format!("Todos · {}/{} complete", self.completed, self.total);
-        if hidden > 0 {
-            heading.push_str(&format!(" · {hidden} more"));
+        // A panel shorter than the list gives up its finished rows first, in
+        // stored order, so the open work stays on screen.
+        let mut kept: Vec<&TodoRow> = self.rows.iter().collect();
+        while kept.len() > shown {
+            match kept
+                .iter()
+                .position(|row| matches!(row.status.as_str(), "completed" | "cancelled"))
+            {
+                Some(index) => {
+                    kept.remove(index);
+                }
+                None => kept.truncate(shown),
+            }
         }
-        std::iter::once(Line::styled(heading, Style::default().fg(theme.core.accent))).chain(
-            self.rows.iter().take(shown).map(move |row| {
-                let color = match row.status {
-                    "Active" => theme.core.accent,
-                    "Blocked" => theme.core.warning,
-                    _ => theme.core.muted,
-                };
-                Line::from(vec![
-                    Span::styled(format!("  {} · ", row.status), Style::default().fg(color)),
-                    Span::styled(row.text.as_str(), Style::default().fg(theme.core.text)),
-                ])
-            }),
-        )
+        let hidden = self.items.len().saturating_sub(kept.len());
+        let filled = (self.completed * BAR_CELLS).checked_div(self.total).unwrap_or(0);
+        let mut heading = vec![
+            Span::styled(
+                "Todos  ",
+                Style::default().fg(theme.core.accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("━".repeat(filled), Style::default().fg(theme.core.success)),
+            Span::styled("─".repeat(BAR_CELLS - filled), Style::default().fg(theme.core.border)),
+            Span::styled(
+                format!(" {}/{} complete", self.completed, self.total),
+                Style::default().fg(theme.core.muted),
+            ),
+        ];
+        if hidden > 0 {
+            heading.push(Span::styled(
+                format!(" · {hidden} more"),
+                Style::default().fg(theme.core.muted),
+            ));
+        }
+        std::iter::once(Line::from(heading)).chain(kept.into_iter().map(move |row| {
+            let text = Style::default().fg(theme.core.text);
+            let struck = Style::default()
+                .fg(theme.core.muted)
+                .add_modifier(Modifier::CROSSED_OUT);
+            let (glyph, glyph_style, text_style) = match row.status.as_str() {
+                "completed" => ("✓", Style::default().fg(theme.core.success), struck),
+                "cancelled" => ("✕", Style::default().fg(theme.core.muted), struck),
+                "in_progress" => (
+                    "◐",
+                    Style::default().fg(theme.core.accent),
+                    text.fg(theme.core.accent).add_modifier(Modifier::BOLD),
+                ),
+                "blocked" => (
+                    "⊘",
+                    Style::default().fg(theme.core.warning),
+                    text.fg(theme.core.warning),
+                ),
+                _ => ("○", Style::default().fg(theme.core.muted), text),
+            };
+            Line::from(vec![
+                Span::styled(format!("  {glyph} "), glyph_style),
+                Span::styled(row.text.as_str(), text_style),
+            ])
+        }))
     }
 
     /// The complete list the rows summarize, in stored order.
@@ -183,4 +242,85 @@ impl TodoPanel {
 
 fn append_text(out: &mut String, value: &str) {
     out.extend(value.chars().take(512).map(|ch| if ch.is_control() { ' ' } else { ch }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(content: &str, status: &str) -> TodoItem {
+        TodoItem {
+            content: content.into(),
+            status: status.into(),
+            ..TodoItem::default()
+        }
+    }
+
+    fn drawn(panel: &TodoPanel, height: u16) -> Vec<(String, Vec<Modifier>)> {
+        let theme = Theme::default();
+        panel
+            .lines(height, &theme)
+            .map(|line| {
+                let text = line.spans.iter().map(|span| span.content.as_ref()).collect();
+                let modifiers = line.spans.iter().map(|span| span.style.add_modifier).collect();
+                (text, modifiers)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn finished_items_stay_in_order_ticked_and_struck_through() {
+        let panel = TodoPanel::from_snapshot(
+            &[
+                item("plan", "completed"),
+                item("build", "in_progress"),
+                item("ship", "pending"),
+                item("old idea", "cancelled"),
+            ],
+            None,
+        );
+        let rows = drawn(&panel, 10);
+        let text: Vec<&str> = rows.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(
+            text,
+            [
+                "Todos  ━━━━──────── 1/3 complete",
+                "  ✓ plan",
+                "  ◐ build",
+                "  ○ ship",
+                "  ✕ old idea",
+            ]
+        );
+        assert!(
+            rows[1].1[1].contains(Modifier::CROSSED_OUT),
+            "a finished item is not struck through"
+        );
+        assert!(
+            rows[4].1[1].contains(Modifier::CROSSED_OUT),
+            "a cancelled item is not struck through"
+        );
+        assert!(!rows[2].1[1].contains(Modifier::CROSSED_OUT));
+        assert!(
+            rows[2].1[1].contains(Modifier::BOLD),
+            "the active item does not stand out"
+        );
+    }
+
+    #[test]
+    fn a_short_panel_gives_finished_rows_to_the_open_work() {
+        let panel = TodoPanel::from_snapshot(
+            &[
+                item("plan", "completed"),
+                item("build", "in_progress"),
+                item("ship", "pending"),
+            ],
+            None,
+        );
+        let rows = drawn(&panel, 3);
+        let text: Vec<&str> = rows.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(
+            text,
+            ["Todos  ━━━━──────── 1/3 complete · 1 more", "  ◐ build", "  ○ ship"]
+        );
+    }
 }

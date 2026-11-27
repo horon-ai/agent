@@ -83,6 +83,7 @@ fn message(role: &str, content: &str, answer: Option<&str>) -> HistoryMessage {
         response_stats: None,
         answer: answer.map(str::to_string),
         message_id: None,
+        tool: None,
     }
 }
 

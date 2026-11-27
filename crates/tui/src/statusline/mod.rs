@@ -31,6 +31,11 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::settings::Settings;
 use crate::theme::{Symbols, Theme};
 
+mod branch;
+mod throughput;
+pub(crate) use branch::git_branch;
+pub use throughput::Throughput;
+
 #[cfg(test)]
 mod effort_tests;
 #[cfg(test)]
@@ -48,6 +53,8 @@ pub const SEGMENT_IDS: &[&str] = &[
     "cost",
     "time",
     "pending",
+    "elapsed",
+    "branch",
 ];
 
 /// One segment of the status line.
@@ -73,6 +80,10 @@ pub enum SegmentId {
     Time,
     /// A parked approval or question.
     Pending,
+    /// How long the running turn has taken, or the last one took.
+    Elapsed,
+    /// The git branch of the working directory.
+    Branch,
 }
 
 impl SegmentId {
@@ -89,6 +100,8 @@ impl SegmentId {
             "cost" => Some(Self::Cost),
             "time" => Some(Self::Time),
             "pending" => Some(Self::Pending),
+            "elapsed" => Some(Self::Elapsed),
+            "branch" => Some(Self::Branch),
             _ => None,
         }
     }
@@ -106,6 +119,8 @@ impl SegmentId {
             Self::Cost => "cost",
             Self::Time => "time",
             Self::Pending => "pending",
+            Self::Elapsed => "elapsed",
+            Self::Branch => "branch",
         }
     }
 
@@ -116,8 +131,10 @@ impl SegmentId {
             Self::Time => 2,
             Self::Session => 3,
             Self::Tokens => 4,
+            Self::Elapsed => 6,
+            Self::Branch => 5,
             Self::Cost => 4,
-            Self::ContextPct => 5,
+            Self::ContextPct => 6,
             Self::Usage => 5,
             Self::Path => 6,
             Self::Pending => 7,
@@ -240,6 +257,8 @@ pub struct StatusData<'a> {
     pub home: Option<&'a str>,
     /// Latest token totals.
     pub tokens: Option<TokenTotals>,
+    /// Average output tokens per second over the session, once measured.
+    pub tps: Option<u64>,
     /// Context window the runtime reported for the route in force, used by
     /// `context_pct` when `statusline.context_window` is unset.
     pub capacity: Option<u64>,
@@ -257,6 +276,10 @@ pub struct StatusData<'a> {
     pub spinner: Option<&'static str>,
     /// Local time, from the clock.
     pub now: Option<Time>,
+    /// Milliseconds the running turn has taken, or the last turn took.
+    pub elapsed_ms: Option<u64>,
+    /// The git branch of the working directory, when it is in a repository.
+    pub branch: Option<&'a str>,
 }
 
 /// A named arrangement of segments.
@@ -295,8 +318,14 @@ impl Preset {
     pub fn segments(self) -> (Vec<SegmentId>, Vec<SegmentId>) {
         match self {
             Self::Default => (
-                vec![SegmentId::Status, SegmentId::Model, SegmentId::Path],
-                vec![SegmentId::Tokens, SegmentId::ContextPct, SegmentId::Time],
+                vec![
+                    SegmentId::Status,
+                    SegmentId::Elapsed,
+                    SegmentId::Model,
+                    SegmentId::Path,
+                    SegmentId::Branch,
+                ],
+                vec![SegmentId::Tokens, SegmentId::ContextPct],
             ),
             Self::Minimal => (vec![SegmentId::Model], vec![SegmentId::Status]),
             Self::Custom => (Vec::new(), Vec::new()),
@@ -534,9 +563,11 @@ fn collect(ids: &[SegmentId], data: &StatusData<'_>, layout: &Layout, theme: &Th
 fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout, symbols: Symbols, with_effort: bool) -> String {
     match id {
         SegmentId::Model => {
+            // The model's own name, without the provider or the route it was
+            // reached through: `magpie/group/deepseek-v4.1-flash` reads as
+            // `deepseek-v4.1-flash`.
             let name = match (data.provider, data.model) {
-                (Some(provider), Some(model)) => format!("{provider}/{model}"),
-                (None, Some(model)) => model.to_string(),
+                (_, Some(model)) => model.rsplit('/').next().unwrap_or(model).to_string(),
                 (Some(provider), None) => provider.to_string(),
                 (None, None) => String::new(),
             };
@@ -561,7 +592,10 @@ fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout, symbols: 
             None => String::new(),
         },
         SegmentId::Tokens => match data.tokens {
-            Some(tokens) => format!("↑{} ↓{}", compact(tokens.input), compact(tokens.output)),
+            Some(tokens) => match data.tps {
+                Some(tps) => format!("↑{} ↓{} {tps} tok/s", compact(tokens.input), compact(tokens.output)),
+                None => format!("↑{} ↓{}", compact(tokens.input), compact(tokens.output)),
+            },
             None => String::new(),
         },
         SegmentId::ContextPct => context_text(data, layout.capacity(data)),
@@ -573,6 +607,18 @@ fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout, symbols: 
         },
         SegmentId::Pending => match data.prompt {
             Some(prompt) => prompt.to_string(),
+            None => String::new(),
+        },
+        SegmentId::Elapsed => match data.elapsed_ms {
+            Some(millis) => {
+                let mut text = String::new();
+                crate::tool_line::push_elapsed(&mut text, millis);
+                text
+            }
+            None => String::new(),
+        },
+        SegmentId::Branch => match data.branch {
+            Some(branch) => format!("⑂ {branch}"),
             None => String::new(),
         },
     }
@@ -633,9 +679,13 @@ fn segment_style(id: SegmentId, data: &StatusData<'_>, theme: &Theme) -> Style {
             }
         }
         SegmentId::Usage | SegmentId::Cost => Style::default().fg(theme.status.status_accent),
-        SegmentId::Session | SegmentId::Path | SegmentId::Tokens | SegmentId::ContextPct | SegmentId::Time => {
-            Style::default().fg(theme.status.status_text)
-        }
+        SegmentId::Branch => Style::default().fg(theme.core.warning),
+        SegmentId::Session
+        | SegmentId::Path
+        | SegmentId::Tokens
+        | SegmentId::ContextPct
+        | SegmentId::Time
+        | SegmentId::Elapsed => Style::default().fg(theme.status.status_text),
     }
 }
 
@@ -820,7 +870,32 @@ fn context_text(data: &StatusData<'_>, window: u64) -> String {
         None => return String::new(),
     };
     let percent = tokens.used().saturating_mul(100) / window;
-    format!("{}%", percent.min(100))
+    // The window rides beside the share, as `4%|1M`, so the reader knows what
+    // the percentage is of without a separate segment.
+    format!("{}%|{}", percent.min(100), window_label(window))
+}
+
+/// A context window as a short count: `1M`, `200K`, `1.5M`, `128K`.
+fn window_label(window: u64) -> String {
+    let (unit, suffix) = if window >= 1_000_000 {
+        (1_000_000, "M")
+    } else if window >= 1_000 {
+        (1_000, "K")
+    } else {
+        return window.to_string();
+    };
+    if window.is_multiple_of(unit) {
+        format!("{}{suffix}", window / unit)
+    } else {
+        // One decimal, dropped when it is zero: a 1 048 576-token window
+        // reads `1M`, the way the provider advertises it.
+        let tenths = window.saturating_mul(10) / unit;
+        if tenths.is_multiple_of(10) {
+            format!("{}{suffix}", tenths / 10)
+        } else {
+            format!("{}.{}{suffix}", tenths / 10, tenths % 10)
+        }
+    }
 }
 
 /// Width of one side's spans, separators included.

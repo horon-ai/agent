@@ -218,6 +218,30 @@ impl Agent {
     /// dispatch gate. The tool is forced eager: it exists to be called at
     /// completion, and a discoverable tool nobody was told to discover is never
     /// called.
+    /// Send the tools `toolbox` could not run for want of `args` as direct
+    /// tools from this request on.
+    ///
+    /// Rebuilding the list costs one prompt-cache miss, and only a session
+    /// whose model failed to fill `args` pays it; a direct schema is the one
+    /// form such a model fills. Answers whether the list changed.
+    pub(crate) fn promote_requested_tools(&mut self) -> bool {
+        let names = crate::tool::take_direct_requests(&self.session.id);
+        if names.is_empty() {
+            return false;
+        }
+        for name in &names {
+            self.allow_tool(name);
+        }
+        logging::info(&format!(
+            "Sending {} as direct tools: toolbox could not run them without `args`",
+            names.join(", ")
+        ));
+        self.locked_tools = None;
+        self.cache_tracker.reset();
+        self.kv_cache_monitor.reset();
+        true
+    }
+
     pub(crate) fn allow_tool(&mut self, name: &str) {
         let name = name.trim();
         if name.is_empty() {
@@ -348,6 +372,7 @@ impl Agent {
             model,
             self.provider.name(),
             self.session.provider_key.as_deref(),
+            self.provider.session_provider_key().as_deref(),
         );
         // A saved OAuth account route cannot survive a model switch: this
         // build has no OAuth credentials, so drop the stale label.

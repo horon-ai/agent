@@ -10,7 +10,7 @@ name: Package compat
 # each kind, calls its tool from a later turn, invokes a plugin resource,
 # cancels, replaces, removes, reaps descendants and refuses a wrong target and a
 # corrupted copy. Each job keeps a JSON report; the final job refuses any target
-# whose report is incomplete and checks that `docs/release/INSTALL.md` advertises
+# whose report is incomplete and checks that `packages/docs-site/reference/release/install.mdx` advertises
 # only targets with a passing report.
 
 on:
@@ -41,8 +41,8 @@ on:
       - "tests/package_end_to_end/**"
       - "scripts/ci/package_compat.py"
       - "scripts/ci/test_package_compat.py"
-      - "docs/release/INSTALL.md"
-      - "docs/release/INSTALL.ko.md"
+      - "packages/docs-site/reference/release/install.mdx"
+      - "packages/docs-site/ko/reference/release/install.mdx"
       - ".github/workflows/package-compat.yml"
   push:
     branches: [dev, main]
@@ -69,8 +69,8 @@ on:
       - "tests/package_end_to_end/**"
       - "scripts/ci/package_compat.py"
       - "scripts/ci/test_package_compat.py"
-      - "docs/release/INSTALL.md"
-      - "docs/release/INSTALL.ko.md"
+      - "packages/docs-site/reference/release/install.mdx"
+      - "packages/docs-site/ko/reference/release/install.mdx"
       - ".github/workflows/package-compat.yml"
   workflow_dispatch:
 
@@ -181,7 +181,7 @@ jobs:
               emit("true")
               sys.exit(0)
           changed = [p for p in diff.stdout.splitlines() if p]
-          install_docs = {"docs/release/INSTALL.md", "docs/release/INSTALL.ko.md"}
+          install_docs = {"packages/docs-site/reference/release/install.mdx", "packages/docs-site/ko/reference/release/install.mdx"}
           # Non-doc compat inputs copied from `on.pull_request.paths` above so paired
           # mintlify doc-site updates (`packages/docs-site/**`) do not force native builds.
           compat_code_prefixes = (
@@ -481,8 +481,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/ci/package_compat.py docs-claims \
-            --install docs/release/INSTALL.md \
-            --install docs/release/INSTALL.ko.md \
+            --install packages/docs-site/reference/release/install.mdx \
+            --install packages/docs-site/ko/reference/release/install.mdx \
             --reports "$RUNNER_TEMP/reports"
 
       - name: Upload the support matrix

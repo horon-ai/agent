@@ -192,7 +192,7 @@ impl BlockingWriter {
         // reader to rebuild sooner, and every derived file is checked against
         // the original log's stamp anyway, so a crash that loses the unflushed
         // entry costs one rebuild, never a stale cache. See
-        // docs/protocol/SESSION_STORE.md.
+        // packages/docs-site/reference/protocol/session-store.mdx.
         self.disk.hit(IoPoint::DirtyCreated)?;
         if self.state.batch {
             self.state.batch_dirty = Some(crate::cache_io::Stamp::read(&path)?);

@@ -32,7 +32,7 @@ fn irc_switch_adds_irc_to_core_allow_list() {
     assert!(allowed.contains(TOOLBOX_TOOL));
     assert_eq!(
         allowed.len(),
-        18 + 17 + 3 + 1,
+        18 + 16 + 3 + 1,
         "the open core surface plus irc, the checkpoint pair, and the dispatcher"
     );
     assert!(!allowed.contains(PLAN_TOOL), "plan mode stays off");

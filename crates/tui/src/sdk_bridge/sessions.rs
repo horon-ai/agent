@@ -12,7 +12,7 @@ use std::time::Duration;
 use horon_agent_sdk::api::ApiEvent;
 use horon_agent_sdk::{ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, SessionInfo};
 
-use super::{AttachedSession, ForkRow, cut, detail, runtime};
+use super::{AttachedSession, ForkRow, Incoming, cut, detail, runtime};
 
 type InitialAttach = Option<(AttachedSession, Option<String>)>;
 
@@ -220,6 +220,42 @@ pub(super) fn history_or_empty<E>(read: Result<Vec<HistoryMessage>, E>) -> Vec<H
 pub(super) fn follow<S>(attached: &AttachedSession, next: S, session_id: &mut String, stream: &mut S) {
     *stream = next;
     *session_id = attached.session_id.clone();
+}
+
+/// Delete the session `/session delete` left, once the client is attached to
+/// the new one, and report how it went on `events`.
+///
+/// The daemon keeps a session its client just left open for a reconnect grace
+/// (thirty seconds by default) and refuses a delete as open until it ends, so
+/// the refusal is retried across that window. The work runs on its own thread
+/// and connection: the bridge keeps answering the new session meanwhile, and a
+/// request the daemon holds does not stall it. A session that never stored a
+/// message has no record to remove, which the daemon reports as an unknown
+/// session: that is the state a delete asks for, so it counts as done.
+pub(super) fn delete_left(dial: Dial, old: String, events: std::sync::mpsc::Sender<Incoming>) {
+    const RETRY: Duration = Duration::from_millis(500);
+    const WINDOW: Duration = Duration::from_secs(40);
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        let outcome = loop {
+            let attempt = HoronAgentClient::connect(dial.options()).and_then(|client| client.delete_session(&old));
+            match attempt {
+                Ok(()) => break Incoming::Info(format!("Session deleted: {old}")),
+                Err(error) if matches!(error.kind, ErrorKind::UnknownSession { .. }) => {
+                    break Incoming::Info(format!("Session deleted: {old} (it had stored nothing)"));
+                }
+                Err(error) if started.elapsed() < WINDOW && error.to_string().contains("session is open") => {
+                    std::thread::sleep(RETRY);
+                }
+                Err(error) => {
+                    break Incoming::RequestFailed(format!(
+                        "started a new session, but could not delete {old}: {error}"
+                    ));
+                }
+            }
+        };
+        drop(events.send(outcome));
+    });
 }
 
 /// The session an event belongs to, when it names one.

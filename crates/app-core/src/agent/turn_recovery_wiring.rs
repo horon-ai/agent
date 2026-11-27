@@ -116,7 +116,7 @@ impl Agent {
     ///
     /// Because the switch itself is off by default, enabling it is what extends
     /// `conservative` to the semantic class; that reach is stated in
-    /// `docs/runtime/TURNS.md` rather than implied. A judgment still runs on the
+    /// `packages/docs-site/reference/runtime/turns.mdx` rather than implied. A judgment still runs on the
     /// stop that spends the last continuation, because its answer decides
     /// whether the terminal notice claims output may be missing.
     ///

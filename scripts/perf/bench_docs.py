@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a benchmark run into the generated block of docs/performance/RESULTS.md.
+"""Write a benchmark run into the generated blocks of the measured-results page.
 
 `.github/workflows/benchmark-docs.yml` runs every benchmark suite on Linux, macOS
 and Windows after a push to `main` passes CI, then calls this script once per
@@ -73,13 +73,89 @@ from pathlib import Path
 import bench_charts
 import bench_request_bytes as brb
 
-START_RE = re.compile(r"^<!-- bench-auto:start(?: commit=([0-9a-f]{7,40}))? -->$", re.MULTILINE)
+START_RE = re.compile(
+    r"^(?:<!-- bench-auto:start(?: commit=([0-9a-f]{7,40}))? -->"
+    r"|\{/\* bench-auto:start(?: commit=([0-9a-f]{7,40}))? \*/\})$",
+    re.MULTILINE,
+)
 END = "<!-- bench-auto:end -->"
 CHARTS_START = "<!-- bench-charts:start -->"
 CHARTS_END = "<!-- bench-charts:end -->"
 CHARTS_DIR = "charts"
+# Where an MDX page of the documentation site keeps its charts, from the site root.
+SITE_CHARTS = "images/reference/performance/charts"
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 HEADING_RE = re.compile(r"^(#{1,6}) ")
+
+# An MDX page (the documentation site's results page) carries the same blocks
+# with `{/* name */}` markers, since MDX rejects HTML comments, and every
+# generated body is escaped so MDX does not read `{`, `}` or `<name` in it as
+# code. A page is MDX when it already carries an MDX marker.
+MDX_MARKER = re.compile(r"^\{/\* bench-[a-z]+:(?:start|end)\b.*\*/\}$", re.MULTILINE)
+INLINE_CODE_RE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
+AUTOLINK_RE = re.compile(r"<(https?://[^>\s]+)>")
+HTML_COMMENT_RE = re.compile(r"^\s*<!--.*-->\s*$")
+BLOCK_TAG_RE = re.compile(r"^(?:</?(?:details|summary)(?:\s[^<>]*)?>|<summary>[^<>]*</summary>)$")
+
+
+def is_mdx(text: str) -> bool:
+    return MDX_MARKER.search(text) is not None
+
+
+def marker(html: str, mdx: bool) -> str:
+    """`<!-- name -->` as written in a page of the given kind."""
+    if not mdx:
+        return html
+    return "{/* " + html.removeprefix("<!-- ").removesuffix(" -->") + " */}"
+
+
+def _mdx_line(line: str) -> str:
+    if BLOCK_TAG_RE.match(line.strip()):
+        return line
+    masked: list[str] = []
+    in_table = line.lstrip().startswith("|")
+
+    def hide(match: re.Match[str]) -> str:
+        span = match.group(0)
+        if in_table:
+            span = re.sub(r"(?<!\\)\|", r"\\|", span)
+        masked.append(span)
+        return f"\x00{len(masked) - 1}\x00"
+
+    line = INLINE_CODE_RE.sub(hide, line)
+    line = AUTOLINK_RE.sub(lambda m: f"[{m.group(1)}]({m.group(1)})", line)
+    pieces = re.split(r"(\]\([^)]*\))", line)
+    escaped = []
+    for piece in pieces:
+        if not piece.startswith("]("):
+            piece = re.sub(r"(?<!\\)([{}])", r"\\\1", piece)
+            piece = re.sub(r"(?<!\\)\[\[", r"\\[\\[", piece)
+            piece = re.sub(r"(?<!\\)<(?=[^\W\d_]|[/!?])", r"\\<", piece)
+        escaped.append(piece)
+    return re.sub(r"\x00(\d+)\x00", lambda m: masked[int(m.group(1))], "".join(escaped))
+
+
+def to_mdx(markdown: str) -> str:
+    """Markdown the run produced, made safe for an MDX page; fences are untouched."""
+    out: list[str] = []
+    in_fence = False
+    for line in markdown.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            out.append(line)
+        elif in_fence:
+            out.append(line)
+        elif not HTML_COMMENT_RE.match(line):
+            out.append(_mdx_line(line))
+    return "\n".join(out)
+
+
+def site_root(doc: Path) -> Path | None:
+    """The documentation-site project (the folder holding `docs.json`) above `doc`."""
+    for folder in doc.resolve().parents:
+        if (folder / "docs.json").is_file():
+            return folder
+    return None
 
 # The OS sections, in the order they appear. (key in platform.txt, title)
 PLATFORMS = (("linux", "Linux"), ("macos", "macOS"), ("windows", "Windows"))
@@ -260,7 +336,7 @@ def _block_span(text: str) -> tuple[re.Match[str], int]:
     starts = list(START_RE.finditer(text))
     if len(starts) != 1:
         raise DocError(f"expected exactly one bench-auto start marker, found {len(starts)}")
-    ends = [m.start() for m in re.finditer(re.escape(END), text)]
+    ends = [m.start() for m in re.finditer(re.escape(marker(END, is_mdx(text))), text)]
     if len(ends) != 1:
         raise DocError(f"expected exactly one bench-auto end marker, found {len(ends)}")
     if ends[0] < starts[0].end():
@@ -270,19 +346,23 @@ def _block_span(text: str) -> tuple[re.Match[str], int]:
 
 def last_commit(text: str) -> str | None:
     start, _ = _block_span(text)
-    return start.group(1)
+    return start.group(1) or start.group(2)
 
 
 def replace_block(text: str, commit: str, body: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{7,40}", commit):
         raise DocError(f"commit must be a lowercase hex SHA, got {commit!r}")
+    mdx = is_mdx(text)
     start, end = _block_span(text)
-    marker = f"<!-- bench-auto:start commit={commit} -->"
-    return text[: start.start()] + marker + "\n\n" + body.strip("\n") + "\n\n" + text[end:]
+    opening = marker(f"<!-- bench-auto:start commit={commit} -->", mdx)
+    body = to_mdx(body) if mdx else body
+    return text[: start.start()] + opening + "\n\n" + body.strip("\n") + "\n\n" + text[end:]
 
 
 def optional_span(text: str, start: str, end: str, label: str) -> tuple[int, int] | None:
     """Body span of an optional block, or None when the document has none."""
+    mdx = is_mdx(text)
+    start, end = marker(start, mdx), marker(end, mdx)
     starts = [match.start() for match in re.finditer(re.escape(start), text)]
     ends = [match.start() for match in re.finditer(re.escape(end), text)]
     if not starts and not ends:
@@ -299,13 +379,16 @@ def replace_optional(text: str, start: str, end: str, body: str) -> tuple[str, b
     span = optional_span(text, start, end, start)
     if span is None:
         return text, False
-    return text[: span[0]] + start + "\n\n" + body.strip("\n") + "\n\n" + text[span[1]:], True
+    mdx = is_mdx(text)
+    body = to_mdx(body) if mdx else body
+    return text[: span[0]] + marker(start, mdx) + "\n\n" + body.strip("\n") + "\n\n" + text[span[1]:], True
 
 
 def charts_span(text: str) -> tuple[int, int] | None:
     """Body span of the optional charts block, or None when the document has none."""
-    starts = [m.end() for m in re.finditer(re.escape(CHARTS_START), text)]
-    ends = [m.start() for m in re.finditer(re.escape(CHARTS_END), text)]
+    mdx = is_mdx(text)
+    starts = [m.end() for m in re.finditer(re.escape(marker(CHARTS_START, mdx)), text)]
+    ends = [m.start() for m in re.finditer(re.escape(marker(CHARTS_END, mdx)), text)]
     if not starts and not ends:
         return None
     if len(starts) != 1 or len(ends) != 1:
@@ -322,19 +405,29 @@ def _run_id(run_url: str | None) -> str | None:
 
 def write_charts(text: str, doc: Path, results: Path, commit: str, run_url: str | None = None,
                  lang: str = "en") -> str:
-    """Draw the charts beside `doc` and rewrite the charts block; no block, no charts."""
+    """Draw the charts and rewrite the charts block; no block, no charts.
+
+    A Markdown page keeps its charts in a `charts/` folder beside it. An MDX page
+    of the documentation site keeps them under the site's
+    `images/reference/performance/charts/` and links them by site path.
+    """
     span = charts_span(text)
     if span is None:
         return text
     dirs = find_platform_dirs(results)
     files = bench_charts.render_charts(dirs, commit, lang, _run_id(run_url))
     tui_files = bench_charts.render_tui_charts(dirs, commit, lang, _run_id(run_url))
-    folder = doc.parent / CHARTS_DIR
+    site = site_root(doc) if is_mdx(text) else None
+    if site is not None:
+        folder = site / SITE_CHARTS
+        link = "/" + SITE_CHARTS
+    else:
+        folder, link = doc.parent / CHARTS_DIR, CHARTS_DIR
     if files:
         folder.mkdir(parents=True, exist_ok=True)
         for name, svg in {**files, **tui_files}.items():
             (folder / name).write_text(svg, encoding="utf-8", newline="\n")
-    body = bench_charts.markdown(lang, bool(files), CHARTS_DIR, bool(tui_files))
+    body = bench_charts.markdown(lang, bool(files), link, bool(tui_files))
     return text[: span[0]] + "\n\n" + body + "\n\n" + text[span[1]:]
 
 
@@ -905,7 +998,7 @@ def main(argv: list[str]) -> int:
                     + "; refusing to overwrite published comparison tables"
                 )
         wrote = False
-        has_auto = START_RE.search(text) is not None or END in text
+        has_auto = START_RE.search(text) is not None or marker(END, is_mdx(text)) in text
         if has_auto and not args.comparison_only:
             missing = missing_suite_groups(dirs) if args.require_complete else []
             if missing:

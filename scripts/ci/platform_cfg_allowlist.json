@@ -240,10 +240,6 @@
       "count": 1,
       "reason": "the whole test module drives a stdio MCP server through a POSIX shell script."
     },
-    "crates/base/src/mcp/manager.rs": {
-      "count": 2,
-      "reason": "a test writes a bash fake MCP server and asserts its mode, plus the unix-only test module that holds it."
-    },
     "crates/base/src/mcp/oauth_tests.rs": {
       "count": 2,
       "reason": "asserts POSIX mode bits (0600) and symlink/hard-link refusal of the credential store; the platform crates assert the same property on their own OS."
@@ -303,10 +299,6 @@
     "crates/base/src/skill/sources_tests.rs": {
       "count": 1,
       "reason": "0o000 permission test needs unix mode bits to make one skill source unreadable."
-    },
-    "crates/base/src/sponsors/provenance.rs": {
-      "count": 1,
-      "reason": "unix-only integration test module that writes a shell-script stand-in for the sponsor report transport."
     },
     "crates/base/src/storage/tests.rs": {
       "count": 3,
@@ -383,6 +375,10 @@
     "crates/logging/src/watchdog.rs": {
       "count": 2,
       "reason": "Linux-only watchdog detail: it reads /proc/self/status for the thread stack and virtual-memory figures while other platforms log the default."
+    },
+    "crates/lsp/src/client_tests.rs": {
+      "count": 1,
+      "reason": "test starts a fake language server through /bin/sh that writes to stderr and exits, to prove the startup error quotes it."
     },
     "crates/lsp/src/server_tests.rs": {
       "count": 1,

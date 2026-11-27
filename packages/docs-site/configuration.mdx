@@ -103,10 +103,10 @@ image = "my-image-model"
 | --- | --- | --- |
 | Tool profile (`--tool-profile`, `HORON_AGENT_TOOL_PROFILE`, `[tools] profile`) | `core` | `full`, `acp`, `minimal`/`lite`, `none` |
 | `[acp] profile` | `standard` | `extended`, `full` |
-| `[tools] redo`, `hashline_edit` | `false` | `true` |
+| `[tools] redo`, `hashline_edit` | `true` | `false` |
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
-| `[tools] irc` | `false` | `true`; `HORON_AGENT_IRC` overrides it per process |
+| `[tools] irc` | `true` | `false`; `HORON_AGENT_IRC` overrides it per process |
 | `[features] crash_bundles` | `true` | `false` |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
 | `[features] foreign_rules`, `stream_rules` | `false` | `true` |

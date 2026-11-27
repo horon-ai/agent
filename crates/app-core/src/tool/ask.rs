@@ -69,6 +69,10 @@ impl AskTool {
 #[derive(Deserialize)]
 struct Input {
     questions: Vec<QuestionInput>,
+    /// Seconds an attached client gets before the recommendation is taken,
+    /// capped at [`CLIENT_ANSWER_TIMEOUT`].
+    #[serde(default, deserialize_with = "super::serde_coerce::opt_u32_from_string_or_number")]
+    timeout_secs: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -346,7 +350,8 @@ impl Tool for AskTool {
                         },
                         "required": ["question", "options"]
                     }
-                }
+                },
+                "timeout_secs": {"type": "integer", "minimum": 1, "maximum": 300, "description": "Seconds to wait for a person before taking the recommendation; default and cap 300."}
             },
             "required": ["questions"]
         })
@@ -354,12 +359,17 @@ impl Tool for AskTool {
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
         let input: Input = serde_json::from_value(input)?;
+        // A caller may shorten the wait (an unattended run, a test), never
+        // lengthen it past the host's bound.
+        let wait = input.timeout_secs.map_or(self.wait, |secs| {
+            Duration::from_secs(u64::from(secs.max(1))).min(self.wait)
+        });
         let request = input.into_request()?;
         let policy = self.policy();
         if let Some(tx) = ask_bridge::sender_for(&ctx.session_id) {
             let _awaiting = ask_bridge::begin_awaiting_answer(&ctx.session_id);
             match self
-                .wait_for_client(&request, tx, &ctx.session_id, &ctx.tool_call_id)
+                .wait_for_client(&request, tx, &ctx.session_id, &ctx.tool_call_id, wait)
                 .await
             {
                 ClientReply::Answered(answers) => return answered(&request, answers, policy),
@@ -367,10 +377,10 @@ impl Tool for AskTool {
                     if policy == AskPolicy::Error {
                         bail!(
                             "This session cannot answer questions: the client that could answer did not ({}s limit) and [tools] ask_policy = \"error\". Decide from the available context and continue without an answer.",
-                            self.wait.as_secs()
+                            wait.as_secs()
                         );
                     }
-                    return resolve_after_wait(&request, policy, reason, self.wait);
+                    return resolve_after_wait(&request, policy, reason, wait);
                 }
             }
         }
@@ -398,6 +408,7 @@ impl AskTool {
         tx: tokio::sync::mpsc::UnboundedSender<AskPrompt>,
         session_id: &str,
         tool_call_id: &str,
+        wait: Duration,
     ) -> ClientReply {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let prompt = AskPrompt {
@@ -410,7 +421,7 @@ impl AskTool {
         if tx.send(prompt).is_err() {
             return ClientReply::None(NoAnswer::Disconnected);
         }
-        match tokio::time::timeout(self.wait, response_rx).await {
+        match tokio::time::timeout(wait, response_rx).await {
             Ok(Ok(answers)) => match merge_client_answers(request, answers) {
                 Some(merged) => ClientReply::Answered(merged),
                 None => ClientReply::None(NoAnswer::Unusable),

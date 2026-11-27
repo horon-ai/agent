@@ -3,8 +3,6 @@ title: "ACP support (v1 and v2)"
 description: "The horon agent supports Agent Client Protocol (ACP) v1 and v2 together on one endpoint so an editor can attach it as an external agent."
 ---
 
-{/* Generated from docs/protocol/ACP.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 The horon agent supports Agent Client Protocol (ACP) v1 and v2 together on one endpoint so an editor can attach it as an external agent. Running `horon acp` turns it into an ACP agent that exchanges JSON-RPC messages over standard input and output. v1 is the stable version and its messages follow the official `schema-v1.32.0`. v2 follows the stable portion of `schema-v2.0.0-alpha.16`. The v1 sections of this document describe how a v1 connection behaves; the v2 differences are collected in [ACP v2](#acp-v2).
 
 ## Running
@@ -187,7 +185,7 @@ When a tool needs approval, `session/request_permission` goes to the editor and 
 | `reject-once` | Reject this once |
 | `reject-always` | Reject. The same tool name is not asked again for the session |
 
-A v1 session gets the four options it always had, in the same order, so an existing editor is unaffected. A v2 session gets `allow-path` and `allow-folder` only when the call names exactly one filesystem path: one answer must not decide several places the user was never shown. Neither scoped option touches the per-tool memory that `allow-always` writes, because the grant is about a place, not a tool. The daemon stores the grant itself (`docs/runtime/TOOLS.md`, "Scoped grants") and repeats the single-path check, so a client cannot widen its own answer.
+A v1 session gets the four options it always had, in the same order, so an existing editor is unaffected. A v2 session gets `allow-path` and `allow-folder` only when the call names exactly one filesystem path: one answer must not decide several places the user was never shown. Neither scoped option touches the per-tool memory that `allow-always` writes, because the grant is about a place, not a tool. The daemon stores the grant itself (`packages/docs-site/reference/runtime/tools.mdx`, "Scoped grants") and repeats the single-path check, so a client cannot widen its own answer.
 
 A cancellation result, an unknown optionId, a malformed response and a client error are all treated as rejection. When another view decides first, the editor's question is withdrawn with `$/cancel_request`.
 

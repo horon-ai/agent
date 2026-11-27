@@ -23,7 +23,7 @@ name: Benchmark
 #
 # and `workflow_call` from benchmark-docs.yml, which runs every suite on every OS
 # for a `main` commit after its CI passed and writes the result into
-# docs/performance/RESULTS.md.
+# packages/docs-site/reference/performance/results.mdx.
 #
 # Each OS runs on its own GitHub-hosted runners (Linux ubuntu-24.04, macOS
 # macos-latest, Windows windows-latest) through one call of benchmark-os.yml,
@@ -35,7 +35,7 @@ name: Benchmark
 # every tool sees the same deterministic replies.
 #
 # Results are reports, not gates. Wall-clock and RSS on a shared runner move with
-# the machine, so nothing here fails on a threshold (docs/performance/BENCHMARK.md).
+# the machine, so nothing here fails on a threshold (packages/docs-site/reference/performance/benchmark.mdx).
 # A suite fails only when its script itself errors; a missing competitor is
 # listed as skipped.
 

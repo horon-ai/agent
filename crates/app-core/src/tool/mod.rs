@@ -27,8 +27,6 @@ pub(crate) use consult::{mark_session_consult_policy, session_is_consult};
 mod context_notes;
 mod conversation_search;
 pub mod diagnostics_list;
-mod discover;
-mod discover_secrets;
 mod edit;
 mod edit_stats;
 pub(crate) mod eval;
@@ -95,7 +93,9 @@ mod tool_names;
 use tool_names::is_fixed_mcp_tool;
 pub(crate) use tool_names::{tool_name_is_allowed, tool_name_is_disabled};
 mod toolbox;
-pub(crate) use self::toolbox::session_can_reach;
+#[cfg(test)]
+pub(crate) use self::toolbox::request_direct;
+pub(crate) use self::toolbox::{session_can_reach, take_direct_requests};
 pub(crate) use a2ui::A2UI_TOOL;
 mod undo;
 mod user_response;
@@ -813,12 +813,7 @@ impl Registry {
         if build_allows("irc") {
             Self::insert_tool_timed(&mut m, &mut timings, "irc", irc::IrcTool::new);
         }
-        Self::insert_tool_timed(
-            &mut m,
-            &mut timings,
-            "horon_agent_docs",
-            horon_agent_docs::HoronAgentDocsTool::new,
-        );
+        Self::insert_tool_timed(&mut m, &mut timings, "horon", horon_agent_docs::HoronAgentDocsTool::new);
         if build_allows("todo") {
             Self::insert_tool_timed(&mut m, &mut timings, "todo", todo::TodoTool::new);
         }
@@ -945,12 +940,6 @@ impl Registry {
                 crate::config::TOOLBOX_TOOL,
                 toolbox::ToolboxTool::new(registry.downgrade()),
             );
-        }
-        // Integration discovery is on by default (opt-out); when disabled the
-        // tool is never registered and no discovery endpoint is ever
-        // contacted.
-        if crate::config::config().sponsors.enabled {
-            Self::insert_tool(&mut tools_map, "integration_tools", discover::DiscoverToolsTool::new());
         }
         let session_tools_ms = session_tools_start.elapsed().as_millis();
 

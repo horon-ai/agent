@@ -45,18 +45,30 @@ struct AgentGrepInput {
     #[serde(default, alias = "pattern")]
     query: Option<String>,
     // `file_path` accepted because agents frequently pass it instead of `file`.
-    #[serde(default, alias = "file_path")]
+    #[serde(
+        default,
+        alias = "file_path",
+        deserialize_with = "super::serde_coerce::opt_string_empty_as_none"
+    )]
     file: Option<String>,
     #[serde(default)]
     terms: Option<Vec<String>>,
     #[serde(default)]
     regex: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::serde_coerce::opt_string_empty_as_none")]
     path: Option<String>,
     // `include` accepted for legacy grep-tool calls aliased to agentgrep.
-    #[serde(default, alias = "include")]
+    #[serde(
+        default,
+        alias = "include",
+        deserialize_with = "super::serde_coerce::opt_string_empty_as_none"
+    )]
     glob: Option<String>,
-    #[serde(rename = "type", default)]
+    #[serde(
+        rename = "type",
+        default,
+        deserialize_with = "super::serde_coerce::opt_string_empty_as_none"
+    )]
     file_type: Option<String>,
     #[serde(default)]
     hidden: Option<bool>,
@@ -66,7 +78,7 @@ struct AgentGrepInput {
     max_files: Option<usize>,
     #[serde(default)]
     max_regions: Option<usize>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::serde_coerce::opt_string_empty_as_none")]
     full_region: Option<String>,
     #[serde(default)]
     debug_plan: Option<bool>,
@@ -223,7 +235,7 @@ impl Tool for AgentGrepTool {
                 },
                 "path": {
                     "type": "string",
-                    "description": "File or directory; defaults to workspace."
+                    "description": "File or directory; defaults to workspace. .gitignore is honored only inside a git repository."
                 },
                 "glob": {
                     "type": "string",
@@ -390,7 +402,7 @@ fn run_agentgrep_blocking(params: &AgentGrepInput, ctx: &ToolContext) -> Result<
                     params.mode, elapsed_ms, request
                 ));
             }
-            Ok(output)
+            Ok(cap_line_lengths(output))
         }
         Err(err) => {
             let detail = err.to_string();
@@ -407,6 +419,32 @@ fn run_agentgrep_blocking(params: &AgentGrepInput, ctx: &ToolContext) -> Result<
             ))
         }
     }
+}
+
+/// Longest rendered line, in bytes, the same bound the context renderer puts
+/// on a body line. agentgrep's own renderers cut body lines but not every
+/// label they print (a symbol named after a minified file's only line), so one
+/// line of a generated file could otherwise fill the result.
+const MAX_RENDERED_LINE_BYTES: usize = 240;
+
+fn cap_line_lengths(mut output: ToolOutput) -> ToolOutput {
+    if output.output.lines().all(|line| line.len() <= MAX_RENDERED_LINE_BYTES) {
+        return output;
+    }
+    let mut capped = String::with_capacity(output.output.len().min(1 << 20));
+    for (index, line) in output.output.split('\n').enumerate() {
+        if index > 0 {
+            capped.push('\n');
+        }
+        if line.len() > MAX_RENDERED_LINE_BYTES {
+            capped.push_str(util::truncate_str(line, MAX_RENDERED_LINE_BYTES));
+            capped.push_str(" [line cut]");
+        } else {
+            capped.push_str(line);
+        }
+    }
+    output.output = capped;
+    output
 }
 
 fn execute_linked_agentgrep(

@@ -3,8 +3,6 @@ title: "Installing horon from npm"
 description: "The npm packages of the CLI: installing and running them, versioning, the publish workflow and provenance."
 ---
 
-{/* Generated from docs/release/NPM.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 `@horon-ai/horon` is the npm distribution of the CLI: a small launcher plus one package per platform that carries the `horon-agent` and `horon-tui` binaries. The launcher starts the binary of the machine it runs on, and npm pins the installed version like it does for any other dependency. Choosing a release tag and the installers that fetch the release archives are described in [`INSTALL.md`](/reference/release/install).
 
 **The seven names are live.** `v0.1.16` is the first release published to npm: the wrapper and the six platform packages carry that release's `horon-agent` and `horon-tui` binaries, and every later release publishes the same seven at its tag version, from the "Release Tag" run on `main` (see "The publish workflow"). The `0.0.0` placeholders that reserved the names are superseded.

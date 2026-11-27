@@ -149,6 +149,7 @@ fn bridge_wiring_snapshot_is_preceded_by_one_matching_marker() {
             role: "assistant".into(),
             content: "hello".into(),
             message_id: None,
+            tool: None,
         }],
         next_history_cursor: None,
         truncated: false,
@@ -556,4 +557,30 @@ fn apply_control_validation_error_maps_to_invalid_request() {
             ..
         }
     ));
+}
+
+/// The daemon answers `get_model_catalog` with a catalog push rather than a
+/// reply to the request, so a `list_models` that had to ask is answered by it.
+#[test]
+fn a_list_waiting_for_the_catalog_is_answered_by_the_catalog_push() {
+    let mut state = BridgeState {
+        session_id: Some("s1".into()),
+        ..Default::default()
+    };
+    let list = state.api_request_to_legacy(&serde_json::json!({"id": 2, "req": "list_models"}));
+    match &list[..] {
+        [Outbound::Legacy(value)] => assert_eq!(value["type"], "get_model_catalog"),
+        other => panic!("an empty cache answered: {other:?}"),
+    }
+    let frames = state.legacy_event_to_api(&serde_json::json!({
+        "type": "available_models_updated", "available_models": ["a", "b"], "provider_model": "a",
+    }));
+    let reply = frames
+        .iter()
+        .find(|frame| frame.reply_to == Some(2))
+        .expect("the waiting list was answered");
+    match &reply.event {
+        ApiEvent::Models { models, .. } => assert_eq!(models, &["a", "b"]),
+        other => panic!("unexpected: {other:?}"),
+    }
 }

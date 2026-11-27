@@ -440,7 +440,7 @@ fn first_sentence(line: &str) -> &str {
 }
 
 const ADDITIONAL_TOOLS_HEADER: &str = "# Additional tools";
-const ADDITIONAL_TOOLS_INSTRUCTION: &str = "Call one with toolbox: action \"run\", tool \"<name>\", args {}.";
+const ADDITIONAL_TOOLS_INSTRUCTION: &str = "Call one with toolbox {\"action\":\"run\",\"tool\":\"<name>\",\"args\":{...}}: args holds that tool's own arguments and is never left out. Use toolbox describe first when unsure of them.";
 
 /// Render the `# Additional tools` system-prompt index of listed tools.
 ///
@@ -896,7 +896,7 @@ pub fn build_session_context(working_dir: Option<&Path>, additional_directories:
     lines.push(format!("OS: {}", std::env::consts::OS));
     lines.push(format!("Architecture: {}", std::env::consts::ARCH));
     lines.push(format!(
-        "HoronAgent version: {} ({})",
+        "Horon version: {} ({})",
         horon_agent_build_meta::version(),
         horon_agent_build_meta::git_hash()
     ));

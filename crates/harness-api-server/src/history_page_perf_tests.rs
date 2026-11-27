@@ -169,6 +169,7 @@ fn oracle(installed: &Installed, before: Option<&str>, limit: usize) -> Vec<horo
                 role: value["role"].as_str().unwrap_or_default().to_owned(),
                 content: crate::translate::flatten_content(&value["content"]),
                 message_id: Some(message.message.id.clone()),
+                tool: None,
             },
         ));
     }
@@ -318,6 +319,7 @@ fn baseline(label: &str) -> Vec<horon_agent_harness_api::HistoryMessage> {
             role: message["role"].as_str().unwrap_or_default().to_owned(),
             content: crate::translate::flatten_content(&message["content"]),
             message_id: message["id"].as_str().map(str::to_string),
+            tool: None,
         })
         .collect()
 }

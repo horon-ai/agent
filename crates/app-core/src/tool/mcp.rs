@@ -41,6 +41,28 @@ struct McpSearchResult {
 /// Upper bound on definitions one `mcp_search` call loads into context via
 /// tool references, so an empty or broad query cannot pull in a whole catalog.
 const MAX_SEARCH_TOOL_REFERENCES: usize = 32;
+/// Tools a connect, reload or list result names per server; the rest are
+/// counted and reached through `mcp_search`. A gateway with hundreds of tools
+/// would otherwise put every name, and on connect every schema, into context.
+const LISTED_TOOLS: usize = 20;
+
+/// `names` joined with `separator`, at most [`LISTED_TOOLS`] of them, and the
+/// count of the rest.
+fn listed_names(names: &[String], separator: &str) -> String {
+    let mut out = names
+        .iter()
+        .take(LISTED_TOOLS)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(separator);
+    let rest = names.len().saturating_sub(LISTED_TOOLS);
+    if rest > 0 {
+        out.push_str(&format!(
+            "{separator}... and {rest} more (mcp_search finds one by name or purpose)"
+        ));
+    }
+    out
+}
 
 /// Token budget for one `mcp_search` result. Descriptions and schemas are
 /// fitted to it adaptively: a narrow query keeps everything, a broad one
@@ -848,7 +870,7 @@ impl McpManagementTool {
             if server_tools.is_empty() {
                 output.push_str("(no tools)\n");
             } else {
-                output.push_str(&server_tools.join(", "));
+                output.push_str(&listed_names(&server_tools, ", "));
                 output.push('\n');
             }
             output.push('\n');
@@ -937,7 +959,8 @@ impl McpManagementTool {
                     server_tools.len()
                 );
                 let mut references = Vec::new();
-                for ((_, tool), fallback) in server_tools {
+                let total = server_tools.len();
+                for ((_, tool), fallback) in server_tools.into_iter().take(LISTED_TOOLS) {
                     let name = registry
                         .as_ref()
                         .and_then(|r| r.mcp_alias(&server_name, &tool.name))
@@ -946,6 +969,8 @@ impl McpManagementTool {
                     // without native deferred loading the cached tool list never
                     // changes, so this transcript entry is the only place the
                     // model learns how to call the new tool (via `mcp_call`).
+                    // Past the first few, `mcp_search` returns the same schema
+                    // for the one tool the model needs.
                     output.push_str(&format!(
                         "  - {}: {}\n    tool: {}  input_schema: {}\n",
                         name,
@@ -954,6 +979,12 @@ impl McpManagementTool {
                         serde_json::to_string(&tool.input_schema).unwrap_or_else(|_| "{}".to_string()),
                     ));
                     references.push(name);
+                }
+                if total > LISTED_TOOLS {
+                    output.push_str(&format!(
+                        "  ... and {} more; mcp_search finds one by name or purpose and returns its schema\n",
+                        total - LISTED_TOOLS
+                    ));
                 }
                 references.truncate(MAX_SEARCH_TOOL_REFERENCES);
                 if super::session_lists_mcp_surface(session_id) {
@@ -1142,8 +1173,11 @@ impl McpManagementTool {
                 .filter(|((owner, _), _)| owner == server)
                 .collect();
 
-            for (_, name) in server_tools {
-                output.push_str(&format!("  - {}\n", name));
+            let server_names: Vec<String> = server_tools.into_iter().map(|(_, name)| name.clone()).collect();
+            if !server_names.is_empty() {
+                output.push_str("  - ");
+                output.push_str(&listed_names(&server_names, "\n  - "));
+                output.push('\n');
             }
             output.push('\n');
         }

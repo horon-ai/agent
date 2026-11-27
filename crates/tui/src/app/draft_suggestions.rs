@@ -44,7 +44,12 @@ impl App {
 
     /// Borrowed ghost suffix for the draft on screen, without allocating.
     pub(crate) fn ghost_suffix(&self) -> Option<&str> {
-        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() || self.side.is_some() {
+        if self.prompt.is_some()
+            || self.overlay.is_some()
+            || self.picker.is_some()
+            || self.side.is_some()
+            || self.info.is_some()
+        {
             return None;
         }
         if !self.suggestions.pending() || !self.input.is_at_end() {

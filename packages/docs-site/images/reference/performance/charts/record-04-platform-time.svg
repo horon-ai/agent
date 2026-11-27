@@ -21,5 +21,5 @@
 <rect x="348.5" y="192.0" width="299.4" height="18" rx="3" fill="#0b84de"/>
 <text x="661.9" y="205.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">57.0 → 57.0 ms</text>
 <text x="32.0" y="232.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each row is scaled to its own before value; read the numbers, not the bar lengths.</text>
-<text x="32.0" y="258.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: docs/performance/RESULTS.md · Before and after across three environments</text>
+<text x="32.0" y="258.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: agent.horon.ai/reference/performance/results · Before and after across three environments</text>
 </svg>

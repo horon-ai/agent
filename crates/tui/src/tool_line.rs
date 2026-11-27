@@ -130,6 +130,90 @@ pub fn summarize(input: &str) -> Option<String> {
     primary(input).map(|(_, value)| one_line(&value))
 }
 
+/// The dispatcher a deferred tool is called through.
+const TOOLBOX: &str = "toolbox";
+
+/// What a card says about the call it draws: the tool that did the work, the
+/// arguments that tool got, and the call's stated purpose.
+///
+/// A `toolbox run` is drawn as the tool it ran, because "toolbox" says nothing
+/// about what happened: `toolbox {"action":"run","tool":"agentgrep",...}` is an
+/// `agentgrep` card with the run's `args` as its arguments. The purpose is the
+/// `intent` the model wrote, on the call or inside the arguments it ran.
+struct Shown {
+    name: String,
+    input: String,
+    intent: Option<String>,
+}
+
+impl Shown {
+    fn of(call: &ToolCall) -> Self {
+        // A call still streaming is unfinished JSON, which the scans below read.
+        let parsed = serde_json::from_str::<serde_json::Value>(&call.input);
+        let field = |value: &serde_json::Value, key: &str| {
+            value
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(one_line)
+                .filter(|text| !text.is_empty())
+        };
+        let mut name = call.name.clone();
+        let mut input = call.input.clone();
+        let mut intent = match &parsed {
+            Ok(value) => field(value, "intent"),
+            Err(_) => scan_string(&call.input, "intent").map(|text| one_line(&text)),
+        };
+        if call.name == TOOLBOX {
+            let inner = match &parsed {
+                Ok(value) => field(value, "tool"),
+                // Still streaming: the name arrives before the arguments.
+                Err(_) => scan_string(&call.input, "tool").map(|text| one_line(&text)),
+            };
+            if let Some(inner) = inner {
+                name = inner;
+                if let Ok(value) = &parsed
+                    && let Some(args) = value.get("args")
+                {
+                    input = args.to_string();
+                    if intent.is_none() {
+                        intent = field(args, "intent");
+                    }
+                }
+            }
+        }
+        Self {
+            name,
+            input,
+            intent: intent.filter(|text| !text.is_empty()),
+        }
+    }
+}
+
+/// The `skill://` address a call reads, when the call reads a skill.
+///
+/// A skill read is drawn as `✓ Read skill://name`: the address says what was
+/// read, and an intent or the tool name in front of it would only push it off
+/// the row. `read` names the address itself; `skill_manage` loads by name, and
+/// `load` is its default action.
+fn skill_read(shown: &Shown) -> Option<String> {
+    match shown.name.as_str() {
+        "read" => primary(&shown.input)
+            .map(|(_, value)| one_line(&value))
+            .filter(|value| value.starts_with("skill://")),
+        "skill_manage" => {
+            let action = scan_string(&shown.input, "action");
+            if action.as_deref().is_some_and(|action| action != "load") {
+                return None;
+            }
+            scan_string(&shown.input, "name")
+                .map(|name| one_line(&name))
+                .filter(|name| !name.is_empty())
+                .map(|name| format!("skill://{name}"))
+        }
+        _ => None,
+    }
+}
+
 /// The interesting argument as the call wrote it, and the key it came from.
 fn primary(input: &str) -> Option<(&'static str, String)> {
     if input.trim().is_empty() {
@@ -512,18 +596,43 @@ pub(crate) fn rows_with<'a>(
     }
     let budget = card.label_budget();
     let lead = glyph.width() + 1;
-    let shown_name = truncate_cells(&call.name, budget.saturating_sub(lead));
-    let mut title = vec![
-        Span::styled(glyph, Style::default().fg(color)),
-        Span::raw(" "),
-        Span::styled(shown_name, name),
-    ];
+    let shown = Shown::of(call);
+    let mut title = vec![Span::styled(glyph, Style::default().fg(color)), Span::raw(" ")];
+    let mut used = lead;
+    let skill = skill_read(&shown);
+    let mut below = None;
+    if let Some(address) = &skill {
+        // `✓ Read skill://name`, the verb in the title style and the address
+        // in the warm colour a path gets.
+        let verb = "Read";
+        title.push(Span::styled(verb, name));
+        used += verb.width();
+        let address = truncate_cells(address, budget.saturating_sub(used + 1));
+        title.push(Span::raw(" "));
+        title.push(Span::styled(address, Style::default().fg(theme.core.warning)));
+    } else if let Some(intent) = &shown.intent {
+        // The purpose leads the title, as a heading: it says what the call was
+        // for, and the tool name after it says how.
+        let heading = truncate_cells(intent, budget.saturating_sub(used));
+        used += heading.width();
+        title.push(Span::styled(heading, name));
+        if used + 3 + shown.name.width() <= budget {
+            title.push(Span::styled(" · ", muted));
+            title.push(Span::styled(shown.name.clone(), muted.add_modifier(Modifier::BOLD)));
+            used += 3 + shown.name.width();
+        }
+    } else {
+        let shown_name = truncate_cells(&shown.name, budget.saturating_sub(used));
+        used += shown_name.width();
+        title.push(Span::styled(shown_name, name));
+    }
     // The argument stays in the title only when all of it fits there: a cut
     // command reads as a different command, so one that does not fit is
     // drawn whole under the title instead.
-    let room = budget.saturating_sub(lead + call.name.width() + 1);
-    let mut below = None;
-    if let Some((key, value)) = primary(&call.input) {
+    let room = budget.saturating_sub(used + 1);
+    if skill.is_none()
+        && let Some((key, value)) = primary(&shown.input)
+    {
         // A multi-line argument always goes below, so its one-line form is
         // never built.
         let summary = (!value.contains('\n'))
@@ -566,22 +675,37 @@ pub(crate) fn rows_with<'a>(
     }
     let failure_divided = error_text.is_some();
 
-    let mut status = call.state.label().to_string();
-    if !settled && let Some(millis) = call.duration_ms {
-        status.push(' ');
-        push_elapsed(&mut status, millis);
-    }
+    // A finished call's title already carries its tick, so its closing row says
+    // only how long it took, in the muted grey that reads above the border but
+    // below the content. Every other outcome keeps its word in its own colour.
+    let (status, status_style) = match (&call.state, call.duration_ms) {
+        (ToolState::Done, Some(millis)) => {
+            let mut elapsed = String::new();
+            push_elapsed(&mut elapsed, millis);
+            (elapsed, muted)
+        }
+        (ToolState::Done, None) => (String::new(), muted),
+        _ => {
+            let mut status = call.state.label().to_string();
+            if !settled && let Some(millis) = call.duration_ms {
+                status.push(' ');
+                push_elapsed(&mut status, millis);
+            }
+            (status, Style::default().fg(color))
+        }
+    };
     // A status that already fits is drawn as it is, without a second copy.
     let status = if status.width() <= budget.max(1) {
         status
     } else {
         truncate_cells(&status, budget)
     };
-    let foot = card.rule(
-        card.border.bottom_left,
-        card.border.bottom_right,
-        vec![Span::styled(status, Style::default().fg(color))],
-    );
+    let label = if status.is_empty() {
+        Vec::new()
+    } else {
+        vec![Span::styled(status, status_style)]
+    };
+    let foot = card.rule(card.border.bottom_left, card.border.bottom_right, label);
 
     // The change palette colours an added or removed line and leaves every
     // other row as the output's own quiet style. The row keeps its own sign

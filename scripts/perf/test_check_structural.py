@@ -72,7 +72,7 @@ HEALTHY_LINES = [
     "request_message_copies=0",
     "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=809 tool_count=8 eager_count=8 "
     "per_tool=read:100,write:100,edit:100,apply_patch:100,bash:100,ls:100,agentgrep:100,toolbox:100",
-    "STRUCTURAL_PERF section=prompt static_bytes=2198 "
+    "STRUCTURAL_PERF section=prompt static_bytes=2510 "
     "static_sha256=380df8ba02b5de4cbdcc3ee203743df5887c004ca9591d3620a53a9593372936 static_tokens=305 "
     "index_bytes=585 index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
     "STRUCTURAL_PERF section=session_context git_spawns_outside_repo=0 git_spawns_in_repo=1 "
@@ -538,7 +538,7 @@ class PromptSectionTest(unittest.TestCase):
     """The static prompt line is a measurement, and a line of zeros is not one."""
 
     PROMPT_LINE = (
-        "STRUCTURAL_PERF section=prompt static_bytes=2198 "
+        "STRUCTURAL_PERF section=prompt static_bytes=2510 "
         "static_sha256=380df8ba02b5de4cbdcc3ee203743df5887c004ca9591d3620a53a9593372936 static_tokens=305 "
         "index_bytes=585 "
     )
@@ -582,7 +582,7 @@ class PromptSectionTest(unittest.TestCase):
     def test_a_static_prompt_over_its_ceiling_fails(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prompt",
-            self.PROMPT_LINE.replace("static_bytes=2198", "static_bytes=2199")
+            self.PROMPT_LINE.replace("static_bytes=2510", "static_bytes=2511")
             + "index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
         )
         run = run_gate(lines)
@@ -593,7 +593,7 @@ class PromptSectionTest(unittest.TestCase):
     def test_a_digest_that_is_not_a_sha256_fails(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prompt",
-            "STRUCTURAL_PERF section=prompt static_bytes=2198 static_sha256=unknown static_tokens=305 "
+            "STRUCTURAL_PERF section=prompt static_bytes=2510 static_sha256=unknown static_tokens=305 "
             "index_bytes=585 index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
         )
         run = run_gate(lines)

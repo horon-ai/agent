@@ -32,6 +32,7 @@ pub use self::action::Action;
 use self::forks::ForkOrigin;
 
 mod action;
+mod blocks;
 mod commands;
 mod copy;
 mod draft_suggestions;
@@ -318,6 +319,8 @@ pub struct App {
     pub home: Option<String>,
     /// Latest token totals the daemon reported.
     pub tokens: Option<TokenTotals>,
+    /// The model's average output speed, for the status line.
+    pub throughput: crate::statusline::Throughput,
     /// Context window of the route in force, from the runtime's own report.
     pub capacity: Option<u64>,
     /// Cumulative token totals of the session, when the runtime reported them.
@@ -348,6 +351,12 @@ pub struct App {
     pub motion_frame: usize,
     /// The slash command popup: the commands the draft offers, and its row.
     pub slash: crate::help::SlashPopup,
+    /// The skill and the images the draft carries as blocks.
+    pub attachments: crate::attachments::Attachments,
+    /// The text the mouse is selecting or selected, painted by the frame.
+    pub selection: Option<crate::selection::Selection>,
+    /// Where the conversation rows sat on the last frame, for the mouse.
+    pub pane: crate::selection::Geometry,
     /// The local draft suggestion: a ghost suffix offered from drafts already
     /// in memory, shown only for the exact text it was computed from.
     pub(crate) suggestions: Suggestions,
@@ -389,6 +398,8 @@ pub struct App {
     /// The open settings screen, if one is showing.
     pub overlay: Option<SettingsOverlay>,
     pub side: Option<crate::overlays::side::SideOverlay>,
+    /// A read-only report panel (`/session`), closed by `esc`.
+    pub info: Option<crate::overlays::info::InfoOverlay>,
     /// The open list of models or sessions, if one is showing.
     ///
     /// A picker sits above every other surface: while it is open no key reaches
@@ -497,6 +508,7 @@ impl App {
             path_cycle: None,
             home: crate::recording::home_directory(),
             tokens: None,
+            throughput: crate::statusline::Throughput::default(),
             capacity: None,
             usage: None,
             cost: None,
@@ -508,6 +520,9 @@ impl App {
             motion: Motion::default(),
             motion_frame: 0,
             slash: crate::help::SlashPopup::new(),
+            attachments: crate::attachments::Attachments::default(),
+            selection: None,
+            pane: crate::selection::Geometry::default(),
             suggestions: Suggestions::new(),
             suggestions_enabled: false,
             commands: Registry::default(),
@@ -520,6 +535,7 @@ impl App {
             artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
             overlay: None,
             side: None,
+            info: None,
             picker: None,
             pins: pins::SessionPins::default(),
             pending_change: None,
@@ -596,6 +612,7 @@ impl App {
             path_cycle: None,
             home: crate::recording::home_directory(),
             tokens: None,
+            throughput: crate::statusline::Throughput::default(),
             capacity: None,
             usage: None,
             cost: None,
@@ -607,6 +624,9 @@ impl App {
             motion: Motion::default(),
             motion_frame: 0,
             slash: crate::help::SlashPopup::new(),
+            attachments: crate::attachments::Attachments::default(),
+            selection: None,
+            pane: crate::selection::Geometry::default(),
             suggestions: Suggestions::new(),
             suggestions_enabled: false,
             commands: Registry::default(),
@@ -619,6 +639,7 @@ impl App {
             artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
             overlay: None,
             side: None,
+            info: None,
             picker: None,
             pins: pins::SessionPins::default(),
             pending_change: None,
@@ -733,6 +754,7 @@ impl App {
         if self.replay.is_some() && record::ends_replay(event) {
             self.stop_replay("ended by live activity");
         }
+        self.throughput.observe(event);
         match event {
             ApiEvent::TextDelta { text, message_id, .. } => {
                 self.transcript.text_delta(message_id.as_deref(), text);
@@ -986,10 +1008,8 @@ impl App {
             }
             ApiEvent::SessionStatus { session_id, status, .. } => {
                 self.session_id = Some(session_id.clone());
-                // `cancelled` is the daemon restating the turn that just
-                // stopped, not a state the session is in: left as it is, the
-                // status line kept saying `cancelled` after the notice that
-                // already reported it, and the client was idle all along.
+                // `cancelled` restates the turn that just stopped; the session
+                // itself is idle, so the line must not keep saying `cancelled`.
                 self.session_status = Some(if status == "cancelled" {
                     "idle".to_string()
                 } else {
@@ -1011,11 +1031,8 @@ impl App {
                     cache_read: cache_read_input.unwrap_or(0),
                     cache_creation: cache_creation_input.unwrap_or(0),
                 });
-                // The event is one provider call, so the cumulative figure
-                // moves with it. The running total is kept here rather than
-                // read again: a request per call would be a request per tool
-                // round, and a requested report replaces this baseline with the
-                // daemon's own totals whenever the session or model moves.
+                // One provider call: the running total moves with it here, and
+                // a requested report replaces it when the session or model moves.
                 self.usage = Some(match self.usage {
                     Some(total) => total.plus(*input, *output, *cache_read_input, *cache_creation_input),
                     None => UsageTotals {
@@ -1134,24 +1151,6 @@ impl App {
         }
         let text = self.input.text();
         self.slash.sync(&self.commands, &text);
-    }
-
-    /// Fill the draft from the command the popup has selected.
-    ///
-    /// The whole line is the command, so nothing of the old prefix survives to
-    /// be sent as an argument the user did not type.
-    fn complete_selected(&mut self) -> bool {
-        let Some(name) = self.slash.selected_name().map(str::to_string) else {
-            return false;
-        };
-        self.history.reset();
-        self.path_cycle = None;
-        self.input.set_text(&format!("/{name}"));
-        // The filled line names the command outright, which is the state the
-        // popup has nothing to offer for; syncing here keeps that true for the
-        // next frame and the next key alike.
-        self.sync_slash();
-        true
     }
 
     /// Complete a slash command first, then a path in the local workspace.

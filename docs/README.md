@@ -1,76 +1,42 @@
-# horon agent documentation
+# Horon documentation
 
-Language: **English** | [한국어](README.ko.md)
+These pages are compiled into the binary and describe the build that is running. Read one with `read horon://<page>` (for example `read horon://tools.md`), list them with `read horon://`, and search them with the `horon` tool. Nothing here needs network access.
 
-This folder describes how horon agent behaves today and labels proposed designs separately from current behavior. Every document ships as an English `X.md` and a Korean `X.ko.md` in the same folder; English is the default, and the Korean files are the `.ko.md` siblings. Paths, commands, and identifiers keep their original spelling. File names are uppercase and each topic gets its own subfolder.
+The developer reference (internal design, CI, benchmarks, crate layout) lives on the documentation site at https://agent.horon.ai/reference; these pages cover what a user or an agent running inside Horon needs.
 
-The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) shows them under its Reference tab: `scripts/ci/sync_docs_site.py` writes `packages/docs-site/reference/` from this folder, and the guides in the rest of `packages/docs-site` are written by hand, so a behavior change that a guide also describes is edited in both places.
+## Reading rules
 
-## Two modes, one agent
+- When a page and the behavior you observe disagree, the behavior wins: report the mismatch instead of following the page.
+- Each page states what happens in each case; the `Read when` column below says which page answers which question.
+- Commands are written as `horon <subcommand>`; `horon-agent` and `hrn` are the same program.
 
-horon agent runs in two modes that use the same engine, daemon, sessions, tools, and configuration. In headless mode a program drives the session: `run`, the daemon (`serve`) behind the SDKs and `api-bridge`, `acp` for editors, and `rpc`. In TUI mode a person drives it through `horon-tui`. Neither mode is a reduced form of the other; they differ only in who is on the other end. The modes ship as two binaries: `horon-agent` (the agent binary, which every installation needs) and `horon-tui` (the TUI binary, a separate optional asset of the same release). [`release/INSTALL.md`](release/INSTALL.md) and [`runtime/TUI.md`](runtime/TUI.md) describe how each is installed.
+## Pages
 
-## Fixed requirements
-
-Every change keeps the three rules below. The source of truth is `AGENTS.md` at the repository root.
-
-| Requirement | What it means | Current state |
-| --- | --- | --- |
-| No TUI in `horon-agent` | The agent binary (`serve`, `run`, `api-bridge`, `acp`, `rpc`) never opens a screen, and its dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate. TUI mode lives in the separate `horon-tui` package on `horon-agent-sdk`, and bare `horon` on a terminal replaces itself with that sibling binary. | Met. `scripts/ci/check_headless_graph.py` walks the resolved graph |
-| ACP v1 and v2 support | `horon acp` handles both `protocolVersion` 1 and 2 and answers with the highest version both sides support. Adding v2 does not break v1. | Met. v2 negotiation lives in `src/cli/acp/v2/negotiate.rs`, v1 in `src/cli/acp/util.rs` |
-| No performance regression | A change must be as fast as or faster than the baseline recorded on the same machine, build profile, and workload. A slower change is not merged. | The method and recorded numbers exist (`performance/BENCHMARK.md`, `performance/RESULTS.md`). The recorded numbers are the baseline |
-
-## Folder layout
-
-| Folder | Document | Contents |
-| --- | --- | --- |
-| `docs/` | [`README.md`](README.md) | This index and the update rules |
-| `diagram/` | [`README.md`](diagram/README.md) | Eight hand-written SVG diagrams with the code paths each one draws: system overview, run modes, turn lifecycle, provider wires, ACP negotiation, session storage, tool loading, branch and release flow |
-| `architecture/` | [`SERVER.md`](architecture/SERVER.md) | Server, session, and socket structure |
-| | [`CRATES.md`](architecture/CRATES.md) | Crate ownership boundaries, platform adapters, storage durability, and the TLS trust set |
-| | [`HOSTING.md`](architecture/HOSTING.md) | The per-user hosting boundary: the `HORON_AGENT_HOSTING_MODE` contract, the container image and volume layout, the control-plane routing contract, the Fly Machines and Volume lifecycle with the quiesce requirement, suspend and wake, and tenant deletion |
-| `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1 and v2 adapters, editor connections, and the stdio contract |
-| | [`HARNESS_API.md`](protocol/HARNESS_API.md) | Harness API credential setup, the optional authenticated TCP exposure, and the request and event surface |
-| | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | Session event storage format, delivery contract, writer pool, durable runtime journal |
-| | [`COLLABORATION.md`](protocol/COLLABORATION.md) | Proposed live session invitations and participant permissions |
-| | [`RPC.md`](protocol/RPC.md) | stdio JSONL RPC mode: commands, frames, and the omp conformance table |
-| | [`SHARING.md`](protocol/SHARING.md) | Proposed encrypted session sharing and revocation |
-| `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | Tool loading, effect and approval tiers, edit safety devices, parent `AGENTS.md`, `skill://` and `memory://` reads and MCP config sources, auxiliary calls |
-| | [`MEMORY.md`](runtime/MEMORY.md) | The memory wiki: markdown pages as the truth, the derived SQLite index and its schema, the search streams and their fusion, deletion and secure-delete order, rebuild, the Korean evaluation and its measured recall, and the volume export, import, quiesce, key contract and `delete_user` step machine |
-| | [`EDIT_DIAGNOSTICS.md`](runtime/EDIT_DIAGNOSTICS.md) | Proposed post-edit language diagnostics |
-| | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | Tool scheduling and loop prevention |
-| | [`TURNS.md`](runtime/TURNS.md) | Turn recovery, mid-run message insertion, the `[prewalk]` plan-to-execution model handoff, goal continuation and its token budget, runtime commands, `--resume` |
-| | [`IRC.md`](runtime/IRC.md) | Inter-agent IRC mailbox bus, the `irc` tool, configuration, performance gate |
-| | [`TUI.md`](runtime/TUI.md) | The `horon-tui` terminal client: the handoff from bare `horon`, user files (`tui.toml`, themes, key bindings, command files, status line), keys, the multi-line editor, the transcript and its scrollback, turn state, prompts, the slash popup, the model and session pickers, commands, the settings screen, installing the optional asset, limits |
-| | [`PROMPT.md`](runtime/PROMPT.md) | System prompt composition, skill sources and invocation, token estimates |
-| | [`HOOKS.md`](runtime/HOOKS.md) | Lifecycle hooks |
-| | [`PACKAGES.md`](runtime/PACKAGES.md) | User-installed Rust packages: the author SDK, the declaration and its digest, both layouts, targets, signing, installation, and the slash commands a package supplies |
-| | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | Swarm task DAG design (a feature that is off by default, and the design rationale of the `horon-agent-plan` crate) |
-| `provider/` | [`MODEL.md`](provider/MODEL.md) | Direct calls to the endpoint of the wire a profile's `type` names (Chat Completions, Responses, Anthropic Messages, Gemini generateContent), provider profiles and API keys, model roles and their fallback order, the one-shot `[prewalk]` handoff, model usage metadata |
-| | [`LOCAL_HELPERS.md`](provider/LOCAL_HELPERS.md) | Proposed offline local model helper |
-| | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | Remote MCP, user-defined web search |
-| | [`VISION_POLICY.md`](provider/VISION_POLICY.md) | Proposed image input routing policy |
-| | [`DIAGNOSTICS.md`](provider/DIAGNOSTICS.md) | Proposed bounded provider-stream diagnostic |
-| | [`SAMPLING.md`](provider/SAMPLING.md) | Proposed typed model sampling |
-| | [`QUOTA_FALLBACK.md`](provider/QUOTA_FALLBACK.md) | Proposed quota-aware route fallback |
-| `safety/` | [`SAFETY.md`](safety/SAFETY.md) | Safety system, unattended approval and automatic switching |
-| | [`SECURITY.md`](safety/SECURITY.md) | Workspace trust, crash bundles, dependency security classification |
-| `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | The goal of beating jcode and the measurement standard, per-OS benchmarks (Linux, macOS, Windows), the structural gate, A/B measurement, skill and MCP config loading A/B |
-| | [`EVAL.md`](performance/EVAL.md) | Proposed fixture-backed instruction-following evaluation |
-| | [`RESULTS.md`](performance/RESULTS.md) | Measured results and their limits |
-| | [`MEMORY.md`](performance/MEMORY.md) | Memory regression budgets, idle session derived-cache release, incident response procedure |
-| `release/` | [`INSTALL.md`](release/INSTALL.md) | Release asset verification and `install-release`, installing from npm, running on a Linux server, the TLS trust set |
-| | [`NPM.md`](release/NPM.md) | The npm packages of the CLI, installing and running them, versioning, the publish workflow, the one-time trusted publisher setup, provenance |
-| | [`WINDOWS.md`](release/WINDOWS.md) | Windows build and signing |
-
-## Update rules
-
-| When this changes | Do this |
+| Page | Read when |
 | --- | --- |
-| Current behavior changes | Edit the document that describes that behavior, and the diagram in `diagram/` that draws it, in the same change. |
-| You want a new document | First consider adding a section to an existing document in the right folder. A new file gets an uppercase name and a row in this table. |
-| A document moves or is deleted | Fix this table and the paths in code, scripts, and tests in the same change. |
-| The same content appears in two documents | Make one the source of truth and have the other point at it. |
-| You want to record a measurement, acceptance note, or plan | Do not create a document; write it in the PR body or an issue. Performance numbers go only in `performance/RESULTS.md`. |
-| You edit any document | Keep the pair in step: every `X.md` has a Korean `X.ko.md` beside it, and `python3 scripts/ci/check_docs_pairs.py` verifies that both exist, that headings, table rows, code fences, and links match, and that relative links resolve. |
-| You change a file under `docs/` | Run `python3 scripts/ci/sync_docs_site.py` and commit the changed pages under `packages/docs-site/reference/` and `packages/docs-site/ko/reference/`, together with any regenerated images under `packages/docs-site/images/reference/`. CI checks all three directories. |
+| [overview.md](overview.md) | You need the shape of Horon: modes, binaries, daemon, sessions |
+| [install.md](install.md) | Installing, updating, reinstalling, or running on a server |
+| [cli.md](cli.md) | Looking for a subcommand or a flag |
+| [configuration.md](configuration.md) | Editing `config.toml`, data directories, environment variables, defaults |
+| [providers.md](providers.md) | Connecting a model endpoint, keys, model roles, presets, model errors |
+| [tools.md](tools.md) | Which tools exist, how a session loads them, `toolbox` |
+| [editing.md](editing.md) | Changing files: `read`, `write`, `edit`, `apply_patch`, hashline and AST edits, undo |
+| [search-and-web.md](search-and-web.md) | Finding code or text: `agentgrep`, `ast_grep`, `lsp`, web search and fetch, history search |
+| [shell.md](shell.md) | Running commands: `bash`, background tasks, `monitor`, `eval`, `codemode`, `batch` |
+| [read-addresses.md](read-addresses.md) | `read` of `skill://`, `horon://`, `memory://`, `artifact://`, `history://`, archives, databases, images |
+| [skills.md](skills.md) | Finding, reading, installing, or writing a skill |
+| [mcp.md](mcp.md) | Connecting MCP servers, workspace trust, calling server tools |
+| [memory.md](memory.md) | Saving and recalling facts across sessions |
+| [sessions.md](sessions.md) | Resuming, forking, exporting, archiving, deleting sessions |
+| [turns.md](turns.md) | What a turn does: recovery, interrupts, compaction, effort, goals, spend caps, the loop guard |
+| [tui.md](tui.md) | The terminal client: keys, slash commands, scrolling, selection, status line |
+| [safety.md](safety.md) | Approvals, plan mode, destructive commands, secrets, workspace trust |
+| [swarm.md](swarm.md) | Delegating work to sub-agents and task graphs |
+| [irc.md](irc.md) | Messaging between agents in one daemon |
+| [hooks.md](hooks.md) | Running your own commands on agent events |
+| [packages.md](packages.md) | Installing or writing Rust extension and plugin packages |
+| [editors.md](editors.md) | Using Horon from an editor over ACP |
+| [rpc.md](rpc.md) | Driving Horon from a host program over stdio JSONL |
+| [harness-api.md](harness-api.md) | The SDKs, `api-bridge`, and remote API credentials |
+| [hosting.md](hosting.md) | Running one Horon per customer in a container |
+| [troubleshooting.md](troubleshooting.md) | An error message or a stuck session |

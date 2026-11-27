@@ -256,6 +256,23 @@ fn eval_retains_state_until_reset_or_idle_reclamation() {
 }
 
 #[test]
+fn eval_cells_see_the_scratch_folder_bash_commands_get() {
+    isolated(async |home| {
+        home.config("profile = 'full'\neval = true");
+        let registry = Registry::new(Arc::new(OfflineProvider)).await;
+        let session = TestSession::new("eval-scratch", &home.cwd);
+        let output = session
+            .approved(
+                &registry,
+                json!({"code": "import os\nprint(os.environ.get('HORON_AGENT_SCRATCH_DIR'))"}),
+            )
+            .await;
+        let expected = home.dir.path().join("scratch");
+        assert_eq!(output.output, format!("{}\n", expected.display()));
+    });
+}
+
+#[test]
 fn eval_bounds_inline_output_and_keeps_a_session_artifact() {
     isolated(async |home| {
         home.config("profile = 'full'\neval = true\nsecrets_mode = 'obfuscate'");

@@ -307,7 +307,7 @@ def render_html(data: dict, svgs: dict[str, str], meta: dict) -> str:
                  "<li>측정은 GitHub Actions 호스티드 러너에서 <code>benchmark.yml</code>로 했고, OS(Linux·macOS·Windows)마다 러너가 다릅니다. 같은 OS 안에서만 비교하고 OS끼리는 비교하지 않습니다.</li>"
                  "<li>모든 도구가 같은 모의 모델 서버(<code>scripts/perf/mock_llm_server.py</code>)에 붙고, 같은 작업(<code>ls</code> 도구 호출 한 번, 스킬 로드 한 번, MCP 도구 호출 한 번)을 합니다. 실제 모델 지연과 토큰 비용은 포함되지 않으며 API 호출은 0건입니다.</li>"
                  "<li>한 표의 행은 같은 잡·같은 머신에서 함께 쟀습니다. 값은 중앙값이고 최소–최대와 표본 수를 함께 적습니다. 최소–최대가 겹치면 같은 수준으로 봅니다.</li>"
-                 "<li>도구별 연결 방식(설정 파일, 도구 이름, 스킬·MCP 경로)은 <code>docs/performance/BENCHMARK.md</code>에 있습니다. 비교 대상은 그 스크립트가 고정한 버전입니다.</li></ul>"
+                 "<li>도구별 연결 방식(설정 파일, 도구 이름, 스킬·MCP 경로)은 <code>packages/docs-site/reference/performance/benchmark.mdx</code>에 있습니다. 비교 대상은 그 스크립트가 고정한 버전입니다.</li></ul>"
                  f"<h3>측정한 버전</h3><table><tr><th>도구</th><th style='text-align:left'>버전</th></tr>{ver_rows}</table></div>")
 
     oses = list(data["os"])
@@ -355,7 +355,7 @@ def render_html(data: dict, svgs: dict[str, str], meta: dict) -> str:
                  "<li>도구마다 세션 구현이 다릅니다(데몬 안의 세션 대 세션당 프로세스). 세션 메모리는 절대값보다 세션 하나당 증가량으로 읽어야 합니다.</li>"
                  "<li>각 도구가 이 하네스의 시나리오를 소화한 경로(Via)가 달라 같은 일을 한 것은 아니지만, 최종 응답이 도구 결과를 거쳐 돌아왔는지(<code>tool_round_trip</code>)를 확인한 값만 실었습니다.</li></ul>"
                  f"<h3>원자료</h3><ul><li>GitHub Actions 실행: {esc(meta.get('run_url') or '—')} (아티팩트 <code>benchmark-&lt;os&gt;-&lt;run-id&gt;</code>, 30일 보관)</li>"
-                 "<li>저장소: <code>docs/performance/BENCHMARK.md</code>, <code>scripts/perf/bench_report.py</code> (이 리포트를 다시 만드는 스크립트)</li>"
+                 "<li>저장소: <code>packages/docs-site/reference/performance/benchmark.mdx</code>, <code>scripts/perf/bench_report.py</code> (이 리포트를 다시 만드는 스크립트)</li>"
                  "<li>이 리포트의 차트 스펙: <code>specs/*.json</code>, 요약 수치: <code>summary.json</code></li></ul></div>")
     return f"<!doctype html><html lang='ko'><head><meta charset='utf-8'><title>Horon 벤치마크 비교 리포트</title><style>{CSS}</style></head><body>{''.join(pages)}</body></html>"
 

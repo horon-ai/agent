@@ -5,7 +5,7 @@
 //! session flows: each request here is one call in, one answer out, and the
 //! answer is a structure the client draws instead of a line it prints.
 
-use horon_agent_sdk::{Error, HoronAgentClient, RuntimeCommand, RuntimeInfo, UsageReport};
+use horon_agent_sdk::{Error, HistoryMessage, HoronAgentClient, RuntimeCommand, RuntimeInfo, UsageReport};
 
 use super::Incoming;
 use crate::statusline::{UsageSnapshot, UsageTotals};
@@ -36,19 +36,99 @@ pub(super) fn command(
 
 pub(super) fn stats(client: &HoronAgentClient, session_id: &str) -> Result<Incoming, Error> {
     let report = client.usage_report(Some(session_id))?;
-    let totals = report.totals;
-    let count = |value: Option<u64>| value.map_or_else(|| "unknown".to_owned(), |value| value.to_string());
+    Ok(Incoming::Info(format!("Session token usage\n{}", usage_lines(&report))))
+}
+
+/// The token and cost lines `/stats` and `/session` both print.
+fn usage_lines(report: &UsageReport) -> String {
+    let totals = &report.totals;
+    let count = |value: Option<u64>| value.map_or_else(|| "unknown".to_owned(), grouped);
     let cost = report
         .estimated_cost
         .map_or_else(|| "unknown".to_owned(), |value| value.to_string());
-    Ok(Incoming::Info(format!(
-        "Session token usage\nInput: {}\nOutput: {}\nCache read: {}\nCache write: {}\nRequests: {}\nEstimated cost: {cost}",
+    format!(
+        "Input: {}\nOutput: {}\nCache read: {}\nCache write: {}\nRequests: {}\nEstimated cost: {cost}",
         count(totals.input),
         count(totals.output),
         count(totals.cache_read_input),
         count(totals.cache_creation_input),
-        totals.requests
-    )))
+        grouped(totals.requests)
+    )
+}
+
+/// `value` with a comma between every three digits, as `1,336,303`.
+fn grouped(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// `/session`: who the session is, what runs it, and what it has cost.
+///
+/// The runtime report is required, because it is what proves the session is
+/// still served. The stored record, the history and the usage are each read
+/// on their own, and a read the daemon refuses leaves that section saying so
+/// rather than failing the whole answer.
+pub(super) fn session_info(client: &HoronAgentClient, session_id: &str) -> Result<Incoming, Error> {
+    let info = client.get_runtime_info(session_id)?;
+    let known = |value: Option<&str>| value.filter(|value| !value.is_empty()).unwrap_or("unknown").to_owned();
+    let mut out = format!("ID: {session_id}\n");
+    match client.list_sessions() {
+        Ok(sessions) => match sessions.iter().find(|session| session.session_id == session_id) {
+            Some(session) => out.push_str(&format!(
+                "Title: {}\nFolder: {}\nStatus: {}\n",
+                known(session.title.as_deref()),
+                known(session.working_dir.as_deref()),
+                session.status
+            )),
+            None => out.push_str("Title: not in the session list\n"),
+        },
+        Err(error) => out.push_str(&format!("Title: could not list the sessions ({error})\n")),
+    }
+    out.push_str(&format!("Server: {}\n", info.server));
+    out.push_str(&format!(
+        "\nProvider\nName: {}\nModel: {}\n",
+        known(info.provider.as_deref()),
+        known(info.model.as_deref())
+    ));
+    if let Some(serving) = info
+        .serving_model
+        .as_deref()
+        .filter(|serving| Some(*serving) != info.model.as_deref())
+    {
+        out.push_str(&format!("Served by: {serving}\n"));
+    }
+    out.push_str(&format!(
+        "Effort: {}\nCredential: {}\n",
+        known(effort(info.reasoning_effort.clone()).as_deref()),
+        known(info.auth_method.as_deref())
+    ));
+    match client.get_history(session_id) {
+        Ok(history) => {
+            let count = |matches: &dyn Fn(&HistoryMessage) -> bool| {
+                grouped(u64::try_from(history.iter().filter(|message| matches(message)).count()).unwrap_or(u64::MAX))
+            };
+            out.push_str(&format!(
+                "\nMessages\nUser: {}\nAssistant: {}\nTool calls: {}\nTotal: {}\n",
+                count(&|message| message.role == "user"),
+                count(&|message| message.role == "assistant"),
+                count(&|message| message.tool.is_some()),
+                count(&|_| true)
+            ));
+        }
+        Err(error) => out.push_str(&format!("\nMessages\ncould not read the history ({error})\n")),
+    }
+    match client.usage_report(Some(session_id)) {
+        Ok(report) => out.push_str(&format!("\nTokens\n{}", usage_lines(&report))),
+        Err(error) => out.push_str(&format!("\nTokens\ncould not read the usage ({error})")),
+    }
+    Ok(Incoming::SessionInfo(out))
 }
 
 /// The effort a report names, trimmed, with a blank one read as unknown.
@@ -92,7 +172,16 @@ pub(super) fn usage(client: &HoronAgentClient, session_id: &str) -> Option<Usage
         // runtime did report a moment ago.
         return None;
     };
-    Some(snapshot(&report))
+    let mut snapshot = snapshot(&report);
+    // A freshly created session never saw a model change, which is what
+    // carries the window into the report, so the share would stay hidden. The
+    // session's own runtime info names the window the serving route has.
+    if snapshot.context_window.is_none()
+        && let Ok(info) = client.runtime_command(session_id, RuntimeCommand::Info, Vec::new())
+    {
+        snapshot.context_window = info.data["context_window"].as_u64().filter(|window| *window > 0);
+    }
+    Some(snapshot)
 }
 
 /// The snapshot one report carries, narrowed to what the status line draws.
@@ -170,4 +259,38 @@ pub(super) fn reported(info: RuntimeInfo, followed: &str, level: Option<&str>) -
         effort,
         level: level.map(str::to_string),
     })
+}
+
+/// The models a `refresh_model_list` reply lists, in its order.
+///
+/// The daemon answers the refresh with the catalog it rebuilt as
+/// `data.models`; a reply without one (an older daemon) lists none.
+pub(super) fn refreshed_models(data: &serde_json::Value) -> Vec<String> {
+    data["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    #[test]
+    fn a_refresh_reply_lists_its_models_and_an_older_one_none() {
+        let data = serde_json::json!({"refreshed": true, "models": ["a", 7, "group/deepseek-v4.1-flash"]});
+        assert_eq!(super::refreshed_models(&data), ["a", "group/deepseek-v4.1-flash"]);
+        assert!(super::refreshed_models(&serde_json::json!({"refreshed": true})).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod grouped_tests {
+    #[test]
+    fn large_numbers_get_a_comma_every_three_digits() {
+        assert_eq!(super::grouped(7), "7");
+        assert_eq!(super::grouped(1_000), "1,000");
+        assert_eq!(super::grouped(213_303_421), "213,303,421");
+    }
 }

@@ -4,8 +4,6 @@ sidebarTitle: "Memory budgets"
 description: "Memory regression budgets, idle session derived-cache release, and the incident response procedure."
 ---
 
-{/* Generated from docs/performance/MEMORY.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 This covers the memory regression budget and the server memory incident response procedure.
 
 ## Memory regression budget
@@ -40,7 +38,7 @@ Do not add new temporary instrumentation; use the existing debug surfaces.
   reports, at every idle and post-turn sample, how many processes were alive beside the
   process-tree RSS, so a per-session memory increment can be read against whether that
   session is a thread inside the daemon or its own process (`process_count` in
-  `docs/performance/BENCHMARK.md`)
+  `packages/docs-site/reference/performance/benchmark.mdx`)
 
 Main sources in the code:
 - `crates/base/src/runtime_memory_log.rs`
@@ -268,7 +266,7 @@ and `server:memory`.
 
 ## Allocator A/B: glibc stays the Linux default
 
-Measured on 2026-11-10 with the `compare` suite in GitHub Actions (run 42748612662, Linux x86_64, 4 CPUs, 5 samples per cell). `horon` was built with `--features jemalloc` and `horon-base` was the same commit with the default glibc allocator, both in the same job (`docs/performance/BENCHMARK.md`, "Allocator A/B").
+Measured on 2026-11-10 with the `compare` suite in GitHub Actions (run 42748612662, Linux x86_64, 4 CPUs, 5 samples per cell). `horon` was built with `--features jemalloc` and `horon-base` was the same commit with the default glibc allocator, both in the same job (`packages/docs-site/reference/performance/benchmark.mdx`, "Allocator A/B").
 
 | Cell | glibc (`horon-base`) | jemalloc (`horon`) | Reading |
 |---|---|---|---|

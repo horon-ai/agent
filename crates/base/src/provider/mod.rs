@@ -1036,6 +1036,10 @@ impl Provider for MultiProvider {
         Ok(())
     }
 
+    async fn refresh_model_catalog(&self) -> Result<horon_agent_provider_core::ModelCatalogRefreshSummary> {
+        self.refresh_execution_catalog().await
+    }
+
     fn on_auth_changed(&self) {
         self.handle_auth_changed(false);
     }

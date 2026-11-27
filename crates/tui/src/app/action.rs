@@ -54,6 +54,8 @@ pub enum Action {
     },
     /// Read the attached session's token usage.
     Stats,
+    /// Read the attached session's details for `/session`.
+    SessionInfo,
     /// Clear or compact the model context on the daemon.
     Context(crate::commands::ContextCommand),
     /// Switch to the model named.
@@ -82,6 +84,9 @@ pub enum Action {
     Fork(String),
     /// Start a new session in this working directory and follow it.
     NewSession,
+    /// Start a new session like [`Action::NewSession`], then delete the named
+    /// session the client just left.
+    DeleteSession(String),
     /// Attach to another session and replay its stored conversation.
     Attach(String),
     /// Ask a read-only child of this conversation a question.

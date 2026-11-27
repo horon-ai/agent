@@ -402,7 +402,7 @@ fn builtin_help_names_what_new_and_switch_do() {
     assert_eq!(type_line(&mut app, "/help switch"), None);
     let detail = last_line(&app);
     assert!(
-        detail.contains("stored session"),
+        detail.contains("switch the model"),
         "the detail did not say what /switch does:\n{detail}"
     );
 }

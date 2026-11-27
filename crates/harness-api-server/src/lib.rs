@@ -1,8 +1,8 @@
 //! Harness API bridge: exposes the stable versioned harness API on its own
 //! Unix socket and translates to the internal (legacy) horon-agent protocol.
 //!
-//! Architecture (milestone 2 of docs/protocol/HARNESS_API.md; storage format in
-//! docs/protocol/SESSION_STORE.md):
+//! Architecture (milestone 2 of packages/docs-site/reference/protocol/harness-api.mdx; storage format in
+//! packages/docs-site/reference/protocol/session-store.mdx):
 //! - Listens on `~/.horon/horon-agent-api.sock` (or `HORON_AGENT_API_SOCKET`).
 //! - For each API client, dials the legacy daemon socket (`HORON_AGENT_SOCKET` or
 //!   `~/.horon/horon-agent.sock`) and speaks `subscribe`/`message`/... on its

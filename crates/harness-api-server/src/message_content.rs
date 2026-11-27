@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use horon_agent_base::message::ContentBlock;
-use horon_agent_harness_api::{HistoryMessage, ResponseStats};
+use horon_agent_harness_api::{HistoryMessage, HistoryToolCall, ResponseStats};
 
 /// Flatten a stored message's `content` to plain text.
 ///
@@ -122,13 +122,57 @@ pub(crate) fn history_message(message: &Value) -> HistoryMessage {
         content,
         answer,
         message_id: message["message_id"].as_str().map(str::to_string),
+        tool: history_tool(message),
     }
+}
+
+/// The stored call on a `tool` row, read from the daemon's `tool_data` and
+/// `is_error` fields.
+fn history_tool(message: &Value) -> Option<HistoryToolCall> {
+    if message["role"].as_str() != Some("tool") {
+        return None;
+    }
+    let call = message.get("tool_data").filter(|call| call.is_object())?;
+    let name = call["name"].as_str().filter(|name| !name.is_empty())?;
+    let input = match call.get("input") {
+        Some(Value::Null) | None => String::new(),
+        Some(input) => input.to_string(),
+    };
+    Some(HistoryToolCall {
+        call_id: call["id"].as_str().unwrap_or("").to_string(),
+        name: name.to_string(),
+        input,
+        is_error: message["is_error"].as_bool().unwrap_or(false),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_tool_row_carries_its_stored_call() {
+        let row = history_message(&json!({
+            "role": "tool",
+            "content": "boom",
+            "is_error": true,
+            "tool_data": {"id": "c1", "name": "bash", "input": {"command": "ls"}},
+        }));
+        assert_eq!(
+            row.tool,
+            Some(HistoryToolCall {
+                call_id: "c1".to_string(),
+                name: "bash".to_string(),
+                input: r#"{"command":"ls"}"#.to_string(),
+                is_error: true,
+            })
+        );
+        // Only a tool row with a named call carries one.
+        assert_eq!(history_message(&json!({"role": "tool", "content": "x"})).tool, None);
+        let assistant = json!({"role": "assistant", "content": "hi", "tool_data": {"id": "c", "name": "bash"}});
+        assert_eq!(history_message(&assistant).tool, None);
+    }
 
     #[test]
     fn a_row_with_reasoning_names_the_visible_answer() {

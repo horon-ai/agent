@@ -2575,6 +2575,9 @@ pub(super) async fn handle_client(
                     if parsed == horon_agent_harness_api::RuntimeCommand::RefreshModelList {
                         if !args.is_empty() { anyhow::bail!("This command accepts no arguments"); }
                         provider.refresh_model_catalog().await?;
+                        // The catalog memo is keyed by provider identity, which a refresh does not
+                        // change: drop it so the next list is the refreshed one, not a stale memo.
+                        super::available_models_cache::invalidate();
                         crate::bus::Bus::global().publish_models_updated();
                         let guard = agent.try_lock().map_err(|_| anyhow::anyhow!("Catalog refreshed, but session is busy. Open the model picker after the turn."))?;
                         let data = serde_json::json!({"refreshed": true, "models": guard.available_models_for_switching(), "routes": guard.model_routes()});

@@ -246,3 +246,30 @@ async fn a_label_the_question_never_offered_is_not_used() {
     ask_bridge::clear(session, token);
     ask_bridge::clear_all();
 }
+
+#[tokio::test]
+async fn a_caller_timeout_shortens_the_wait() {
+    let _bridge = bridge_guard();
+    let session = "ask-client-short-timeout";
+    ask_bridge::clear_all();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AskPrompt>();
+    let token = ask_bridge::install(session, tx);
+    let asked = tokio::spawn(async move { rx.recv().await.expect("the tool asks") });
+    let mut input = two_questions();
+    input["timeout_secs"] = serde_json::json!(1);
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(10),
+        AskTool::with_policy(AskPolicy::Recommended)
+            .with_wait(Duration::from_secs(300))
+            .execute(input, context(session)),
+    )
+    .await
+    .expect("a one-second timeout must not wait out the host's 300s")
+    .expect("the turn continues on the recommendation");
+
+    drop(asked.await.expect("ask task"));
+    assert!(output.output.contains("did not answer within 1s"), "{}", output.output);
+    ask_bridge::clear(session, token);
+    ask_bridge::clear_all();
+}

@@ -104,7 +104,6 @@ pub mod sidecar;
 pub mod skill;
 pub mod skill_install;
 pub mod soft_interrupt_store;
-pub mod sponsors;
 pub mod sqlite_read;
 pub mod stdin_detect;
 pub mod storage;

@@ -3,8 +3,6 @@ title: "Hosting and the per-user boundary"
 description: "A hosted deployment runs one agent container or Fly Machine per customer, each with one home volume, and never puts two customers in one daemon."
 ---
 
-{/* Generated from docs/architecture/HOSTING.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 A hosted deployment runs one agent container or Fly Machine per customer, each with one home volume, and never puts two customers in one daemon. This page states the flag contract, the image and volume layout, the routing contract the control plane owns, the suspend and delete procedures, and the limits that remain.
 
 ## The hosting flag contract
@@ -65,7 +63,7 @@ Hosted images keep the gateway off. A container that must serve the harness API 
 tenant's home, and acknowledges the TLS-terminating proxy in front; the listener then authenticates
 every TCP connection while the local socket keeps its handshake. Because the credential file lives in
 the tenant's `HORON_HOME`, credentials are per customer by construction. The full listener contract is
-`docs/protocol/HARNESS_API.md`.
+`packages/docs-site/reference/protocol/harness-api.mdx`.
 
 Deployment target: Fly Machines, one Machine plus one Fly Volume mounted as `/data` per customer. The
 Fly Proxy and the 6PN cannot reach a Unix socket, so the listener above is the only route off the
@@ -176,7 +174,7 @@ calls the Fly API.
 
 ## Suspend, wake and restore
 
-Idling an instance is stopping its container or sending the daemon `SIGTERM` or `SIGINT`. The daemon drains in-flight session saves, unregisters and removes its runtime sockets before it exits (`docs/architecture/SERVER.md`), so a stop is a durable stop and the next start opens the same volume.
+Idling an instance is stopping its container or sending the daemon `SIGTERM` or `SIGINT`. The daemon drains in-flight session saves, unregisters and removes its runtime sockets before it exits (`packages/docs-site/reference/architecture/server.mdx`), so a stop is a durable stop and the next start opens the same volume.
 
 - Stop with `scripts/hosting/instance.sh stop <tenant>`, `docker stop`, or the supervisor's termination signal. `stop_hosted_instance` in `horon-agent-sdk` is the same operation: it signals, waits for the endpoint to stop accepting, and reports the tenant as stopped only after that. On Fly, configuring `SIGTERM` remains recommended as defense in depth, while the platform default `SIGINT` also drains cleanly.
 - Wake by starting the image or the daemon again with the same volume. Sessions, approvals, MCP config and memory files are read from the volume; a session resumes through the ordinary resume path.
@@ -210,7 +208,7 @@ daemons are separate, and the boundary test starts two daemons and asserts exact
 
 - Billing, plans and quotas.
 - Autoscaling and placement policy.
-- A central metadata service; the control plane owns the mapping and this repository does not implement it. The agent's client against that service and its request shapes are in the memory volume docs (`docs/runtime/MEMORY.md`); the service itself is `horon-ai/server#28`, whose contract is still a draft.
+- A central metadata service; the control plane owns the mapping and this repository does not implement it. The agent's client against that service and its request shapes are in the memory volume docs (`packages/docs-site/reference/runtime/memory.mdx`); the service itself is `horon-ai/server#28`, whose contract is still a draft.
 - A Fly API client. The control plane calls the provider; the agent only exposes the volume commands it needs.
 - Live-disk page-file encryption beyond Fly volume at-rest encryption (memory export/import archives support authenticated `aes-256-gcm` sealing via `KeyProvider` and `--key-env`/`--key-file`, and the key contract tracks creation and revocation).
 - A hosted idle-exit switch. Changing the shared-server idle deadline or adding a hosted idle-exit switch is outside this scope.

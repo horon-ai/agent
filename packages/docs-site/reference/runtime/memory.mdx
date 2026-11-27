@@ -3,8 +3,6 @@ title: "The memory wiki"
 description: "The memory wiki is the per-user storage engine behind memory: one markdown file per page as the source of truth, and a SQLite index that can always be rebuilt from those files."
 ---
 
-{/* Generated from docs/runtime/MEMORY.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 The memory wiki is the per-user storage engine behind memory: one markdown file per page as the source of truth, and a SQLite index that can always be rebuilt from those files. It stores no embeddings and needs no network round trip. This page describes the layout, the page format, the index schema, the search signals, deletion and rebuild semantics, the Korean evaluation, and the current limits. This wiki is the store behind the `memory` tool and the prompt-injection path: every `memory` action reads and writes it, and the pre-wiki JSON files are read once as a migration source.
 
 ## Layout

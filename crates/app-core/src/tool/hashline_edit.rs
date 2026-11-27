@@ -54,7 +54,9 @@ struct HashlineEditInput {
     #[serde(default)]
     ops: Vec<HashlineOp>,
     /// Move the file (after any line ops) to this path, then remove the source.
-    #[serde(default)]
+    /// `""` is read as omitted: a client that fills every field sends it for
+    /// a call that moves nothing.
+    #[serde(default, deserialize_with = "super::serde_coerce::opt_string_empty_as_none")]
     move_to: Option<String>,
     /// Delete the whole file after any line ops.
     #[serde(default)]
@@ -76,9 +78,6 @@ impl HashlineEditInput {
             (Some(_), true) => anyhow::bail!(
                 "`move_to` and `delete` cannot be combined: a file is either moved to a new path or removed."
             ),
-            (Some(destination), false) if destination.trim().is_empty() => {
-                anyhow::bail!("`move_to` is empty; name the destination path.")
-            }
             (Some(destination), false) => Ok(FileLevelOp::Move(destination.clone())),
             (None, true) => Ok(FileLevelOp::Delete),
             (None, false) => Ok(FileLevelOp::None),
@@ -89,7 +88,8 @@ impl HashlineEditInput {
 #[derive(Deserialize)]
 struct HashlineOp {
     start_anchor: String,
-    #[serde(default)]
+    /// `""` is read as omitted, so the op covers its start line alone.
+    #[serde(default, deserialize_with = "super::serde_coerce::opt_string_empty_as_none")]
     end_anchor: Option<String>,
     #[serde(default)]
     new_text: String,

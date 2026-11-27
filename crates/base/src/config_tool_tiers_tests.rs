@@ -40,7 +40,7 @@ fn core_profile_without_listing_keeps_every_allowed_tool_essential() {
     assert!(!tiers.core_listed(), "the flag is stored as the caller resolved it");
     assert_eq!(
         allowed.len(),
-        18 + 17 + 3 + 1,
+        18 + 16 + 3 + 1,
         "core is the open set plus irc, the checkpoint pair, and the dispatcher"
     );
     for name in &allowed {
@@ -426,8 +426,7 @@ fn tool_config_core_profile_reaches_every_builtin_tool() {
         "generate_image",
         "goal",
         "hashline_edit",
-        "horon_agent_docs",
-        "integration_tools",
+        "horon",
         "irc",
         "lsp",
         "memory",
@@ -448,7 +447,7 @@ fn tool_config_core_profile_reaches_every_builtin_tool() {
     // constant lists, the switch-joined irc and checkpoint pair, the dispatcher.
     assert_eq!(
         allowed.len(),
-        18 + 17 + 3 + 1,
+        18 + 16 + 3 + 1,
         "core profile is the two tool lists plus irc, checkpoint/rewind, and the dispatcher"
     );
 }

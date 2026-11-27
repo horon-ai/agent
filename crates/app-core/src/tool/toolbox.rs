@@ -28,10 +28,12 @@
 //! `# Additional tools` index is the way back to the tool and `describe` is how
 //! its parameters are read.
 //!
-//! What it deliberately does NOT do: it never promotes a tool to the eager
-//! list, never edits the session's definitions, never writes the transcript,
-//! and never reaches a tool whose load mode is `Off`. There is no `promote`
-//! action: the dispatcher loads a schema by reference and nothing else.
+//! What it deliberately does NOT do: it never edits the session's definitions,
+//! never writes the transcript, and never reaches a tool whose load mode is
+//! `Off`. There is no `promote` action. The one way a tool becomes direct is a
+//! `run` without `args` for a tool that takes arguments: the model has shown it
+//! will not fill the free-form object, so the agent is asked
+//! (`request_direct`) to send that tool with its own schema from then on.
 
 use super::{ConcurrencyClass, Registry, Tool, ToolContext, ToolEffects, ToolOutput, WeakRegistry};
 use crate::config::{LoadMode, TOOLBOX_TOOL};
@@ -100,8 +102,11 @@ struct Input {
 }
 
 const DESCRIPTION: &str = "\
-Use tools sent without a schema, e.g. under \"Additional tools\": \
-`list` names them, `describe` returns a schema, `run` calls one. \
+Reach the tools named under \"Additional tools\", which are sent without a schema. \
+`list` names them; `describe` with `tool` returns one tool's input schema; `run` calls it as \
+{\"action\":\"run\",\"tool\":\"ast_grep\",\"args\":{\"pattern\":\"foo($A)\"}}. \
+`args` is required for `run`: it is the target tool's own arguments as one object, never left out \
+and never spread beside `action`. Describe a tool first when its arguments are unknown. \
 Policy, approval, and hooks apply as for direct calls.";
 
 #[async_trait]
@@ -144,15 +149,15 @@ impl Tool for ToolboxTool {
                 "action": {
                     "type": "string",
                     "enum": ["list", "describe", "run"],
-                    "description": "`list`, `describe`, or `run`."
+                    "description": "`list` names the tools, `describe` returns one schema, `run` calls one."
                 },
                 "tool": {
                     "type": "string",
-                    "description": "Target tool name."
+                    "description": "Target tool name, required for `describe` and `run`."
                 },
                 "args": {
                     "type": "object",
-                    "description": "`run` arguments."
+                    "description": "Required for `run`: the target tool's arguments as one object, e.g. {\"pattern\":\"foo($A)\"}."
                 }
             },
             "required": ["action"]
@@ -160,6 +165,7 @@ impl Tool for ToolboxTool {
     }
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
+        let raw = input.clone();
         let input: Input = serde_json::from_value(input)?;
         let registry = self
             .registry
@@ -174,9 +180,19 @@ impl Tool for ToolboxTool {
             }
             "run" => {
                 let name = require_tool(&input)?.to_string();
-                let args = input
-                    .args
-                    .ok_or_else(|| anyhow!("toolbox run needs `args`, the object the target tool takes"))?;
+                let args = match input.args {
+                    // A model that serialised the object into a string meant
+                    // the object: the string is read back as JSON.
+                    Some(Value::String(text)) => match serde_json::from_str::<Value>(&text) {
+                        Ok(parsed) => parsed,
+                        Err(_) => Value::String(text),
+                    },
+                    Some(args) => args,
+                    None => match stray_args(&raw) {
+                        Some(args) => args,
+                        None => missing_args(&registry, &ctx, &name).await?,
+                    },
+                };
                 run(&registry, &ctx, &name, args).await
             }
             other => bail!("Unknown toolbox action {other:?}; expected one of: list, describe, run"),
@@ -191,6 +207,97 @@ fn require_tool(input: &Input) -> Result<&str> {
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .ok_or_else(|| anyhow!("toolbox {} needs `tool`", input.action))
+}
+
+/// Keys of the dispatcher's own input; everything else beside them is a
+/// target argument a model spread at the top level.
+const OWN_KEYS: &[&str] = &["action", "tool", "args", "intent", "accept_large_output"];
+
+/// The target's arguments when a model wrote them beside `action` instead of
+/// inside `args`, which is the shape of a direct call and a common slip.
+fn stray_args(raw: &Value) -> Option<Value> {
+    let object = raw.as_object()?;
+    let stray: Map<String, Value> = object
+        .iter()
+        .filter(|(key, _)| !OWN_KEYS.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    (!stray.is_empty()).then_some(Value::Object(stray))
+}
+
+/// Arguments for a `run` that named none: `{}` for a tool that requires
+/// nothing, otherwise a refusal that spells out the call to make.
+///
+/// The refusal carries the target's required fields and its schema, so the
+/// next call can be written correctly instead of repeating the same input
+/// until the loop guard ends the turn.
+async fn missing_args(registry: &Registry, ctx: &ToolContext, name: &str) -> Result<Value> {
+    let name = Registry::resolve_tool_name(name);
+    let (tiers, policy) = tiers_for(ctx);
+    ensure_reachable(registry, policy.as_ref(), &tiers, name)?;
+    let schema = match registry
+        .definitions(None)
+        .await
+        .into_iter()
+        .find(|definition| definition.name == name)
+    {
+        Some(definition) => definition.input_schema,
+        None => bail!("Unknown tool: {name}"),
+    };
+    // A model that runs a tool without `args` while that tool takes arguments
+    // has shown it will not fill the free-form object: some models drop it on
+    // every retry while saying they sent it, until the loop guard ends the
+    // turn. From the next request the tool is sent with its own schema, so the
+    // model calls it directly with typed arguments.
+    let takes_arguments = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .is_some_and(|properties| properties.keys().any(|key| !OWN_KEYS[3..].contains(&key.as_str())));
+    if takes_arguments {
+        request_direct(&ctx.session_id, name);
+    }
+    // `intent` and `accept_large_output` are filled on every tool and say
+    // nothing about what the call needs.
+    let required: Vec<&str> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|key| !OWN_KEYS[3..].contains(key))
+        .collect();
+    if required.is_empty() {
+        return Ok(json!({}));
+    }
+    let example: Map<String, Value> = required.iter().map(|key| ((*key).to_string(), json!("..."))).collect();
+    bail!(
+        "toolbox run needs `args`: put {name}'s own arguments inside `args`, not beside `action`. \
+         Required: {}. Call it as {}. From the next request `{name}` is also a direct tool: call it by \
+         name with these arguments. Schema of {name}: {}",
+        required.join(", "),
+        json!({"action": "run", "tool": name, "args": Value::Object(example)}),
+        serde_json::to_string(&schema)?
+    )
+}
+
+/// Tools a session asked to receive as direct tools, by session id.
+static DIRECT_REQUESTS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Ask the session's agent to send `name` with its own schema from the next
+/// request (`Agent::promote_requested_tools`).
+pub(crate) fn request_direct(session_id: &str, name: &str) {
+    let mut requests = DIRECT_REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let names = requests.entry(session_id.to_string()).or_default();
+    if !names.iter().any(|known| known == name) {
+        names.push(name.to_string());
+    }
+}
+
+/// The tools `session_id` asked to receive directly since the last call.
+pub(crate) fn take_direct_requests(session_id: &str) -> Vec<String> {
+    let mut requests = DIRECT_REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    requests.remove(session_id).into_iter().flatten().collect()
 }
 
 /// The session's load tiers, plus the policy they were resolved against.
@@ -327,7 +434,10 @@ async fn describe(registry: &Registry, ctx: &ToolContext, name: &str) -> Result<
         .find(|definition| definition.name == name)
         .ok_or_else(|| anyhow!("Unknown tool: {name}"))?;
     let schema = serde_json::to_string_pretty(&definition.input_schema)?;
-    let output = format!("{name}\n{}\n\nInput schema:\n{schema}", definition.description.trim());
+    let output = format!(
+        "{name}\n{}\n\nInput schema:\n{schema}\n\nCall it with toolbox {{\"action\":\"run\",\"tool\":\"{name}\",\"args\":{{...}}}}, the arguments above inside `args`.",
+        definition.description.trim()
+    );
     Ok(ToolOutput::new(output)
         .with_title(format!("Schema for {name}"))
         .with_metadata(json!({ TOOL_REFERENCES_METADATA_KEY: [name] })))
