@@ -95,9 +95,9 @@ SIGNAL_CASES = ("SIGTERM", "SIGHUP", "SIGQUIT")
 HEADLESS_MESSAGE = "the interactive client is unavailable in this headless build"
 # The install instruction itself. A headless sentence names it only when the
 # client is genuinely missing (#430).
-INSTALL_COMMAND = "horon-agent install-release"
+INSTALL_COMMAND = "horon install-release"
 # The fallback every headless sentence keeps.
-HEADLESS_FALLBACK = "horon-agent serve"
+HEADLESS_FALLBACK = "horon serve"
 FIRST_SCREEN = "Send a message to start"
 REPLY_TEXT = "mock-ok"
 APPROVAL_PROMPT = "approval needed"
@@ -110,10 +110,11 @@ APPROVAL_PROMPT = "approval needed"
 # segment's separator, means the client is past its first frame and talking to
 # a live bridge.
 SESSION_READY = "mock-model ·"
-# `Preset::Default` places `Status` before `Model` separated by `" · "`
-# (`SymbolPreset::Unicode`), so an idle turn at 120x40 renders this prefix on
-# the live status row on both POSIX and Windows.
-IDLE_STATUS = f"idle · {SESSION_READY}"
+# `Preset::Default` opens the status row with `Status`, then `Elapsed` once a
+# turn has run, then `Model`, separated by `" · "` (`SymbolPreset::Unicode`).
+# A running turn shows another status word, so the row's opening `idle · ` on
+# the live grid means the turn settled, on both POSIX and Windows.
+IDLE_STATUS = "idle · "
 TOOL_FILE = "tui-smoke.txt"
 TOOL_FILE_TEXT = "retry"
 # The sequences the client writes when it gives the terminal back (#431). A
@@ -1811,7 +1812,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if len(pins) != 1 or not os.path.isdir(os.path.join(home, "sessions", pins[0])):
             raise Failure(f"expected one saved session to be pinned, got {pins!r}")
         if POSIX:
-            terminal.send("/switch\r")
+            # `/switch` now picks a model; `/resume` opens the session picker.
+            terminal.send("/resume\r")
             terminal.read_until("(pinned)", STEP_TIMEOUT, "pinned session appears in the picker")
             terminal.send("\x10")
             terminal.send("\x1b")
@@ -1854,7 +1856,11 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.send("\r")
             terminal.read_until("attaching to", STEP_TIMEOUT, "return to the parent", since=parent_start)
             terminal.read_until(f"resumed {parent_session}", STEP_TIMEOUT, "parent session reattached", since=parent_start)
-            terminal.read_until_live(SESSION_READY, STEP_TIMEOUT, "parent session ready before archiving", since=parent_start)
+            # The reattach is proven above; the status row may read the same
+            # in the fork and the parent, and a row that did not change is not
+            # redrawn, so this checks the whole live grid rather than rows
+            # written since the return.
+            terminal.read_until_live(SESSION_READY, STEP_TIMEOUT, "parent session ready before archiving")
         else:
             terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
         archive_picker_start = len(terminal.transcript)
