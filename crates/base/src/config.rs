@@ -722,8 +722,8 @@ impl ToolLoadTiers {
     /// Tier for one tool name. Unknown names never appear here, so an
     /// override for a tool this build does not have is inert.
     pub fn tier(&self, name: &str) -> LoadMode {
-        let normalized = normalize_tool_name(name);
-        if let Some(mode) = self.overrides.get(&normalized) {
+        let normalized = normalized_tool_name(name);
+        if let Some(mode) = self.overrides.get(normalized) {
             // `toolbox` is the discovery path for the deferred surface, so an
             // explicit entry may remove it but can never defer it: deferring
             // the dispatcher would leave nothing able to reference it.
@@ -732,13 +732,13 @@ impl ToolLoadTiers {
             }
             return *mode;
         }
-        if ESSENTIAL_TOOLS.contains(&normalized.as_str())
-            || ALWAYS_EAGER_TOOLS.contains(&normalized.as_str())
+        if ESSENTIAL_TOOLS.contains(&normalized)
+            || ALWAYS_EAGER_TOOLS.contains(&normalized)
             || normalized == TOOLBOX_TOOL
         {
             return LoadMode::Essential;
         }
-        if CORE_TOOLS.contains(&normalized.as_str()) {
+        if CORE_TOOLS.contains(&normalized) {
             return if self.core_listed {
                 LoadMode::Discoverable
             } else {
@@ -749,7 +749,7 @@ impl ToolLoadTiers {
         // dispatcher, so it is listed exactly where that dispatcher is: a
         // `core`-listed session. Outside one it keeps its session default, which
         // is what `full` already deferred before the surface opened.
-        if self.core_listed && is_core_reachable(&normalized) {
+        if self.core_listed && is_core_reachable(normalized) {
             return LoadMode::Discoverable;
         }
         self.default
@@ -766,8 +766,8 @@ impl ToolLoadTiers {
     /// a caller that suppresses a profile default can still honor the entries an
     /// operator wrote down.
     pub fn explicit_tier(&self, name: &str) -> Option<LoadMode> {
-        let normalized = normalize_tool_name(name);
-        let mode = *self.overrides.get(&normalized)?;
+        let normalized = normalized_tool_name(name);
+        let mode = *self.overrides.get(normalized)?;
         if normalized == TOOLBOX_TOOL && mode == LoadMode::Discoverable {
             return Some(LoadMode::Essential);
         }
@@ -1176,9 +1176,13 @@ impl ToolConfig {
     }
 }
 
+/// The canonical spelling of a configured tool name, borrowed from `name`.
+fn normalized_tool_name(name: &str) -> &str {
+    horon_agent_tool_types::resolve_tool_name(name.trim().trim_matches('"'))
+}
+
 fn normalize_tool_name(name: &str) -> String {
-    let trimmed = name.trim().trim_matches('"');
-    horon_agent_tool_types::resolve_tool_name(trimmed).to_string()
+    normalized_tool_name(name).to_string()
 }
 
 pub mod change_report;

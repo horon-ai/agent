@@ -430,11 +430,6 @@ impl Card {
         self.width.saturating_sub(BORDER_COLUMNS + 1)
     }
 
-    /// Columns the text of a row inside the card gets.
-    fn inner(&self) -> usize {
-        self.width.saturating_sub(2 * (self.border.vertical.width() + 1))
-    }
-
     /// A border row: `open`, the line with `label` near its start, and `close`.
     ///
     /// The row is exactly the pane's width whenever the label fits its budget,
@@ -442,10 +437,11 @@ impl Card {
     fn rule(&self, open: &'static str, close: &'static str, label: Vec<Span<'static>>) -> Indented {
         let line = self.border.horizontal;
         let mut used = open.width() + line.width() + close.width();
-        let mut spans = Vec::with_capacity(label.len() + 4);
-        spans.push(Span::styled(format!("{open}{line}"), self.edge));
+        let mut spans = Vec::with_capacity(label.len() + 5);
+        spans.push(Span::styled(open, self.edge));
+        spans.push(Span::styled(line, self.edge));
         if !label.is_empty() {
-            used += 2 + label.iter().map(|span| span.content.width()).sum::<usize>();
+            used += 2 + label.iter().map(|span| wrap::drawn_width(&span.content)).sum::<usize>();
             spans.push(Span::raw(" "));
             spans.extend(label);
             spans.push(Span::raw(" "));
@@ -528,12 +524,17 @@ pub(crate) fn rows_with<'a>(
     let room = budget.saturating_sub(lead + call.name.width() + 1);
     let mut below = None;
     if let Some((key, value)) = primary(&call.input) {
-        let summary = one_line(&value);
-        if value.contains('\n') || summary.width() > room {
-            below = Some((key, value));
-        } else {
-            title.push(Span::raw(" "));
-            title.push(Span::styled(summary, muted));
+        // A multi-line argument always goes below, so its one-line form is
+        // never built.
+        let summary = (!value.contains('\n'))
+            .then(|| one_line(&value))
+            .filter(|summary| summary.width() <= room);
+        match summary {
+            Some(summary) => {
+                title.push(Span::raw(" "));
+                title.push(Span::styled(summary, muted));
+            }
+            None => below = Some((key, value)),
         }
     }
     let mut rows = vec![card.rule(card.border.top_left, card.border.top_right, title)];
@@ -570,7 +571,12 @@ pub(crate) fn rows_with<'a>(
         status.push(' ');
         push_elapsed(&mut status, millis);
     }
-    let status = truncate_cells(&status, budget);
+    // A status that already fits is drawn as it is, without a second copy.
+    let status = if status.width() <= budget.max(1) {
+        status
+    } else {
+        truncate_cells(&status, budget)
+    };
     let foot = card.rule(
         card.border.bottom_left,
         card.border.bottom_right,
@@ -636,7 +642,7 @@ pub(crate) fn rows_with<'a>(
             let marker = marker.map(|row| match retained.key {
                 Some(key) => {
                     let labelled = format!("{row} · {key} expands");
-                    if UnicodeWidthStr::width(labelled.as_str()) <= card.inner() {
+                    if UnicodeWidthStr::width(labelled.as_str()) <= card.sides().inner(card.width) {
                         labelled
                     } else {
                         row
@@ -663,8 +669,8 @@ fn argument_rows(rows: &mut Vec<Indented>, card: &Card, key: &str, value: &str, 
     let text = Style::default().fg(theme.core.text);
     let command = key == COMMAND_KEY;
     let indent = if command { 2 } else { 0 };
-    let total = value.lines().count();
-    for (index, line) in value.lines().take(MAX_ARGUMENT_LINES).enumerate() {
+    let mut lines = value.lines();
+    for (index, line) in lines.by_ref().take(MAX_ARGUMENT_LINES).enumerate() {
         let mut spans = Vec::with_capacity(2);
         if command {
             spans.push(Span::styled(if index == 0 { "$ " } else { "  " }, muted));
@@ -672,9 +678,10 @@ fn argument_rows(rows: &mut Vec<Indented>, card: &Card, key: &str, value: &str, 
         spans.push(Span::styled(truncate_cells(line.trim_end(), MAX_PREVIEW_CELLS), text));
         rows.push(card.boxed(Line::from(spans), indent));
     }
-    if total > MAX_ARGUMENT_LINES {
+    let hidden = lines.count();
+    if hidden > 0 {
         let mut more = String::from("… +");
-        push_u64(&mut more, u64::try_from(total - MAX_ARGUMENT_LINES).unwrap_or(u64::MAX));
+        push_u64(&mut more, u64::try_from(hidden).unwrap_or(u64::MAX));
         more.push_str(" lines");
         rows.push(card.boxed(Line::from(Span::styled(more, muted)), indent));
     }

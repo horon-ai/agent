@@ -42,6 +42,23 @@ fn irc_switch_adds_irc_to_core_allow_list() {
     );
 }
 
+/// `enabled = ["*"]` asks for every tool, so a swarm worker (which narrows only
+/// the untouched core surface) must not cut it down to the core set.
+#[test]
+fn all_tools_sentinel_is_not_the_core_surface() {
+    assert!(core_config().is_core_surface());
+    let all = ToolConfig {
+        enabled: vec!["*".to_string()],
+        ..core_config()
+    };
+    assert!(!all.is_core_surface());
+    let blank = ToolConfig {
+        enabled: vec![" ".to_string()],
+        ..core_config()
+    };
+    assert!(blank.is_core_surface(), "a blank entry names no tool");
+}
+
 #[test]
 fn irc_switch_off_removes_only_irc_from_the_core_allow_list() {
     let on = core_config()

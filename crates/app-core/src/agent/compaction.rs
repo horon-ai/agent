@@ -16,18 +16,9 @@ pub(super) const CONTEXT_ROLLOVER_MARKER: &str = "The model rolled this session'
 /// projection rejects that transcript. A `<system-reminder>` message (the turn
 /// context, a memory summary) is the harness speaking, not a user turn.
 fn last_user_turn_start(messages: &[crate::session::StoredMessage]) -> Option<usize> {
-    messages.iter().rposition(|message| {
-        let first_text = message.content.iter().find_map(|block| match block {
-            crate::message::ContentBlock::Text { text, .. } => Some(text.as_str()),
-            _ => None,
-        });
-        matches!(message.role, Role::User)
-            && first_text.is_some_and(|text| !text.trim_start().starts_with("<system-reminder>"))
-            && !message
-                .content
-                .iter()
-                .any(|block| matches!(block, crate::message::ContentBlock::ToolResult { .. }))
-    })
+    messages
+        .iter()
+        .rposition(|message| crate::compaction::pruning::is_turn_start_content(&message.role, &message.content))
 }
 
 impl Agent {

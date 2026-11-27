@@ -534,12 +534,17 @@ pub(in crate::tool) fn stop_child(mut child: Child) {
 async fn find_python(cwd: &Path) -> Result<PathBuf> {
     let path = std::env::var_os("PATH").context("PATH is missing; install Python 3.10 or later for eval")?;
     let cwd = cwd.to_path_buf();
-    tokio::task::spawn_blocking(move || find_python_sync(&cwd, &path))
+    tokio::task::spawn_blocking(move || find_python_sync(Some(&cwd), &path))
         .await
         .context("search PATH for Python interpreter")?
 }
 
-pub(super) fn find_python_sync(cwd: &Path, path: &std::ffi::OsStr) -> Result<PathBuf> {
+/// The first Python interpreter on an absolute `path` entry.
+///
+/// `exclude` is the directory a cell must not load its interpreter from (the
+/// session's working directory); `None` only asks whether one exists.
+pub(super) fn find_python_sync(exclude: Option<&Path>, path: &std::ffi::OsStr) -> Result<PathBuf> {
+    let inside = |candidate: &Path| exclude.is_some_and(|dir| candidate.starts_with(dir));
     let suffix = std::env::consts::EXE_SUFFIX;
     let (py3, py): (Cow<'static, str>, Cow<'static, str>) = if suffix.is_empty() {
         (Cow::Borrowed("python3"), Cow::Borrowed("python"))
@@ -557,7 +562,7 @@ pub(super) fn find_python_sync(cwd: &Path, path: &std::ffi::OsStr) -> Result<Pat
         let Ok(canonical_dir) = std::fs::canonicalize(&dir) else {
             continue;
         };
-        if canonical_dir.starts_with(cwd) {
+        if inside(&canonical_dir) {
             continue;
         }
         for name in names {
@@ -566,7 +571,7 @@ pub(super) fn find_python_sync(cwd: &Path, path: &std::ffi::OsStr) -> Result<Pat
                 continue;
             }
             if let Ok(target) = std::fs::canonicalize(&candidate)
-                && !target.starts_with(cwd)
+                && !inside(&target)
                 && horon_agent_platform::fs::is_executable(&target)
             {
                 return Ok(candidate);

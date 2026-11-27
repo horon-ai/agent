@@ -76,11 +76,15 @@ impl ToolConfig {
 
     /// Whether this configuration is the untouched default `core` surface: the
     /// `core` profile with no list the operator spelled out. Only that surface
-    /// is open; every other list stays exactly as written.
+    /// is open; every other list stays exactly as written. `enabled = ["*"]` is
+    /// a list spelled out too: it asks for every tool, not for the core set.
     pub fn is_core_surface(&self) -> bool {
-        self.normalized_enabled_tools().0.is_empty()
-            && !self.disable_base_tools
+        !self.disable_base_tools
             && self.profile.trim().eq_ignore_ascii_case(super::CORE_TOOL_PROFILE)
+            && self
+                .enabled
+                .iter()
+                .all(|name| super::normalized_tool_name(name).is_empty())
     }
 }
 

@@ -288,6 +288,22 @@ fn a_card_keeps_its_right_side_in_line_with_wide_text_and_plain_ascii() {
     assert_eq!(rows[1].spans[0].style.fg, Some(theme.transcript.tool_error));
 }
 
+/// ratatui draws no column for a control character, so a tab in the output must
+/// not shorten the padding before the right edge.
+#[test]
+fn a_card_keeps_its_right_side_in_line_with_a_tab_in_the_output() {
+    let theme = Theme::default();
+    let symbols = crate::theme::SymbolPreset::Ascii.symbols();
+    let mut finished = call(r#"{"command":"ls"}"#);
+    finished.state = ToolState::Done;
+    finished.output = cut_output("name\tsize\na\t1", 3);
+    let rows = lines(&finished, &theme, symbols, 30);
+    for row in &rows {
+        let drawn_text: String = row_text(row).chars().filter(|ch| !ch.is_control()).collect();
+        assert_eq!(drawn_text.width(), 30, "{drawn_text:?} in {}", drawn(&rows));
+    }
+}
+
 #[test]
 fn parallel_calls_of_one_tool_finish_by_their_own_id() {
     let mut transcript = Transcript::new();
