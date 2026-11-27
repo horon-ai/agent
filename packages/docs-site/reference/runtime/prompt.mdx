@@ -3,8 +3,6 @@ title: "Prompts and tokens"
 description: "How the system prompt is assembled, where skills come from and how they are invoked, and how tokens are estimated."
 ---
 
-{/* Generated from docs/runtime/PROMPT.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 This covers how the system prompt is assembled and how tokens are estimated.
 
 ## System prompt configuration
@@ -17,7 +15,7 @@ horon-agent builds the system prompt in several layers. Two of them are files th
    file (see below). Trailing whitespace is trimmed from the built-in text as it is from a
    replacement file, so the next layer follows exactly one blank line.
 2. Feature modules (for example the `[[stream_rules]]` guidance below).
-3. `AGENTS.md`: the project's `./AGENTS.md` and the global `~/AGENTS.md`. An `AGENTS.md` in a subdirectory that this layer does not cover is attached separately to `read` results when `[tools] nested_agents_md` is on ([`docs/runtime/TOOLS.md`](/reference/runtime/tools)).
+3. `AGENTS.md`: the project's `./AGENTS.md` and the global `~/AGENTS.md`. An `AGENTS.md` in a subdirectory that this layer does not cover is attached separately to `read` results when `[tools] nested_agents_md` is on ([`packages/docs-site/reference/runtime/tools.mdx`](/reference/runtime/tools)).
 4. Prompt overlay: `./.horon/prompt-overlay.md` and `~/.horon/prompt-overlay.md`.
 5. Preferred tools: `./.horon/preferred-tools.md` and `~/.horon/preferred-tools.md`.
 6. Memory and the active skill prompt. These are not part of the system prompt: they reach the model as reminders appended to the conversation (the turn context and the memory summary, see [Requests only grow](/reference/runtime/turns#requests-only-grow-the-turn-context)). Where the skill list comes from is in the "Skills" section below.

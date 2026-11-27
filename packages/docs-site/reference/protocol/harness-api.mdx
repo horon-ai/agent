@@ -3,8 +3,6 @@ title: "Harness API"
 description: "Harness API credential setup and the request and event surface that SDK and desktop clients use."
 ---
 
-{/* Generated from docs/protocol/HARNESS_API.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 This document covers the credential setup and the request and event surfaces of the harness API that desktop and SDK clients use over a local socket: a Unix socket, or a named pipe on Windows. Both mechanisms carry the same frames. A client that finds nothing listening at the socket path starts `horon-agent api-bridge` itself and waits on that path, so the bridge is a subcommand of the agent binary on every platform the SDK supports.
 
 A client may read and write at the same time: the SDK client parks one thread in a read for the next frame while another writes a request, and the Windows pipe is opened for overlapped I/O so the pending read never holds the write behind it.
@@ -24,7 +22,7 @@ This build has no interactive login flow. The SDK exposes two things about crede
 - `HoronAgentClient::set_api_key(provider, key)` (TypeScript `setApiKey`) writes the key into horon-agent's owner-only credential store (a `SetApiKey` request with a `credential_updated` response) and re-reads the provider credentials. The key never appears in a response or a log.
 - `notify_auth_changed(provider)` (TypeScript `notifyAuthChanged`) is the notice to re-read the credential files after the user logged in to OAuth with another tool. It sends no credentials itself, and the bridge advertises this through `auth_changed_notification`.
 
-The SDK neither issues nor refreshes OAuth tokens. The launch option `inherit_logins` (on by default) links the user's existing CLI credential files into the instance, and model requests use those files as they are (`crates/agent-sdk/src/launch.rs`). Model calls go directly to the configured `[providers.<name>]` endpoint over the wire its `type` selects (`openai-compatible`, `openai-responses`, `anthropic-compatible`, or `gemini-compatible`), so this build has no model runtime that authenticates with OAuth. The `openai-oauth:` prefix still exists, but with that runtime gone it fails before the call (`docs/provider/MODEL.md`).
+The SDK neither issues nor refreshes OAuth tokens. The launch option `inherit_logins` (on by default) links the user's existing CLI credential files into the instance, and model requests use those files as they are (`crates/agent-sdk/src/launch.rs`). Model calls go directly to the configured `[providers.<name>]` endpoint over the wire its `type` selects (`openai-compatible`, `openai-responses`, `anthropic-compatible`, or `gemini-compatible`), so this build has no model runtime that authenticates with OAuth. The `openai-oauth:` prefix still exists, but with that runtime gone it fails before the call (`packages/docs-site/reference/provider/model.mdx`).
 
 ## Serving the API beyond the local socket
 
@@ -61,7 +59,7 @@ A listener on a network address is reached one of two ways, and they are not equ
 
 Neither path authenticates a *user*: the private network keeps other organizations out, but every process on it is equally trusted, and a public port is public. That is why every TCP connection presents the token on both paths, and why the proxy acknowledgement exists only to state where TLS ends — never to stand in for authentication. The listener trusts no forwarded header, so `Fly-Client-IP` or any other proxy header never affects who is accepted.
 
-On Fly.io, which is the hosting target for `docs/architecture/HOSTING.md`: the public path is a `services` entry in `fly.toml` (or the Machine config) whose `internal_port` matches `--api-bind`, with Fly Proxy terminating TLS on port 443 and forwarding plaintext to the process over the WireGuard mesh — so that path passes `--api-insecure-behind-proxy`. The private path is the organization's 6PN: a service is reachable there when it binds the IPv6 wildcard (`[::]:PORT`) or `fly-local-6pn`, and needs no `services` entry and no app IP. 6PN addresses are IPv6 literals in an `fdaa::/16` ULA, so `[fdaa:…]:PORT` and `[::]:PORT` are both non-loopback binds that need the proxy acknowledgement and a credential. A Fly Machine that is stopped or suspended has no running process, so its listener, its sockets and any in-memory session are gone; the credential file stays on the volume and keeps working after the next start. The listener therefore does not exit on idleness or when the starting process goes away (see above), and the control plane's autostop policy is what ends it. Those platform details are documented by Fly.io (`docs.fly.io/networking/tls-termination`, `docs.fly.io/networking/app-services`); this repository implements no Fly API call, no proxy-header handling and no autostop.
+On Fly.io, which is the hosting target for `packages/docs-site/reference/architecture/hosting.mdx`: the public path is a `services` entry in `fly.toml` (or the Machine config) whose `internal_port` matches `--api-bind`, with Fly Proxy terminating TLS on port 443 and forwarding plaintext to the process over the WireGuard mesh — so that path passes `--api-insecure-behind-proxy`. The private path is the organization's 6PN: a service is reachable there when it binds the IPv6 wildcard (`[::]:PORT`) or `fly-local-6pn`, and needs no `services` entry and no app IP. 6PN addresses are IPv6 literals in an `fdaa::/16` ULA, so `[fdaa:…]:PORT` and `[::]:PORT` are both non-loopback binds that need the proxy acknowledgement and a credential. A Fly Machine that is stopped or suspended has no running process, so its listener, its sockets and any in-memory session are gone; the credential file stays on the volume and keeps working after the next start. The listener therefore does not exit on idleness or when the starting process goes away (see above), and the control plane's autostop policy is what ends it. Those platform details are documented by Fly.io (`docs.fly.io/networking/tls-termination`, `docs.fly.io/networking/app-services`); this repository implements no Fly API call, no proxy-header handling and no autostop.
 
 ### Issuing, rotating and revoking credentials
 
@@ -939,7 +937,7 @@ bounds its daemon-leg read: a bridge that keeps the leg open after its client
 left now fails the assertion instead of hanging the target until the runner's
 timeout.
 
-The full storage format, limits and legacy migration rules are in `docs/protocol/SESSION_STORE.md`.
+The full storage format, limits and legacy migration rules are in `packages/docs-site/reference/protocol/session-store.mdx`.
 
 ## Ask requests a client declares in the handshake
 
@@ -950,7 +948,7 @@ The `ask` tool shows a person a question and waits for the answer. The daemon dr
 | `supports_ask_requests` | boolean | `false` | This connection draws the `ask` tool's questions and answers them |
 | `supports_permission_requests` | boolean | `false` | This connection prompts on `approval_pending` and answers with `permission_decision` interactively |
 
-The bridge reads `hello["supports_ask_requests"].as_bool().unwrap_or(false)` and `hello["supports_permission_requests"].as_bool().unwrap_or(false)` (`crates/harness-api-server/src/lib.rs`), so a client that predates either field advertises nothing and keeps working. Neither field is a capability string or protocol-minor negotiation: each gates whether a turn waits for an interactive reply on this connection. A session whose attached connection advertised `supports_ask_requests` receives the question there and waits; otherwise it falls back to `ask_policy` (`docs/safety/SAFETY.md`). Likewise, when the attached turn-owning connection advertises `supports_permission_requests`, gated tool calls emit `approval_pending` and block until `permission_decision` (`allow`, `allow_always`, `deny`) is sent rather than failing immediately for the model to retry.
+The bridge reads `hello["supports_ask_requests"].as_bool().unwrap_or(false)` and `hello["supports_permission_requests"].as_bool().unwrap_or(false)` (`crates/harness-api-server/src/lib.rs`), so a client that predates either field advertises nothing and keeps working. Neither field is a capability string or protocol-minor negotiation: each gates whether a turn waits for an interactive reply on this connection. A session whose attached connection advertised `supports_ask_requests` receives the question there and waits; otherwise it falls back to `ask_policy` (`packages/docs-site/reference/safety/safety.mdx`). Likewise, when the attached turn-owning connection advertises `supports_permission_requests`, gated tool calls emit `approval_pending` and block until `permission_decision` (`allow`, `allow_always`, `deny`) is sent rather than failing immediately for the model to retry.
 
 The SDKs expose both as connect options, and all three default them to off:
 

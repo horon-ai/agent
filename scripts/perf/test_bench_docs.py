@@ -490,6 +490,41 @@ class Charts(unittest.TestCase):
                              "--commit", "abc1234", "--lang", "ko"])
             self.assertEqual(with_block.read_text(encoding="utf-8"), text)
 
+    def test_an_mdx_page_of_the_site_keeps_mdx_markers_and_site_charts(self) -> None:
+        """The site's results page is MDX: markers stay `{/* ... */}`, the run's
+        text is escaped for MDX, and charts go under the site's images folder."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "bench-results"
+            results.mkdir()
+            self.make_results(results)
+            site = root / "site"
+            (site / "reference" / "performance").mkdir(parents=True)
+            (site / "docs.json").write_text("{}", encoding="utf-8")
+            doc = site / "reference" / "performance" / "results.mdx"
+            doc.write_text(
+                "## Charts\n\n{/* bench-charts:start */}\n{/* bench-charts:end */}\n\n"
+                "{/* bench-auto:start */}\n\nnone yet\n\n{/* bench-auto:end */}\n",
+                encoding="utf-8",
+            )
+            code = bench_docs.main(["render", "--doc", str(doc), "--results", str(results),
+                                    "--commit", "abc1234", "--lang", "en"])
+            self.assertEqual(code, 0)
+            text = doc.read_text(encoding="utf-8")
+            self.assertIn("{/* bench-auto:start commit=abc1234 */}", text)
+            self.assertIn("{/* bench-auto:end */}", text)
+            self.assertNotIn("<!--", text)
+            self.assertIn("](/images/reference/performance/charts/00-summary.svg)", text)
+            self.assertTrue((site / "images/reference/performance/charts/03-oneshot-time.svg").is_file())
+            self.assertFalse((doc.parent / "charts").exists())
+            self.assertEqual(bench_docs.last_commit(text), "abc1234")
+
+    def test_mdx_escaping_leaves_code_and_links_alone(self) -> None:
+        self.assertEqual(
+            bench_docs.to_mdx("use {x} and <tag>, `{y} <z>` [r](https://a/{b})\n```\n{raw}\n```\n<!-- gone -->"),
+            "use \\{x\\} and \\<tag>, `{y} <z>` [r](https://a/{b})\n```\n{raw}\n```",
+        )
+
     def test_no_comparison_gives_a_note_and_no_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -941,8 +976,8 @@ class CommittedBenchmarkDocsTests(unittest.TestCase):
     def test_results_versions_and_summary_charts_cover_all_eight_tools(self) -> None:
         commits: dict[str, str | None] = {}
         for name, missing_marker, npm_marker in (
-            ("docs/performance/RESULTS.md", "not recorded", "npm dist-tag latest"),
-            ("docs/performance/RESULTS.ko.md", "기록 없음", "npm dist-tag latest"),
+            ("packages/docs-site/reference/performance/results.mdx", "not recorded", "npm dist-tag latest"),
+            ("packages/docs-site/ko/reference/performance/results.mdx", "기록 없음", "npm dist-tag latest"),
         ):
             with self.subTest(doc=name):
                 text = (self.REPO / name).read_text(encoding="utf-8")
@@ -951,7 +986,8 @@ class CommittedBenchmarkDocsTests(unittest.TestCase):
                 assert commit is not None
                 self.assertEqual(len(commit), 40)
                 commits[name] = commit
-                versions = self._between(text, bench_docs.VERSIONS_START, bench_docs.VERSIONS_END)
+                versions = self._between(text, bench_docs.marker(bench_docs.VERSIONS_START, True),
+                                         bench_docs.marker(bench_docs.VERSIONS_END, True))
                 for label in self.TOOL_LABELS:
                     self.assertIn(f"| {label} |", versions)
                 self.assertIn(f"({commit[:7]})", versions)
@@ -963,10 +999,10 @@ class CommittedBenchmarkDocsTests(unittest.TestCase):
                 self.assertNotIn(missing_marker, versions)
 
         self.assertEqual(
-            commits["docs/performance/RESULTS.md"],
-            commits["docs/performance/RESULTS.ko.md"],
+            commits["packages/docs-site/reference/performance/results.mdx"],
+            commits["packages/docs-site/ko/reference/performance/results.mdx"],
         )
-        measured_commit = commits["docs/performance/RESULTS.md"]
+        measured_commit = commits["packages/docs-site/reference/performance/results.mdx"]
         assert measured_commit is not None
         has_origin_main = subprocess.run(
             ["git", "rev-parse", "--verify", "--quiet", "origin/main"],

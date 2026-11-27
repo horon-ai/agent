@@ -9,7 +9,7 @@ and the real worked example, and each job uploads one JSON report per target
 
     package_compat.py check --reports <dir> [--require-targets t1,t2] \\
         [--matrix-out <file>]
-    package_compat.py docs-claims --install docs/release/INSTALL.md \\
+    package_compat.py docs-claims --install packages/docs-site/reference/release/install.mdx \\
         --reports <dir>
 
 `check` refuses a report whose `cross_compiled` is not false, one whose host

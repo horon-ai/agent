@@ -3,7 +3,7 @@ name: Attach/Detach Soak
 env:
   HORON_AGENT_CI: "1"
 
-# Runs the 1,000-cycle attach/detach soak, the form `docs/performance/RESULTS.md`
+# Runs the 1,000-cycle attach/detach soak, the form `packages/docs-site/reference/performance/results.mdx`
 # depends on. The 200-cycle default form runs in `ci.yml` on every code change,
 # but 1,000 cycles is roughly 50 minutes of wall clock, far past a pull-request
 # gate's budget, so this is a scheduled run of its own.

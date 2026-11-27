@@ -3,8 +3,6 @@ title: "stdio RPC mode"
 description: "RPC mode lets a host program drive the agent as a child process: one JSON object per line on stdin, one frame per line on stdout."
 ---
 
-{/* Generated from docs/protocol/RPC.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 RPC mode lets a host program drive the agent as a child process: one JSON object per line on stdin, one frame per line on stdout. It is the surface to embed Horon in another program that owns the process, needs streaming output, cancellation, and session controls, but cannot speak ACP.
 
 This page states the contract this build implements and, row by row, which parts of the published omp RPC reference it serves. Horon speaks the same wire protocol as omp so that a host written for omp can drive Horon; where it cannot, the support table says so instead of failing quietly.

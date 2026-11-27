@@ -61,8 +61,13 @@ including the trailing `...`; the model fetches parameters with `toolbox describ
 Some descriptions open with a sentence that fits the row; the rest are cut at the
 cap, so a row is a hint and `toolbox describe` gives the full text.
 
+A `run` without `args` for a tool that takes arguments is refused (or run with
+`{}` when the tool has no required field), and from the next request that tool
+is sent with its own schema as a direct tool: some models never fill the
+free-form `args` object, and a direct schema is the form they fill.
+
 The index freezes when the first tool list is locked and does not change
-afterwards. `/clear` keeps it because it is the same session; only a session
+afterwards, except for that one promotion. `/clear` keeps it because it is the same session; only a session
 restore rebuilds it.
 
 ## Edit safety
@@ -81,4 +86,12 @@ is refused with `HOSTED_POLICY` and exit `1`). Everything external comes in over
 skipped until its digest is trusted (`--trust-workspace` records the decision).
 
 Skills are read through `skill://` and managed with `skill_manage`; the workspace
-convention is `.horon/skills/<name>/SKILL.md`.
+convention is `.horon/skills/<name>/SKILL.md`. A skill read returns the whole
+`SKILL.md` without line numbers in one call.
+
+## Built-in documentation
+
+The agent's own documentation is compiled into the binary from the repository's
+`docs/` folder. `read horon://` lists it, `read horon://<path>` returns one page
+(`horon://tools.md`), and the `horon` tool searches it. It describes the version
+that is running, with no network access.

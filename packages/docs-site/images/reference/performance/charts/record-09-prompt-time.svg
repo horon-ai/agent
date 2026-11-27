@@ -53,5 +53,5 @@
 <rect x="244.1" y="432.0" width="423.0" height="18" rx="3" fill="#0b84de"/>
 <text x="733.9" y="445.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">302.51 → 268.93 ms</text>
 <text x="32.0" y="472.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each row is scaled to its own before value; read the numbers, not the bar lengths.</text>
-<text x="32.0" y="498.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: docs/performance/RESULTS.md · Time and memory (median ms, min–max in parentheses)</text>
+<text x="32.0" y="498.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: agent.horon.ai/reference/performance/results · Time and memory (median ms, min–max in parentheses)</text>
 </svg>

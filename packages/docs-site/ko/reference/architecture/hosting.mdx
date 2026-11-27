@@ -3,8 +3,6 @@ title: "호스팅과 사용자별 경계"
 description: "호스팅 배포는 고객마다 에이전트 컨테이너 또는 Fly Machine 한 개와 홈 볼륨 한 개를 두고, 두 고객을 한 데몬에 넣지 않습니다. 이 문서는 플래그 계약, 이미지와 볼륨 배치, 컨트롤 플레인이 소유하는 라우팅 계약, 정지와 삭제 절차, 남아 있는 한계를 정리합니다."
 ---
 
-{/* Generated from docs/architecture/HOSTING.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 호스팅 배포는 고객마다 에이전트 컨테이너 또는 Fly Machine 한 개와 홈 볼륨 한 개를 두고, 두 고객을 한 데몬에 넣지 않습니다. 이 문서는 플래그 계약, 이미지와 볼륨 배치, 컨트롤 플레인이 소유하는 라우팅 계약, 정지와 삭제 절차, 남아 있는 한계를 정리합니다.
 
 ## 호스팅 플래그 계약
@@ -63,9 +61,9 @@ description: "호스팅 배포는 고객마다 에이전트 컨테이너 또는 
 호스팅 이미지는 게이트웨이를 끕니다. 하네스 API를 자기 밖으로 서비스해야 하는 컨테이너는
 `horon-agent api-bridge --api-bind`(또는 `HORON_AGENT_API_BIND`)로 시작하고, 그 테넌트 홈
 안에서 자격 증명을 발급하며, 앞단의 TLS 종료 프록시를 확인합니다. 그러면 리스너가 모든 TCP
-연결을 인증하고 로컬 소켓은 기존 핸드셰이크를 유지합니다(`docs/protocol/HARNESS_API.ko.md`).
+연결을 인증하고 로컬 소켓은 기존 핸드셰이크를 유지합니다(`packages/docs-site/ko/reference/protocol/harness-api.mdx`).
 자격 증명 파일이 테넌트의 `HORON_HOME`에 있으므로 자격 증명은 구조적으로 고객별입니다.
-리스너 계약 전체는 `docs/protocol/HARNESS_API.ko.md`에 있습니다.
+리스너 계약 전체는 `packages/docs-site/ko/reference/protocol/harness-api.mdx`에 있습니다.
 
 배포 대상은 Fly Machines이며, 고객마다 Machine 하나와 `/data`로 마운트한 Fly Volume 하나를
 씁니다. Fly Proxy와 6PN은 유닉스 소켓에 닿을 수 없으므로 위 리스너가 Machine을 떠나는 유일한
@@ -155,7 +153,7 @@ config:
 
 ## 정지, 깨우기, 복원
 
-인스턴스를 유휴 상태로 두는 일은 컨테이너를 멈추거나 데몬에 `SIGTERM`이나 `SIGINT`를 보내는 것입니다. 데몬은 종료 전에 진행 중인 세션 저장을 비우고 등록 해제와 런타임 소켓 정리를 마치므로(`docs/architecture/SERVER.ko.md`), 정지는 영속적인 정지이고 다음 시작은 같은 볼륨을 엽니다.
+인스턴스를 유휴 상태로 두는 일은 컨테이너를 멈추거나 데몬에 `SIGTERM`이나 `SIGINT`를 보내는 것입니다. 데몬은 종료 전에 진행 중인 세션 저장을 비우고 등록 해제와 런타임 소켓 정리를 마치므로(`packages/docs-site/ko/reference/architecture/server.mdx`), 정지는 영속적인 정지이고 다음 시작은 같은 볼륨을 엽니다.
 
 - `scripts/hosting/instance.sh stop <tenant>`, `docker stop`, 슈퍼바이저의 종료 신호로 멈춥니다. `horon-agent-sdk`의 `stop_hosted_instance`가 같은 동작입니다. 신호를 보내고, 엔드포인트가 접속을 받지 않을 때까지 기다린 뒤에야 테넌트를 정지됐다고 보고합니다. Fly에서는 방어선으로 `SIGTERM` 고정을 계속 권장하지만, 플랫폼 기본값인 `SIGINT`에서도 같은 저장 비우기와 정리가 동작합니다.
 - 같은 볼륨으로 이미지나 데몬을 다시 시작해 깨웁니다. 세션, 승인, MCP 설정, 기억 파일은 볼륨에서 읽고, 세션은 일반 재개 경로로 이어집니다.
@@ -185,7 +183,7 @@ config:
 
 - 과금, 요금제, 할당량.
 - 오토스케일과 배치 정책.
-- 중앙 메타데이터 서비스. 매핑은 컨트롤 플레인이 소유하고 이 저장소는 구현하지 않습니다. 그 서비스에 대한 에이전트 쪽 클라이언트와 요청 형태는 기억 볼륨 문서(`docs/runtime/MEMORY.ko.md`)에 있고, 서비스 자체는 `horon-ai/server#28`이며 계약은 아직 초안입니다.
+- 중앙 메타데이터 서비스. 매핑은 컨트롤 플레인이 소유하고 이 저장소는 구현하지 않습니다. 그 서비스에 대한 에이전트 쪽 클라이언트와 요청 형태는 기억 볼륨 문서(`packages/docs-site/ko/reference/runtime/memory.mdx`)에 있고, 서비스 자체는 `horon-ai/server#28`이며 계약은 아직 초안입니다.
 - Fly API 클라이언트. 공급자를 호출하는 것은 컨트롤 플레인이고, 에이전트는 필요한 볼륨 명령만 노출합니다.
 - Fly 볼륨 저장 시 암호화를 넘어서는 디스크 상시 페이지 파일 암호화(기억 볼륨 내보내기·가져오기 tar는 `KeyProvider` 및 `--key-env`/`--key-file` 기반 `aes-256-gcm` 인증 암호화를 구현했으며, 키 계약은 생성·폐기와 열기 거부를 함께 처리합니다).
 - 호스팅 유휴 종료 스위치. 공유 서버 유휴 기한을 바꾸거나 호스팅 유휴 종료 스위치를 두는 일은 이 범위에 포함하지 않습니다.

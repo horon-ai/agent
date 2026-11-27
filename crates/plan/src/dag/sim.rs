@@ -2,7 +2,7 @@
 //!
 //! This drives the engine end-to-end with scripted mock workers so the scheduler,
 //! ops, dataflow, and gate mechanics can be verified without any live agents. It
-//! is the executable analogue of the worked example in `docs/runtime/SWARM_TASK_GRAPH.md`
+//! is the executable analogue of the worked example in `packages/docs-site/reference/runtime/swarm-task-graph.mdx`
 //! section 9.
 //!
 //! A worker is a closure that, given the assembled input for a node, returns a

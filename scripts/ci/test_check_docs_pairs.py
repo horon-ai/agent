@@ -186,3 +186,27 @@ Text.
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_site_pages_pair_across_the_ko_tree(self):
+        """A site reference page pairs with the same path under `ko/`; no switch
+        line is needed, and the structure is compared like a Markdown pair."""
+        english = self.root / "packages" / "docs-site" / "reference" / "runtime" / "tui.mdx"
+        korean = self.root / "packages" / "docs-site" / "ko" / "reference" / "runtime" / "tui.mdx"
+        english.parent.mkdir(parents=True)
+        korean.parent.mkdir(parents=True)
+        english.write_text("---\ntitle: TUI\n---\n\n## Keys\n\nPress enter.\n\n## Mouse\n\nScroll.\n", encoding="utf-8")
+        korean.write_text("---\ntitle: TUI\n---\n\n## 키\n\nenter를 누른다.\n", encoding="utf-8")
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(gate, "REPO", self.root),
+            mock.patch.object(gate, "SITE", self.root / "packages" / "docs-site"),
+            mock.patch.object(gate, "pair_files", return_value=[english, korean]),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            code = gate.main()
+        self.assertEqual(code, 1)
+        self.assert_only_structure_error(
+            err.getvalue(), "packages/docs-site/reference/runtime/tui.mdx: h2 differs: English 2, Korean 1"
+        )
+

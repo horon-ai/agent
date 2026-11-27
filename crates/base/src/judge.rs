@@ -21,7 +21,7 @@
 //! different thing: it spawns a reviewer worker inside a swarm and resolves its
 //! model through the session agent-model overrides. Both read the same
 //! `[autojudge] model` setting so a user has one place to name their judge
-//! model, but they are separate workloads; `docs/runtime/TURNS.md` states the
+//! model, but they are separate workloads; `packages/docs-site/reference/runtime/turns.mdx` states the
 //! difference.
 
 use crate::config::{AutoJudgeConfig, NamedProviderConfig};

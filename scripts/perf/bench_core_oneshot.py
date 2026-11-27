@@ -2,7 +2,7 @@
 """Core-profile one-shot: the default tool surface, measured end to end.
 
 The plain ``oneshot`` row passes ``--tools bash`` so its numbers stay
-comparable with docs/performance/RESULTS.md. A real turn runs with the core
+comparable with packages/docs-site/reference/performance/results.mdx. A real turn runs with the core
 profile instead: seven eager tools plus ``toolbox`` in the request and the
 listed-tool index in the system prompt. This row is the same one-shot turn with
 ``--tools`` removed, so the request carries that surface. Dropping a flag needs

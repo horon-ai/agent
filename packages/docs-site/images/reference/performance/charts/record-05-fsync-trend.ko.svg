@@ -55,5 +55,5 @@
 <rect x="862.6" y="288.2" width="40.0" height="23.8" rx="2" fill="#d3d9e1"/>
 <text x="882.6" y="282.2" font-size="10.5" fill="#59636e" text-anchor="middle" font-weight="normal">5</text>
 <text x="836.6" y="330.0" font-size="11.5" fill="#1f2328" text-anchor="middle" font-weight="normal">close-save (#44)</text>
-<text x="32.0" y="368.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: docs/performance/RESULTS.md · fsync 줄이기와 jcode 와의 구조 차이 (#47)</text>
+<text x="32.0" y="368.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: agent.horon.ai/ko/reference/performance/results · fsync 줄이기와 jcode 와의 구조 차이 (#47)</text>
 </svg>

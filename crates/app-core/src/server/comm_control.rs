@@ -2471,7 +2471,7 @@ mod tests;
 ///
 /// Light mode keeps the single-coordinator rule: a coordinator is the one driver,
 /// which matches the cheap fan-out preset. Deep mode follows the task-DAG
-/// ownership model (see `docs/runtime/SWARM_TASK_GRAPH.md` section 2): the plan is a tree
+/// ownership model (see `packages/docs-site/reference/runtime/swarm-task-graph.mdx` section 2): the plan is a tree
 /// of ownership over a graph, and the agent that seeded/participates in the graph
 /// must be able to dispatch it even when another session already holds the
 /// swarm-level coordinator slot. Without this, a deep-mode agent that joins a

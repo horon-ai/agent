@@ -3,7 +3,7 @@
 //! A role is a named workload-to-model mapping inside one provider profile
 //! (`[providers.<name>.roles]`). Roles never select a second profile, endpoint
 //! or credential; the resolution order below is the single chain every caller
-//! uses, as described in `docs/provider/MODEL.md` under `### Resolution order`.
+//! uses, as described in `packages/docs-site/reference/provider/model.mdx` under `### Resolution order`.
 
 use serde::{Deserialize, Serialize};
 

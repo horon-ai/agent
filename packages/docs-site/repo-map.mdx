@@ -21,38 +21,38 @@ description: Where each part of horon-agent lives in the repository and which do
 
 | Topic | Document |
 | --- | --- |
-| Server, sessions, sockets | `docs/architecture/SERVER.md` |
-| Crate ownership, platform adapters, TLS trust | `docs/architecture/CRATES.md` |
-| Hosted tenant deployment modes and gates | `docs/architecture/HOSTING.md` |
-| Architecture and flow diagrams | `docs/diagram/README.md` |
-| ACP v1 and v2 | `docs/protocol/ACP.md` |
-| Harness API credential setup and surface | `docs/protocol/HARNESS_API.md` |
-| Collaborative shared sessions | `docs/protocol/COLLABORATION.md` |
-| Stdio JSONL RPC adapter | `docs/protocol/RPC.md` |
-| Session sharing | `docs/protocol/SHARING.md` |
-| Session event storage | `docs/protocol/SESSION_STORE.md` |
-| Tool loading, effect tiers, edit safety | `docs/runtime/TOOLS.md` |
-| Tool scheduling and loop prevention | `docs/runtime/TOOL_SCHEDULING.md` |
-| Turn recovery, mid-run insert, `--resume` | `docs/runtime/TURNS.md` |
-| Inter-agent IRC mailbox | `docs/runtime/IRC.md` |
-| Persistent markdown wiki memory | `docs/runtime/MEMORY.md` |
-| User-installed Rust extensions and plugins | `docs/runtime/PACKAGES.md` |
-| Hook lifecycle events | `docs/runtime/HOOKS.md` |
-| Pre-edit diagnostics | `docs/runtime/EDIT_DIAGNOSTICS.md` |
-| Swarm dependency task graph | `docs/runtime/SWARM_TASK_GRAPH.md` |
-| TUI mode (`horon-tui`) | `docs/runtime/TUI.md` |
-| System prompt composition | `docs/runtime/PROMPT.md` |
-| Provider profiles and model roles | `docs/provider/MODEL.md` |
-| Remote MCP, custom websearch, image route | `docs/provider/INTEGRATIONS.md` |
-| Provider diagnostics, local helpers, sampling, quota, vision | `docs/provider/DIAGNOSTICS.md`, `LOCAL_HELPERS.md`, `SAMPLING.md`, `QUOTA_FALLBACK.md`, `VISION_POLICY.md` |
-| Safety, approvals, unattended runs | `docs/safety/SAFETY.md` |
-| Workspace trust, crash bundles | `docs/safety/SECURITY.md` |
-| Benchmarks and the measurement standard | `docs/performance/BENCHMARK.md` |
-| Eval and memory limits | `docs/performance/EVAL.md`, `MEMORY.md` |
-| Measured results | `docs/performance/RESULTS.md` |
-| Release assets and installation | `docs/release/INSTALL.md` |
-| npm packages | `docs/release/NPM.md` |
-| Windows build and signing | `docs/release/WINDOWS.md` |
+| Server, sessions, sockets | `packages/docs-site/reference/architecture/server.mdx` |
+| Crate ownership, platform adapters, TLS trust | `packages/docs-site/reference/architecture/crates.mdx` |
+| Hosted tenant deployment modes and gates | `packages/docs-site/reference/architecture/hosting.mdx` |
+| Architecture and flow diagrams | `packages/docs-site/reference/diagram/index.mdx` |
+| ACP v1 and v2 | `packages/docs-site/reference/protocol/acp.mdx` |
+| Harness API credential setup and surface | `packages/docs-site/reference/protocol/harness-api.mdx` |
+| Collaborative shared sessions | `packages/docs-site/reference/protocol/collaboration.mdx` |
+| Stdio JSONL RPC adapter | `packages/docs-site/reference/protocol/rpc.mdx` |
+| Session sharing | `packages/docs-site/reference/protocol/sharing.mdx` |
+| Session event storage | `packages/docs-site/reference/protocol/session-store.mdx` |
+| Tool loading, effect tiers, edit safety | `packages/docs-site/reference/runtime/tools.mdx` |
+| Tool scheduling and loop prevention | `packages/docs-site/reference/runtime/tool-scheduling.mdx` |
+| Turn recovery, mid-run insert, `--resume` | `packages/docs-site/reference/runtime/turns.mdx` |
+| Inter-agent IRC mailbox | `packages/docs-site/reference/runtime/irc.mdx` |
+| Persistent markdown wiki memory | `packages/docs-site/reference/runtime/memory.mdx` |
+| User-installed Rust extensions and plugins | `packages/docs-site/reference/runtime/packages.mdx` |
+| Hook lifecycle events | `packages/docs-site/reference/runtime/hooks.mdx` |
+| Pre-edit diagnostics | `packages/docs-site/reference/runtime/edit-diagnostics.mdx` |
+| Swarm dependency task graph | `packages/docs-site/reference/runtime/swarm-task-graph.mdx` |
+| TUI mode (`horon-tui`) | `packages/docs-site/reference/runtime/tui.mdx` |
+| System prompt composition | `packages/docs-site/reference/runtime/prompt.mdx` |
+| Provider profiles and model roles | `packages/docs-site/reference/provider/model.mdx` |
+| Remote MCP, custom websearch, image route | `packages/docs-site/reference/provider/integrations.mdx` |
+| Provider diagnostics, local helpers, sampling, quota, vision | `packages/docs-site/reference/provider/diagnostics.mdx`, `LOCAL_HELPERS.md`, `SAMPLING.md`, `QUOTA_FALLBACK.md`, `VISION_POLICY.md` |
+| Safety, approvals, unattended runs | `packages/docs-site/reference/safety/safety.mdx` |
+| Workspace trust, crash bundles | `packages/docs-site/reference/safety/security.mdx` |
+| Benchmarks and the measurement standard | `packages/docs-site/reference/performance/benchmark.mdx` |
+| Eval and memory limits | `packages/docs-site/reference/performance/eval.mdx`, `MEMORY.md` |
+| Measured results | `packages/docs-site/reference/performance/results.mdx` |
+| Release assets and installation | `packages/docs-site/reference/release/install.mdx` |
+| npm packages | `packages/docs-site/reference/release/npm.mdx` |
+| Windows build and signing | `packages/docs-site/reference/release/windows.mdx` |
 
 Each document ships as English `X.md` with a Korean `X.ko.md` beside it. The
 English file is canonical; `.ko.md` files are not bundled into the binary.

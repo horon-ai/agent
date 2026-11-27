@@ -4,11 +4,9 @@ sidebarTitle: "Overview"
 description: "How the reference documentation is organized, the fixed requirements, and the rules for keeping it current."
 ---
 
-{/* Generated from docs/README.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
+This Reference tab is the developer documentation of horon agent: how it behaves today, with proposed designs labeled separately from current behavior. The pages are written here, in `packages/docs-site/reference/` (English) and `packages/docs-site/ko/reference/` (Korean, the same path), and every English page has its Korean pair with the same headings and tables (`scripts/ci/check_docs_pairs.py`). Paths, commands, and identifiers keep their original spelling. Moving or deleting a page updates the paths left in code, scripts, and tests in the same change.
 
-This folder describes how horon agent behaves today and labels proposed designs separately from current behavior. Every document ships as an English `X.md` and a Korean `X.ko.md` in the same folder; English is the default, and the Korean files are the `.ko.md` siblings. Paths, commands, and identifiers keep their original spelling. File names are uppercase and each topic gets its own subfolder.
-
-The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) shows them under its Reference tab: `scripts/ci/sync_docs_site.py` writes `packages/docs-site/reference/` from this folder, and the guides in the rest of `packages/docs-site` are written by hand, so a behavior change that a guide also describes is edited in both places.
+The binary does not carry these pages. The agent reads its own English corpus in the repository's `docs/` folder, compiled into the binary and served at `horon://<path>` and by the `horon` tool; it explains each feature as the cases an agent meets. A behavior change updates the page here, the agent corpus, and any guide outside the Reference tab that repeats it. Only four pages are generated: `philosophy` and the SDK and npm pages, by `scripts/ci/sync_docs_site.py` from `PHILOSOPHY.md` and the package READMEs.
 
 ## Two modes, one agent
 
@@ -28,7 +26,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 
 | Folder | Document | Contents |
 | --- | --- | --- |
-| `docs/` | [`README.md`](/reference/index) | This index and the update rules |
+| `reference/` | [Overview](/reference/index) | This index and the update rules |
 | `diagram/` | [`README.md`](/reference/diagram/index) | Eight hand-written SVG diagrams with the code paths each one draws: system overview, run modes, turn lifecycle, provider wires, ACP negotiation, session storage, tool loading, branch and release flow |
 | `architecture/` | [`SERVER.md`](/reference/architecture/server) | Server, session, and socket structure |
 | | [`CRATES.md`](/reference/architecture/crates) | Crate ownership boundaries, platform adapters, storage durability, and the TLS trust set |
@@ -76,5 +74,5 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | A document moves or is deleted | Fix this table and the paths in code, scripts, and tests in the same change. |
 | The same content appears in two documents | Make one the source of truth and have the other point at it. |
 | You want to record a measurement, acceptance note, or plan | Do not create a document; write it in the PR body or an issue. Performance numbers go only in `performance/RESULTS.md`. |
-| You edit any document | Keep the pair in step: every `X.md` has a Korean `X.ko.md` beside it, and `python3 scripts/ci/check_docs_pairs.py` verifies that both exist, that headings, table rows, code fences, and links match, and that relative links resolve. |
-| You change a file under `docs/` | Run `python3 scripts/ci/sync_docs_site.py` and commit the changed pages under `packages/docs-site/reference/` and `packages/docs-site/ko/reference/`, together with any regenerated images under `packages/docs-site/images/reference/`. CI checks all three directories. |
+| You edit any page | Keep the pair in step: every `reference/<path>.mdx` has a Korean `ko/reference/<path>.mdx`, and `python3 scripts/ci/check_docs_pairs.py` verifies that both exist and that headings, table rows, code fences, and links match. |
+| You change `PHILOSOPHY.md` or an SDK or npm README | Run `python3 scripts/ci/sync_docs_site.py` and commit the regenerated `philosophy` or `sdk/` page; `--check` in CI fails while one is stale. |

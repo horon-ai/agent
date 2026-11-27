@@ -231,7 +231,7 @@ async fn swarm_follows_tool_profile_only() {
     let open = registry.definitions_filtered(None, &HashSet::new()).await;
     assert_eq!(open.iter().filter(|def| def.name == "swarm").count(), 1);
 
-    // `swarm` is one of the eighteen `CORE_TOOLS` (AGENTS.md, `docs/runtime/TOOLS.md`),
+    // `swarm` is one of the eighteen `CORE_TOOLS` (AGENTS.md, `packages/docs-site/reference/runtime/tools.mdx`),
     // so `core` lists it — discoverable through the index and `toolbox`, not eager.
     let core: HashSet<String> = crate::config::CORE_TOOLS.iter().map(|n| (*n).to_string()).collect();
     assert!(core.contains("swarm") && !crate::config::ESSENTIAL_TOOLS.contains(&"swarm"));

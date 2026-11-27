@@ -690,7 +690,7 @@ jobs:
           $signingRequired = $env:WINDOWS_SIGNING_REQUIRED -eq 'true'
 
           if (-not $configured -and $signingRequired) {
-            Write-Output "::error::WINDOWS_SIGNING_REQUIRED is 'true' but Azure Artifact Signing is not configured. Set AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID secrets and WINDOWS_SIGNING_ENDPOINT, WINDOWS_SIGNING_ACCOUNT, WINDOWS_SIGNING_CERTIFICATE_PROFILE variables, or unset WINDOWS_SIGNING_REQUIRED. See docs/release/WINDOWS.md."
+            Write-Output "::error::WINDOWS_SIGNING_REQUIRED is 'true' but Azure Artifact Signing is not configured. Set AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID secrets and WINDOWS_SIGNING_ENDPOINT, WINDOWS_SIGNING_ACCOUNT, WINDOWS_SIGNING_CERTIFICATE_PROFILE variables, or unset WINDOWS_SIGNING_REQUIRED. See packages/docs-site/reference/release/windows.mdx."
             throw 'Windows code signing is required but its configuration is incomplete.'
           }
           if (-not $configured) {

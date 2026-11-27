@@ -10,7 +10,7 @@
 # publish. This writes <out-dir>/<name>/{package.json,README.md} for the seven
 # names and prints the `npm publish --access public` command for each. It never
 # publishes, and it registers nothing: the maintainer runs those commands once,
-# by hand, with two-factor authentication. See docs/release/NPM.md.
+# by hand, with two-factor authentication. See packages/docs-site/reference/release/npm.mdx.
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then

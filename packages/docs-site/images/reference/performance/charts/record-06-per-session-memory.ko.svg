@@ -48,5 +48,5 @@
 <rect x="790.7" y="258.2" width="50.0" height="53.8" rx="2" fill="#d3d9e1"/>
 <text x="815.8" y="252.2" font-size="10.5" fill="#59636e" text-anchor="middle" font-weight="normal">0.26</text>
 <text x="815.8" y="330.0" font-size="11.5" fill="#1f2328" text-anchor="middle" font-weight="normal">세션당 스레드, macOS</text>
-<text x="32.0" y="368.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: docs/performance/RESULTS.md · `jcode-parity-optimization` 계획 측정</text>
+<text x="32.0" y="368.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: agent.horon.ai/ko/reference/performance/results · `jcode-parity-optimization` 계획 측정</text>
 </svg>

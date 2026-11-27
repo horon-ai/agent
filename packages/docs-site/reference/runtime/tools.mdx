@@ -3,8 +3,6 @@ title: "Tools"
 description: "Tool loading tiers, effect and approval tiers, edit safety, skill and memory reads, MCP config sources and large-output handling."
 ---
 
-{/* Generated from docs/runtime/TOOLS.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 This covers tool loading tiers, effects and approval tiers, edit safety, the ancestor `AGENTS.md` attached to `read`, archive and SQLite reads, skill reads (`skill://`), memory reads (`memory://`) and memory updates, where MCP configuration comes from, condensing large tool output and `read` deduplication, aging of old results, and the one-shot auxiliary call.
 
 ## Tool discovery and deferred loading
@@ -265,7 +263,7 @@ A repaired call leaves three traces:
 Both fields are omitted when the call needed no repair, so an existing session
 file keeps exactly its previous bytes and one written earlier still loads. The
 same two values go out as the `tool_args_repaired` event right before the call's
-result, described in `docs/protocol/HARNESS_API.md`.
+result, described in `packages/docs-site/reference/protocol/harness-api.mdx`.
 
 ## Edit safety
 
@@ -383,7 +381,7 @@ The one tool whose model does not speak Chat Completions. Registered only when
 `[tools] generate_image = true` **and** the active profile names
 `roles.image = "<model>"`; with either missing the name is neither registered nor
 in an index row, so a session that never generates an image pays nothing for the
-tool existing. `docs/provider/INTEGRATIONS.md` has the MCP recipe for anything this
+tool existing. `packages/docs-site/reference/provider/integrations.mdx` has the MCP recipe for anything this
 tool does not cover.
 
 | Input | Meaning |
@@ -489,7 +487,7 @@ The search is `find_agents_md_up`. It starts at the directory holding the file b
 
 Three cases are excluded.
 
-- The working directory's own `AGENTS.md` is not attached, because the `break` above ends the search the moment it reaches the working directory. That file is already handled by the system prompt layers (layer 4 in [`docs/runtime/PROMPT.md`](/reference/runtime/prompt)).
+- The working directory's own `AGENTS.md` is not attached, because the `break` above ends the search the moment it reaches the working directory. That file is already handled by the system prompt layers (layer 4 in [`packages/docs-site/reference/runtime/prompt.mdx`](/reference/runtime/prompt)).
 - When the file being read is that directory's own `AGENTS.md`, it is not included. The `canonical != start` condition in `find_agents_md_up` skips that case. Only ancestor contracts are attached.
 - An ancestor directory with no `AGENTS.md` is skipped. Only existing files are collected, in order.
 
@@ -584,7 +582,7 @@ Where skills come from and what happens when names collide is in the "Skills" se
 
 ### `read horon://`
 
-- The documentation bundled into the binary is read at `horon://<path>`, where `docs/` is the root: `docs/runtime/TOOLS.md` is `horon://runtime/TOOLS.md` and the docs index is `horon://README.md`. The repository's root `README.md` is `horon://project/README.md`. `.md` and letter case may be left out (`horon://runtime/tools`), and a reference that still spells `docs/` resolves too.
+- The documentation bundled into the binary is read at `horon://<path>`, where `docs/` is the root: `packages/docs-site/reference/runtime/tools.mdx` is `horon://runtime/TOOLS.md` and the docs index is `horon://README.md`. The repository's root `README.md` is `horon://project/README.md`. `.md` and letter case may be left out (`horon://runtime/tools`), and a reference that still spells `docs/` resolves too.
 - `horon://` alone lists every bundled document with its title. An unknown path fails with `horon://<path> names no bundled document`.
 - Like a skill read, a document comes whole and without line numbers unless a selector or range asks for part of it (`horon://runtime/TOOLS.md:40-80`).
 - The `horon` tool searches the same documents and prints `horon://` addresses; the address reads the copy built into this binary, so it describes the version that is running.
@@ -677,13 +675,13 @@ Memory injected into the prompt is truncated, and seeing the full content used t
 
 ### Where memory lives
 
-Memory is stored in the per-user markdown wiki: one markdown page per memory plus a SQLite index rebuilt from those pages (`docs/runtime/MEMORY.md`). Every `memory` action and `read memory://` goes through it.
+Memory is stored in the per-user markdown wiki: one markdown page per memory plus a SQLite index rebuilt from those pages (`packages/docs-site/reference/runtime/memory.mdx`). Every `memory` action and `read memory://` goes through it.
 
 - `remember` and `learn` write to the working folder's project store, or to the user-level store with `scope: "global"`. A `learn` with `all` is refused, because `all` is a read scope.
 - `search` keeps its substring contract: the query and the stored search text are normalized the same way (lowercase, whitespace and separators folded), so `side-panel` still matches `side_panel`. It deliberately does not use the wiki's ranked search, whose link, recency and kind-authority streams would change which memories the action returns.
 - `list` is newest first by `updated_at`, with the id as the final tie-break, so two records stored in the same millisecond list the same way every time.
 - `tag` with several tags is one store write, not one per tag.
-- The pre-wiki JSON files are imported on first use by a migration that never modifies them; `horon-agent memory migrate [--dry-run]` imports every project file at once. See "Migration from JSON" in `docs/runtime/MEMORY.md`.
+- The pre-wiki JSON files are imported on first use by a migration that never modifies them; `horon-agent memory migrate [--dry-run]` imports every project file at once. See "Migration from JSON" in `packages/docs-site/reference/runtime/memory.mdx`.
 
 ### `read memory://`
 
@@ -733,7 +731,7 @@ An installed extension or plugin can declare native tools in its `extension.toml
 | Question | Answer |
 | --- | --- |
 | Name | `ext__<package id>__<declared name>`. The installer caps the declared part so the whole name stays within 64 bytes. |
-| Which generation | The one the turn captured (see `docs/runtime/PACKAGES.md`). A package installed or removed since appears from the next turn; a running turn keeps its tools. |
+| Which generation | The one the turn captured (see `packages/docs-site/reference/runtime/packages.mdx`). A package installed or removed since appears from the next turn; a running turn keeps its tools. |
 | Effect | `ToolEffects::process()` (`crates/app-core/src/tool/package_tool.rs:92`). The call is a write barrier and never overlaps another call in its round. |
 | Name collision | A name the registry already holds wins. The package never replaces an existing tool. |
 
@@ -758,7 +756,7 @@ MCP server definitions are merged in the order given by `crates/base/src/mcp/sou
 
 | Order | Source | File | When it is on |
 | --- | --- | --- | --- |
-| 1 | Working folder | `.horon/mcp.json` > `.mcp.json` > `.claude/mcp.json` | When the working folder is trusted (`docs/safety/SECURITY.md`) |
+| 1 | Working folder | `.horon/mcp.json` > `.mcp.json` > `.claude/mcp.json` | When the working folder is trusted (`packages/docs-site/reference/safety/security.mdx`) |
 | 2 | horon-agent | `~/.horon/mcp.json` | Always |
 | 3 | Claude Code | `~/.claude.json` (this project's entry > global `mcpServers`) > `~/.claude/mcp.json` | `[mcp] claude_user = true` |
 | 4 | Codex CLI | `[mcp_servers.*]` in `~/.codex/config.toml` | `[mcp] codex_user = true` |

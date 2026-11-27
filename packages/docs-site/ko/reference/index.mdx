@@ -4,11 +4,9 @@ sidebarTitle: "개요"
 description: "참조 문서가 어떻게 구성되어 있는지, 고정 요구사항, 문서를 최신으로 유지하는 규칙을 설명한다."
 ---
 
-{/* Generated from docs/README.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
+이 Reference 탭은 horon agent의 개발자 문서다. 현재 동작을 설명하고 설계 제안에는 상태를 따로 표시한다. 페이지는 여기에서 직접 쓴다. 영어는 `packages/docs-site/reference/`, 한국어는 같은 경로의 `packages/docs-site/ko/reference/`에 두고, 영어 페이지마다 제목과 표가 같은 한국어 짝이 있다(`scripts/ci/check_docs_pairs.py`). 경로·명령·식별자는 원형을 유지한다. 페이지를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다.
 
-이 폴더는 horon agent의 현재 동작을 설명하고 설계 제안에는 상태를 표시한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
-
-문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. [agent.horon.ai](https://agent.horon.ai) 사이트는 이 문서들을 Reference 탭에 보여 준다. `scripts/ci/sync_docs_site.py`가 이 폴더에서 `packages/docs-site/reference/`를 생성하고, `packages/docs-site`의 나머지 가이드는 손으로 쓰므로, 가이드도 설명하는 동작이 바뀌면 두 곳을 함께 고친다.
+바이너리에는 이 페이지들이 들어가지 않는다. 에이전트는 저장소 `docs/` 폴더의 영어 문서를 읽는다. 이 문서는 바이너리에 컴파일되어 `horon://<경로>`와 `horon` 도구로 제공되며, 기능마다 에이전트가 만나는 경우를 나눠 설명한다. 동작이 바뀌면 여기 페이지, 에이전트 문서, 그 동작을 되풀이하는 Reference 밖 가이드를 함께 고친다. 생성되는 페이지는 넷뿐이다. `philosophy`와 SDK·npm 페이지를 `scripts/ci/sync_docs_site.py`가 `PHILOSOPHY.md`와 패키지 README에서 만든다.
 
 ## 하나의 에이전트, 두 가지 모드
 
@@ -28,7 +26,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 
 | 폴더 | 문서 | 내용 |
 | --- | --- | --- |
-| `docs/` | [`README.ko.md`](/ko/reference/index) | 이 색인과 갱신 규칙 |
+| `reference/` | [개요](/ko/reference/index) | 이 색인과 갱신 규칙 |
 | `diagram/` | [`README.ko.md`](/ko/reference/diagram/index) | 손으로 그린 SVG 그림 여덟 장과 각 그림이 그리는 코드 경로: 시스템 개요, 실행 모드, 턴 수명 주기, 프로바이더 방식, ACP 협상, 세션 저장, 도구 로딩, 브랜치·릴리스 흐름 |
 | `architecture/` | [`SERVER.ko.md`](/ko/reference/architecture/server) | 서버·세션·소켓 구조 |
 | | [`CRATES.ko.md`](/ko/reference/architecture/crates) | 크레이트 소유권 경계, 플랫폼 어댑터, 저장 내구성과 TLS 신뢰 집합 |
@@ -76,5 +74,5 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | 문서를 옮기거나 지울 때 | 이 표와 코드·스크립트·테스트 속 경로를 같은 변경에서 고친다. |
 | 같은 내용이 두 문서에 있을 때 | 하나를 정본으로 두고 나머지는 그것을 가리킨다. |
 | 측정 기록·인수 기록·계획을 남기고 싶을 때 | 문서를 만들지 않고 PR 본문이나 이슈에 적는다. 성능 수치는 `performance/RESULTS.md`에만 적는다. |
-| 문서를 고칠 때 | 짝을 함께 맞춘다. 모든 `X.md` 옆에 한국어 `X.ko.md`를 두고, `python3 scripts/ci/check_docs_pairs.py`가 두 파일의 존재와 제목·표 행·코드 펜스·링크 수 일치, 상대 링크 해석을 확인한다. |
-| `docs/` 아래 파일을 고칠 때 | `python3 scripts/ci/sync_docs_site.py`를 실행한다. `packages/docs-site/reference/`와 `packages/docs-site/ko/reference/`에서 바뀐 페이지를 커밋하고 `packages/docs-site/images/reference/`에서 다시 생성된 이미지도 함께 커밋한다. CI는 세 폴더를 모두 검사한다. |
+| 페이지를 고칠 때 | 짝을 함께 맞춘다. 모든 `reference/<경로>.mdx`에 한국어 `ko/reference/<경로>.mdx`가 있고, `python3 scripts/ci/check_docs_pairs.py`가 두 파일의 존재와 제목·표 행·코드 펜스·링크 수 일치를 확인한다. |
+| `PHILOSOPHY.md`나 SDK·npm README를 고칠 때 | `python3 scripts/ci/sync_docs_site.py`를 실행하고 다시 만든 `philosophy`나 `sdk/` 페이지를 커밋한다. CI의 `--check`가 낡은 페이지를 잡는다. |

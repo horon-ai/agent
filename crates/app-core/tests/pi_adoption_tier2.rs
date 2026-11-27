@@ -368,7 +368,7 @@ async fn plan_mode_blocks_write_and_submit_plan_unblocks_it() {
 
 /// `write` mode asks about a file mutation that names a path and about a call
 /// that runs a process or reaches the network; both are what its own
-/// documentation promises (`docs/runtime/TOOLS.md`, approval tiers).
+/// documentation promises (`packages/docs-site/reference/runtime/tools.mdx`, approval tiers).
 #[tokio::test]
 async fn write_approval_mode_asks_for_files_and_shell() {
     let _env = TEST_ENV.lock().await;
@@ -500,7 +500,7 @@ async fn write_mode_enqueues_a_request_instead_of_only_refusing() {
 /// and reads the `TOOL_APPROVAL` line back out of the log file.
 ///
 /// The call is `todo`, not `write`. `write` mode asks before a file mutation
-/// that names a path (`docs/runtime/TOOLS.md`, approval tiers), so the only
+/// that names a path (`packages/docs-site/reference/runtime/tools.mdx`, approval tiers), so the only
 /// auto-approvals it records are the path-less write-effect tools: there is no
 /// file to approve, and the audit line is what explains that decision.
 #[tokio::test]

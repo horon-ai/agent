@@ -4,8 +4,6 @@ sidebarTitle: "Tool scheduling"
 description: "How a message's tool calls are grouped and run, and how repeated calls are stopped."
 ---
 
-{/* Generated from docs/runtime/TOOL_SCHEDULING.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 Two behaviors decide how a message's tool calls run. The scheduler groups the calls
 of one model message and runs read-only calls side by side. The loop guard watches
 for repetition in the tool call sequence. This document describes the behavior of the

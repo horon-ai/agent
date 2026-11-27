@@ -142,7 +142,7 @@ bing_market = "en-US"
 
 # Custom HTTP JSON search: set engine = "custom" above.
 # Set fallback_engines = [] above if private queries must not reach Bing on failure.
-# See docs/provider/INTEGRATIONS.md for GET/POST, authentication and JSON pointers.
+# See packages/docs-site/reference/provider/integrations.mdx for GET/POST, authentication and JSON pointers.
 # [websearch.custom]
 # endpoint = "https://search.example.org/api"
 # method = "GET"

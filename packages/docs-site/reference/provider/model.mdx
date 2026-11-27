@@ -3,8 +3,6 @@ title: "Model calls"
 description: "The agent sends model requests directly to the endpoint of the profile's wire protocol."
 ---
 
-{/* Generated from docs/provider/MODEL.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 The agent sends model requests directly to the endpoint of the profile's wire protocol. A profile speaks one of four wires: Chat Completions, the OpenAI Responses API, Anthropic Messages, or Gemini generateContent. There is no router process or plugin layer in between, and no port is opened for the model. Endpoints are written under `[providers.<name>]` in `config.toml` and selected with `[provider] default_provider` or `--provider-profile`.
 
 ## Model path
@@ -157,7 +155,7 @@ A model role is a named workload-to-model mapping shared by every feature that n
 | `default` | Every turn of the session unless a more specific role applies. A bare `--model` or `/model` names this role for the run. | `default` |
 | `plan` | Planning turns: the model that writes a plan before execution hands off (#70). | `plan` |
 | `aux` | Cheap auxiliary work: compaction summaries, titles, classification, memory extraction. | `aux` |
-| `judge` | Typed judgments: one bounded call answering a `bool`, `choice`, or `score` question about text the turn already produced. Today the single caller is unexpected-stop recovery (`docs/runtime/TURNS.md`). | `judge` |
+| `judge` | Typed judgments: one bounded call answering a `bool`, `choice`, or `score` question about text the turn already produced. Today the single caller is unexpected-stop recovery (`packages/docs-site/reference/runtime/turns.mdx`). | `judge` |
 | `image` | Image generation and editing: the one role whose model does not speak Chat Completions. Its single caller is the `generate_image` tool, which posts to `/images/generations` and `/images/edits` on the same profile, and only a profile of type `openai-compatible` or `openai-responses` accepts it. No inherited fallback, because a text model cannot answer an image request. | `image` |
 
 No other role exists. A new role is added only together with the workload that calls it. Reason: a role with no named caller is a second spelling of `default`, and a role that appears before its consumer cannot be reviewed for the model it should point at.
@@ -231,11 +229,11 @@ The build's rule is that one model path serves models: a turn posts to the endpo
 
 - It posts `POST {base_url}/images/generations` with a JSON body, or `POST {base_url}/images/edits` with a multipart body, on the **same** profile: same base URL, same credential, same `auth`, same `extra_body`.
 - Only a profile of type `openai-compatible` or `openai-responses` accepts this route. A profile on the Anthropic or Gemini wire cannot serve it, because neither wire carries an Images endpoint: the tool still registers when `roles.image` names a model, and each call fails with an error naming the profile and its type instead of sending a request to a URL that cannot answer (`crates/base/src/provider/external.rs` `image_endpoint`).
-- One provider runtime sends requests directly. `crates/provider-openai/src/images.rs` builds image requests beside `chat/`. User-installed Rust packages (`docs/runtime/PACKAGES.md`) sit outside the model path.
+- One provider runtime sends requests directly. `crates/provider-openai/src/images.rs` builds image requests beside `chat/`. User-installed Rust packages (`packages/docs-site/reference/runtime/packages.mdx`) sit outside the model path.
 - The model comes from `roles.image`, and the tool is registered only when that entry exists **and** `[tools] generate_image = true`. Both conditions are required: the switch alone would advertise a tool whose every call fails, and the role alone would register it for a session that never asked.
 - A call declares `WRITE | NETWORK`, so `approval_mode = "write"` asks first and an unattended run does not spend money without approval.
 - The model never receives image bytes. Files land in `~/.horon/generated-images/` and the result names paths, sizes and MIME types, which keeps a call at a few hundred tokens instead of megabytes in the context and the stored event log.
-- Output is limited to the OpenAI Images shape. A gateway that speaks it works unchanged, including the Horon AI Gateway. The Gemini-native image API and the Responses API's `image_generation` tool are out of scope; the MCP recipe in `docs/provider/INTEGRATIONS.md` covers anything this route does not.
+- Output is limited to the OpenAI Images shape. A gateway that speaks it works unchanged, including the Horon AI Gateway. The Gemini-native image API and the Responses API's `image_generation` tool are out of scope; the MCP recipe in `packages/docs-site/reference/provider/integrations.mdx` covers anything this route does not.
 
 ### The `judge` role in practice
 

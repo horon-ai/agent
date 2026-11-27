@@ -25,8 +25,8 @@ import record_charts  # noqa: E402
 
 ROOT = record_charts.ROOT
 DOCS = (
-    ROOT / "docs" / "performance" / "RESULTS.md",
-    ROOT / "docs" / "performance" / "RESULTS.ko.md",
+    ROOT / "packages" / "docs-site" / "reference" / "performance" / "results.mdx",
+    ROOT / "packages" / "docs-site" / "ko" / "reference" / "performance" / "results.mdx",
 )
 HANGUL = re.compile(r"[\u3131-\u318e\uac00-\ud7a3]")
 

@@ -3,8 +3,6 @@ title: "The terminal client"
 description: "horon-tui is the TUI binary: TUI mode of horon agent, where a person drives a session from the terminal."
 ---
 
-{/* Generated from docs/runtime/TUI.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 `horon-tui` is the TUI binary: TUI mode of horon agent, where a person drives a session from the terminal. Headless mode, where a program drives it, runs from the agent binary `horon-agent`; both modes share one engine and one daemon. `horon-tui` is a separate package and binary that talks to the daemon only through `horon-agent-sdk`, so the `horon-agent` graph stays free of terminal libraries and a client bug cannot take down the server.
 
 ## Running it

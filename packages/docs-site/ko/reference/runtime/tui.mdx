@@ -3,8 +3,6 @@ title: "터미널 클라이언트"
 description: "horon-tui는 TUI 바이너리다. 사람이 터미널에서 세션을 움직이는 horon agent의 TUI 모드가 여기에 있다. 프로그램이 세션을 움직이는 헤드리스 모드는 에이전트 바이너리 horon-agent에서 돌고, 두 모드는 엔진 하나와 데몬 하나를 함께 쓴다."
 ---
 
-{/* Generated from docs/runtime/TUI.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 `horon-tui`는 TUI 바이너리다. 사람이 터미널에서 세션을 움직이는 horon agent의 TUI 모드가 여기에 있다. 프로그램이 세션을 움직이는 헤드리스 모드는 에이전트 바이너리 `horon-agent`에서 돌고, 두 모드는 엔진 하나와 데몬 하나를 함께 쓴다. `horon-tui`는 `horon-agent-sdk`로만 데몬과 대화하는 별도 패키지이자 별도 바이너리이므로, `horon-agent` 의존성 그래프에 터미널 라이브러리가 들어오지 않고 클라이언트의 버그가 서버를 끌어내리지 못한다.
 
 ## 실행 방법

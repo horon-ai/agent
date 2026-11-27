@@ -4,7 +4,7 @@
 //! session's identity; this module keeps the projection the host asks for and
 //! turns each host command into the one daemon request that answers it. Anything
 //! the daemon cannot answer is derived here and marked partial in
-//! `docs/protocol/RPC.md`.
+//! `packages/docs-site/reference/protocol/rpc.mdx`.
 
 use anyhow::Result;
 use serde_json::{Value, json};

@@ -66,7 +66,7 @@ impl Agent {
         self.fire_turn_start_hook("run");
         let result = self.run_turn(true).await.map(|_| ());
         // `horon-agent run` uses this path, so headless turns fire the same
-        // lifecycle hooks as streaming turns (docs/runtime/HOOKS.md).
+        // lifecycle hooks as streaming turns (packages/docs-site/reference/runtime/hooks.mdx).
         self.fire_turn_end_hook(&result, turn_started_at, start_message_index);
         result
     }

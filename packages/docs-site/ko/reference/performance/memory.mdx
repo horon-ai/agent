@@ -4,8 +4,6 @@ sidebarTitle: "메모리 예산"
 description: "메모리 회귀 예산과 서버 메모리 사고 대응 절차를 다룬다."
 ---
 
-{/* Generated from docs/performance/MEMORY.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 메모리 회귀 예산과 서버 메모리 사고 대응 절차를 다룬다.
 
 ## 메모리 회귀 예산
@@ -39,7 +37,7 @@ description: "메모리 회귀 예산과 서버 메모리 사고 대응 절차�
 - 세션 집단 비교: `python3 scripts/perf/bench_compare.py --scenarios sessions`가 idle과 턴 직후
   표본마다 프로세스 트리 RSS 옆에 살아 있는 프로세스 수를 남긴다. 세션당 메모리 증가분을
   그 세션이 데몬 안의 스레드인지 따로 뜬 프로세스인지와 함께 읽기 위해서다
-  (`docs/performance/BENCHMARK.ko.md`의 `process_count`)
+  (`packages/docs-site/ko/reference/performance/benchmark.mdx`의 `process_count`)
 
 코드의 주요 출처:
 - `crates/base/src/runtime_memory_log.rs`
@@ -265,7 +263,7 @@ hibernation의 몫은 도구 인덱스 + 다시 만들어진 projection이며, `
 
 ## 할당자 A/B: Linux 기본값은 glibc 유지
 
-2026-11-10 GitHub Actions의 `compare` 스위트로 측정했다(run 42748612662, Linux x86_64, CPU 4개, 칸당 표본 5개). `horon`은 `--features jemalloc`로, `horon-base`는 같은 커밋을 기본 glibc 할당자로 같은 잡에서 빌드했다(`docs/performance/BENCHMARK.ko.md`의 "할당자 A/B").
+2026-11-10 GitHub Actions의 `compare` 스위트로 측정했다(run 42748612662, Linux x86_64, CPU 4개, 칸당 표본 5개). `horon`은 `--features jemalloc`로, `horon-base`는 같은 커밋을 기본 glibc 할당자로 같은 잡에서 빌드했다(`packages/docs-site/ko/reference/performance/benchmark.mdx`의 "할당자 A/B").
 
 | 칸 | glibc (`horon-base`) | jemalloc (`horon`) | 판정 |
 |---|---|---|---|
