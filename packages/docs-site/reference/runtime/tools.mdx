@@ -584,9 +584,9 @@ Where skills come from and what happens when names collide is in the "Skills" se
 
 ### `read horon://`
 
-- The documentation bundled into the binary (the root `README.md` and every English file under `docs/`) is read at `horon://<path>`, as in `horon://docs/runtime/TOOLS.md`. `docs/`, `.md` and letter case may be left out (`horon://runtime/tools`); the exact path wins when both match.
+- The documentation bundled into the binary is read at `horon://<path>`, where `docs/` is the root: `docs/runtime/TOOLS.md` is `horon://runtime/TOOLS.md` and the docs index is `horon://README.md`. The repository's root `README.md` is `horon://project/README.md`. `.md` and letter case may be left out (`horon://runtime/tools`), and a reference that still spells `docs/` resolves too.
 - `horon://` alone lists every bundled document with its title. An unknown path fails with `horon://<path> names no bundled document`.
-- Like a skill read, a document comes whole and without line numbers unless a selector or range asks for part of it (`horon://docs/runtime/TOOLS.md:40-80`).
+- Like a skill read, a document comes whole and without line numbers unless a selector or range asks for part of it (`horon://runtime/TOOLS.md:40-80`).
 - The `horon` tool searches the same documents and prints `horon://` addresses; the address reads the copy built into this binary, so it describes the version that is running.
 
 ### Relationship to path policy

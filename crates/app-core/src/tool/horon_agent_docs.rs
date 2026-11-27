@@ -121,27 +121,47 @@ pub(crate) fn list_docs() -> String {
     );
     for (path, body) in HORON_AGENT_DOCS {
         let title = body.lines().find_map(|line| line.strip_prefix("# ")).unwrap_or(path);
-        output.push_str(&format!("- {SCHEME}{path}: {title}\n"));
+        output.push_str(&format!("- {SCHEME}{}: {title}\n", address(path)));
     }
     output
 }
 
-/// The bundled document a `horon://` reference names, or `None` for the bare
-/// scheme, which lists them.
+/// Prefix the root `README.md` is addressed under, since `horon://README.md`
+/// is the docs index (`docs/README.md`).
+const PROJECT_PREFIX: &str = "project/";
+
+/// The `horon://` address of a bundled path: `docs/` is the root of the
+/// scheme, so `docs/runtime/TOOLS.md` is `runtime/TOOLS.md`, and the project's
+/// own `README.md` is `project/README.md`.
+fn address(path: &str) -> String {
+    match path.strip_prefix("docs/") {
+        Some(rest) => rest.to_string(),
+        None => format!("{PROJECT_PREFIX}{path}"),
+    }
+}
+
+/// The bundled document a `horon://` reference names, with its address, or
+/// `None` for the bare scheme, which lists them.
 ///
-/// The exact bundled path wins; otherwise `docs/` and `.md` may be left out and
-/// letter case does not matter, so `runtime/tools` names `docs/runtime/TOOLS.md`.
-pub(crate) fn document(reference: &str) -> Result<Option<(&'static str, &'static str)>> {
+/// `horon://runtime/TOOLS.md` names `docs/runtime/TOOLS.md`. `.md` may be left
+/// out and letter case does not matter (`horon://runtime/tools`); a reference
+/// that still spells `docs/` resolves too.
+pub(crate) fn document(reference: &str) -> Result<Option<(String, &'static str)>> {
     let reference = reference.trim().trim_matches('/');
     if reference.is_empty() {
         return Ok(None);
     }
-    let candidates = [
-        reference.to_string(),
-        format!("{reference}.md"),
-        format!("docs/{reference}"),
-        format!("docs/{reference}.md"),
-    ];
+    let path = match reference.get(..PROJECT_PREFIX.len()) {
+        Some(head) if head.eq_ignore_ascii_case(PROJECT_PREFIX) => reference[PROJECT_PREFIX.len()..].to_string(),
+        _ if reference
+            .get(..5)
+            .is_some_and(|head| head.eq_ignore_ascii_case("docs/")) =>
+        {
+            reference.to_string()
+        }
+        _ => format!("docs/{reference}"),
+    };
+    let candidates = [path.clone(), format!("{path}.md")];
     let found = candidates.iter().find_map(|candidate| {
         HORON_AGENT_DOCS
             .iter()
@@ -153,7 +173,7 @@ pub(crate) fn document(reference: &str) -> Result<Option<(&'static str, &'static
             })
     });
     match found {
-        Some((path, body)) => Ok(Some((path, body))),
+        Some((path, body)) => Ok(Some((address(path), body))),
         None => Err(anyhow!(
             "{SCHEME}{reference} names no bundled document. Read {SCHEME} to list them, or search with the horon tool."
         )),
@@ -205,7 +225,7 @@ fn search(query: &str, limit: Option<usize>) -> String {
         output.push_str(&format!(
             "\n{}. {SCHEME}{} > {}\n{}\n",
             index + 1,
-            section.path,
+            address(section.path),
             section.heading,
             excerpt
         ));
@@ -307,7 +327,7 @@ mod tests {
     #[test]
     fn search_finds_relevant_version_matched_documentation() {
         let output = search("How does swarm task graph work?", Some(3));
-        assert!(output.contains("docs/runtime/SWARM_TASK_GRAPH.md"), "{output}");
+        assert!(output.contains("horon://runtime/SWARM_TASK_GRAPH.md"), "{output}");
         assert!(output.contains("bundled with this Horon build"));
     }
 
@@ -338,17 +358,28 @@ mod tests {
             async move { crate::tool::read::ReadTool::new().execute(input, context).await }
         };
 
-        let whole = read("horon://docs/README.md").await.expect("bundled doc").output;
+        // `docs/` is the root of the scheme.
+        let whole = read("horon://README.md").await.expect("bundled doc").output;
         assert!(
             whole.starts_with(
-                "Source: horon://docs/README.md (bundled with this Horon build)\n\n# horon agent documentation"
+                "Source: horon://README.md (bundled with this Horon build)\n\n# horon agent documentation"
             ),
             "{whole}"
         );
-        // `docs/`, `.md` and letter case may be left out.
-        let short = read("horon://runtime/tools").await.expect("short address").output;
-        assert!(short.starts_with("Source: horon://docs/runtime/TOOLS.md"), "{short}");
-        let first_line = read("horon://docs/README.md:1").await.expect("selector").output;
+        let tools = read("horon://runtime/TOOLS.md").await.expect("doc under docs/").output;
+        assert!(tools.starts_with("Source: horon://runtime/TOOLS.md "), "{tools}");
+        // `.md`, letter case and a spelled-out `docs/` are forgiven.
+        for loose in ["horon://runtime/tools", "horon://docs/runtime/TOOLS.md"] {
+            let output = read(loose).await.expect("loose address").output;
+            assert!(
+                output.starts_with("Source: horon://runtime/TOOLS.md "),
+                "{loose}: {output}"
+            );
+        }
+        // The project's own README sits under `project/`.
+        let project = read("horon://project/README.md").await.expect("root README").output;
+        assert!(project.starts_with("Source: horon://project/README.md "), "{project}");
+        let first_line = read("horon://README.md:1").await.expect("selector").output;
         assert!(first_line.contains("# horon agent documentation"), "{first_line}");
         assert!(
             !first_line.contains("\n## "),
@@ -356,7 +387,8 @@ mod tests {
         );
 
         let list = read("horon://").await.expect("list").output;
-        assert!(list.contains("- horon://docs/runtime/TOOLS.md: "), "{list}");
+        assert!(list.contains("- horon://runtime/TOOLS.md: "), "{list}");
+        assert!(list.contains("- horon://project/README.md: "), "{list}");
 
         let missing = read("horon://nope").await.expect_err("unknown doc").to_string();
         assert!(missing.contains("horon://nope names no bundled document"), "{missing}");

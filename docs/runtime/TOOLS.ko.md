@@ -570,9 +570,9 @@ config 하위 디렉터리 규칙 본문
 
 ### `read horon://`
 
-- 바이너리에 들어 있는 문서(루트 `README.md`와 `docs/` 아래 모든 영어 파일)는 `horon://<경로>`로 읽는다. 예: `horon://docs/runtime/TOOLS.md`. `docs/`, `.md`, 대소문자는 생략해도 되고(`horon://runtime/tools`), 정확한 경로가 함께 맞으면 그쪽이 이긴다.
+- 바이너리에 들어 있는 문서는 `horon://<경로>`로 읽고, `docs/`가 그 뿌리다. `docs/runtime/TOOLS.md`는 `horon://runtime/TOOLS.md`이고 문서 목차는 `horon://README.md`다. 저장소 루트의 `README.md`는 `horon://project/README.md`다. `.md`와 대소문자는 생략해도 되고(`horon://runtime/tools`), `docs/`를 붙여 쓴 주소도 읽힌다.
 - `horon://`만 쓰면 들어 있는 문서 전체를 제목과 함께 나열한다. 없는 경로는 `horon://<경로> names no bundled document` 오류가 된다.
-- 스킬 읽기처럼 선택자나 범위가 없으면 줄 번호 없이 전체를 돌려주고, 선택자(`horon://docs/runtime/TOOLS.md:40-80`)나 범위가 있으면 그 부분만 읽는다.
+- 스킬 읽기처럼 선택자나 범위가 없으면 줄 번호 없이 전체를 돌려주고, 선택자(`horon://runtime/TOOLS.md:40-80`)나 범위가 있으면 그 부분만 읽는다.
 - `horon` 도구는 같은 문서를 검색하고 `horon://` 주소를 보여 준다. 주소는 이 바이너리에 들어 있는 사본을 읽으므로 지금 실행 중인 버전의 설명이다.
 
 ### 경로 정책과의 관계
