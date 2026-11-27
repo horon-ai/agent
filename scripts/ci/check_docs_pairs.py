@@ -160,7 +160,15 @@ def check_links(path: Path, text: str, errors: list[str]) -> None:
                 continue
             if dest.suffix == ".md" and REPO in dest.parents:
                 is_switch = dest == counterpart(path).resolve()
-                if not is_switch and is_ko(dest) != ko and dest.name not in ("AGENTS.md", "AGENTS.ko.md"):
+                # `docs/` is the English-only agent corpus, so either language
+                # may link it.
+                english_only = REPO / "docs" in dest.parents
+                if (
+                    not is_switch
+                    and not english_only
+                    and is_ko(dest) != ko
+                    and dest.name not in ("AGENTS.md", "AGENTS.ko.md")
+                ):
                     side = "Korean" if ko else "English"
                     errors.append(f"{rel}: {side} document links the other language: {raw}")
             if fragment and dest.suffix == ".md" and fragment not in anchors(dest.read_text(encoding="utf-8")):

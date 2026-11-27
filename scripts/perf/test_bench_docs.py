@@ -1025,7 +1025,7 @@ class CommittedBenchmarkDocsTests(unittest.TestCase):
                 f"measured RESULTS commit {measured_commit} must be an ancestor of origin/main",
             )
 
-        charts_dir = self.REPO / "docs" / "performance" / "charts"
+        charts_dir = self.REPO / "packages" / "docs-site" / "images" / "reference" / "performance" / "charts"
         en_svg = (charts_dir / "00-summary.svg").read_text(encoding="utf-8")
         ko_svg = (charts_dir / "00-summary.ko.svg").read_text(encoding="utf-8")
         self.assertIn("horon against 7 tools", en_svg)

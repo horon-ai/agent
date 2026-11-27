@@ -1,9 +1,8 @@
 //! `horon://` reads: the documentation bundled into this build.
 //!
 //! `horon://` lists the bundled documents and `horon://<path>` returns one,
-//! with the same selectors as a file read (`horon://runtime/TOOLS.md:40-80`).
-//! `docs/` is the root of the scheme; the project `README.md` is
-//! `horon://project/README.md`.
+//! with the same selectors as a file read (`horon://tools.md:40-80`).
+//! `docs/` is the root of the scheme: `horon://tools.md` is `docs/tools.md`.
 
 use super::{ReadInput, page_text};
 use crate::tool::ToolOutput;
