@@ -48,7 +48,9 @@ A missing platform package is a reinstall, not a broken install. The launcher pr
 
 ## How versions work
 
-The npm version of a release is the release tag without its `v`. `scripts/npm/release_npm_version.py tag-version` accepts only `vMAJOR.MINOR.PATCH`, so a tag with a prerelease or build suffix is refused before anything is downloaded; the `dispatch` command applies the same rule to a manual run.
+The npm version of a release is the release tag without its `v`. `scripts/npm/release_npm_version.py tag-version` accepts `vMAJOR.MINOR.PATCH` and `vMAJOR.MINOR.PATCH-PRERELEASE`, so an alpha tag `v0.2.0-alpha.1` publishes `0.2.0-alpha.1`; a tag with build metadata (`v0.2.0+build`) is refused before anything is downloaded, and the `dispatch` command applies the same rule to a manual run.
+
+A prerelease publishes under its own dist-tag, the first identifier of the suffix (`v0.2.0-alpha.1` and `v0.2.0-alpha.2` both publish under `alpha`), which `scripts/npm/release_npm_version.py dist-tag` computes for the publish step. `latest` moves only for a stable version, so `npm i -g @horon-ai/horon` never installs an alpha; `npm i -g @horon-ai/horon@alpha` does.
 
 `packages/npm/horon/package.json` keeps `0.0.0` in git and is never bumped. `scripts/npm/prepare_cli_packages.sh <out-dir> <assets-dir> <version>` copies the manifest and the launcher into a staging directory and writes the release version into that copy, together with the six pins. The tracked file therefore always describes the placeholder state, while every published package carries the version of the archives it holds.
 

@@ -18,6 +18,22 @@ PLATFORMS = ("linux-x86_64", "linux-aarch64", "macos-aarch64", "macos-x86_64",
 # horon-tui ships beside horon-agent on every platform except FreeBSD, which
 # keeps publishing the CLI only.
 TUI_PLATFORMS = tuple(platform for platform in PLATFORMS if platform != "freebsd-x86_64")
+
+# `vMAJOR.MINOR.PATCH` with an optional semver prerelease suffix, the same shape
+# `prepare_source.py` accepts. Repeated rather than imported because the release
+# workflow copies each helper into `$RUNNER_TEMP` and runs it alone.
+RELEASE_TAG = re.compile(
+    r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?"
+)
+
+
+def is_prerelease(tag):
+    """True when the release tag names a prerelease rather than a release."""
+    if RELEASE_TAG.fullmatch(tag) is None:
+        raise ValueError(f"Not a release tag: {tag!r}")
+    return "-" in tag
+
+
 REQUIRED = (
     {f"horon-agent-{platform}.tar.gz" for platform in PLATFORMS}
     | {f"horon-tui-{platform}.tar.gz" for platform in TUI_PLATFORMS}
@@ -52,8 +68,10 @@ def verify_metadata(metadata, tag, allow_draft=False):
     if (metadata.get("tag_name") != tag or type(metadata.get("draft")) is not bool
             or (metadata["draft"] and not allow_draft)):
         raise ValueError("Release must be public and match the requested tag")
-    if metadata.get("prerelease") is not False:
-        raise ValueError("Official release must not be a prerelease")
+    # A tag with a suffix names a prerelease and a stable tag names a release;
+    # either mismatch means the release would mislead `/releases/latest`.
+    if metadata.get("prerelease") is not is_prerelease(tag):
+        raise ValueError("Release prerelease flag must match the tag: a suffix names a prerelease")
     assets = metadata.get("assets", [])
     names = [asset.get("name") for asset in assets]
     if any(not isinstance(name, str) for name in names) or len(names) != len(set(names)):
@@ -127,8 +145,10 @@ def main():
                         help="Validate staged draft assets before publication")
     parser.add_argument("--directory", help="Keep downloads in this new directory")
     args = parser.parse_args()
-    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", args.tag):
-        parser.error("tag must be vMAJOR.MINOR.PATCH")
+    try:
+        is_prerelease(args.tag)
+    except ValueError:
+        parser.error("tag must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-PRERELEASE")
     if not re.fullmatch(r"[0-9a-f]{40}", args.sha):
         parser.error("sha must be a full lowercase commit SHA")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", args.repo):

@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Release-time checks for the npm publish workflow.
 
-`publish-npm.yml` needs four things npm does not answer itself: the version a
-release tag names, validation of a manual dispatch before anything is built, a
-statement that the seven generated packages agree on one version, and the mode
-a run may take once the owner's switch is read. Each rule is a pure function
-here so it can be proved without a runner, a registry or a network.
+`publish-npm.yml` needs five things npm does not answer itself: the version a
+release tag names, the dist-tag it publishes under, validation of a manual
+dispatch before anything is built, a statement that the seven generated
+packages agree on one version, and the mode a run may take once the owner's
+switch is read. Each rule is a pure function here so it can be proved without
+a runner, a registry or a network.
 
 Commands:
 
   tag-version TAG             print the npm version a release tag names
+  dist-tag TAG_OR_VERSION     print the npm dist-tag it publishes under
   fixture-version             print the unpublished version the pull-request run uses
   dispatch                    validate dispatch inputs, print source/version/mode
   missing-assets DIR          name every required release asset DIR lacks
@@ -30,9 +32,10 @@ import re
 import sys
 from pathlib import Path
 
-# The npm package version is the release tag without its `v`. A prerelease or a
-# build suffix is not published from a tag: the tag names a stable patch.
-TAG = re.compile(r"v([0-9]+\.[0-9]+\.[0-9]+)")
+# The npm package version is the release tag without its `v`. A prerelease tag
+# names a prerelease version and publishes under its own dist-tag, so `latest`
+# keeps pointing at the stable release. Build metadata is not a release tag.
+TAG = re.compile(r"v([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)")
 SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
 
 # Platform package -> release archive suffix, in publish order.
@@ -74,11 +77,33 @@ FIXTURE_VERSION = "0.0.1"
 
 
 def tag_version(tag: str) -> str:
-    """Return the npm version a `vMAJOR.MINOR.PATCH` release tag names."""
+    """Return the npm version a release tag names, prerelease suffix included."""
     match = TAG.fullmatch(tag.strip())
     if match is None:
-        raise ValueError(f"not a vMAJOR.MINOR.PATCH release tag: {tag!r}")
+        raise ValueError(f"not a vMAJOR.MINOR.PATCH[-PRERELEASE] release tag: {tag!r}")
     return match.group(1)
+
+
+def dist_tag(tag_or_version: str) -> str:
+    """Return the npm dist-tag a release publishes under.
+
+    A stable version moves `latest`. A prerelease publishes under its first
+    identifier (`0.2.0-alpha.1` -> `alpha`), so a series of alphas lands on one
+    tag and `latest` never moves for a prerelease.
+    """
+    version = tag_or_version.strip()
+    if version.startswith("v"):
+        version = tag_version(version)
+    if SEMVER.fullmatch(version) is None:
+        raise ValueError(f"not a release version: {version!r}")
+    _, _, prerelease = version.partition("-")
+    if not prerelease:
+        return "latest"
+    # Build metadata is not the identifier to publish under.
+    identifier = prerelease.split("+", 1)[0].split(".", 1)[0]
+    if not identifier:
+        raise ValueError(f"prerelease has no identifier to publish under: {version!r}")
+    return identifier
 
 
 def dispatch_plan(
@@ -238,6 +263,9 @@ def main(argv: list[str] | None = None) -> int:
     tag = commands.add_parser("tag-version", help="print the npm version a release tag names")
     tag.add_argument("tag")
 
+    dist = commands.add_parser("dist-tag", help="print the npm dist-tag a release publishes under")
+    dist.add_argument("tag_or_version")
+
     commands.add_parser("fixture-version", help="print the version the pull-request run publishes")
 
     dispatch = commands.add_parser("dispatch", help="validate a manual dispatch")
@@ -271,6 +299,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "tag-version":
         try:
             print(tag_version(args.tag))
+        except ValueError as error:
+            print(f"::error::{error}" if _in_actions() else error, file=sys.stderr)
+            return 1
+        return 0
+
+    if args.command == "dist-tag":
+        try:
+            print(dist_tag(args.tag_or_version))
         except ValueError as error:
             print(f"::error::{error}" if _in_actions() else error, file=sys.stderr)
             return 1

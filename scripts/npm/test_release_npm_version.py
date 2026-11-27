@@ -37,12 +37,38 @@ class TagVersionTests(unittest.TestCase):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 helper.tag_version(tag)
 
-    def test_rejects_a_prerelease_tag(self) -> None:
-        # A stable npm version comes from a stable patch tag; a prerelease tag
-        # would publish a different version than the release names.
-        for tag in ("v1.2.3-rc.1", "v1.2.3+build.5"):
+    def test_keeps_the_prerelease_suffix(self) -> None:
+        # The published version must name the same release the tag does, so an
+        # alpha tag publishes `0.2.0-alpha.1`, not `0.2.0`.
+        self.assertEqual(helper.tag_version("v1.2.3-rc.1"), "1.2.3-rc.1")
+        self.assertEqual(helper.tag_version("v0.2.0-alpha"), "0.2.0-alpha")
+        self.assertEqual(helper.tag_version("v0.2.0-alpha.10"), "0.2.0-alpha.10")
+
+    def test_rejects_build_metadata(self) -> None:
+        # `+build` names the same release twice, so it is not a release tag.
+        for tag in ("v1.2.3+build.5", "v1.2.3-rc.1+build.5"):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 helper.tag_version(tag)
+
+
+class DistTagTests(unittest.TestCase):
+    """The dist-tag `publish-npm.yml` publishes each version under."""
+
+    def test_a_stable_version_moves_latest(self) -> None:
+        self.assertEqual(helper.dist_tag("v1.2.3"), "latest")
+        self.assertEqual(helper.dist_tag("1.2.3"), "latest")
+
+    def test_every_alpha_of_a_series_shares_one_tag(self) -> None:
+        for tag, expected in (("v0.2.0-alpha", "alpha"), ("v0.2.0-alpha.1", "alpha"),
+                              ("v0.2.0-alpha.10", "alpha"), ("0.2.0-beta.2", "beta"),
+                              ("v0.2.0-rc.1", "rc")):
+            with self.subTest(tag=tag):
+                self.assertEqual(helper.dist_tag(tag), expected)
+
+    def test_an_unusable_version_is_refused(self) -> None:
+        for value in ("latest", "v1.2", "1.2", ""):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                helper.dist_tag(value)
 
 
 class FixtureVersionTests(unittest.TestCase):
@@ -64,6 +90,12 @@ class DispatchPlanTests(unittest.TestCase):
         self.assertEqual(
             helper.dispatch_plan("v1.2.3", "", "", False),
             {"source": "release_tag", "version": "1.2.3", "mode": "publish"},
+        )
+
+    def test_release_tag_derives_a_prerelease_version(self) -> None:
+        self.assertEqual(
+            helper.dispatch_plan("v0.2.0-alpha.1", "", "", True),
+            {"source": "release_tag", "version": "0.2.0-alpha.1", "mode": "dry-run"},
         )
 
     def test_run_id_requires_a_version(self) -> None:

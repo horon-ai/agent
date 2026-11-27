@@ -25,7 +25,8 @@ this file, this file wins.
 |Hosted per-tenant image|`scripts/hosting/Containerfile`|one customer per container with a `/data` home volume|built from the same release archives; not published, started by the control plane (`packages/docs-site/reference/architecture/hosting.mdx`)|
 
 - **One release.** Both binaries are built by the same `release.yml` run from
-  the same tagged commit (`vMAJOR.MINOR.PATCH`), and `install-release` stages
+  the same tagged commit (`vMAJOR.MINOR.PATCH`, or a `-PRERELEASE` tag such as
+  `v0.2.0-alpha.1` for a GitHub prerelease), and `install-release` stages
   them into one `builds/versions/<version>/` directory that activates as a
   unit. There is no separate TUI release or channel. The version strings
   differ: `horon-agent --version` comes from the tag (`crates/build-meta`),

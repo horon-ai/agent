@@ -198,6 +198,8 @@ A release pull request (base `main`) whose head is the head of the last successf
 
 `prepare_source.py` allows a build only when the tag shares MAJOR.MINOR with `Cargo.toml` and its patch is at least that value. A new MINOR or MAJOR needs only the root version in `Cargo.toml` and `Cargo.lock` bumped and merged to main. With the repository variable `RELEASE_AUTO` set to `false` no tag is created. A manual run of `release-tag.yml` reports the tag it would create and creates nothing.
 
+A release tag may also carry a semver prerelease suffix (`v0.2.0-alpha`, `v0.2.0-alpha.1`), which publishes a GitHub prerelease instead of a release. `prepare_source.py` accepts the next minor of the `Cargo.toml` major at patch 0 for a prerelease tag, so `v0.2.0-alpha` can be cut from a commit that still reads `0.1.x`; every other line change still needs the root version bumped first.
+
 ### Rerunning a release
 
 A published tag is never moved. To rebuild a release that stopped, dispatch the reviewed workflow from `dev` with the existing tag; the checkout is detached at that tag's commit and `prepare_source.py` refuses a mismatched tree, while `check_ci.py` still requires the successful push CI run for that exact commit.
@@ -207,6 +209,19 @@ gh workflow run release.yml --ref dev -f tag=vX.Y.Z
 ```
 
 Every asset is uploaded with `--clobber`, so a platform that failed is replaced and the ones that succeeded stay. The release remains a draft until the full asset set exists. The container image has its own path that touches neither the tag nor the release: `gh workflow run release-tag.yml --ref dev -f republish_container=vX.Y.Z` verifies the tag, its exact-commit CI and the published assets, then rebuilds and pushes the image.
+
+### Publishing a prerelease
+
+A prerelease tag reaches no automatic path: `next_version.py` ignores every tag with a suffix, so `release-tag.yml` never creates one, and the tag has to be made by hand on a commit whose CI push run is green. The release run then publishes a GitHub prerelease that never becomes `Latest`, so `/releases/latest`, the installers and `horon-agent update` keep serving the last stable release.
+
+```bash
+git tag v0.2.0-alpha <commit>
+git push origin v0.2.0-alpha
+gh release create v0.2.0-alpha --draft --prerelease --title v0.2.0-alpha --notes "Prerelease"
+gh workflow run release.yml --ref dev -f tag=v0.2.0-alpha
+```
+
+The draft is required because `prepare_source.py --check-public-state` refuses a dispatch that has no existing draft. The final step publishes with `--prerelease --latest=false`, leaving the release out of `Latest`, and the "close issues" step is skipped so no issue claims `horon-agent update` delivers the prerelease. The npm packages of a prerelease go out under their own dist-tag (`alpha` for `v0.2.0-alpha*`) and never move `latest`. Later alphas of the same series only need a new tag on a green commit and the same sequence.
 
 The update check only updates when the release version is higher than the current version. An installation built from 0.98.x therefore does not treat a 0.1.x release as newer. Such an installation is reinstalled once with `scripts/install/install.sh`.
 
