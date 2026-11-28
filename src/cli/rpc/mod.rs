@@ -3,7 +3,7 @@
 //! `horon-agent rpc` (or `horon-agent --mode rpc`) speaks this mode on stdin and
 //! stdout: commands in, frames out, one JSON object per line, no chunking.
 //! The protocol contract this implements, and the parts of it Horon cannot
-//! serve, are in `docs/protocol/RPC.md`.
+//! serve, are in `packages/docs-site/reference/protocol/rpc.mdx`.
 //!
 //! The transport is version 1 only: one JSON object per line, no chunking, so a
 //! frame over [`frame::MAX_FRAME_BYTES`] is reported as `rpc_frame_error` rather

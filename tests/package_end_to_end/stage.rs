@@ -13,7 +13,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 /// The layouts and resources the example ships.
-const LAYOUTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/packages/example/layouts");
+const LAYOUTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/package-example/layouts");
 
 /// The declaration an extension ships at its root and a plugin bundles.
 const DECLARATION: &str = "extension.toml";
@@ -82,7 +82,7 @@ fn foreign_target() -> &'static str {
 /// (`crates/base/src/packages/manifest.rs`, `validate_package`), so a package
 /// that lists the whole release matrix while shipping one binary is refused;
 /// the documented rule is to trim the table to the targets a build ships
-/// (`docs/runtime/PACKAGES.md`).
+/// (`packages/docs-site/reference/runtime/packages.mdx`).
 pub fn stage(root: &Path, kind: Kind, version: &str, example: &Path) -> PathBuf {
     let layouts = Path::new(LAYOUTS);
     fs::create_dir_all(root).expect("create the package source directory");

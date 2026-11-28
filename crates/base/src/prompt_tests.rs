@@ -25,7 +25,7 @@ fn test_skill_prompt_integration() {
 
     // The prompt should contain our default system prompt
     // Identity line reworded in 24838926e ("docs: refine base agent guidance").
-    assert!(prompt.contains("You are HoronAgent"));
+    assert!(prompt.contains("You are Horon,"));
 
     // The prompt should contain the skill prompt
     assert!(prompt.contains(skill_prompt));
@@ -442,7 +442,7 @@ fn test_session_context_includes_time_timezone_and_system_info() {
     assert!(context.contains("Timezone: "));
     assert!(context.contains("OS: "));
     assert!(context.contains("Architecture: "));
-    assert!(context.contains("HoronAgent version: "));
+    assert!(context.contains("Horon version: "));
     assert!(!context.contains("Working directory: "));
     assert!(!context.contains("Git:"));
 }
@@ -478,13 +478,6 @@ fn test_split_prompt_does_not_inject_session_context_per_turn() {
     assert!(!split.dynamic_part.contains("# Session Context"));
     assert!(!split.dynamic_part.contains("Time: "));
     assert!(!split.dynamic_part.contains("Timezone: UTC"));
-}
-
-#[test]
-fn sponsored_discovery_is_not_injected_into_the_system_prompt() {
-    let (split, _) = build_system_prompt_split(None, &[], None, None);
-    assert!(!split.static_part.contains("Discoverable Tools"));
-    assert!(!split.static_part.contains("integration_tools"));
 }
 
 #[test]

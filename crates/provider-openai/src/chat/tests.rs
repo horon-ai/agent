@@ -96,6 +96,72 @@ fn responses_messages_become_chat_messages() {
 }
 
 #[test]
+fn parallel_tool_calls_stay_one_assistant_message() {
+    let call = |id: &str, command: &str| ContentBlock::ToolUse {
+        id: id.to_string(),
+        name: "bash".to_string(),
+        input: json!({ "command": command }),
+        thought_signature: None,
+    };
+    let messages = vec![
+        Message::user("run both"),
+        Message {
+            role: Role::Assistant,
+            content: vec![call("call_a", "echo one"), call("call_b", "echo two")],
+            timestamp: None,
+            tool_duration_ms: None,
+        },
+        Message::tool_result("call_a", "one", false),
+        Message::tool_result("call_b", "two", false),
+    ];
+
+    let body = build_chat_completions_request("m", &messages, &[], "", None);
+    let chat = body["messages"].as_array().expect("messages array");
+
+    let roles: Vec<&str> = chat.iter().filter_map(|message| message["role"].as_str()).collect();
+    assert_eq!(roles, ["user", "assistant", "tool", "tool"], "{body}");
+    let ids: Vec<&str> = chat[1]["tool_calls"]
+        .as_array()
+        .expect("tool calls")
+        .iter()
+        .filter_map(|call| call["id"].as_str())
+        .collect();
+    assert_eq!(ids, ["call_a", "call_b"]);
+    assert_eq!(chat[2]["tool_call_id"], json!("call_a"));
+    assert_eq!(chat[3]["tool_call_id"], json!("call_b"));
+}
+
+#[test]
+fn parallel_tool_calls_stay_one_message_when_a_result_is_missing() {
+    let call = |id: &str| ContentBlock::ToolUse {
+        id: id.to_string(),
+        name: "bash".to_string(),
+        input: json!({ "command": "true" }),
+        thought_signature: None,
+    };
+    let messages = vec![
+        Message::user("run both"),
+        Message {
+            role: Role::Assistant,
+            content: vec![call("call_a"), call("call_b")],
+            timestamp: None,
+            tool_duration_ms: None,
+        },
+        Message::tool_result("call_b", "two", false),
+    ];
+
+    let body = build_chat_completions_request("m", &messages, &[], "", None);
+    let chat = body["messages"].as_array().expect("messages array");
+
+    let roles: Vec<&str> = chat.iter().filter_map(|message| message["role"].as_str()).collect();
+    assert_eq!(roles, ["user", "assistant", "tool", "tool"], "{body}");
+    assert_eq!(chat[1]["tool_calls"].as_array().map(Vec::len), Some(2));
+    assert_eq!(chat[2]["tool_call_id"], json!("call_a"));
+    assert_eq!(chat[3]["tool_call_id"], json!("call_b"));
+    assert_eq!(chat[3]["content"], json!("two"));
+}
+
+#[test]
 fn failed_tool_result_keeps_its_error_marker() {
     let messages = vec![tool_use_message(), Message::tool_result("call_1", "boom", true)];
     let body = build_chat_completions_request("m", &messages, &[], "", None);
@@ -810,6 +876,56 @@ async fn extra_body_fields_override_generated_request_fields() {
     .expect("extra body checks finish within the deadline");
 }
 
+#[tokio::test]
+async fn session_header_carries_each_request_session_id() {
+    tokio::time::timeout(DEADLINE, async {
+        let server = MockServer::start(Reply::sse(&["data: [DONE]\n\n"]));
+        let provider = OpenAiCompatibleProvider::new(format!("{}/v1", server.url), ChatAuth::None, None, "m", vec![])
+            .expect("provider")
+            .with_session_header(Some(reqwest::header::HeaderName::from_static("x-session-affinity")));
+        let forked = provider.fork();
+        let context = |session: &str| ProviderRequestContext {
+            session_id: Some(session.to_string()),
+            cache_root_id: Some("shared-root".to_string()),
+            ..Default::default()
+        };
+
+        for (runtime, session) in [
+            (
+                &provider as &dyn Provider,
+                "session_otter_1795696332403_9a252fd9aabc0a1f",
+            ),
+            (forked.as_ref(), "session_badger_1795695929227_2cbdae737a3f6c2c"),
+        ] {
+            let mut stream = runtime
+                .complete_with_context(&[Message::user("hi")], &[], "system", None, &context(session))
+                .await
+                .expect("stream opens");
+            let _ = collect(&mut stream).await;
+        }
+        let mut plain = provider
+            .complete(&[Message::user("hi")], &[], "system", None)
+            .await
+            .expect("stream opens");
+        let _ = collect(&mut plain).await;
+
+        // A UUIDv7 like Claude Code's and omp's session ids: the session's
+        // creation time leads, and the same id always maps to the same UUID.
+        let requests = server.requests();
+        assert_eq!(
+            requests[0].header("x-session-affinity"),
+            Some("01a217d7-8e73-7b04-88b4-ad9122fa3265")
+        );
+        assert_eq!(
+            requests[1].header("x-session-affinity"),
+            Some("01a217d1-678b-7b5a-8e49-ec6ef495d79d")
+        );
+        assert!(requests[2].header("x-session-affinity").is_none());
+    })
+    .await
+    .expect("session header checks finish within the deadline");
+}
+
 #[test]
 fn endpoint_handles_both_base_url_shapes() {
     let base =
@@ -1014,4 +1130,46 @@ fn openai_provider_for_effort(model: &str) -> OpenAiCompatibleProvider {
         vec![model.to_string()],
     )
     .expect("provider")
+}
+
+/// A profile lists only its configured models until an explicit refresh reads
+/// the endpoint's `/models`; after it, every listed model can be switched to,
+/// configured ones first and the discovered ones in name order, and a fork
+/// sees the same catalog.
+#[tokio::test]
+async fn an_explicit_refresh_adds_the_endpoints_models_after_the_configured_ones() {
+    let server = MockServer::start(Reply::status(
+        200,
+        r#"{"data":[{"id":"group/deepseek-v4.1-flash"},{"id":"auto/claude-sonnet-5-5"},{"id":"claude/claude-sonnet-5-5"}]}"#,
+    ));
+    let provider = OpenAiCompatibleProvider::new(
+        format!("{}/v1", server.url),
+        ChatAuth::Bearer,
+        Some(TEST_KEY.to_string()),
+        "auto/claude-sonnet-5-5",
+        vec!["auto/claude-sonnet-5-5".to_string()],
+    )
+    .expect("provider");
+    assert_eq!(provider.available_models_for_switching(), ["auto/claude-sonnet-5-5"]);
+    assert!(server.requests().is_empty(), "building the provider asked the endpoint");
+
+    let summary = provider.refresh_model_catalog().await.expect("refresh");
+    assert_eq!(summary.models_added, 2);
+    let expected = [
+        "auto/claude-sonnet-5-5",
+        "claude/claude-sonnet-5-5",
+        "group/deepseek-v4.1-flash",
+    ];
+    assert_eq!(provider.available_models_for_switching(), expected);
+    assert_eq!(
+        provider
+            .model_routes()
+            .iter()
+            .map(|route| route.model.as_str())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(server.requests().len(), 1);
+    assert_eq!(server.requests()[0].path, "/v1/models");
+    assert_eq!(provider.fork().available_models_for_switching(), expected);
 }

@@ -93,6 +93,7 @@ jobs:
     outputs:
       source: ${{ steps.source.outputs.source }}
       version: ${{ steps.source.outputs.version }}
+      dist_tag: ${{ steps.source.outputs.dist_tag }}
       mode: ${{ steps.source.outputs.mode }}
       tag: ${{ steps.source.outputs.tag }}
       run_id: ${{ steps.source.outputs.run_id }}
@@ -225,14 +226,20 @@ jobs:
           # packages, and only an explicitly requested dry run stays green.
           mode="$(python3 scripts/npm/release_npm_version.py gate "$EVENT" "$mode" "$NPM_PUBLISH" "$source" "$version")"
 
+          # A prerelease publishes under its own identifier (`alpha`), so the
+          # alphas of one series share a dist-tag and `latest` stays on the last
+          # stable version. A stable version moves `latest`.
+          dist_tag="$(python3 scripts/npm/release_npm_version.py dist-tag "$version")"
+
           emit skip false
           emit source "$source"
           emit version "$version"
+          emit dist_tag "$dist_tag"
           emit mode "$mode"
           emit tag "$tag"
           emit run_id "$run_id"
           emit ref "$ref"
-          echo "source=${source} version=${version} mode=${mode}"
+          echo "source=${source} version=${version} dist_tag=${dist_tag} mode=${mode}"
 
   dry-run:
     name: Package and dry-run publish
@@ -247,6 +254,7 @@ jobs:
     env:
       SOURCE: ${{ needs.plan.outputs.source }}
       VERSION: ${{ needs.plan.outputs.version }}
+      DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
       RELEASE_TAG: ${{ needs.plan.outputs.tag }}
       RUN_ID: ${{ needs.plan.outputs.run_id }}
     steps:
@@ -372,11 +380,17 @@ jobs:
             # Platform packages first, the wrapper last: the wrapper's optional
             # dependencies resolve by name, so a wrapper published early would
             # install a package that does not exist yet.
-            # `--tag fixture` keeps the dry run off `latest`: once a real
-            # release is higher than the fixture version, npm refuses to apply
-            # `latest` implicitly and the pull-request check would fail for a
-            # reason that has nothing to do with packaging.
-            npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --dry-run --tag fixture
+            # `--tag fixture` keeps a run that does not name a published release
+            # off `latest`: once a real release is higher than the fixture
+            # version, npm refuses to apply `latest` implicitly and the check
+            # would fail for a reason that has nothing to do with packaging. A
+            # release tag publishes under the dist-tag its plan resolved, so the
+            # dry run exercises the same registry slot as the publish.
+            if [ "$SOURCE" = "release_tag" ]; then
+              npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --dry-run --tag "$DIST_TAG"
+            else
+              npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --dry-run --tag fixture
+            fi
             echo "::endgroup::"
           done
           after="$(npm view @horon-ai/horon versions --json || echo '[]')"
@@ -402,6 +416,7 @@ jobs:
     env:
       SOURCE: ${{ needs.plan.outputs.source }}
       VERSION: ${{ needs.plan.outputs.version }}
+      DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
       RELEASE_TAG: ${{ needs.plan.outputs.tag }}
       RUN_ID: ${{ needs.plan.outputs.run_id }}
     steps:
@@ -485,7 +500,9 @@ jobs:
             packed="$(cd "packages/$dir" && npm pack --pack-destination "$RUNNER_TEMP/npm-pack")"
             tarball="$(printf '%s\n' "$packed" | tail -n 1)"
             echo "::group::$name@$version"
-            npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance
+            # npm refuses to publish a prerelease without an explicit --tag,
+            # and a stable version must still move `latest`.
+            npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --tag "$DIST_TAG"
             echo "::endgroup::"
           done
 

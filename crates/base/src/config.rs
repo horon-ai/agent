@@ -12,9 +12,9 @@ pub use horon_agent_config_types::{
     CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DisplayConfig, FeatureConfig,
     ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, ModelReference, NamedProviderAuth,
     NamedProviderConfig, NamedProviderModelConfig, NamedProviderType, PowerConfig, PrewalkConfig, PrewalkConfigError,
-    ProviderConfig, ReasoningDisplayMode, SafetyConfig, SecretsMode, SponsorsConfig, StorageConfig, StorageSyncMode,
-    StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel,
-    WebSearchConfig, WebSearchEngine,
+    ProviderConfig, ReasoningDisplayMode, SafetyConfig, SecretsMode, StorageConfig, StorageSyncMode, StreamRuleConfig,
+    StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel, WebSearchConfig,
+    WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 pub use mcp::McpSourcesConfig;
@@ -28,6 +28,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 mod artifact_output;
 pub use artifact_output::ArtifactOutputConfig;
+mod tool_surface;
+use tool_surface::is_core_reachable;
+pub use tool_surface::{CORE_DISCOVERABLE_TOOLS, CORE_TOOLS, ESSENTIAL_TOOLS};
 
 const CONFIG_CACHE_CHECK_INTERVAL: Duration = if cfg!(test) {
     Duration::ZERO
@@ -248,7 +251,7 @@ pub fn config() -> &'static Config {
     if let Some(reason) = reload_reason {
         crate::logging::info(&format!("CONFIG_RELOAD {}", reason));
         // A config reload can change config-derived system prompt sections
-        // (feature toggles, sponsors, ...), which legitimately invalidates the
+        // (feature toggles, ...), which legitimately invalidates the
         // KV cache prefix of warm sessions. Document it so a subsequent
         // harness-attributed cache miss is surfaced with this cause instead of
         // as an unexplained prompt mutation.
@@ -410,12 +413,6 @@ pub struct Config {
 
     /// Auto-judge configuration
     pub autojudge: AutoJudgeConfig,
-
-    /// Partner discovery configuration. Skipped when it matches the shipped
-    /// default so saving config never bakes today's default into the file (see
-    /// [`sponsors_is_default`]).
-    #[serde(skip_serializing_if = "sponsors_is_default")]
-    pub sponsors: SponsorsConfig,
 
     /// `[desktop.*]` tables owned by HoronAgent Desktop (voice, workspace,
     /// appearance, ...). The CLI never interprets them, but it must round-trip
@@ -590,9 +587,10 @@ impl BashPtyMode {
 ///
 /// The `horon-agent` CLI applies this when neither `--tool-profile`, the
 /// `HORON_AGENT_TOOL_PROFILE` environment variable, nor `[tools] profile` in
-/// config.toml selects one, so a plain headless `serve`/`run` exposes only
-/// [`CORE_TOOLS`]. Any of those three still overrides it, so the set can be
-/// widened back to `full`.
+/// config.toml selects one, so a plain headless `serve`/`run` exposes the core
+/// surface: [`CORE_TOOLS`], [`CORE_DISCOVERABLE_TOOLS`], and the dispatcher.
+/// Any of those three still overrides it, so the set can be widened back to
+/// `full`.
 pub const CORE_TOOL_PROFILE: &str = "core";
 
 /// Default lifetime of a scoped `path`/`folder` approval grant, in days.
@@ -606,87 +604,42 @@ pub const DEFAULT_APPROVAL_GRANT_TTL_DAYS: u64 = 7;
 /// Tool joined into a non-empty allow-list when
 /// `ambient.approval_for_clientless_runs` is on.
 ///
-/// It is deliberately not part of [`CORE_TOOLS`]: the default headless surface
-/// must stay at eighteen entries, and this tool only becomes reachable when the
+/// It is deliberately not part of [`CORE_TOOLS`] or
+/// [`CORE_DISCOVERABLE_TOOLS`]: this tool only becomes reachable when the
 /// operator opts into clientless approvals.
 pub const CLIENTLESS_APPROVAL_TOOL: &str = "request_permission";
 
 /// Tool joined into a non-empty allow-list when `[tools] plan_mode` is on.
 ///
-/// Like [`CLIENTLESS_APPROVAL_TOOL`] it stays outside [`CORE_TOOLS`]: the
-/// eighteen-tool headless surface is unchanged, and this tool only becomes
-/// reachable when the operator turns plan mode on.
+/// Like [`CLIENTLESS_APPROVAL_TOOL`] it stays outside the default surface, and
+/// this tool only becomes reachable when the operator turns plan mode on.
 pub const PLAN_TOOL: &str = "submit_plan";
 
 /// Tool joined into a non-empty allow-list when `[tools] irc` is on.
 ///
-/// Like [`PLAN_TOOL`] it stays outside [`CORE_TOOLS`]: the eighteen-tool
-/// headless surface is unchanged, and this tool only becomes reachable when the
-/// operator turns the IRC bus on.
+/// Like [`PLAN_TOOL`] it stays outside [`CORE_TOOLS`] and
+/// [`CORE_DISCOVERABLE_TOOLS`], because the switch is the only thing that
+/// decides whether this tool is reachable at all. It only becomes reachable when
+/// the operator turns the IRC bus on.
 pub const IRC_TOOL: &str = "irc";
 
 /// Tools joined into a non-empty allow-list when `[tools] checkpoint` is on.
 ///
-/// Like [`IRC_TOOL`] they stay outside [`CORE_TOOLS`]: the eighteen-tool
-/// headless surface is unchanged, and the pair only becomes reachable when the
-/// operator opts into model-driven checkpoints. Both tools share one switch
-/// because a checkpoint nothing can rewind to, or a rewind with no checkpoint,
-/// is useless on its own.
+/// Like [`IRC_TOOL`] they stay outside [`CORE_TOOLS`] and
+/// [`CORE_DISCOVERABLE_TOOLS`], because the switch is the only thing that
+/// decides whether the pair is reachable. Both tools share one switch because a
+/// checkpoint nothing can rewind to, or a rewind with no checkpoint, is useless
+/// on its own.
 pub const CHECKPOINT_TOOLS: &[&str] = &["checkpoint", "rewind"];
-
-/// Tools exposed by [`CORE_TOOL_PROFILE`].
-///
-/// Every other registered built-in stays off because the profile is an
-/// allow-list: `batch`, `bg`, `memory`, `irc`, `schedule`, `goal`,
-/// `horon_agent_docs`, `invalid`, `conversation_search`, the opt-in
-/// `codemod`/`redo`/`hashline_edit`/`ast_grep`/`ast_edit`/`lsp`/
-/// `context_notes`/`toolbox`/`integration_tools` surface, the opt-in
-/// `checkpoint`/`rewind` pair, and the per-session
-/// `request_permission` and `submit_plan` tools. `skill_manage` is the registry
-/// key for the skill tool (`resolve_tool_name` maps `skill` to it); `mcp` is the
-/// wildcard covering every `mcp__server__tool` plus the fixed
-/// `mcp_search`/`mcp_call` surface.
-///
-/// The list is the reachability contract, not the eager surface: a `core`
-/// listing sends only [`ESSENTIAL_TOOLS`] eagerly and names the rest in its
-/// system prompt, where [`TOOLBOX_TOOL`] reaches them; others send all of them.
-pub const CORE_TOOLS: &[&str] = &[
-    "bash",
-    "read",
-    "write",
-    "edit",
-    "replace",
-    "apply_patch",
-    "agentgrep",
-    "ls",
-    "webfetch",
-    "websearch",
-    "skill_manage",
-    "mcp",
-    "monitor",
-    "undo",
-    "ask",
-    "todo",
-    "session_search",
-    "swarm",
-];
-
-/// Tools a `core`-listed session keeps eager.
-///
-/// These are the tools almost every coding turn touches, so their schemas stay
-/// in the cached prefix. The other [`CORE_TOOLS`] entries are listed by name in
-/// the system prompt and called through [`TOOLBOX_TOOL`]; an operator who wants
-/// one of them eager again sets `[tools.load_mode] <tool> = "essential"`.
-pub const ESSENTIAL_TOOLS: &[&str] = &["read", "write", "edit", "apply_patch", "bash", "ls", "agentgrep"];
 
 /// The always-visible dispatcher for built-in tools that are not carried
 /// eagerly.
 ///
 /// Deliberately outside [`CORE_TOOLS`]: the `core` allow-list joins it and the
-/// `acp` list never does, so [`CORE_TOOLS`] itself stays the eighteen-tool
-/// surface. It is registered under `full` and `core`, and [`ToolLoadTiers::tier`]
-/// pins its tier to [`LoadMode::Essential`] so the one tool that reaches the
-/// deferred surface is never itself deferred. It only loads a schema.
+/// `acp` list never does. It is registered under `full` and `core`, and
+/// [`ToolLoadTiers::tier`] pins its tier to [`LoadMode::Essential`] so the one
+/// tool that reaches the deferred surface is never itself deferred. It only
+/// loads a schema.
 pub const TOOLBOX_TOOL: &str = "toolbox";
 
 /// How one built-in tool enters the model's tool list.
@@ -700,7 +653,7 @@ pub const TOOLBOX_TOOL: &str = "toolbox";
 pub enum LoadMode {
     /// Sent eagerly and callable without a discovery step. Every
     /// [`ESSENTIAL_TOOLS`] entry is essential in every profile, and so is any
-    /// [`CORE_TOOLS`] entry outside a `core`-listed session.
+    /// entry of the default surface outside a `core`-listed session.
     #[default]
     Essential,
     /// Sent deferred: the schema reaches the model once a tool reference names
@@ -740,11 +693,12 @@ const ALWAYS_EAGER_TOOLS: &[&str] = &["mcp_search", "mcp_call"];
 /// The session resolves this once, when it starts, so a configuration reload
 /// cannot rewrite the tool list's deferred set mid-session and force a prompt
 /// cache miss. [`ESSENTIAL_TOOLS`], [`ALWAYS_EAGER_TOOLS`] and [`TOOLBOX_TOOL`]
-/// are always [`LoadMode::Essential`]. In a `core`-listed session the remaining
-/// [`CORE_TOOLS`] entries are [`LoadMode::Discoverable`]: that session
-/// advertises them by name and reaches them through the dispatcher instead of
-/// paying for their schemas in the cached prefix. Every other tool takes the
-/// session default unless [`ToolConfig::load_mode`] names it.
+/// are always [`LoadMode::Essential`]. In a `core`-listed session every other
+/// reachable tool — [`CORE_TOOLS`], [`CORE_DISCOVERABLE_TOOLS`], and the
+/// switch-joined `irc`/`checkpoint`/`rewind` — is [`LoadMode::Discoverable`]:
+/// that session advertises them by name and reaches them through the dispatcher
+/// instead of paying for their schemas in the cached prefix. Every other tool
+/// takes the session default unless [`ToolConfig::load_mode`] names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolLoadTiers {
     /// Tier for an enabled tool that is neither core nor explicitly listed.
@@ -762,8 +716,8 @@ impl ToolLoadTiers {
     /// Tier for one tool name. Unknown names never appear here, so an
     /// override for a tool this build does not have is inert.
     pub fn tier(&self, name: &str) -> LoadMode {
-        let normalized = normalize_tool_name(name);
-        if let Some(mode) = self.overrides.get(&normalized) {
+        let normalized = normalized_tool_name(name);
+        if let Some(mode) = self.overrides.get(normalized) {
             // `toolbox` is the discovery path for the deferred surface, so an
             // explicit entry may remove it but can never defer it: deferring
             // the dispatcher would leave nothing able to reference it.
@@ -772,18 +726,25 @@ impl ToolLoadTiers {
             }
             return *mode;
         }
-        if ESSENTIAL_TOOLS.contains(&normalized.as_str())
-            || ALWAYS_EAGER_TOOLS.contains(&normalized.as_str())
+        if ESSENTIAL_TOOLS.contains(&normalized)
+            || ALWAYS_EAGER_TOOLS.contains(&normalized)
             || normalized == TOOLBOX_TOOL
         {
             return LoadMode::Essential;
         }
-        if CORE_TOOLS.contains(&normalized.as_str()) {
+        if CORE_TOOLS.contains(&normalized) {
             return if self.core_listed {
                 LoadMode::Discoverable
             } else {
                 LoadMode::Essential
             };
+        }
+        // The rest of the open surface is only ever reachable through the
+        // dispatcher, so it is listed exactly where that dispatcher is: a
+        // `core`-listed session. Outside one it keeps its session default, which
+        // is what `full` already deferred before the surface opened.
+        if self.core_listed && is_core_reachable(normalized) {
+            return LoadMode::Discoverable;
         }
         self.default
     }
@@ -799,8 +760,8 @@ impl ToolLoadTiers {
     /// a caller that suppresses a profile default can still honor the entries an
     /// operator wrote down.
     pub fn explicit_tier(&self, name: &str) -> Option<LoadMode> {
-        let normalized = normalize_tool_name(name);
-        let mode = *self.overrides.get(&normalized)?;
+        let normalized = normalized_tool_name(name);
+        let mode = *self.overrides.get(normalized)?;
         if normalized == TOOLBOX_TOOL && mode == LoadMode::Discoverable {
             return Some(LoadMode::Essential);
         }
@@ -855,12 +816,13 @@ pub struct ToolConfig {
         alias = "mcp_tools_auto_threshold_tokens"
     )]
     pub mcp_tools_token_threshold: usize,
-    /// Opt-in Codemode: expose a `codemode` tool that runs model-written
+    /// Codemode: expose a `codemode` tool that runs model-written
     /// JavaScript in an embedded QuickJS sandbox able to call every other
-    /// tool (including MCP tools). Off by default.
+    /// tool (including MCP tools). On by default; `[tools] codemode = false`
+    /// removes it.
     pub codemode: bool,
-    /// Opt-in `redo`: expose the tool that re-applies the mutation the last
-    /// `undo` removed. Off by default; `undo` is always available.
+    /// `redo`: expose the tool that re-applies the mutation the last
+    /// `undo` removed. On by default; `undo` is always available.
     pub redo: bool,
     /// On by default: append the `AGENTS.md` files in a read file's ancestor directories.
     pub nested_agents_md: bool,
@@ -878,11 +840,11 @@ pub struct ToolConfig {
     /// Terminal allocation for the `bash` tool: `auto` (default), `off`, or
     /// `always`. A call's own `pty` argument overrides it.
     pub bash_pty: BashPtyMode,
-    /// Opt-in `hashline_edit`: expose the tool that replaces line spans named
-    /// by the anchors `read` emits with `hashline: true`. Off by default.
+    /// `hashline_edit`: expose the tool that replaces line spans named
+    /// by the anchors `read` emits with `hashline: true`. On by default.
     pub hashline_edit: bool,
-    /// Opt-in `ast_grep`/`ast_edit`: structural search and rewrite over
-    /// tree-sitter grammars. Off by default.
+    /// `ast_grep`/`ast_edit`: structural search and rewrite over
+    /// tree-sitter grammars. On by default.
     pub ast_tools: bool,
     /// Opt-in outlines for large source files and Markdown documents.
     pub read_summary: bool,
@@ -890,17 +852,19 @@ pub struct ToolConfig {
     /// location after whitespace and quote normalization. Off by default.
     pub edit_fuzzy: bool,
     pub enforce_seen_line_guard: bool,
-    /// Opt-in `lsp`: expose the tool that asks the project's language server
-    /// for diagnostics, definitions, references, hover text, and symbols. Off
-    /// by default because it starts and keeps a server process.
+    /// `lsp`: expose the tool that asks the project's language server
+    /// for diagnostics, definitions, references, hover text, and symbols. On by
+    /// default; the server process starts on the first call and shuts down
+    /// after its idle window.
     pub lsp: bool,
-    /// Opt-in managed skills: let `skill_manage create`/`update` write skill
-    /// files into `~/.horon/managed-skills/`. Off by default, so a
-    /// model never authors its own instructions unless the operator asks.
+    /// Managed skills: let `skill_manage create`/`update` write skill
+    /// files into `~/.horon/managed-skills/`. On by default;
+    /// `[tools] managed_skills = false` stops a managed skill from being
+    /// authored.
     pub managed_skills: bool,
-    /// Opt-in `context_notes`: expose the tool that keeps a small notes file
+    /// `context_notes`: expose the tool that keeps a small notes file
     /// per session and read it back into every request's dynamic prompt.
-    /// Off by default.
+    /// On by default.
     pub context_notes: bool,
     /// How `ask` resolves a question when no client answers: `recommended`
     /// (default) picks it and says so; `error` refuses the call. An attached
@@ -915,13 +879,15 @@ pub struct ToolConfig {
     /// refused until a plan is approved. Off by default so nothing changes for
     /// an existing config.
     pub plan_mode: bool,
-    /// Opt-in `checkpoint`/`rewind` pair: let the model mark a point of the
+    /// `checkpoint`/`rewind` pair: let the model mark a point of the
     /// top-level conversation and later fold the exploration after it into one
-    /// written report. Off by default, so the tool surface is unchanged and
-    /// nothing rewrites history unless the operator asks for it.
+    /// written report. On by default; `[tools] checkpoint = false` removes both
+    /// tools, because a checkpoint nothing can rewind to, or a rewind with no
+    /// checkpoint, is useless on its own.
     pub checkpoint: bool,
-    /// Opt-in `irc`: expose the tool that sends and receives messages between
-    /// agents of the same daemon. Off by default; `HORON_AGENT_IRC` overrides.
+    /// `irc`: expose the tool that sends and receives messages between
+    /// agents of the same daemon. On by default; `[tools] irc = false` or
+    /// `HORON_AGENT_IRC=0` removes it.
     pub irc: bool,
     /// Which calls ask before they run. `yolo` auto-approves ordinary calls.
     /// See [`ApprovalMode`] for the modes and their restrictions.
@@ -958,9 +924,11 @@ pub struct ToolConfig {
     /// Opt-in auxiliary completions: a separate small completion path for
     /// side tasks that must not disturb the main conversation.
     pub aux_completion: bool,
-    /// Opt in to `generate_image` on profiles with an `image` model role.
+    /// `generate_image` on profiles with an `image` model role. On by default;
+    /// it still needs the role, so a build without one never registers it.
     pub generate_image: bool,
-    /// Opt in to Python cells that require explicit approval to run.
+    /// Python cells for `eval`. On by default; a cell asks for approval exactly
+    /// like `bash` and only runs when Python 3.10 or later is on PATH.
     pub eval: bool,
     /// How credentials in outbound text are handled. `off` (default) leaves
     /// text untouched; see [`SecretsMode`].
@@ -995,8 +963,8 @@ impl Default for ToolConfig {
             disable_base_tools: false,
             mcp_tools: McpToolsMode::Auto,
             mcp_tools_token_threshold: 8_000,
-            codemode: false,
-            redo: false,
+            codemode: true,
+            redo: true,
             nested_agents_md: true,
             read_dedup: true,
             read_default_limit: 5000,
@@ -1005,19 +973,19 @@ impl Default for ToolConfig {
             artifact_output: ArtifactOutputConfig::default(),
             block_auto_generated: true,
             bash_pty: BashPtyMode::Auto,
-            hashline_edit: false,
-            ast_tools: false,
+            hashline_edit: true,
+            ast_tools: true,
             read_summary: false,
             edit_fuzzy: false,
             enforce_seen_line_guard: false,
-            lsp: false,
-            managed_skills: false,
-            context_notes: false,
+            lsp: true,
+            managed_skills: true,
+            context_notes: true,
             ask_policy: AskPolicy::Recommended,
             load_mode: BTreeMap::new(),
             plan_mode: false,
-            checkpoint: false,
-            irc: false,
+            checkpoint: true,
+            irc: true,
             approval_mode: ApprovalMode::default(),
             bash_session_cwd: true,
             bash_non_interactive_env: true,
@@ -1027,8 +995,8 @@ impl Default for ToolConfig {
             bash_patterns: Vec::new(),
             git_guard: false,
             aux_completion: false,
-            generate_image: false,
-            eval: false,
+            generate_image: true,
+            eval: true,
             secrets_mode: SecretsMode::Off,
             dual_confirm_classes: Vec::new(),
             restricted_paths: Vec::new(),
@@ -1162,13 +1130,16 @@ impl ToolConfig {
                 .collect(),
             )
         } else if profile == CORE_TOOL_PROFILE {
-            // The dispatcher joins the closed `core` list so the tools this
-            // session lists instead of sending stay reachable. It stays out of
-            // `CORE_TOOLS`: that constant is the eighteen-tool reachability
-            // contract, and every other profile keeps its own list.
+            // The default surface is open: every built-in this build can
+            // construct joins the list, and the dispatcher comes along so the
+            // tools this session lists instead of sending stay reachable.
+            // `irc`, `checkpoint`, and `rewind` are not here: their switches
+            // join them in `selection_with_ambient`, so turning a switch off
+            // still removes its tool. Every other profile keeps its own list.
             Some(
                 CORE_TOOLS
                     .iter()
+                    .chain(CORE_DISCOVERABLE_TOOLS)
                     .copied()
                     .chain(std::iter::once(TOOLBOX_TOOL))
                     .map(str::to_string)
@@ -1199,9 +1170,13 @@ impl ToolConfig {
     }
 }
 
+/// The canonical spelling of a configured tool name, borrowed from `name`.
+fn normalized_tool_name(name: &str) -> &str {
+    horon_agent_tool_types::resolve_tool_name(name.trim().trim_matches('"'))
+}
+
 fn normalize_tool_name(name: &str) -> String {
-    let trimmed = name.trim().trim_matches('"');
-    horon_agent_tool_types::resolve_tool_name(trimmed).to_string()
+    normalized_tool_name(name).to_string()
 }
 
 pub mod change_report;
@@ -1212,8 +1187,6 @@ mod mcp;
 mod messages;
 mod server;
 mod skills;
-mod sponsors_default;
-use sponsors_default::sponsors_is_default;
 mod tool_selection;
 
 pub use self::server::{DEFAULT_IDLE_HIBERNATION_SECS, ServerConfig};

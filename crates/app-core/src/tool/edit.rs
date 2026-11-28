@@ -45,7 +45,13 @@ struct EditOperation {
 impl EditInput {
     /// Accept either the `edits` array or the single-edit shorthand, never both.
     fn operations(&self) -> Result<Vec<EditOperation>> {
-        let single = self.old_string.is_some() || self.new_string.is_some();
+        // A client that fills every field sends `""` for the shorthand next to
+        // `edits`; empty shorthand beside an `edits` array is no shorthand.
+        let filled = |value: &Option<String>| value.as_deref().is_some_and(|text| !text.is_empty());
+        let single = match &self.edits {
+            Some(_) => filled(&self.old_string) || filled(&self.new_string),
+            None => self.old_string.is_some() || self.new_string.is_some(),
+        };
         match (&self.edits, single) {
             (Some(_), true) => Err(anyhow::anyhow!(
                 "Use either `edits` or `old_string`/`new_string`, not both."
@@ -108,12 +114,31 @@ fn apply_edits(
             failures.push(format!("{}old_string must not be empty", label(index)));
             continue;
         }
-        let occurrences = content.matches(&edit.old_string).count();
+        // A model writes `\n` even where the file uses `\r\n`. A string that
+        // does not occur as written is tried again in the file's CRLF, so the
+        // edit lands instead of failing on a difference nobody can see, and the
+        // file keeps its line endings.
+        let crlf_strings = (content.contains("\r\n")
+            && edit.old_string.contains('\n')
+            && !edit.old_string.contains('\r')
+            && !content.contains(&edit.old_string))
+        .then(|| {
+            (
+                edit.old_string.replace('\n', "\r\n"),
+                edit.new_string.replace("\r\n", "\n").replace('\n', "\r\n"),
+            )
+        })
+        .filter(|(old, _)| content.contains(old.as_str()));
+        let (old_string, new_string) = match &crlf_strings {
+            Some((old, new)) => (old.as_str(), new.as_str()),
+            None => (edit.old_string.as_str(), edit.new_string.as_str()),
+        };
+        let occurrences = content.matches(old_string).count();
         if occurrences == 0 {
-            match closest_match(&content, &edit.old_string) {
+            match closest_match(&content, old_string) {
                 Some(found) if fuzzy && found.unique => {
                     let matched_text = &content[found.start_byte..found.end_byte];
-                    let replacement = reindent(&edit.new_string, &edit.old_string, matched_text);
+                    let replacement = reindent(new_string, old_string, matched_text);
                     if let Some(evidence) = evidence.as_mut() {
                         evidence.replace(&content, file_path, found.start_byte, found.end_byte, &replacement)?;
                     }
@@ -148,28 +173,22 @@ fn apply_edits(
             ));
             continue;
         }
-        let start_line = find_line_number(&content, &edit.old_string);
+        let start_line = find_line_number(&content, old_string);
         if let Some(evidence) = evidence.as_mut() {
-            let mut matches = content.match_indices(&edit.old_string);
+            let mut matches = content.match_indices(old_string);
             if edit.replace_all && occurrences > 1 {
                 let offsets: Vec<_> = matches.map(|(start, _)| start).collect();
                 for start in offsets.into_iter().rev() {
-                    evidence.replace(
-                        &content,
-                        file_path,
-                        start,
-                        start + edit.old_string.len(),
-                        &edit.new_string,
-                    )?;
+                    evidence.replace(&content, file_path, start, start + old_string.len(), new_string)?;
                 }
             } else if let Some((start, matched)) = matches.next() {
-                evidence.replace(&content, file_path, start, start + matched.len(), &edit.new_string)?;
+                evidence.replace(&content, file_path, start, start + matched.len(), new_string)?;
             }
         }
         content = if edit.replace_all {
-            content.replace(&edit.old_string, &edit.new_string)
+            content.replace(old_string, new_string)
         } else {
-            content.replacen(&edit.old_string, &edit.new_string, 1)
+            content.replacen(old_string, new_string, 1)
         };
         applied.push(AppliedEdit {
             occurrences,
@@ -878,6 +897,21 @@ mod tests {
     }
 
     #[test]
+    fn apply_edits_matches_lf_strings_against_a_crlf_file() {
+        let (content, _) = apply_edits(
+            "alpha\r\nbeta\r\ngamma\r\n",
+            &[op("alpha\nbeta", "ALPHA\nbeta")],
+            "f.txt",
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(content, "ALPHA\r\nbeta\r\ngamma\r\n");
+        // A string that is not in the file is still refused.
+        assert!(apply_edits("alpha\r\nbeta\r\n", &[op("alpha\nzeta", "x")], "f.txt", false, None).is_err());
+    }
+
+    #[test]
     fn input_accepts_single_or_array_but_not_both() {
         let parse = |value: Value| serde_json::from_value::<EditInput>(value).unwrap();
         assert_eq!(
@@ -901,6 +935,16 @@ mod tests {
         );
         assert!(parse(json!({"file_path":"f"})).operations().is_err());
         assert!(parse(json!({"file_path":"f","old_string":"a"})).operations().is_err());
+        // Empty shorthand beside `edits` is a client filling every field.
+        assert_eq!(
+            parse(
+                json!({"file_path":"f","old_string":"","new_string":"","edits":[{"old_string":"a","new_string":"b"}]})
+            )
+            .operations()
+            .unwrap()
+            .len(),
+            1
+        );
     }
 
     #[test]

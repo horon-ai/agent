@@ -27,6 +27,15 @@ use crate::sdk_bridge::{Command, Incoming};
 /// stays short whatever the motion settings say.
 pub(crate) const POLL: Duration = Duration::from_millis(50);
 
+/// The longest queued input may hold a frame back.
+///
+/// Input already sent is read before the frame it changes, so the ticks of one
+/// wheel gesture move the view once by all of them, as a terminal's own
+/// scrollback follows the hand, instead of drawing every tick and trailing
+/// behind it. A frame still lands this often, so a steady stream of input
+/// (a long paste, a trackpad's momentum) cannot starve the screen.
+const CATCH_UP: Duration = Duration::from_millis(16);
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Redraw {
     None,
@@ -79,6 +88,9 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             Incoming::Notice(message) => app.warn(message),
             Incoming::SendFailed { text, message, lost } => app.send_failed(&text, &message, lost),
             Incoming::Info(message) => app.transcript.push_notice(message),
+            Incoming::SessionInfo(report) => {
+                app.info = Some(crate::overlays::info::InfoOverlay::new("Session Info", report));
+            }
             Incoming::Context(report) => app.transcript.push_context(*report),
             Incoming::Report(report) => app.transcript.push_report(*report),
             Incoming::Todos {
@@ -169,7 +181,10 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
 /// Send one user action to the bridge thread.
 pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command>, action: Action) {
     let command = match action {
-        Action::Send(text) => Command::Text(text),
+        Action::Send(text) => {
+            let images = app.attachments.images_for(&text);
+            Command::Text(text, images)
+        }
         Action::Steer(text) => Command::Steer(text),
         Action::Cancel => Command::Cancel,
         Action::Retry => Command::Retry,
@@ -203,6 +218,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
             display,
         },
         Action::Stats => Command::Stats,
+        Action::SessionInfo => Command::SessionInfo,
         Action::Context(command) => Command::Context(command),
         Action::Model(name) => Command::Model(name),
         Action::Effort(level) => Command::Effort(level),
@@ -230,6 +246,11 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // sessions it appears in is the one `/switch` shows.
         Action::NewSession => Command::NewSession {
             working_dir: app.cwd.clone(),
+            delete: None,
+        },
+        Action::DeleteSession(old) => Command::NewSession {
+            working_dir: app.cwd.clone(),
+            delete: Some(old),
         },
         Action::Attach(session_id) => Command::Attach(session_id),
         Action::SideQuestion { id, question, boundary } => Command::SideQuestion { id, question, boundary },
@@ -403,6 +424,11 @@ where
     if let Err(error) = crate::paste::enable() {
         app.warn(format!("paste: {error}"));
     }
+    // The hand-over popped the key reports with the rest of the modes; the
+    // screen is ours again, so they go back on the stack it keeps.
+    if let Err(error) = crate::keyboard::enable() {
+        app.warn(format!("keyboard: {error}"));
+    }
     if title.enabled() {
         title.forget_label();
         let state_supported = title.state_supported();
@@ -504,14 +530,23 @@ where
     B::Error: std::fmt::Display,
 {
     frames.retune(app.motion);
-    if changed {
+    // A drag held past the pane's edge keeps scrolling, one row a pass.
+    if changed || app.drag_autoscroll() {
         frames.request();
+    }
+    if frames.pending && frames.last_draw.elapsed() < CATCH_UP && input_queued() {
+        return Ok(());
     }
     let Some(frame) = frames.due(app.animating(), Instant::now()) else {
         return Ok(());
     };
     app.motion_frame = frame;
     crate::draw(terminal, app).map_err(|error| error.to_string())
+}
+
+/// Whether the terminal has already sent input the loop has not read.
+fn input_queued() -> bool {
+    matches!(crossterm::event::poll(Duration::ZERO), Ok(true))
 }
 
 /// Schedule automatic frames without delaying input or advancing the spinner

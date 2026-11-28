@@ -19,7 +19,7 @@ Policy:
 
 The long-term goal is to drive this budget to zero as the migration-era
 re-export spine is dismantled. See
-docs/architecture/CRATES.md.
+packages/docs-site/reference/architecture/crates.mdx.
 """
 
 from __future__ import annotations

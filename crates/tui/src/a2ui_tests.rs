@@ -149,6 +149,7 @@ fn attach_session_splits_stored_a2ui_cards_from_prose_and_ignores_fenced_example
                     response_stats: None,
                     answer: None,
                     message_id: Some("msg-code".to_string()),
+                    tool: None,
                 },
                 HistoryMessage {
                     role: "assistant".to_string(),
@@ -156,6 +157,7 @@ fn attach_session_splits_stored_a2ui_cards_from_prose_and_ignores_fenced_example
                     response_stats: None,
                     answer: None,
                     message_id: Some("msg-card".to_string()),
+                    tool: None,
                 },
             ],
         },
@@ -230,6 +232,7 @@ fn replay_accepts_one_char_closed_headers_rejects_blank_ids_and_keeps_code_fence
                 response_stats: None,
                 answer: None,
                 message_id: Some("msg-1".to_string()),
+                tool: None,
             }],
         },
         false,
@@ -276,9 +279,11 @@ fn inplace_a2ui_update_recounts_scroll_heights_and_registers_as_copyable_answer(
 
     app.scroll.up(1);
     let look = look_with(80, SymbolPreset::Unicode.symbols());
-    let before = app.scroll.measure(80, app.transcript.items().len(), [0, 0], 10, |idx| {
-        wrap::wrap_rows(item_lines::lines(&app.transcript.items()[idx], &look, None), 80).len()
-    });
+    let before = app
+        .scroll
+        .measure(80, app.transcript.items().len(), None, [0, 0], 10, |idx| {
+            wrap::wrap_rows(item_lines::lines(&app.transcript.items()[idx], &look, None), 80).len()
+        });
 
     app.apply_event(&ApiEvent::A2uiEnvelope {
         session_id: "s1".into(),
@@ -299,9 +304,11 @@ fn inplace_a2ui_update_recounts_scroll_heights_and_registers_as_copyable_answer(
         fallback_text: None,
     });
 
-    let after = app.scroll.measure(80, app.transcript.items().len(), [0, 0], 10, |idx| {
-        wrap::wrap_rows(item_lines::lines(&app.transcript.items()[idx], &look, None), 80).len()
-    });
+    let after = app
+        .scroll
+        .measure(80, app.transcript.items().len(), None, [0, 0], 10, |idx| {
+            wrap::wrap_rows(item_lines::lines(&app.transcript.items()[idx], &look, None), 80).len()
+        });
     assert!(
         after > before,
         "expected scroll recount after in-place card growth ({before} -> {after})"

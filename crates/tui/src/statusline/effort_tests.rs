@@ -54,7 +54,7 @@ fn effort_shown_after_model_info() {
     )
     .to_string();
     assert!(
-        line.contains("anthropic/claude-sonnet-4 · high"),
+        line.contains("claude-sonnet-4 · high"),
         "the effort is missing from the model segment: {line:?}"
     );
 
@@ -77,7 +77,7 @@ fn effort_shown_after_model_info() {
     .to_string();
     assert!(!line.contains("high"), "a cleared effort was drawn: {line:?}");
     assert!(
-        line.contains("anthropic/claude-sonnet-4"),
+        line.contains("claude-sonnet-4"),
         "the model name went with the effort: {line:?}"
     );
 }
@@ -86,17 +86,17 @@ fn effort_shown_after_model_info() {
 fn effort_uses_the_preset_separator() {
     assert_eq!(
         rendered(&data(Some("high")), Symbols::default(), 80),
-        "anthropic/claude-sonnet-4 · high"
+        "claude-sonnet-4 · high"
     );
     assert_eq!(
         rendered(&data(Some("high")), SymbolPreset::Ascii.symbols(), 80),
-        "anthropic/claude-sonnet-4 | high"
+        "claude-sonnet-4 | high"
     );
 }
 
 #[test]
 fn effort_omitted_when_unknown_or_blank() {
-    let expected = "anthropic/claude-sonnet-4";
+    let expected = "claude-sonnet-4";
     assert_eq!(rendered(&data(None), Symbols::default(), 80), expected);
     // An empty or blank effort is no effort: drawn as it is, it would leave a
     // separator with nothing after it.
@@ -106,22 +106,16 @@ fn effort_omitted_when_unknown_or_blank() {
 
 #[test]
 fn effort_is_dropped_before_the_model_name_is_cut() {
-    // "anthropic/claude-sonnet-4" is 25 cells, so the segment with " · high"
-    // is 32; one cell less than that loses the effort alone.
+    // "claude-sonnet-4" is 15 cells, so the segment with " · high"
+    // is 22; one cell less than that loses the effort alone.
     assert_eq!(
-        rendered(&data(Some("high")), Symbols::default(), 32),
-        "anthropic/claude-sonnet-4 · high"
+        rendered(&data(Some("high")), Symbols::default(), 22),
+        "claude-sonnet-4 · high"
     );
-    assert_eq!(
-        rendered(&data(Some("high")), Symbols::default(), 31),
-        "anthropic/claude-sonnet-4"
-    );
+    assert_eq!(rendered(&data(Some("high")), Symbols::default(), 21), "claude-sonnet-4");
     // The model name still fits whole, so dropping the effort is all the line
     // gives up here.
-    assert_eq!(
-        rendered(&data(Some("high")), Symbols::default(), 25),
-        "anthropic/claude-sonnet-4"
-    );
+    assert_eq!(rendered(&data(Some("high")), Symbols::default(), 15), "claude-sonnet-4");
 
     // A long effort does not get to push the model name out of the segment.
     let long = "x".repeat(80);
@@ -132,6 +126,6 @@ fn effort_is_dropped_before_the_model_name_is_cut() {
         ..StatusData::default()
     };
     let text = rendered(&long_data, Symbols::default(), 31);
-    assert_eq!(text, "anthropic/claude-sonnet-4");
+    assert_eq!(text, "claude-sonnet-4");
     assert!(!text.contains('·'), "a dangling separator survived: {text:?}");
 }

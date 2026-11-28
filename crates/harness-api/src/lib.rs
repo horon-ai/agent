@@ -4,7 +4,7 @@
 //! (TUI, desktop, web, scripts). It is deliberately smaller than the internal
 //! `horon-agent-protocol`: only curated, stable surface lives here.
 //!
-//! Design rules (see docs/protocol/HARNESS_API.md and docs/protocol/SESSION_STORE.md):
+//! Design rules (see packages/docs-site/reference/protocol/harness-api.mdx and packages/docs-site/reference/protocol/session-store.mdx):
 //! - Every frame is one JSON object on one line (NDJSON).
 //! - Every frame carries `v`, the protocol major version.
 //! - Clients must ignore unknown fields and skip unknown event kinds

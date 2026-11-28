@@ -1,4 +1,4 @@
-//! The on-demand server contract from `docs/architecture/SERVER.md`: only the
+//! The on-demand server contract from `packages/docs-site/reference/architecture/server.mdx`: only the
 //! one-shot `run` path registers a spawner, registering it starts nothing, the
 //! first tool that needs a server starts exactly one, and a failed start is
 //! paid once.

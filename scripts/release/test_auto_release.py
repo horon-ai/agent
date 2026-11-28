@@ -117,6 +117,52 @@ class TagFitsVersionTests(unittest.TestCase):
             with self.subTest(tag=tag, version=version):
                 self.assertEqual(prepare_source.tag_fits_version(tag, version), fits)
 
+    def test_a_prerelease_keeps_the_stable_rule_on_its_own_line(self):
+        for tag, version, fits in (("v0.1.0-alpha", "0.1.0", True),
+                                   ("v0.1.7-alpha.1", "0.1.0", True),
+                                   ("v0.1.0-alpha", "0.1.1", False)):
+            with self.subTest(tag=tag, version=version):
+                self.assertEqual(prepare_source.tag_fits_version(tag, version), fits)
+
+    def test_a_prerelease_may_open_the_next_minor_line_at_patch_zero(self):
+        # The alpha announces the line `Cargo.toml` has not taken yet, which is
+        # how `v0.2.0-alpha` is cut from a commit that still reads 0.1.x.
+        self.assertTrue(prepare_source.tag_fits_version("v0.2.0-alpha", "0.1.0"))
+        self.assertTrue(prepare_source.tag_fits_version("v0.2.0-alpha.3", "0.1.24"))
+        # Anything else still needs the root version bumped first.
+        for tag in ("v0.2.1-alpha", "v0.3.0-alpha", "v1.0.0-alpha"):
+            with self.subTest(tag=tag):
+                self.assertFalse(prepare_source.tag_fits_version(tag, "0.1.0"))
+
+    def test_build_metadata_is_not_a_release_tag(self):
+        for tag in ("v0.1.0+build", "v0.2.0-alpha+build.1", "v0.1", "0.1.0", "v0.1.0-"):
+            with self.subTest(tag=tag):
+                self.assertFalse(prepare_source.tag_fits_version(tag, "0.1.0"))
+
+
+class ReleaseTagShapeTests(unittest.TestCase):
+    """The one tag shape every release gate validates, and its semver order."""
+
+    def test_a_prerelease_suffix_is_a_release_tag(self):
+        for tag in ("v0.1.0", "v0.2.0-alpha", "v0.2.0-alpha.1", "v10.0.0-rc.2"):
+            with self.subTest(tag=tag):
+                self.assertIsNotNone(prepare_source.parse_release_tag(tag))
+        for tag in ("v0.1.0+build", "v0.2.0-alpha+build.1", "v0.1.0-", "v0.2.0-",
+                    "0.2.0-alpha", "v0.2-alpha", "v0.2.0-alpha..1"):
+            with self.subTest(tag=tag):
+                self.assertIsNone(prepare_source.parse_release_tag(tag))
+
+    def test_prerelease_order_follows_semver(self):
+        ordered = ["v0.2.0-alpha", "v0.2.0-alpha.1", "v0.2.0-alpha.2",
+                   "v0.2.0-alpha.10", "v0.2.0-beta", "v0.2.0", "v0.2.1-alpha", "v0.10.0"]
+        keys = [prepare_source.semver_key(tag) for tag in ordered]
+        self.assertEqual(keys, sorted(keys))
+        self.assertEqual(len(set(keys)), len(keys))
+
+    def test_a_name_that_is_not_a_release_tag_has_no_order(self):
+        with self.assertRaises(ValueError):
+            prepare_source.semver_key("bench-1")
+
 
 if __name__ == "__main__":
     unittest.main()

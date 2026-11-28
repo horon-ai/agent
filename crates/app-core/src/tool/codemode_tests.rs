@@ -156,6 +156,61 @@ async fn uncaught_errors_without_side_effects_are_tool_errors() {
     assert!(err.to_string().contains("broken script"), "{err}");
 }
 
+/// A command tool whose run exits with `code`, the way `bash` reports one.
+struct ExitTool;
+
+#[async_trait::async_trait]
+impl Tool for ExitTool {
+    fn name(&self) -> &str {
+        "exiter"
+    }
+
+    fn description(&self) -> &str {
+        "Exit with a code"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({"type": "object", "properties": {"code": {"type": "number"}}})
+    }
+
+    async fn execute(&self, input: Value, _ctx: ToolContext) -> Result<ToolOutput> {
+        let code = input["code"].as_i64().unwrap_or(0);
+        Ok(ToolOutput::new(format!("out\n\n\nExit code: {code}"))
+            .with_metadata(json!({ "exit_status": { "exit_code": code, "signal": null } })))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_command_that_exits_non_zero_throws_inside_a_script() {
+    let registry = registry().await;
+    registry
+        .tools
+        .write()
+        .await
+        .insert("exiter".to_string(), Arc::new(ExitTool));
+    let out = registry
+        .execute(
+            "codemode",
+            json!({
+                "code": r#"
+                    const ok = await tools.exiter({ code: 0 });
+                    try {
+                        await tools.exiter({ code: 3 });
+                        return { ok, failed: "no throw" };
+                    } catch (error) {
+                        return { ok, failed: String(error.message) };
+                    }
+                "#
+            }),
+            ctx("codemode-exit-test"),
+        )
+        .await
+        .expect("codemode runs");
+    assert!(out.output.contains("Exit code: 0"), "{}", out.output);
+    assert!(!out.output.contains("no throw"), "{}", out.output);
+    assert!(out.output.contains("Exit code: 3"), "{}", out.output);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn script_tool_calls_measure_the_session_budget_not_the_default_one() {
     const SESSION_BUDGET: usize = 20_000;

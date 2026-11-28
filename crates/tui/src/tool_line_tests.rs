@@ -1,9 +1,9 @@
-//! Tests for the tool line, kept out of `tool_line.rs` so production code
+//! Tests for the tool card, kept out of `tool_line.rs` so production code
 //! stays inside its size budget.
 //!
 //! These cover the parts that can be wrong without a terminal: the summary read
-//! out of JSON that is still arriving, the preview cut, width-aware truncation
-//! and the elapsed wording.
+//! out of JSON that is still arriving, the preview cut, width-aware truncation,
+//! the elapsed wording and the card's rows.
 
 use super::*;
 use crate::tool_line::{
@@ -11,6 +11,7 @@ use crate::tool_line::{
     format_elapsed, lines, summarize, truncate_cells,
 };
 use crate::transcript::{Decision, Item, ToolCall, ToolState, Transcript};
+use unicode_width::UnicodeWidthStr;
 
 fn call(input: &str) -> ToolCall {
     ToolCall {
@@ -155,15 +156,12 @@ fn a_running_line_names_the_tool_and_its_argument() {
     let theme = Theme::default();
     let symbols = Symbols::default();
     let rows = lines(&call(r#"{"command":"ls -la"}"#), &theme, symbols, 80);
-    assert_eq!(rows.len(), 1, "a running call draws one row");
-    let text: String = rows[0].spans.iter().map(|span| span.content.as_ref()).collect();
-    assert!(text.contains("bash"), "{text:?}");
-    assert!(text.contains("ls -la"), "{text:?}");
-    assert!(text.contains("running"), "{text:?}");
-    assert!(
-        !text.contains('*'),
-        "the lead is a glyph now, not an asterisk: {text:?}"
-    );
+    assert_eq!(rows.len(), 2, "a running call draws its title and its closing row");
+    let title = row_text(&rows[0]);
+    assert!(title.starts_with("╭─ ◐ bash ls -la "), "{title:?}");
+    assert!(title.ends_with('╮'), "{title:?}");
+    let foot = row_text(&rows[1]);
+    assert!(foot.starts_with("╰─ running "), "{foot:?}");
 }
 
 #[test]
@@ -175,14 +173,18 @@ fn a_finished_line_shows_elapsed_and_the_preview() {
     finished.duration_ms = Some(1_500);
     finished.output = cut_output("a\nb\nc\nd", 3);
     let rows = lines(&finished, &theme, symbols, 80);
-    let first: String = rows[0].spans.iter().map(|span| span.content.as_ref()).collect();
-    assert!(first.contains("done"), "{first:?}");
-    assert!(first.contains("1.5s"), "{first:?}");
-    let rest: Vec<String> = rows[1..]
-        .iter()
-        .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect())
-        .collect();
-    assert_eq!(rest, ["  a", "  b", "  c", "  +1 lines"]);
+    assert!(row_text(&rows[0]).starts_with("╭─ ✓ bash ─"), "{}", drawn(&rows));
+    let inside: Vec<String> = rows[1..rows.len() - 1].iter().map(card_text).collect();
+    assert_eq!(inside, ["a", "b", "c", "+1 lines"]);
+    let foot = row_text(&rows[rows.len() - 1]);
+    assert!(
+        foot.starts_with("╰─ 1.5s ─"),
+        "a finished call closes with its time alone: {foot:?}"
+    );
+    // Every row is the pane's width, so the right side of the card lines up.
+    for row in &rows {
+        assert_eq!(row_text(row).width(), 80, "{:?}", row_text(row));
+    }
 }
 
 #[test]
@@ -225,10 +227,84 @@ fn a_failure_that_its_output_repeats_is_drawn_once() {
 fn a_narrow_pane_drops_the_summary_rather_than_the_name() {
     let theme = Theme::default();
     let symbols = Symbols::default();
-    let rows = lines(&call(r#"{"command":"ls -la"}"#), &theme, symbols, 12);
-    let text: String = rows[0].spans.iter().map(|span| span.content.as_ref()).collect();
-    assert!(text.contains("bash"), "{text:?}");
-    assert!(!text.contains("ls -la"), "{text:?}");
+    let rows = lines(&call(r#"{"command":"ls -la"}"#), &theme, symbols, 14);
+    let title = row_text(&rows[0]);
+    assert!(title.contains("bash"), "{title:?}");
+    assert!(!title.contains("ls -la"), "{title:?}");
+    // The argument that has no room in the title is drawn whole under it.
+    assert_eq!(card_text(&rows[1]), "$ ls -la", "{}", drawn(&rows));
+}
+
+#[test]
+fn an_argument_the_title_cannot_hold_is_drawn_above_the_output() {
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let script: String = (1..=8).map(|line| format!("echo {line}\\n")).collect();
+    let mut finished = call(&format!(r#"{{"command":"{script}"}}"#));
+    finished.state = ToolState::Done;
+    finished.duration_ms = Some(13);
+    finished.output = cut_output("1\n2", 3);
+    let rows = lines(&finished, &theme, symbols, 60);
+    let text: Vec<String> = rows.iter().map(row_text).collect();
+    assert_eq!(text[0].trim_end_matches(['─', '╮']), "╭─ ✓ bash ", "{text:#?}");
+    let argument: Vec<String> = rows[1..8].iter().map(card_text).collect();
+    assert_eq!(
+        argument,
+        [
+            "$ echo 1",
+            "  echo 2",
+            "  echo 3",
+            "  echo 4",
+            "  echo 5",
+            "  echo 6",
+            "… +2 lines",
+        ],
+        "{text:#?}"
+    );
+    assert!(text[8].starts_with("├─ Output ─"), "{text:#?}");
+    assert!(text[8].ends_with('┤'), "{text:#?}");
+    let output: Vec<String> = rows[9..rows.len() - 1].iter().map(card_text).collect();
+    assert_eq!(output, ["1", "2"], "{text:#?}");
+}
+
+#[test]
+fn a_card_keeps_its_right_side_in_line_with_wide_text_and_plain_ascii() {
+    let theme = Theme::default();
+    let symbols = crate::theme::SymbolPreset::Ascii.symbols();
+    let mut finished = call(r#"{"path":"한국어/파일.txt"}"#);
+    finished.name = "read".to_string();
+    finished.state = ToolState::Failed("파일을 찾을 수 없습니다".to_string());
+    finished.output = cut_output("첫 줄입니다 그리고 꽤 긴 한국어 문장이 이어집니다", 3);
+    let rows = lines(&finished, &theme, symbols, 30);
+    for row in &rows {
+        let text = row_text(row);
+        assert_eq!(text.width(), 30, "{text:?} in {}", drawn(&rows));
+    }
+    let first = row_text(&rows[0]);
+    assert!(first.starts_with("+- x read"), "{first:?}");
+    assert!(
+        row_text(&rows[rows.len() - 1]).starts_with("+- failed "),
+        "{}",
+        drawn(&rows)
+    );
+    // The failure is boxed in the error colour, so it is found by its edges.
+    assert_eq!(rows[1].spans[0].style.fg, Some(theme.transcript.tool_error));
+}
+
+/// ratatui draws no column for a control character, so a tab in the output must
+/// not shorten the padding before the right edge.
+#[test]
+fn a_card_keeps_its_right_side_in_line_with_a_tab_in_the_output() {
+    let theme = Theme::default();
+    let symbols = crate::theme::SymbolPreset::Ascii.symbols();
+    let mut finished = call(r#"{"command":"ls"}"#);
+    finished.state = ToolState::Done;
+    finished.output = cut_output("name\tsize\na\t1", 3);
+    let rows = lines(&finished, &theme, symbols, 30);
+    for row in &rows {
+        let drawn_text: String = row_text(row).chars().filter(|ch| !ch.is_control()).collect();
+        assert_eq!(drawn_text.width(), 30, "{drawn_text:?} in {}", drawn(&rows));
+    }
 }
 
 #[test]
@@ -377,10 +453,22 @@ fn refusal(request: &str) -> String {
 }
 
 fn drawn(rows: &[ratatui::text::Line<'static>]) -> String {
-    rows.iter()
-        .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n")
+    rows.iter().map(row_text).collect::<Vec<_>>().join("\n")
+}
+
+/// Everything one row draws, sides included.
+fn row_text(row: &ratatui::text::Line<'static>) -> String {
+    row.spans.iter().map(|span| span.content.as_ref()).collect()
+}
+
+/// The text one row inside a card holds, without the sides and the padding.
+fn card_text(row: &ratatui::text::Line<'static>) -> String {
+    let text = row_text(row);
+    let inside = text
+        .strip_prefix("│  ")
+        .and_then(|inside| inside.strip_suffix('│'))
+        .unwrap_or_else(|| panic!("{text:?} is not inside a card"));
+    inside.trim_end().to_string()
 }
 
 #[test]
@@ -394,7 +482,7 @@ fn a_refused_call_is_drawn_as_one_short_phrase() {
         let rows = lines(&refused, &theme, symbols, width);
         assert_eq!(
             rows.len(),
-            2,
+            3,
             "the refusal took {} rows at width {width}: {}",
             rows.len(),
             drawn(&rows)
@@ -435,7 +523,12 @@ fn a_parked_call_is_drawn_as_waiting_not_as_a_failure() {
     parked.state = ToolState::Waiting(refusal("r1"));
 
     let rows = lines(&parked, &theme, symbols, 100);
-    assert_eq!(rows.len(), 1, "a parked call is one row: {}", drawn(&rows));
+    assert_eq!(
+        rows.len(),
+        2,
+        "a parked call is its title and closing row: {}",
+        drawn(&rows)
+    );
     let text = drawn(&rows);
     assert!(text.contains("needs approval"), "{text}");
     assert!(!text.contains("failed"), "a waiting call says it failed: {text}");
@@ -475,7 +568,7 @@ fn a_decided_gate_call_states_the_answer_and_never_says_failed() {
         settled.duration_ms = Some(20);
         let rows = lines(&settled, &theme, symbols, 100);
         let text = drawn(&rows);
-        assert_eq!(rows.len(), 1, "the gate sentence is drawn again: {text}");
+        assert_eq!(rows.len(), 2, "the gate sentence is drawn again: {text}");
         assert!(text.contains(word), "{decision:?} does not say `{word}`: {text}");
         assert!(!text.contains("failed"), "{decision:?} says it failed: {text}");
         assert!(!text.contains("needs approval"), "{decision:?} still waits: {text}");
@@ -494,4 +587,57 @@ fn a_decided_gate_call_states_the_answer_and_never_says_failed() {
     let mut denied = call("");
     denied.state = ToolState::Settled(Decision::Denied, refusal("req_1"));
     assert!(drawn(&lines(&denied, &theme, symbols, 100)).contains(symbols.tool_error));
+}
+
+#[test]
+fn a_toolbox_run_is_drawn_as_the_tool_it_ran_under_its_intent() {
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let mut ran = call(r#"{"action":"run","tool":"agentgrep","args":{"pattern":"greet","intent":"Finding greet"}}"#);
+    ran.name = "toolbox".to_string();
+    ran.state = ToolState::Done;
+    let title = row_text(&lines(&ran, &theme, symbols, 80)[0]);
+    assert!(title.starts_with("╭─ ✓ Finding greet · agentgrep greet "), "{title:?}");
+    assert!(!title.contains("toolbox"), "{title:?}");
+
+    // The intent on the call itself leads the title of a direct call too.
+    let direct = call(r#"{"command":"cargo test","intent":"Running the tests"}"#);
+    let title = row_text(&lines(&direct, &theme, symbols, 80)[0]);
+    assert!(
+        title.starts_with("╭─ ◐ Running the tests · bash cargo test "),
+        "{title:?}"
+    );
+
+    // A listing call names no tool and stays a toolbox card.
+    let mut listing = call(r#"{"action":"list"}"#);
+    listing.name = "toolbox".to_string();
+    assert!(row_text(&lines(&listing, &theme, symbols, 80)[0]).starts_with("╭─ ◐ toolbox"));
+}
+
+#[test]
+fn a_skill_read_is_drawn_as_read_and_its_address() {
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let mut read = call(r#"{"file_path":"skill://hyper-deploy","intent":"Reading the deploy skill"}"#);
+    read.name = "read".to_string();
+    read.state = ToolState::Done;
+    let row = &lines(&read, &theme, symbols, 80)[0];
+    let title = row_text(row);
+    assert!(title.starts_with("╭─ ✓ Read skill://hyper-deploy "), "{title:?}");
+    let address = row
+        .spans
+        .iter()
+        .find(|span| span.content == "skill://hyper-deploy")
+        .expect("the address is its own span");
+    assert_eq!(address.style.fg, Some(theme.core.warning));
+
+    // Loading by name through skill_manage, even through toolbox, reads the same.
+    let mut loaded = call(r#"{"action":"run","tool":"skill_manage","args":{"name":"hyper-deploy"}}"#);
+    loaded.name = "toolbox".to_string();
+    assert!(row_text(&lines(&loaded, &theme, symbols, 80)[0]).starts_with("╭─ ◐ Read skill://hyper-deploy "));
+
+    // A plain file read keeps the ordinary card.
+    let mut file = call(r#"{"file_path":"src/main.rs"}"#);
+    file.name = "read".to_string();
+    assert!(row_text(&lines(&file, &theme, symbols, 80)[0]).starts_with("╭─ ◐ read src/main.rs "));
 }

@@ -3,8 +3,6 @@ title: "Security"
 description: "Workspace trust gates, hosted MCP and extension isolation, local crash bundles, and dependency security classification."
 ---
 
-{/* Generated from docs/safety/SECURITY.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 Workspace trust gates, hosted MCP and extension isolation, local crash bundles, and dependency security classification.
 
 ## Workspace trust
@@ -107,7 +105,7 @@ gateway), not behind this gate.
 
 ## Python eval
 
-A Python cell needs explicit approval for its code and working directory. A directory grant cannot authorize it. The kernel inherits only selected environment variables. Approved Python runs with the user's filesystem, network and process access, which includes any credential files the user can read. The opt-in setting and approval control when execution starts.
+A Python cell takes the same approval tier as `bash`. The tool declares process, write and network effects, so `[tools] approval_mode = "yolo"` and `"off"` start a cell without asking, while `"write"` and `"all"` ask first. A scoped grant answers a cell the mode would otherwise ask about, the same way it answers a shell command. `[tools.bash_patterns]` reads a `bash` command, so it does not inspect Python code, and `[tools] restricted_paths` matches the paths a call names, which a cell does not. What a cell can do is bounded by the OS permissions of the agent user, not by those rules: a cell that runs under an auto-approving mode runs with the user's filesystem, network and process access, including every credential file the user can read. The kernel inherits only selected environment variables. `[tools] eval = false` removes the tool entirely, `[tools.load_mode] eval = "off"` removes it from one profile, and a build with no Python 3.10 or later on `PATH` never registers it.
 
 `tool.<name>` sends requests to the current session's tool registry through the kernel's child-process pipes. The agent verifies the active cell and request number, applies the session allow-list and load modes, and runs the named tool's own approvals and hooks. These tool rules govern bridge requests. Python's direct filesystem and process access still follows the OS permissions of the agent user.
 

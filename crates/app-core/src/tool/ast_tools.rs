@@ -50,8 +50,15 @@ impl AstGrepTool {
 #[derive(Deserialize)]
 struct AstGrepInput {
     pattern: String,
-    #[serde(default)]
-    path: Option<String>,
+    /// One path or several; `paths` is accepted too, so a call that used the
+    /// edit tool's field name still searches what it named instead of
+    /// silently searching the working directory.
+    #[serde(
+        default,
+        alias = "paths",
+        deserialize_with = "super::serde_coerce::strings_one_or_many"
+    )]
+    path: Vec<String>,
     #[serde(default)]
     lang: Option<String>,
     #[serde(default)]
@@ -87,7 +94,7 @@ impl Tool for AstGrepTool {
     }
 
     fn description(&self) -> &str {
-        "Search code by syntax shape with an ast-grep pattern (`foo($A, $B)`). Reports the path and line span of each match; `$A` captures are reported when named."
+        "Search code by syntax shape with an ast-grep pattern."
     }
 
     fn effects(&self) -> ToolEffects {
@@ -106,15 +113,15 @@ impl Tool for AstGrepTool {
                 "intent": super::intent_schema_property(),
                 "pattern": {
                     "type": "string",
-                    "description": "ast-grep pattern, for example `foo($A, $B)` or `if ($COND) { $$$BODY }`. `$NAME` captures one node, `$$$NAME` captures many."
+                    "description": "ast-grep pattern such as `foo($A, $B)`; `$$$NAME` captures many nodes."
                 },
                 "path": {
                     "type": "string",
-                    "description": "File or directory to search. Defaults to the working directory."
+                    "description": "File or directory to search (or an array of them). Defaults to the working directory."
                 },
                 "lang": {
                     "type": "string",
-                    "description": "Language override: rust, typescript, tsx, javascript, python, go. Inferred from each file's extension when omitted."
+                    "description": "Language override (rust, typescript, tsx, javascript, python, go); else by extension."
                 },
                 "limit": {
                     "type": "integer",
@@ -128,23 +135,33 @@ impl Tool for AstGrepTool {
         let params: AstGrepInput = serde_json::from_value(input)?;
         let explicit_lang = params.lang.as_deref();
         let limit = params.limit.unwrap_or(DEFAULT_LIMIT).max(1);
-        let root = ctx.resolve_path(Path::new(params.path.as_deref().unwrap_or(".")));
-        if !root.exists() {
-            anyhow::bail!("Path not found: {}", root.display());
+        let authored = if params.path.is_empty() {
+            vec![".".to_string()]
+        } else {
+            params.path.clone()
+        };
+        let roots: Vec<PathBuf> = authored.iter().map(|path| ctx.resolve_path(Path::new(path))).collect();
+        if let Some(missing) = roots.iter().find(|root| !root.exists()) {
+            anyhow::bail!("Path not found: {}", missing.display());
         }
         let explicit = explicit_lang
             .map(|name| resolve_lang(Some(name), Path::new("")))
             .transpose()?;
 
-        let files = if root.is_file() {
-            vec![root.clone()]
-        } else {
-            files_under(&root)
-        };
-        let scan_root = if root.is_file() {
-            root.parent().unwrap_or(&root)
-        } else {
-            &root
+        let mut files = Vec::new();
+        for root in &roots {
+            if root.is_file() {
+                files.push(root.clone());
+            } else {
+                files.extend(files_under(root));
+            }
+        }
+        let scanned = files.len();
+        let base = ctx.resolve_path(Path::new("."));
+        let scan_root = match roots.as_slice() {
+            [root] if root.is_file() => root.parent().unwrap_or(root),
+            [root] => root.as_path(),
+            _ => base.as_path(),
         };
         let mut grouped: BTreeMap<String, Vec<AstMatch>> = BTreeMap::new();
         let mut total = 0usize;
@@ -182,7 +199,14 @@ impl Tool for AstGrepTool {
         }
 
         if total == 0 {
-            return Ok(ToolOutput::new(format!("No matches for `{}`.", params.pattern)));
+            // Where it looked is part of the answer: a zero from the wrong root
+            // reads like the code not existing.
+            let searched: Vec<String> = roots.iter().map(|root| root.display().to_string()).collect();
+            return Ok(ToolOutput::new(format!(
+                "No matches for `{}` in {} ({scanned} file(s) of a supported language scanned).",
+                params.pattern,
+                searched.join(", ")
+            )));
         }
 
         let mut body = String::new();
@@ -220,6 +244,11 @@ struct AstEditInput {
     #[serde(default)]
     intent: Option<String>,
     ops: Vec<AstEditOp>,
+    #[serde(
+        default,
+        alias = "path",
+        deserialize_with = "super::serde_coerce::strings_one_or_many"
+    )]
     paths: Vec<String>,
     #[serde(default)]
     lang: Option<String>,
@@ -248,7 +277,7 @@ impl Tool for AstEditTool {
     }
 
     fn description(&self) -> &str {
-        "Rewrite code by ast-grep pattern and template. Previews a unified diff unless `expected_replacements` is given; a count mismatch writes nothing."
+        "Rewrite code with an ast-grep pattern and template."
     }
 
     fn effects(&self) -> ToolEffects {

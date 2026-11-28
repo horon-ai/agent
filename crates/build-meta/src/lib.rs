@@ -40,16 +40,37 @@ static RUNTIME_GIT_HASH: OnceLock<Option<String>> = OnceLock::new();
 static RUNTIME_GIT_DATE: OnceLock<Option<String>> = OnceLock::new();
 static RUNTIME_GIT_TAG: OnceLock<Option<String>> = OnceLock::new();
 
+/// `[v]MAJOR.MINOR.PATCH[-PRERELEASE]`, with the prerelease suffix kept.
+///
+/// A fast release may wrap a prerelease tag, so the wrapper's semver has to
+/// carry the suffix the tag names; build metadata is refused.
 fn parse_release_semver(value: &str) -> Option<String> {
     let value = value.trim().trim_start_matches('v');
-    let mut parts = value.split('.');
+    let (core, prerelease) = match value.split_once('-') {
+        Some((core, prerelease)) => (core, Some(prerelease)),
+        None => (value, None),
+    };
+    if core.contains('+') || prerelease.is_some_and(|pre| pre.is_empty() || pre.contains('+')) {
+        return None;
+    }
+    if let Some(prerelease) = prerelease
+        && !prerelease
+            .split('.')
+            .all(|identifier| !identifier.is_empty() && identifier.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+    {
+        return None;
+    }
+    let mut parts = core.split('.');
     let major = parts.next()?.parse::<u32>().ok()?;
     let minor = parts.next()?.parse::<u32>().ok()?;
     let patch = parts.next()?.parse::<u32>().ok()?;
     if parts.next().is_some() {
         return None;
     }
-    Some(format!("{major}.{minor}.{patch}"))
+    Some(match prerelease {
+        Some(prerelease) => format!("{major}.{minor}.{patch}-{prerelease}"),
+        None => format!("{major}.{minor}.{patch}"),
+    })
 }
 
 /// Optional release semver supplied by the fast-release wrapper at process start.
@@ -140,11 +161,19 @@ mod tests {
     use super::parse_release_semver;
 
     #[test]
-    fn runtime_release_semver_accepts_only_three_numeric_components() {
+    fn runtime_release_semver_keeps_a_prerelease_and_rejects_build_metadata() {
         assert_eq!(parse_release_semver("v1.2.3").as_deref(), Some("1.2.3"));
         assert_eq!(parse_release_semver(" 1.2.3 ").as_deref(), Some("1.2.3"));
+        // A prerelease tag names a real version; dropping the suffix would
+        // report the release `v0.2.0` for a build of `v0.2.0-alpha.1`.
+        assert_eq!(parse_release_semver("v0.2.0-alpha").as_deref(), Some("0.2.0-alpha"));
+        assert_eq!(parse_release_semver("0.2.0-alpha.1").as_deref(), Some("0.2.0-alpha.1"));
         assert_eq!(parse_release_semver("1.2"), None);
         assert_eq!(parse_release_semver("1.2.3.4"), None);
         assert_eq!(parse_release_semver("1.2.beta"), None);
+        assert_eq!(parse_release_semver("1.2.3+build.5"), None);
+        assert_eq!(parse_release_semver("1.2.3-alpha+003"), None);
+        assert_eq!(parse_release_semver("1.2.3-"), None);
+        assert_eq!(parse_release_semver("1.2.3-.alpha"), None);
     }
 }

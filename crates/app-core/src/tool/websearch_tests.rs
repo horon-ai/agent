@@ -233,6 +233,23 @@ fn parses_bing_html_results() {
     assert_eq!(results[1].title, "HoronAgent");
 }
 
+/// Bing serves organic results through a `/ck/a` click-tracking redirect; the
+/// target page comes from its `u=a1<base64url>` parameter.
+#[test]
+fn reads_the_target_of_a_bing_click_tracking_link() {
+    let html = r#"
+            <li class="b_algo">
+              <h2><a href="https://www.bing.com/ck/a?!&amp;&amp;p=abc&amp;ptn=3&amp;u=a1aHR0cHM6Ly93d3cucGlrbW9uLmtyL3dpa2kvNTU&amp;ntb=1">Wiki</a></h2>
+              <div class="b_caption"><p>Page.</p></div>
+            </li>
+            <li class="b_algo"><h2><a href="https://www.bing.com/ck/a?!&amp;p=x&amp;ntb=1">no target</a></h2></li>
+        "#;
+    let results = parse_bing_html_results(html, 10);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].url, "https://www.pikmon.kr/wiki/55");
+    assert_eq!(results[0].title, "Wiki");
+}
+
 #[test]
 fn parses_bing_api_results() {
     let response: BingApiResponse = serde_json::from_value(json!({

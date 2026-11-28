@@ -217,7 +217,6 @@
       "tool::context_condense_perf_tests",
       "tool::context_notes::tests",
       "tool::conversation_search::tests",
-      "tool::discover::tests",
       "tool::edit::fuzzy_tests",
       "tool::edit::tests",
       "tool::edit_stats::tests",

@@ -207,6 +207,7 @@ fn heads_selection_and_history_page_round_trip() {
                     response_stats: None,
                     answer: None,
                     message_id: None,
+                    tool: None,
                     role: "user".into(),
                     content: format!("limit={limit:?} before={before_event_id:?}"),
                 }],

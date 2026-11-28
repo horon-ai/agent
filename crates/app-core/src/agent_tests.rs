@@ -1553,7 +1553,7 @@ async fn horon_agent_docs_is_exposed_by_default_and_can_be_explicitly_disabled()
     let mut agent = Agent::new(provider, registry);
     let definitions = agent.tool_definitions().await;
     let tool_names = agent.tool_names().await;
-    let tool_name = "horon_agent_docs";
+    let tool_name = "horon";
 
     assert!(
         definitions.iter().any(|definition| definition.name == tool_name),
@@ -1565,7 +1565,7 @@ async fn horon_agent_docs_is_exposed_by_default_and_can_be_explicitly_disabled()
     );
     agent
         .validate_tool_allowed(tool_name)
-        .expect("horon_agent_docs must be executable in every session");
+        .expect("horon must be executable in every session");
 
     crate::env::set_var("HORON_AGENT_DISABLED_TOOLS", tool_name);
     crate::config::Config::invalidate_cache();
@@ -1586,7 +1586,7 @@ async fn horon_agent_docs_is_exposed_by_default_and_can_be_explicitly_disabled()
     );
     let err = agent
         .validate_tool_allowed(tool_name)
-        .expect_err("explicitly disabled horon_agent_docs must not be executable");
+        .expect_err("explicitly disabled horon must not be executable");
     assert!(err.to_string().contains("disabled"));
 
     if let Some(previous) = prev_home {
@@ -1839,7 +1839,7 @@ async fn memory_guidance_is_the_consolidation_summary_only() {
 }
 
 #[tokio::test]
-async fn memory_injection_message_defaults_to_ephemeral_history() {
+async fn memory_injection_message_can_stay_request_only() {
     let _guard = crate::storage::lock_test_env();
     let previous = std::env::var_os("HORON_AGENT_PERSIST_MEMORY_INJECTIONS");
     crate::env::set_var("HORON_AGENT_PERSIST_MEMORY_INJECTIONS", "false");
@@ -1857,7 +1857,7 @@ async fn memory_injection_message_defaults_to_ephemeral_history() {
         memory_ids: vec!["mem-ephemeral".to_string()],
     };
 
-    let (message, persisted) = agent.prepare_memory_injection_message(&memory);
+    let (message, persisted) = agent.prepare_memory_injection_message(&[], &memory).unwrap();
 
     assert!(!persisted);
     assert_eq!(agent.session.active_context().len(), before);
@@ -1890,7 +1890,7 @@ async fn memory_injection_message_can_persist_to_history() {
         memory_ids: vec!["mem-persisted".to_string()],
     };
 
-    let (message, persisted) = agent.prepare_memory_injection_message(&memory);
+    let (message, persisted) = agent.prepare_memory_injection_message(&[], &memory).unwrap();
 
     assert!(persisted);
     assert_eq!(agent.session.active_context().len(), before + 1);
@@ -3103,13 +3103,13 @@ impl Provider for SharedRoundProvider {
 
     async fn complete_split(
         &self,
-        _: &[Message],
+        m: &[Message],
         _: &[ToolDefinition],
         _: &str,
-        system_dynamic: &str,
+        d: &str,
         _: Option<&str>,
     ) -> Result<EventStream> {
-        self.dynamic_prompts.lock().unwrap().push(system_dynamic.to_string());
+        self.dynamic_prompts.lock().unwrap().push(super::context_seen(m, d));
         Ok(Box::pin(futures::stream::iter(self.next_events())))
     }
 

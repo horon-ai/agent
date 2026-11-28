@@ -20,6 +20,8 @@ mod turn_usage;
 mod a2ui_ops;
 #[path = "transcript_activity.rs"]
 mod activity;
+#[path = "transcript_changed.rs"]
+mod changed;
 
 use crate::tool_expand::{self, ExpandState};
 use crate::tool_line::{self, DEFAULT_OUTPUT_LINES, OutputHead};
@@ -352,6 +354,8 @@ pub struct Transcript {
     /// edited in place, and they carry no note key, so a reader that derives
     /// something from the user and assistant rows can keep it while this holds.
     items_generation: u64,
+    /// The first item that changed in place since the scroll tally read it.
+    changed_from: Option<usize>,
     /// The requests this session has decided, newest last.
     ///
     /// A refusal can reach the client after its prompt was answered, and the
@@ -365,6 +369,8 @@ pub struct Transcript {
     /// Whether a finished turn's time and usage are drawn, as
     /// `transcript.turn_usage` resolves.
     turn_usage: bool,
+    /// How long the last turn this client measured took, for the status line.
+    last_turn_ms: Option<u64>,
 }
 
 /// When one call started.
@@ -407,9 +413,11 @@ impl Default for Transcript {
             expand: ExpandState::default(),
             revision: 0,
             items_generation: next_items_generation(),
+            changed_from: None,
             decided: Vec::new(),
             turn: None,
             turn_usage: false,
+            last_turn_ms: None,
         }
     }
 }
@@ -508,6 +516,7 @@ impl Transcript {
         debug_assert_eq!(self.stored.len(), self.items.len(), "stored ids must track items");
         self.stored.remove(index);
         self.items_generation = next_items_generation();
+        self.mark_changed(index);
         self.items.remove(index)
     }
 
@@ -568,6 +577,7 @@ impl Transcript {
         self.revision += 1;
         self.items.clear();
         self.items_generation = next_items_generation();
+        self.changed_from = None;
         self.stored.clear();
         self.streaming = Streaming::default();
         self.reasoned = Reasoned::default();
@@ -653,17 +663,18 @@ impl Transcript {
 
     /// Turn the oldest queued line for `text` into the message that was sent.
     ///
-    /// The queued line is promoted rather than replaced, so the conversation
-    /// keeps the order the messages were typed in.
+    /// The message joins the conversation where it was sent, after whatever the
+    /// turn it waited for produced: while it waited it was drawn above the
+    /// input, not at the place it was typed.
     pub fn promote_queued(&mut self, text: &str) {
         let found = self
             .items
             .iter()
             .position(|item| matches!(item, Item::Queued(queued) if queued == text));
         if let Some(index) = found {
-            self.items[index] = Item::User(text.to_string());
-            self.stored[index] = None;
-            self.items_generation = next_items_generation();
+            self.remove_item(index);
+            self.finish_stream();
+            self.push_item(Item::User(text.to_string()), None);
         }
     }
 
@@ -713,13 +724,16 @@ impl Transcript {
     /// `running` for the rest of the session, so it is closed here with a
     /// sentence that blames neither the tool nor the model.
     pub fn end_running_tools(&mut self) {
-        for item in &mut self.items {
+        let mut first = None;
+        for (index, item) in self.items.iter_mut().enumerate() {
             if let Item::Tool(call) = item
                 && call.state == ToolState::Running
             {
                 call.state = ToolState::Failed(TURN_ENDED.to_string());
+                first.get_or_insert(index);
             }
         }
+        self.changed_from = self.changed_from.into_iter().chain(first).min();
         // The call can never finish now, so its start mark is dead weight; a
         // late replay of its result must not invent a duration either.
         let items = &self.items;
@@ -983,6 +997,7 @@ impl Transcript {
     /// kept for it goes too: the key must not report a press that changes
     /// nothing on screen.
     fn restate_request(&mut self, request_id: &str, restate: impl Fn(ToolState) -> Option<ToolState>) {
+        self.mark_changed(0);
         for item in &mut self.items {
             if let Item::Tool(call) = item
                 && let ToolState::Failed(message) | ToolState::Waiting(message) | ToolState::Settled(_, message) =
@@ -1023,13 +1038,14 @@ impl Transcript {
         } else {
             call_id
         };
-        let Some(call) = items.iter_mut().rev().find_map(|item| match item {
-            Item::Tool(call) if call.is_call(target) => Some(call),
+        let Some((index, call)) = items.iter_mut().enumerate().rev().find_map(|(index, item)| match item {
+            Item::Tool(call) if call.is_call(target) => Some((index, call)),
             _ => None,
         }) else {
             return;
         };
         tool_line::append_input(&mut call.input, delta);
+        self.mark_changed(index);
     }
 
     /// A tool call finished, with its output and the error text when it failed.
@@ -1135,6 +1151,7 @@ impl Transcript {
             })
         };
         let index = index?;
+        self.mark_changed(index);
         match self.items.get_mut(index) {
             Some(Item::Tool(call)) => Some(call),
             _ => None,

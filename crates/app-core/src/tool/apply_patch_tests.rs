@@ -4,28 +4,7 @@ use crate::protocol::AcpClientCapabilities;
 use crate::tool::client_fs::test_support::{FakeClient, Reply};
 use crate::tool::undo::UndoTool;
 use serde_json::json;
-use std::io::Write;
 use std::path::Path;
-use tempfile::NamedTempFile;
-
-fn write_temp(content: &str) -> NamedTempFile {
-    let mut f = NamedTempFile::new().unwrap();
-    f.write_all(content.as_bytes()).unwrap();
-    f
-}
-
-fn local_ctx(file: &NamedTempFile) -> crate::tool::ToolContext {
-    crate::tool::ToolContext {
-        session_id: "apply-patch-update-chunks".to_string(),
-        message_id: "apply-patch-update-chunks".to_string(),
-        tool_call_id: "apply-patch-update-chunks".to_string(),
-        working_dir: file.path().parent().map(std::path::Path::to_path_buf),
-        stdin_request_tx: None,
-        graceful_shutdown_signal: None,
-        execution_mode: crate::tool::ToolExecutionMode::Direct,
-    }
-}
-
 #[test]
 fn test_parse_add_file() {
     let patch = "*** Begin Patch\n*** Add File: hello.txt\n+Hello world\n+Second line\n*** End Patch";
@@ -128,23 +107,20 @@ fn test_parse_end_of_file() {
     }
 }
 
-#[tokio::test]
-async fn test_apply_update_simple() {
-    let f = write_temp("foo\nbar\n");
+#[test]
+fn test_apply_update_simple() {
     let chunks = vec![UpdateFileChunk {
         change_context: None,
         old_lines: vec!["foo".to_string(), "bar".to_string()],
         new_lines: vec!["foo".to_string(), "baz".to_string()],
         is_end_of_file: false,
     }];
-    let (old_result, new_result) = apply_update_chunks(f.path(), &chunks, &local_ctx(&f)).await.unwrap();
-    assert_eq!(old_result, "foo\nbar\n");
+    let new_result = compute_update("foo\nbar\n", Path::new("t.txt"), &chunks).unwrap();
     assert_eq!(new_result, "foo\nbaz\n");
 }
 
-#[tokio::test]
-async fn test_apply_update_multiple_chunks() {
-    let f = write_temp("foo\nbar\nbaz\nqux\n");
+#[test]
+fn test_apply_update_multiple_chunks() {
     let chunks = vec![
         UpdateFileChunk {
             change_context: None,
@@ -159,37 +135,35 @@ async fn test_apply_update_multiple_chunks() {
             is_end_of_file: false,
         },
     ];
-    let (old_result, new_result) = apply_update_chunks(f.path(), &chunks, &local_ctx(&f)).await.unwrap();
-    assert_eq!(old_result, "foo\nbar\nbaz\nqux\n");
+    let new_result = compute_update("foo\nbar\nbaz\nqux\n", Path::new("t.txt"), &chunks).unwrap();
     assert_eq!(new_result, "foo\nBAR\nbaz\nQUX\n");
 }
 
-#[tokio::test]
-async fn test_apply_update_with_context_header() {
-    let f = write_temp("class Foo:\n    def bar(self):\n        pass\n    def baz(self):\n        pass\n");
+#[test]
+fn test_apply_update_with_context_header() {
+    let original = "class Foo:\n    def bar(self):\n        pass\n    def baz(self):\n        pass\n";
     let chunks = vec![UpdateFileChunk {
         change_context: Some("def baz(self):".to_string()),
         old_lines: vec!["        pass".to_string()],
         new_lines: vec!["        return 42".to_string()],
         is_end_of_file: false,
     }];
-    let (_old_result, new_result) = apply_update_chunks(f.path(), &chunks, &local_ctx(&f)).await.unwrap();
+    let new_result = compute_update(original, Path::new("t.py"), &chunks).unwrap();
     assert_eq!(
         new_result,
         "class Foo:\n    def bar(self):\n        pass\n    def baz(self):\n        return 42\n"
     );
 }
 
-#[tokio::test]
-async fn test_apply_update_append_at_eof() {
-    let f = write_temp("foo\nbar\nbaz\n");
+#[test]
+fn test_apply_update_append_at_eof() {
     let chunks = vec![UpdateFileChunk {
         change_context: None,
         old_lines: vec![],
         new_lines: vec!["quux".to_string()],
         is_end_of_file: false,
     }];
-    let (_old_result, new_result) = apply_update_chunks(f.path(), &chunks, &local_ctx(&f)).await.unwrap();
+    let new_result = compute_update("foo\nbar\nbaz\n", Path::new("t.txt"), &chunks).unwrap();
     assert_eq!(new_result, "foo\nbar\nbaz\nquux\n");
 }
 
@@ -890,4 +864,90 @@ async fn unified_patch_matches_the_editor_buffer_not_the_stale_disk_copy() {
         "a rejected preflight must not reach the client write: {:?}",
         client.asked()
     );
+}
+
+#[tokio::test]
+async fn envelope_patch_keeps_crlf_and_a_missing_final_newline() {
+    let _env = TestEnv::new();
+    let dir = tempfile::tempdir().expect("temp dir");
+    let partial = dir.path().join("partial.txt");
+    let context = dir.path().join("context.txt");
+    let mixed = dir.path().join("mixed.txt");
+    let bare = dir.path().join("bare.txt");
+    std::fs::write(&partial, "alpha\r\nbeta\r\ngamma\r\n").expect("seed");
+    std::fs::write(&context, "alpha\r\nbeta\r\ngamma\r\n").expect("seed");
+    std::fs::write(&mixed, "one\r\ntwo\nthree\r\n").expect("seed");
+    std::fs::write(&bare, "no newline at end").expect("seed");
+
+    let output = run_patch(
+        dir.path(),
+        "envelope-endings",
+        "*** Begin Patch\n*** Update File: partial.txt\n@@\n-beta\n+BETA\n\
+*** Update File: context.txt\n@@\n alpha\n-beta\n+BETA\n+inserted\n gamma\n\
+*** Update File: mixed.txt\n@@\n one\n-two\n+TWO\n three\n\
+*** Update File: bare.txt\n@@\n-no newline at end\n+replaced\n*** End Patch",
+    )
+    .await;
+
+    assert!(!body(&output).contains('✗'), "{}", body(&output));
+    assert_eq!(std::fs::read(&partial).expect("partial"), b"alpha\r\nBETA\r\ngamma\r\n");
+    assert_eq!(
+        std::fs::read(&context).expect("context"),
+        b"alpha\r\nBETA\r\ninserted\r\ngamma\r\n"
+    );
+    assert_eq!(
+        std::fs::read(&mixed).expect("mixed"),
+        b"one\r\nTWO\nthree\r\n",
+        "the unchanged lines of a mixed file keep their bytes"
+    );
+    assert_eq!(std::fs::read(&bare).expect("bare"), b"replaced");
+}
+
+#[tokio::test]
+async fn envelope_patch_with_one_failing_file_changes_nothing() {
+    let _env = TestEnv::new();
+    let dir = tempfile::tempdir().expect("temp dir");
+    let first = dir.path().join("m1.txt");
+    let second = dir.path().join("m2.txt");
+    let gone = dir.path().join("gone.txt");
+    std::fs::write(&first, "x = 1\ny = 2\n").expect("seed");
+    std::fs::write(&second, "keep\n").expect("seed");
+    std::fs::write(&gone, "bye\n").expect("seed");
+
+    let output = run_patch(
+        dir.path(),
+        "envelope-preflight",
+        "*** Begin Patch\n*** Update File: m1.txt\n@@\n-x = 1\n+x = 100\n\
+*** Delete File: gone.txt\n\
+*** Update File: m2.txt\n@@\n-does not exist\n+boom\n*** End Patch",
+    )
+    .await;
+    let text = body(&output);
+
+    assert!(text.contains("✗ m2.txt: "), "{text}");
+    assert!(text.contains("No files changed"), "{text}");
+    assert!(!text.contains('✓'), "{text}");
+    assert_eq!(output.verdict, Some(crate::tool::ToolVerdict::Failed));
+    assert_eq!(std::fs::read(&first).expect("m1"), b"x = 1\ny = 2\n");
+    assert_eq!(std::fs::read(&gone).expect("gone"), b"bye\n");
+    assert_eq!(std::fs::read(&second).expect("m2"), b"keep\n");
+}
+
+#[tokio::test]
+async fn envelope_patch_updates_a_file_twice_in_order() {
+    let _env = TestEnv::new();
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = dir.path().join("twice.txt");
+    std::fs::write(&file, "a\nb\n").expect("seed");
+
+    let output = run_patch(
+        dir.path(),
+        "envelope-twice",
+        "*** Begin Patch\n*** Update File: twice.txt\n@@\n-a\n+A\n\
+*** Update File: twice.txt\n@@\n-A\n+AA\n*** End Patch",
+    )
+    .await;
+
+    assert!(!body(&output).contains('✗'), "{}", body(&output));
+    assert_eq!(std::fs::read(&file).expect("twice"), b"AA\nb\n");
 }

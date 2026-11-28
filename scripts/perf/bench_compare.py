@@ -1991,7 +1991,7 @@ class HoronRunner(ToolRunner):
         write_horon_config(root, mock.base_url)
         env = horon_env(root, self.binary)
         # The one-shot and session rows keep MCP off so their numbers stay
-        # comparable with docs/performance/RESULTS.md; only the MCP scenario
+        # comparable with packages/docs-site/reference/performance/results.mdx; only the MCP scenario
         # turns server startup into part of the measurement.
         env["HORON_AGENT_RUN_MCP"] = "1" if run_mcp else "0"
         return env

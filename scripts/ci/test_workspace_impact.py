@@ -83,7 +83,7 @@ class WorkspaceImpactTests(unittest.TestCase):
             "Cargo.lock",
             "rust-toolchain.toml",
             ".cargo/config.toml",
-            "examples/packages/example/src/main.rs",
+            "tests/fixtures/package-example/src/main.rs",
             "scripts/ci/run_lib_tests.py",
             "tests/support/acp_credentials.rs",
         ):

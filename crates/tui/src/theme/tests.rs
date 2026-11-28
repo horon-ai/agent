@@ -263,7 +263,14 @@ fn theme_symbol_presets_are_distinct_and_ascii_is_plain() {
         ascii.tool_running,
         ascii.tool_done,
         ascii.tool_error,
-        ascii.tool_lead,
+        ascii.border.top_left,
+        ascii.border.top_right,
+        ascii.border.bottom_left,
+        ascii.border.bottom_right,
+        ascii.border.horizontal,
+        ascii.border.vertical,
+        ascii.border.tee_left,
+        ascii.border.tee_right,
         ascii.prompt_marker,
         ascii.more_below,
         ascii.separator,
@@ -446,12 +453,25 @@ fn diff_call() -> ToolCall {
     )
 }
 
+/// The text a card row holds, without the card's sides and padding.
 fn drawn_row(line: &Line<'_>) -> String {
-    line.spans.iter().map(|span| span.content.as_ref()).collect()
+    let row: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
+    row.strip_prefix("│ ")
+        .and_then(|inside| inside.strip_suffix('│'))
+        .map_or(row.clone(), |inside| inside.trim_end().to_string())
 }
 
+/// The colour of a card row's own text, past the card's side.
 fn row_color(line: &Line<'_>) -> Option<Color> {
-    line.spans.first().and_then(|span| span.style.fg)
+    line.spans
+        .iter()
+        .find(|span| !span.content.trim().is_empty() && span.content != "│")
+        .and_then(|span| span.style.fg)
+}
+
+/// The rows between a card's title and its closing row.
+fn inside<'a>(lines: &'a [Line<'static>]) -> &'a [Line<'static>] {
+    &lines[1..lines.len() - 1]
 }
 
 #[test]
@@ -603,7 +623,7 @@ fn theme_changes_palette_leaves_output_that_is_not_a_diff_alone() {
     for name in ["dark", "light"] {
         let theme = changes::apply(&builtin(name), ChangePalette::Accessible);
         let lines = tool_line::lines(&call, &theme, symbols, 80);
-        for line in lines.iter().skip(1) {
+        for line in inside(&lines) {
             assert_eq!(
                 row_color(line),
                 Some(theme.transcript.notice),
@@ -620,7 +640,7 @@ fn theme_changes_palette_off_leaves_every_output_row_its_own_colour() {
     let symbols = SymbolPreset::Unicode.symbols();
     let theme = builtin("dark");
     let lines = tool_line::lines(&call, &theme, symbols, 80);
-    for line in lines.iter().skip(1) {
+    for line in inside(&lines) {
         assert_eq!(
             row_color(line),
             Some(theme.transcript.notice),

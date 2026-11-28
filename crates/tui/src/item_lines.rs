@@ -80,21 +80,11 @@ pub(crate) fn visual_blocks_enabled(settings: &Settings) -> bool {
 /// look having to carry state that belongs to the transcript.
 pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::Frame<'_>>) -> Vec<Indented> {
     match item {
-        Item::User(text) => prefixed(
-            Span::styled("> ", Style::default().fg(look.theme.core.accent)),
-            text,
-            Style::default().fg(look.theme.transcript.user_text),
-        ),
-        // A queued message is accepted but not sent yet, so it is drawn dim
-        // and worded as waiting: the same color as a notice, because nothing
-        // is wrong with it.
-        Item::Queued(text) => prefixed(
-            Span::styled("queued: ", Style::default().fg(look.theme.transcript.notice)),
-            text,
-            Style::default()
-                .fg(look.theme.transcript.user_text)
-                .add_modifier(Modifier::DIM),
-        ),
+        Item::User(text) => user_box(text, look),
+        // A queued message is drawn above the input while it waits, so it does
+        // not scroll away with the conversation; it joins the transcript as the
+        // message it is when the turn before it ends.
+        Item::Queued(_) => Vec::new(),
         Item::Assistant(text) => answer(text, look),
         Item::Tool(call) => {
             if hidden(call, expand) {
@@ -104,13 +94,7 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
                 Some(expand) => expand.retained(&call.call_id),
                 None => tool_line::Retained::default(),
             };
-            indented(tool_line::lines_with(
-                call,
-                look.theme,
-                look.symbols,
-                look.width,
-                retained,
-            ))
+            tool_line::lines_with(call, look.theme, look.symbols, look.width, retained)
         }
         Item::Notice(text) => notice(text, look),
         Item::Warning(text) => prefixed(Span::raw("! "), text, Style::default().fg(look.theme.core.error)),
@@ -221,38 +205,25 @@ pub(crate) fn source<'a>(item: &Item, look: &Look<'_>, expand: Option<&tool_expa
         None => tool_line::Retained::default(),
     };
     match tool_line::rows_with(call, look.theme, look.symbols, look.width, retained) {
-        tool_line::CallRows::Built(rows) => wrap::Source::built(indented(rows)),
-        tool_line::CallRows::Expanded { head, text, style } => wrap::Source::Output {
-            head: indented(head),
+        tool_line::CallRows::Built(rows) => wrap::Source::built(rows),
+        tool_line::CallRows::Expanded {
+            head,
             text,
-            prefix: tool_line::OUTPUT_PREFIX,
             style,
-            indent: INDENT,
+            sides,
+            foot,
+        } => wrap::Source::Output {
+            head,
+            text,
+            style,
+            indent: 0,
+            sides: Some(sides),
             // A note never lands on a tool row: only user and assistant
-            // messages can be addressed, so there is nothing below the output.
-            tail: Vec::new(),
+            // messages can be addressed, so the card's closing row is the
+            // only line below the output.
+            tail: vec![foot],
         },
     }
-}
-
-/// A tool call's rows as lines.
-///
-/// The head row introduces the call; every row under it (the failure text, the
-/// output preview, the count of rows the preview hides) is written after a
-/// two-column pad, so a wrapped row has to stay under that text rather than
-/// slide back to the first column.
-fn indented(lines: Vec<Line<'static>>) -> Vec<Indented> {
-    lines
-        .into_iter()
-        .enumerate()
-        .map(|(index, line)| {
-            if index == 0 {
-                Indented::plain(line)
-            } else {
-                Indented::new(line, INDENT)
-            }
-        })
-        .collect()
 }
 
 /// The reader's note on one message, drawn under it.
@@ -311,6 +282,29 @@ const INDENT_PAD: &str = const {
     assert!(INDENT == 2);
     "  "
 };
+
+/// A message the user sent, drawn as a filled box the width of the pane.
+///
+/// The box has a blank row above and below the text, the way the reader
+/// expects a turn of their own to stand apart from the answer under it.
+fn user_box(text: &str, look: &Look<'_>) -> Vec<Indented> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let fill = Style::default().bg(look.theme.status.status_bg);
+    let sides = wrap::Sides { edge: " ", style: fill };
+    let style = fill.fg(look.theme.transcript.user_text);
+    let blank = || Indented::boxed(Line::from(Span::styled(" ", fill)), 0, sides);
+    let mut rows = vec![blank()];
+    rows.extend(text.lines().map(|line| {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        // An empty line still takes a row of the box.
+        let line = if line.is_empty() { " " } else { line };
+        Indented::boxed(Line::from(Span::styled(line.to_string(), style)), 0, sides)
+    }));
+    rows.push(blank());
+    rows
+}
 
 /// One line per logical line, the first under `prefix` and the rest under it.
 fn prefixed(prefix: Span<'static>, text: &str, style: Style) -> Vec<Indented> {

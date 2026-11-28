@@ -11,6 +11,15 @@ impl Transcript {
         self.turn_usage = show;
     }
 
+    /// How long the running turn has taken so far, or how long the last one
+    /// took; `None` before this client measured a turn.
+    pub fn turn_elapsed_ms(&self) -> Option<u64> {
+        match &self.turn {
+            Some(turn) => Some(u64::try_from(turn.started.elapsed().as_millis()).unwrap_or(u64::MAX)),
+            None => self.last_turn_ms,
+        }
+    }
+
     /// Start measuring the turn the client is about to send.
     ///
     /// A turn already being measured is replaced: one message is in flight at a
@@ -50,6 +59,7 @@ impl Transcript {
         let Some(turn) = self.turn.take() else {
             return;
         };
+        self.last_turn_ms = Some(u64::try_from(turn.started.elapsed().as_millis()).unwrap_or(u64::MAX));
         if !self.turn_usage {
             return;
         }

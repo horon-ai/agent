@@ -110,11 +110,14 @@ async fn a_core_session_without_mcp_servers_lists_the_fixed_surface() {
     }
     let mut expected: Vec<String> = ESSENTIAL_TOOLS.iter().map(|name| (*name).to_string()).collect();
     expected.push(TOOLBOX_TOOL.to_string());
+    if crate::tool::eval::interpreter_on_path() {
+        expected.push("eval".to_string());
+    }
     expected.sort();
     assert_eq!(
         eager_names(&mut agent).await,
         expected,
-        "the eager set is the seven essential tools plus the dispatcher"
+        "the eager set is the essential tools, the dispatcher, and eval where Python exists"
     );
 
     let prompt = agent.system_prompt_for_debug();
@@ -160,6 +163,9 @@ async fn a_configured_mcp_server_keeps_the_fixed_surface_eager() {
         "mcp_search".to_string(),
         TOOLBOX_TOOL.to_string(),
     ]);
+    if crate::tool::eval::interpreter_on_path() {
+        expected.push("eval".to_string());
+    }
     expected.sort();
     assert_eq!(eager_names(&mut agent).await, expected);
 

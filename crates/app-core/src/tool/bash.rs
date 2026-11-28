@@ -629,7 +629,7 @@ pub(crate) fn tool_scratch_dir_for_risk() -> Option<std::path::PathBuf> {
     tool_scratch_dir()
 }
 
-fn tool_scratch_dir() -> Option<std::path::PathBuf> {
+pub(crate) fn tool_scratch_dir() -> Option<std::path::PathBuf> {
     let dir = std::env::var_os("HORON_AGENT_SCRATCH_DIR")
         .filter(|value| !value.is_empty())
         .map(std::path::PathBuf::from)
@@ -1174,7 +1174,7 @@ struct BashInput {
     wake: bool,
     /// Opt-in live notices for a finite background job: every output line that
     /// matches this regex is delivered to this session while the job runs.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::serde_coerce::opt_string_empty_as_none")]
     notify_pattern: Option<String>,
     /// For background runs: wake the agent after this many seconds with no
     /// new output and no progress events. Resets on activity.
@@ -1192,8 +1192,10 @@ struct BashInput {
     #[serde(default)]
     cwd: Option<String>,
     /// Named long-running service. The call always runs in the background,
-    /// and `bg` plus later calls can address the task by this name.
-    #[serde(default)]
+    /// and `bg` plus later calls can address the task by this name. `""` is
+    /// read as omitted: a client that fills every field must not turn a
+    /// one-shot command into a refused service name.
+    #[serde(default, deserialize_with = "super::serde_coerce::opt_string_empty_as_none")]
     name: Option<String>,
     /// Readiness checks for a named service. Ignored without `name`.
     #[serde(default)]

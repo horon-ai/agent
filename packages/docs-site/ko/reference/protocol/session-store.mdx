@@ -3,8 +3,6 @@ title: "세션 저장소"
 description: "세션 이벤트 로그의 디스크 형식·전송 계약과, 그 위에 쌓이는 영속 런타임 상태 저널을 다룬다."
 ---
 
-{/* Generated from docs/protocol/SESSION_STORE.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 세션 이벤트 로그의 디스크 형식·전송 계약과, 그 위에 쌓이는 영속 런타임 상태 저널을 다룬다.
 
 ## 세션 이벤트 저장소: 디스크 형식과 전송 계약
@@ -243,7 +241,7 @@ fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식�
 앞서 쓴 글로 소개하게 한다(`crates/base/src/compaction/handoff_provider.rs`). 핸드오프를 쓸 수
 없으면 같은 잡에서 구조화 요약으로 대체한다. `[compaction] method_order`로 그 사슬을 직접
 지정할 수 있고(`["handoff", "structured"]`), 없거나 거부되면 `strategy` 하나가 결정하며
-프로바이더 네이티브 전략은 이 값을 무시한다(`docs/runtime/TURNS.ko.md`,
+프로바이더 네이티브 전략은 이 값을 무시한다(`packages/docs-site/ko/reference/runtime/turns.mdx`,
 `crates/base/src/compaction/method_order.rs`). `[provider] openai_native_compaction_mode`를 `auto`/`explicit`로 명시해
 둔 경우 `strategy`가 설정되지 않았을 때만 존중한다. 없음, 빈 값, `off`는 모두 `structured`로
 해석한다. 같은 절의 예산 기본값은 `recent_tokens` 20,000, `reserve_tokens` 16,384를

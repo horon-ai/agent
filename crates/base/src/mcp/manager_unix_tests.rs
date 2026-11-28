@@ -3,8 +3,6 @@
 use super::*;
 
 #[tokio::test]
-// `disconnect_all` flushes process-global sponsor provenance counters, so
-// hold the test-env lock to avoid draining another test's pending reports.
 #[allow(clippy::await_holding_lock)]
 async fn concurrent_owned_connects_spawn_only_one_server() {
     use std::os::unix::fs::PermissionsExt;

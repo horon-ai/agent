@@ -227,13 +227,26 @@ impl MultiProvider {
             .or_else(|| crate::session::derive_session_provider_key(provider_name))
     }
 
+    /// The session key a model switch leaves behind.
+    ///
+    /// `active_profile` is the named or catalog profile the provider runs the
+    /// new model on (`Provider::session_provider_key`). A bare model id such as
+    /// a gateway route `group/deepseek-v4.1-flash` runs on that profile, so the
+    /// key names it: falling back to the runtime's family name (`openai`) would
+    /// rebuild the model later as `openai:<id>`, which the built-in catalog
+    /// refuses, and a swarm worker inheriting the key could not start.
     pub fn session_provider_key_after_model_switch(
         model_request: &str,
         provider_name: &str,
         previous_provider_key: Option<&str>,
+        active_profile: Option<&str>,
     ) -> Option<String> {
         if let Some(provider_key) = Self::explicit_session_provider_key_for_model_request(model_request) {
             return Some(provider_key);
+        }
+
+        if let Some(profile) = active_profile.map(str::trim).filter(|profile| !profile.is_empty()) {
+            return Some(profile.to_string());
         }
 
         if let Some(previous_provider_key) = previous_provider_key

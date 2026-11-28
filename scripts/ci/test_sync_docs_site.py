@@ -1,9 +1,9 @@
-"""Tests for the docs-to-Mintlify mirror.
+"""Tests for the generated documentation-site pages.
 
 The cases pin the conversions a page can silently get wrong: text MDX would read
-as code, a table cell split by a `|` inside a code span, link targets, and the
-heading ids that links must use. They run against the real `docs/` tree, so a
-new page that breaks one of these rules fails here before it fails the site build.
+as code, a table cell split by a `|` inside a code span, and link targets. They
+run against the real sources, so a source that breaks one of these rules fails
+here before it fails the site build.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sync_docs_site as sync
 
 PAGES = set(sync.source_pages())
-ORIGIN = PurePosixPath("docs/runtime/TOOLS.md")
+ORIGIN = PurePosixPath("PHILOSOPHY.md")
 
 
 def convert(line: str, origin: PurePosixPath = ORIGIN) -> str:
@@ -50,41 +50,20 @@ class EscapeTests(unittest.TestCase):
 
 
 class LinkTests(unittest.TestCase):
-    def test_link_to_another_doc_becomes_a_site_route(self) -> None:
-        self.assertEqual(convert("[m](../provider/MODEL.md)"), "[m](/reference/provider/model)")
-
-    def test_korean_link_target_maps_to_the_english_route(self) -> None:
-        self.assertEqual(convert("[m](../provider/MODEL.ko.md)"), "[m](/reference/provider/model)")
-
-    def test_readme_in_a_folder_is_that_folders_index(self) -> None:
-        self.assertEqual(convert("[d](../diagram/README.md)"), "[d](/reference/diagram/index)")
-
-    def test_link_outside_docs_goes_to_github(self) -> None:
+    def test_link_to_a_site_page_becomes_its_route(self) -> None:
         self.assertEqual(
-            convert("[r](../../README.md)"), f"[r]({sync.GITHUB_BLOB}README.md)"
+            convert("[m](packages/docs-site/reference/provider/model.mdx)"), "[m](/reference/provider/model)"
+        )
+        self.assertEqual(
+            convert("[m](packages/docs-site/ko/reference/provider/model.mdx#x)"), "[m](/ko/reference/provider/model#x)"
         )
 
-    def test_image_points_at_the_copied_svg(self) -> None:
-        out = convert("![x](01-system-overview.svg)", PurePosixPath("docs/diagram/README.md"))
-        self.assertEqual(out, "![x](/images/reference/diagram/01-system-overview.svg)")
+    def test_link_outside_the_site_goes_to_github(self) -> None:
+        self.assertEqual(convert("[r](README.md)"), f"[r]({sync.GITHUB_BLOB}README.md)")
 
     def test_external_link_and_autolink(self) -> None:
         self.assertEqual(convert("[e](https://example.com/a)"), "[e](https://example.com/a)")
         self.assertEqual(convert("<https://example.com/a>"), "[https://example.com/a](https://example.com/a)")
-
-
-class AnchorTests(unittest.TestCase):
-    def test_slash_in_a_heading_is_kept_in_the_site_id(self) -> None:
-        mapping = sync.anchor_map(PurePosixPath("docs/performance/BENCHMARK.md"))
-        self.assertEqual(mapping.get("ab-measurement"), "a/b-measurement")
-
-    def test_same_page_fragment_uses_the_site_id(self) -> None:
-        out = sync.rewrite_target("#ab-measurement", PurePosixPath("docs/performance/BENCHMARK.md"), PAGES, "en")
-        self.assertEqual(out, "#a/b-measurement")
-
-    def test_unmapped_fragment_is_unchanged(self) -> None:
-        out = sync.rewrite_target("#overview", PurePosixPath("docs/performance/BENCHMARK.md"), PAGES, "en")
-        self.assertEqual(out, "#overview")
 
 
 class ExtraSourceTests(unittest.TestCase):
@@ -97,7 +76,7 @@ class ExtraSourceTests(unittest.TestCase):
         self.assertEqual(out, "/ko/reference/philosophy")
 
     def test_link_to_a_page_with_no_korean_source_falls_back_to_english(self) -> None:
-        out = sync.rewrite_target("../../packages/sdk/python/README.md", PurePosixPath("docs/runtime/TOOLS.md"), PAGES, "ko")
+        out = sync.rewrite_target("packages/sdk/python/README.md", PurePosixPath("PHILOSOPHY.ko.md"), PAGES, "ko")
         self.assertEqual(out, "/reference/sdk/python")
 
     def test_package_readme_link_to_an_unmirrored_file_goes_to_github(self) -> None:

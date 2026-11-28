@@ -161,9 +161,7 @@ impl Tool for CheckpointTool {
     }
 
     fn description(&self) -> &str {
-        "Mark this point of the conversation so `rewind` can later fold everything after it into a \
-         report you write. One checkpoint per session; it applies when this turn ends. Files, \
-         background tasks and process state are not restored."
+        "Mark a point that `rewind` can fold this session back to."
     }
 
     /// The record is appended to the session transcript at turn end.
@@ -222,7 +220,11 @@ impl Default for RewindTool {
 
 #[derive(Debug, serde::Deserialize)]
 struct RewindInput {
+    #[serde(default)]
     report: String,
+    /// Check the rewind and say what it would fold, without queuing it.
+    #[serde(default, deserialize_with = "super::serde_coerce::bool_from_string_or_bool")]
+    dry_run: bool,
 }
 
 #[async_trait]
@@ -232,9 +234,7 @@ impl Tool for RewindTool {
     }
 
     fn description(&self) -> &str {
-        "Rewind to the active checkpoint: every message after it leaves this session's context and \
-         `report` takes its place as background for the work ahead. Files, background tasks and \
-         process state are not restored."
+        "Fold context back to the checkpoint; files stay as they are."
     }
 
     /// The rewind truncates the session transcript at turn end.
@@ -245,15 +245,15 @@ impl Tool for RewindTool {
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
-            "required": ["report"],
             "properties": {
                 "intent": super::intent_schema_property(),
                 "report": {
                     "type": "string",
-                    "minLength": 1,
-                    "description": "What the abandoned branch established, why it was abandoned, \
-                                    and what the next attempt should do differently. This is the \
-                                    only record of that work left in context."
+                    "description": "What the abandoned branch found, why it was dropped, and what to try next. Required unless dry_run."
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "Only report what the rewind would fold; nothing is queued."
                 }
             }
         })
@@ -262,7 +262,7 @@ impl Tool for RewindTool {
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
         let params: RewindInput = serde_json::from_value(input)?;
         let report = params.report.trim();
-        if report.is_empty() {
+        if report.is_empty() && !params.dry_run {
             anyhow::bail!(
                 "rewind needs a non-empty report: it is the only record of the discarded work that \
                  stays in context."
@@ -286,6 +286,15 @@ impl Tool for RewindTool {
                 "The active checkpoint has no earlier conversation to rewind to, so there is nothing \
                  to fold into a report."
             );
+        }
+        if params.dry_run {
+            let folded = history.len().saturating_sub(marker + 1);
+            return Ok(ToolOutput::new(format!(
+                "Dry run: a rewind now would fold {folded} message(s) after the checkpoint into the report \
+                 and keep the {} before it. Nothing was queued.",
+                messages_before(&session, marker)
+            ))
+            .with_title("rewind (dry run)"));
         }
         request_rewind(&ctx.session_id, report.to_string());
         Ok(ToolOutput::new(

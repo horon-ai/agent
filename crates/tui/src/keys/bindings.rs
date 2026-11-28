@@ -39,6 +39,8 @@ pub mod ids {
     pub const APP_SCROLL_DOWN: &str = "app.scroll_down";
     /// Follow the end of the conversation again.
     pub const APP_SCROLL_BOTTOM: &str = "app.scroll_bottom";
+    /// Hold the transcript at the first message of the session.
+    pub const APP_SCROLL_TOP: &str = "app.scroll_top";
     /// Show the whole output of the selected tool call whose preview was cut,
     /// and the preview again on the next press.
     pub const APP_EXPAND_TOOL: &str = "app.expand_tool";
@@ -102,6 +104,8 @@ pub mod ids {
     pub const EDITOR_HISTORY_NEXT: &str = "editor.history_next";
     /// Complete the slash command being typed.
     pub const EDITOR_COMPLETE: &str = "editor.complete";
+    /// Attach the image on the system clipboard to the draft.
+    pub const EDITOR_PASTE_IMAGE: &str = "editor.paste_image";
     /// Fill the draft with the local suggestion shown after the caret.
     pub const EDITOR_ACCEPT_SUGGESTION: &str = "editor.accept_suggestion";
     /// Search the drafts sent before this one.
@@ -172,7 +176,10 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_SCROLL_PAGE_DOWN, Scope::App, &["pagedown"]),
     ActionSpec::new(ids::APP_SCROLL_UP, Scope::App, &["shift+up"]),
     ActionSpec::new(ids::APP_SCROLL_DOWN, Scope::App, &["shift+down"]),
-    ActionSpec::new(ids::APP_SCROLL_BOTTOM, Scope::App, &["ctrl+end"]),
+    // Command-↑ and Command-↓ jump to either end, as in omp; they arrive only
+    // from a terminal that reports the Command key (Ghostty, kitty, WezTerm).
+    ActionSpec::new(ids::APP_SCROLL_TOP, Scope::App, &["cmd+up", "ctrl+home"]),
+    ActionSpec::new(ids::APP_SCROLL_BOTTOM, Scope::App, &["cmd+down", "ctrl+end"]),
     // The key a cut tool preview names: reading the rest of one call's output
     // is the one thing the transcript cannot do with the scroll keys alone.
     ActionSpec::new(ids::APP_EXPAND_TOOL, Scope::App, &["ctrl+o"]),
@@ -231,8 +238,10 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::EDITOR_RIGHT, Scope::Editor, &["right", "ctrl+f"]),
     ActionSpec::new(ids::EDITOR_HOME, Scope::Editor, &["home", "ctrl+a"]),
     ActionSpec::new(ids::EDITOR_END, Scope::Editor, &["end", "ctrl+e"]),
-    ActionSpec::new(ids::EDITOR_WORD_LEFT, Scope::Editor, &["alt+left"]),
-    ActionSpec::new(ids::EDITOR_WORD_RIGHT, Scope::Editor, &["alt+right"]),
+    // A macOS terminal sends Option-← and Option-→ as the readline `alt+b` and
+    // `alt+f`, so both spellings move by word.
+    ActionSpec::new(ids::EDITOR_WORD_LEFT, Scope::Editor, &["alt+left", "alt+b"]),
+    ActionSpec::new(ids::EDITOR_WORD_RIGHT, Scope::Editor, &["alt+right", "alt+f"]),
     // `up` and `down` move between the lines of a draft first; the app hands
     // them to the history only at the first and last line.
     ActionSpec::new(ids::EDITOR_HISTORY_PREV, Scope::Editor, &["up"]),
@@ -249,6 +258,9 @@ pub const ACTIONS: &[ActionSpec] = &[
     // and the other clients send for the same intent.
     ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w", "alt+backspace"]),
     ActionSpec::new(ids::EDITOR_COMPLETE, Scope::Editor, &["tab"]),
+    // A terminal's paste carries text only, so an image on the clipboard is
+    // fetched by its own key, the one other clients use for it.
+    ActionSpec::new(ids::EDITOR_PASTE_IMAGE, Scope::Editor, &["ctrl+v"]),
     // The one key that puts a ghost suggestion into the draft. It is a
     // modifier on the arrow that already moves by a character, so it cannot be
     // reached by a slip while typing.

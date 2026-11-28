@@ -86,6 +86,54 @@ const CORE_BASELINE: &[&str] = &[
     "write",
 ];
 
+/// The default `core` surface in a test registry with no image model role:
+/// every built-in tool the registry constructs, irc and the checkpoint pair
+/// joined by their switches, and the dispatcher.
+const CORE_OPEN_SURFACE: &[&str] = &[
+    "agentgrep",
+    "apply_patch",
+    "ask",
+    "ast_edit",
+    "ast_grep",
+    "bash",
+    "batch",
+    "bg",
+    "checkpoint",
+    "codemode",
+    "context_notes",
+    "conversation_search",
+    "edit",
+    "eval",
+    "goal",
+    "hashline_edit",
+    "horon",
+    "irc",
+    "ls",
+    "lsp",
+    "mcp",
+    "memory",
+    "monitor",
+    "new_context",
+    "read",
+    "redo",
+    "replace",
+    "rewind",
+    "session_search",
+    "skill_manage",
+    "swarm",
+    "todo",
+    "toolbox",
+    "undo",
+    "webfetch",
+    "websearch",
+    "write",
+];
+
+/// Whether a `core` session sends `name` eagerly on this machine.
+fn eager_in_core(name: &str) -> bool {
+    ESSENTIAL_TOOLS.contains(&name) || (name == "eval" && crate::tool::eval::interpreter_on_path())
+}
+
 async fn definitions_json(agent: &Agent) -> String {
     serde_json::to_string(&agent.tool_definitions_for_debug().await).expect("serialize definitions")
 }
@@ -115,13 +163,11 @@ async fn core_profile_lists_non_essential_tools() {
     let agent = agent_with_mcp_management_tool().await;
 
     let definitions = agent.tool_definitions_for_debug().await;
-    let mut expected: Vec<String> = CORE_BASELINE.iter().map(|name| (*name).to_string()).collect();
-    expected.push(TOOLBOX_TOOL.to_string());
-    expected.sort();
+    let expected: Vec<String> = CORE_OPEN_SURFACE.iter().map(|name| (*name).to_string()).collect();
     let names: Vec<String> = definitions.iter().map(|definition| definition.name.clone()).collect();
     assert_eq!(
         names, expected,
-        "the core surface is the eighteen kept tools plus the dispatcher"
+        "the core surface is every built-in tool plus the dispatcher"
     );
     let mut baseline: Vec<String> = CORE_BASELINE.iter().map(|name| (*name).to_string()).collect();
     baseline.sort();
@@ -136,7 +182,7 @@ async fn core_profile_lists_non_essential_tools() {
             assert!(!definition.defer_loading, "the dispatcher must stay eager");
             continue;
         }
-        let eager = ESSENTIAL_TOOLS.contains(&definition.name.as_str());
+        let eager = eager_in_core(&definition.name);
         assert_eq!(
             definition.defer_loading,
             !eager,
@@ -157,8 +203,8 @@ async fn core_profile_lists_non_essential_tools() {
     }
     assert_eq!(
         definitions.iter().filter(|d| !d.defer_loading).count(),
-        ESSENTIAL_TOOLS.len() + 1,
-        "the seven essential tools and the dispatcher are the eager set"
+        CORE_OPEN_SURFACE.iter().filter(|name| eager_in_core(name)).count() + 1,
+        "the frequently used tools and the dispatcher are the eager set"
     );
 }
 
@@ -175,7 +221,7 @@ async fn full_profile_defers_non_core_tools() {
         definitions.len()
     );
     for definition in &definitions {
-        if CORE_TOOLS.contains(&definition.name.as_str()) {
+        if CORE_TOOLS.contains(&definition.name.as_str()) || ESSENTIAL_TOOLS.contains(&definition.name.as_str()) {
             assert_eq!(
                 agent.load_tiers.tier(&definition.name),
                 LoadMode::Essential,
@@ -222,10 +268,11 @@ async fn full_profile_defers_non_core_tools() {
         .iter()
         .filter(|definition| !definition.defer_loading)
         .count();
+    let core_or_essential: HashSet<&str> = CORE_TOOLS.iter().chain(ESSENTIAL_TOOLS).copied().collect();
     assert_eq!(
         eager,
-        CORE_TOOLS.len() + 1,
-        "only the core tools and the toolbox dispatcher stay eager on this provider"
+        core_or_essential.len() + 1,
+        "only the core and essential tools and the toolbox dispatcher stay eager on this provider"
     );
 }
 
@@ -419,7 +466,11 @@ async fn core_load_mode_override_restores_eager() {
         definitions.iter().all(|definition| !definition.defer_loading),
         "every core tool is eager again"
     );
-    assert_eq!(definitions.len(), CORE_TOOLS.len(), "only the dispatcher is gone");
+    assert_eq!(
+        definitions.len(),
+        CORE_OPEN_SURFACE.len() - 1,
+        "only the dispatcher is gone"
+    );
 }
 
 /// Sessions that named their own tools send what they sent before the listing
@@ -591,7 +642,11 @@ async fn core_index_names_every_listed_core_tool() {
 
     let definitions = agent.tool_definitions().await;
     let listed = listed_core_tools();
-    assert_eq!(listed.len(), 11, "eighteen core tools minus the seven essential ones");
+    assert_eq!(
+        listed.len(),
+        8,
+        "the eighteen core tools minus the ten that ride eagerly"
+    );
     for name in &listed {
         assert!(
             definition(&definitions, name).defer_loading,
@@ -612,8 +667,8 @@ async fn core_index_names_every_listed_core_tool() {
         .collect();
     assert_eq!(
         eager.len(),
-        ESSENTIAL_TOOLS.len() + 1,
-        "only the seven essential tools and the dispatcher are eager: {eager:?}"
+        ESSENTIAL_TOOLS.len() + 1 + usize::from(crate::tool::eval::interpreter_on_path()),
+        "only the essential tools, the dispatcher and eval where Python exists are eager: {eager:?}"
     );
 
     let prompt = agent.system_prompt_for_debug();
@@ -942,7 +997,7 @@ async fn prewarm_sends_the_same_static_prefix_as_the_first_turn() {
     );
 
     let tools = agent.tool_definitions().await;
-    let first_turn = agent.build_system_prompt_split(None).static_part;
+    let first_turn = agent.build_request_system_prompt(&tools).static_part;
     assert_eq!(
         without_clock(&warm_static),
         without_clock(&first_turn),
@@ -989,7 +1044,7 @@ async fn a_warmup_built_before_mcp_registration_is_rebuilt_at_the_tool_lock() {
         definition(&definitions, "mcp").defer_loading,
         "the late tool is listed, not eager"
     );
-    let prompt = agent.build_system_prompt_split(None).static_part;
+    let prompt = agent.build_request_system_prompt(&definitions).static_part;
     assert!(
         prompt.contains("\n- mcp: "),
         "the frozen index names every tool the session can reach: {prompt}"
@@ -1038,15 +1093,7 @@ async fn swarm_worker_allow_list_never_carries_the_dispatcher() {
         )
         .await;
 
-    let mut allowed: HashSet<String> = registry.tool_names().await.into_iter().collect();
-    for blocked in ["subagent", "task", "swarm", "todo", "session_search"] {
-        allowed.remove(blocked);
-    }
-    crate::config::config().tools.apply_to_allowed_set(&mut allowed);
-    assert!(
-        allowed.contains(TOOLBOX_TOOL),
-        "the registry-derived list starts with the dispatcher, as swarm.rs builds it"
-    );
+    let allowed = crate::server::swarm_tools::worker_allow_list(&registry).await;
 
     let worker = Agent::new_with_session(provider, registry, Session::create(None, None), Some(allowed));
     let definitions = worker.tool_definitions_for_debug().await;

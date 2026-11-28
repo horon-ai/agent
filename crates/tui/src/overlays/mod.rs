@@ -4,6 +4,7 @@
 //! returns what the caller should do, so the app state stays synchronous and a
 //! test can drive the screen without a terminal.
 
+pub mod info;
 pub mod picker;
 mod picker_draw;
 pub mod settings;

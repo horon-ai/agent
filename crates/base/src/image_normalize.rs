@@ -92,6 +92,24 @@ pub struct ProviderImage {
 ///   explanation suitable for showing to the model or the user.
 pub fn normalize_image_bytes(data: Vec<u8>) -> Result<ProviderImage, String> {
     if let Some(media_type) = sniff_provider_media_type(&data) {
+        // Magic bytes say the format, not that the image is whole. A PNG whose
+        // data chunk fails its checksum passes the sniff and is then refused
+        // by the provider ("an image in the conversation could not be
+        // processed"), and once stored it rides every later request. PNG and
+        // JPEG are decoded here, once per image; GIF and WebP have no decoder
+        // in this build and pass on their magic bytes.
+        let format = match media_type {
+            "image/png" => Some(image::ImageFormat::Png),
+            "image/jpeg" => Some(image::ImageFormat::Jpeg),
+            _ => None,
+        };
+        if let Some(format) = format
+            && let Err(error) = image::load_from_memory_with_format(&data, format)
+        {
+            return Err(format!(
+                "the image data is corrupt ({error}), so it cannot be sent to the model"
+            ));
+        }
         return Ok(ProviderImage {
             media_type,
             data,
@@ -174,6 +192,20 @@ mod tests {
         assert_eq!(out.media_type, "image/png");
         assert_eq!(out.data, png);
         assert_eq!(out.converted_from, None);
+    }
+
+    /// A 1x1 PNG whose data chunk fails its checksum: the header sniffs as
+    /// PNG, and the provider refuses it.
+    #[test]
+    fn a_png_whose_data_fails_its_checksum_is_refused() {
+        let corrupt = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhWMjxwAAAABJRU5ErkJggg==",
+        )
+        .expect("fixture decodes");
+        assert_eq!(sniff_provider_media_type(&corrupt), Some("image/png"));
+        let err = normalize_image_bytes(corrupt).unwrap_err();
+        assert!(err.starts_with("the image data is corrupt"), "{err}");
     }
 
     #[test]

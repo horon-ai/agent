@@ -39,7 +39,14 @@ impl App {
             spinner: self.spinner_glyph(),
             provider: self.provider.as_deref(),
             model: self.model.as_deref(),
-            effort: self.reasoning_effort.as_deref(),
+            // The level the reader last chose shows at once, before the daemon
+            // confirms it or a running turn lets it through: the key's effect
+            // is what the line reports.
+            effort: self
+                .effort_after_turn
+                .as_deref()
+                .or(self.effort_requested.as_deref())
+                .or(self.reasoning_effort.as_deref()),
             session_id: self.session_id.as_deref(),
             pending_turn: self.pending_turn,
             disconnected: self.disconnected,
@@ -48,10 +55,13 @@ impl App {
             cwd: self.cwd.as_deref(),
             home: self.home.as_deref(),
             tokens: self.tokens,
+            tps: self.throughput.per_second(),
             capacity: self.capacity,
             usage: self.usage,
             cost: self.cost,
             now: None,
+            elapsed_ms: None,
+            branch: None,
         }
     }
 

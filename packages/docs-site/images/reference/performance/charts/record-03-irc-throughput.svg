@@ -29,5 +29,5 @@
 <rect x="784.0" y="169.8" width="52.0" height="142.2" rx="2" fill="#d3d9e1"/>
 <text x="810.0" y="163.8" font-size="10.5" fill="#59636e" text-anchor="middle" font-weight="normal">3,141,178</text>
 <text x="781.0" y="330.0" font-size="11.5" fill="#1f2328" text-anchor="middle" font-weight="normal">broadcast64</text>
-<text x="32.0" y="368.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: docs/performance/RESULTS.md · IRC throughput</text>
+<text x="32.0" y="368.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: agent.horon.ai/reference/performance/results · IRC throughput</text>
 </svg>

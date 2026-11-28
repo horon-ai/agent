@@ -98,3 +98,28 @@ fn apply_edit_is_never_applied() {
     let result = server_request_result("workspace/applyEdit", None, "rust-analyzer", Path::new("/w"));
     assert_eq!(result, serde_json::json!({ "applied": false }));
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_that_dies_at_startup_names_its_stderr_in_the_error() {
+    static FAKE: ServerSpec = ServerSpec {
+        name: "fake-ls",
+        program: "/bin/sh",
+        args: &[
+            "-c",
+            "echo 'Could not find a valid TypeScript installation' >&2; exit 1",
+        ],
+        extensions: &["fake"],
+        root_markers: &[],
+    };
+    let root = tempfile::tempdir().expect("temp dir");
+    let error = match Client::get(&FAKE, root.path().to_path_buf()).await {
+        Ok(_) => panic!("a server that exits at once must not start"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.starts_with("initialize request failed: "), "{error}");
+    assert!(
+        error.contains("fake-ls stderr (last 1 lines):\n  Could not find a valid TypeScript installation"),
+        "{error}"
+    );
+}

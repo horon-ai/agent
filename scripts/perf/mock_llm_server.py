@@ -213,6 +213,29 @@ def find_shell_tool(tools) -> tuple[str, str] | None:
     return None
 
 
+def _is_reminder(message: dict) -> bool:
+    """A user message the harness wrote: a stored turn context, memory summary or nudge.
+
+    horon appends these to the transcript, so they can follow a tool result or
+    the prompt; they never start a turn and never answer a tool call. horon
+    stores each one as its own message, so a message that also carries other
+    text is a prompt, whatever block it opens with.
+    """
+    if message.get("role") != "user":
+        return False
+    content = message.get("content")
+    if not isinstance(content, list):
+        return _text_of(content).lstrip().startswith("<system-reminder>")
+    if not content:
+        return False
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_result":
+            return False
+        if not _text_of([block]).lstrip().startswith("<system-reminder>"):
+            return False
+    return True
+
+
 def has_tool_result(kind: str, body: dict) -> bool:
     """True when the current (last) user turn already produced a tool result.
 
@@ -223,7 +246,7 @@ def has_tool_result(kind: str, body: dict) -> bool:
     if kind == "anthropic":
         messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
         for message in reversed(messages):
-            if message.get("role") != "user":
+            if message.get("role") != "user" or _is_reminder(message):
                 continue
             content = message.get("content")
             if isinstance(content, list):
@@ -245,12 +268,14 @@ def has_tool_result(kind: str, body: dict) -> bool:
                 if item.get("role") == "tool":
                     found = True
                     continue
+                if _is_reminder(item):
+                    continue
                 saw_prompt = True
                 found = False
         return saw_prompt and found
     messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
     for index in range(len(messages) - 1, -1, -1):
-        if messages[index].get("role") != "user":
+        if messages[index].get("role") != "user" or _is_reminder(messages[index]):
             continue
         return any(m.get("role") == "tool" for m in messages[index + 1 :])
     return False
@@ -542,21 +567,13 @@ def find_mcp_eval_namespace(body: dict) -> str | None:
 
 def user_turn_text(kind: str, body: dict) -> str:
     """The text of the prompt that started the current turn."""
-    if kind == "anthropic":
-        messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
-        for message in reversed(messages):
-            if message.get("role") == "user":
-                return _text_of(message.get("content"))
-        return ""
     if kind == "responses":
-        for item in reversed(body.get("input") or []):
-            if isinstance(item, dict) and item.get("role") == "user":
-                return _text_of(item.get("content"))
-        return ""
-    messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
-    for message in reversed(messages):
-        if message.get("role") == "user":
-            return _text_of(message.get("content"))
+        items = [item for item in (body.get("input") or []) if isinstance(item, dict)]
+    else:
+        items = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
+    for item in reversed(items):
+        if item.get("role") == "user" and not _is_reminder(item):
+            return _text_of(item.get("content"))
     return ""
 
 

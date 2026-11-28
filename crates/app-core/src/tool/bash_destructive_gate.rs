@@ -170,7 +170,7 @@ pub(super) fn bash_parameters_schema() -> serde_json::Value {
             },
             "name": {
                 "type": "string",
-                "description": "Service and bg task ID (1-48 chars: letters, digits, ._-)."
+                "description": "Background task name (1-48 of a-z0-9._-); naming runs it in background, ignoring timeout."
             },
             "ready": {
                 "type": "object",

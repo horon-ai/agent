@@ -14,7 +14,7 @@
 //! promotion action exists at all.
 
 use super::*;
-use crate::config::{CORE_TOOLS, ESSENTIAL_TOOLS, LoadMode, TOOLBOX_TOOL, ToolConfig, ToolLoadTiers};
+use crate::config::{LoadMode, TOOLBOX_TOOL, ToolConfig, ToolLoadTiers};
 use serde_json::json;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -872,13 +872,35 @@ async fn toolbox_list_names_the_listed_core_tools_under_core() {
     let registry = core_registry().await;
 
     let output = call(&registry, json!({"action": "list"})).await.expect("list succeeds");
-    let mut expected: Vec<&str> = CORE_TOOLS
-        .iter()
-        .copied()
-        .filter(|name| !ESSENTIAL_TOOLS.contains(name))
-        .collect();
-    expected.sort_unstable();
-    assert_eq!(expected.len(), 11, "eighteen core tools minus the seven essential ones");
+    // Every tool of the open surface that is not sent eagerly: the core tools
+    // outside the eager set and every opt-out tool this registry constructs.
+    let expected = [
+        "ask",
+        "ast_edit",
+        "ast_grep",
+        "batch",
+        "checkpoint",
+        "codemode",
+        "context_notes",
+        "conversation_search",
+        "eval",
+        "goal",
+        "hashline_edit",
+        "horon",
+        "irc",
+        "lsp",
+        "mcp",
+        "memory",
+        "monitor",
+        "new_context",
+        "redo",
+        "replace",
+        "rewind",
+        "session_search",
+        "skill_manage",
+        "swarm",
+        "undo",
+    ];
 
     let rows: Vec<&str> = output
         .output
@@ -1164,3 +1186,6 @@ async fn effects_for_input_answers_only_run_through_the_target() {
         "a run without args reaches nothing this hook can classify"
     );
 }
+
+#[path = "toolbox_tests/args.rs"]
+mod args;

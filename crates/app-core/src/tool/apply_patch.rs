@@ -1,11 +1,12 @@
-use super::{Tool, ToolContext, ToolOutput};
+use super::{Tool, ToolContext, ToolOutput, ToolVerdict};
 use crate::bus::{Bus, BusEvent, FileOp, FileTouch};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use similar::{ChangeTag, TextDiff};
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 const FILE_TOUCH_PREVIEW_MAX_LINES: usize = 6;
 const FILE_TOUCH_PREVIEW_MAX_BYTES: usize = 240;
@@ -150,11 +151,69 @@ impl Tool for ApplyPatchTool {
             }
         }
 
+        // Every update is computed and every delete checked before the first
+        // write, against the content earlier hunks of this patch leave behind:
+        // a patch lands whole or leaves every file as it was, so a later hunk
+        // that does not apply can never strand an earlier file half-changed.
+        let mut planned: HashMap<PathBuf, Option<String>> = HashMap::new();
+        let mut computed: Vec<Option<(String, String)>> = Vec::with_capacity(hunks.len());
+        let mut failures = Vec::new();
+        for hunk in &hunks {
+            match hunk {
+                PatchHunk::AddFile { path, contents } => {
+                    planned.insert(ctx.resolve_path(Path::new(path)), Some(contents.clone()));
+                    computed.push(None);
+                }
+                PatchHunk::DeleteFile { path } => {
+                    let resolved = ctx.resolve_path(Path::new(path));
+                    if let Some(refusal) = super::path_policy::catastrophic_delete_refusal(&resolved, path, &ctx) {
+                        failures.push(refusal);
+                    } else if !planned_exists(&planned, &resolved) {
+                        failures.push(format!("✗ {path}: file does not exist"));
+                    } else {
+                        planned.insert(resolved, None);
+                    }
+                    computed.push(None);
+                }
+                PatchHunk::UpdateFile { path, move_to, chunks } => {
+                    let resolved = ctx.resolve_path(Path::new(path));
+                    let original = match planned.get(&resolved) {
+                        Some(Some(text)) => Ok(text.clone()),
+                        Some(None) => Err(super::client_fs::missing_file_error()),
+                        None => read_original(&resolved, &ctx).await,
+                    };
+                    match original.and_then(|old| compute_update(&old, &resolved, chunks).map(|new| (old, new))) {
+                        Ok((old, new)) => {
+                            match move_to {
+                                Some(dest) => {
+                                    planned.insert(resolved, None);
+                                    planned.insert(ctx.resolve_path(Path::new(dest)), Some(new.clone()));
+                                }
+                                None => {
+                                    planned.insert(resolved, Some(new.clone()));
+                                }
+                            }
+                            computed.push(Some((old, new)));
+                        }
+                        Err(error) => {
+                            failures.push(format!("✗ {path}: {error}"));
+                            computed.push(None);
+                        }
+                    }
+                }
+            }
+        }
+        if !failures.is_empty() {
+            let mut body = failures.join("\n");
+            body.push_str("\n\nNo files changed: the patch failed preflight.");
+            return Ok(ToolOutput::new(body).with_verdict(ToolVerdict::Failed));
+        }
+
         let mut results = Vec::new();
         let mut touched_paths = Vec::new();
         let mut journal = super::undo::Journal::begin(&ctx);
 
-        for hunk in &hunks {
+        for (index, hunk) in hunks.iter().enumerate() {
             match hunk {
                 PatchHunk::AddFile { path, contents } => {
                     let resolved = ctx.resolve_path(Path::new(path));
@@ -226,7 +285,10 @@ impl Tool for ApplyPatchTool {
                 }
                 PatchHunk::UpdateFile { path, move_to, chunks } => {
                     let resolved = ctx.resolve_path(Path::new(path));
-                    match apply_update_chunks(&resolved, chunks, &ctx).await {
+                    let precomputed = computed[index]
+                        .take()
+                        .ok_or_else(|| anyhow::anyhow!("the preflight computed no content for this update"));
+                    match precomputed {
                         Ok((old_contents, new_contents)) => {
                             let diff = generate_diff_summary(&old_contents, &new_contents);
                             if let Some(dest) = move_to {
@@ -329,6 +391,7 @@ impl Tool for ApplyPatchTool {
             }
         }
 
+        let failed = results.iter().any(|result| result.starts_with('✗'));
         if results.is_empty() {
             Ok(ToolOutput::new("No changes applied"))
         } else {
@@ -414,6 +477,13 @@ impl Tool for ApplyPatchTool {
                 super::file_diff::attach(ToolOutput::new(body), unified),
                 structured,
             );
+            // A write that failed after the preflight passed (an I/O error)
+            // leaves the files listed above it written: the call says so.
+            let output = if failed {
+                output.with_verdict(ToolVerdict::Failed)
+            } else {
+                output
+            };
             if touched_paths.len() == 1 {
                 Ok(output.with_title(touched_paths[0].clone()))
             } else {
@@ -474,29 +544,58 @@ fn build_file_touch_preview(diff: &str) -> Option<String> {
     Some(preview)
 }
 
-async fn apply_update_chunks(path: &Path, chunks: &[UpdateFileChunk], ctx: &ToolContext) -> Result<(String, String)> {
-    let original_contents = match super::client_fs::read_text(path, ctx).await? {
-        super::client_fs::TextRead::Client(text) => text,
-        super::client_fs::TextRead::NotFound => {
-            // Report a client `-32002` exactly as the local read reports a missing
-            // path, so a patch result does not depend on which side served it.
-            return Err(super::client_fs::missing_file_error());
-        }
-        super::client_fs::TextRead::Local => tokio::fs::read_to_string(path).await?,
-    };
-    let mut original_lines: Vec<String> = original_contents.split('\n').map(String::from).collect();
+/// Whether `path` exists once the hunks planned so far have run.
+fn planned_exists(planned: &HashMap<PathBuf, Option<String>>, path: &Path) -> bool {
+    match planned.get(path) {
+        Some(content) => content.is_some(),
+        None => path.exists(),
+    }
+}
 
-    if original_lines.last().is_some_and(String::is_empty) {
-        original_lines.pop();
+/// The text an update starts from: the editor's buffer when a client serves the
+/// file, the disk copy otherwise.
+async fn read_original(path: &Path, ctx: &ToolContext) -> Result<String> {
+    match super::client_fs::read_text(path, ctx).await? {
+        super::client_fs::TextRead::Client(text) => Ok(text),
+        // Report a client `-32002` exactly as the local read reports a missing
+        // path, so a patch result does not depend on which side served it.
+        super::client_fs::TextRead::NotFound => Err(super::client_fs::missing_file_error()),
+        super::client_fs::TextRead::Local => Ok(tokio::fs::read_to_string(path).await?),
+    }
+}
+
+/// The text after `chunks`, keeping the file's own line endings and its final
+/// newline, or the lack of one.
+///
+/// The patch carries its lines without carriage returns. A uniformly CRLF file
+/// is matched and rebuilt with CRLF; in a file with mixed endings the lines the
+/// patch did not change keep their exact bytes, and the lines it adds use LF.
+fn compute_update(original: &str, path: &Path, chunks: &[UpdateFileChunk]) -> Result<String> {
+    let ends_with_newline = original.ends_with('\n');
+    let newlines = original.matches('\n').count();
+    let crlf = newlines > 0 && original.matches("\r\n").count() == newlines;
+    let mut lines: Vec<String> = original
+        .split('\n')
+        .map(|line| match crlf {
+            true => line.strip_suffix('\r').unwrap_or(line).to_string(),
+            false => line.to_string(),
+        })
+        .collect();
+    if lines.last().is_some_and(String::is_empty) {
+        lines.pop();
     }
 
-    let replacements = compute_replacements(&original_lines, path, chunks)?;
-    let mut new_lines = apply_replacements(original_lines, &replacements);
+    let replacements = compute_replacements(&lines, path, chunks)?;
+    let new_lines = apply_replacements(lines, &replacements);
 
-    if !new_lines.last().is_some_and(String::is_empty) {
-        new_lines.push(String::new());
+    let separator = if crlf { "\r\n" } else { "\n" };
+    let mut text = new_lines.join(separator);
+    // An empty file gains a final newline with its first lines, as a unified
+    // patch does; any other file keeps whether it ended with one.
+    if !new_lines.is_empty() && (ends_with_newline || original.is_empty()) {
+        text.push_str(separator);
     }
-    Ok((original_contents, new_lines.join("\n")))
+    Ok(text)
 }
 
 /// Generate a compact diff with line numbers (max 30 lines).
@@ -605,21 +704,38 @@ fn compute_replacements(
 
 fn apply_replacements(mut lines: Vec<String>, replacements: &[(usize, usize, Vec<String>)]) -> Vec<String> {
     for (start_idx, old_len, new_segment) in replacements.iter().rev() {
-        let start_idx = *start_idx;
-        let old_len = *old_len;
+        let start = (*start_idx).min(lines.len());
+        let end = (start + *old_len).min(lines.len());
+        let replaced: Vec<String> = lines.drain(start..end).collect();
+        let segment = keep_unchanged_bytes(&replaced, new_segment);
+        lines.splice(start..start, segment);
+    }
+    lines
+}
 
-        for _ in 0..old_len {
-            if start_idx < lines.len() {
-                lines.remove(start_idx);
+/// `segment` with each line the patch kept unchanged taken from `replaced`,
+/// byte for byte.
+///
+/// A patch line has no carriage return, so in a file with mixed endings a
+/// context line copied from the patch would silently lose its `\r`. A line of
+/// the segment that equals the next unconsumed replaced line, ignoring only
+/// that line's trailing `\r`, is the same line and keeps its original bytes.
+fn keep_unchanged_bytes(replaced: &[String], segment: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(segment.len());
+    let mut next = 0;
+    for line in segment {
+        let same = replaced[next..]
+            .iter()
+            .position(|original| original.strip_suffix('\r').unwrap_or(original) == line);
+        match same {
+            Some(offset) => {
+                out.push(replaced[next + offset].clone());
+                next += offset + 1;
             }
-        }
-
-        for (offset, new_line) in new_segment.iter().enumerate() {
-            lines.insert(start_idx + offset, new_line.clone());
+            None => out.push(line.clone()),
         }
     }
-
-    lines
+    out
 }
 
 fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) -> Option<usize> {

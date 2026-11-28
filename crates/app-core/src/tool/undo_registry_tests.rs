@@ -78,22 +78,26 @@ fn undo_is_registered_and_in_the_core_profile() {
 }
 
 #[test]
-fn redo_stays_out_of_the_default_surface() {
+fn redo_is_on_by_default_and_its_switch_removes_it() {
     let _env = crate::storage::lock_test_env();
     let home = tempfile::tempdir().expect("home");
     let _guard = HomeGuard::new(home.path());
 
     runtime().block_on(async {
         let registry = Registry::new(Arc::new(MockProvider) as Arc<dyn Provider>).await;
-        assert!(!crate::config::ToolConfig::default().redo, "redo must default to off");
+        let names = registry.tool_names().await;
+        assert!(
+            names.iter().any(|name| name == "redo"),
+            "redo is registered by default, got {names:?}"
+        );
+
+        std::fs::write(home.path().join("config.toml"), "[tools]\nredo = false\n").expect("write config");
+        crate::config::invalidate_config_cache();
+        let registry = Registry::new(Arc::new(MockProvider) as Arc<dyn Provider>).await;
         let names = registry.tool_names().await;
         assert!(
             !names.iter().any(|name| name == "redo"),
-            "redo must stay unregistered, got {names:?}"
-        );
-        assert!(
-            !crate::config::CORE_TOOLS.contains(&"redo"),
-            "redo must never join CORE_TOOLS"
+            "redo = false leaves it unregistered, got {names:?}"
         );
     });
 }

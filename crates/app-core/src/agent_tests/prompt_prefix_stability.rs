@@ -15,12 +15,17 @@ use super::*;
 use crate::config::CORE_TOOL_PROFILE;
 
 /// The `core`-profile static prompt of a session with no prompt files, as the
-/// `prompt` measurement reported it (ci.yml run 43656656999, both OSes).
-/// Capturing the sources per session moved no byte of it (1,367 B); trimming
-/// the built-in prompt's trailing newline and fitting the listed tools' first
-/// sentences to the index brought it to 1,322 B.
-const CORE_STATIC_BYTES: usize = 1322;
-const CORE_STATIC_SHA256: &str = "380df8ba02b5de4cbdcc3ee203743df5887c004ca9591d3620a53a9593372936";
+/// `prompt` measurement reports it. The eager-set trim that took it to 1,322 B
+/// still applies; opening the default surface added one index row per newly
+/// reachable tool, which is where the current count comes from. `eval` is
+/// pinned to the listed tier here so the count does not depend on the host's
+/// PATH.
+const CORE_STATIC_BYTES: usize = 2524;
+const CORE_STATIC_SHA256: &str = "cc264f973a3b1763586f83372c95774996ef6ffd58ce6f62777204e990eaf186";
+
+/// The pin session names `eval`'s tier, so a host with no Python on PATH and a
+/// host with one produce the same prefix.
+const PIN_CONFIG: &str = "[tools]\nprofile = \"core\"\n\n[tools.load_mode]\neval = \"discoverable\"\n";
 
 /// Tool calls answered before the prefix is compared for the last time.
 const TOOL_ROUND_TRIPS: usize = 3;
@@ -32,7 +37,7 @@ const TOOL_ROUND_TRIPS: usize = 3;
 async fn core_static_prefix_is_pinned_across_tool_round_trips() {
     let _guard = crate::storage::lock_test_env();
     let _counters = crate::perf::lock_perf_counters().await;
-    let _env = ProfileEnv::new(CORE_TOOL_PROFILE, None);
+    let _env = ProfileEnv::new(CORE_TOOL_PROFILE, Some(PIN_CONFIG));
     let mut agent = agent_with_mcp_management_tool().await;
     agent.tool_definitions().await;
 
@@ -358,38 +363,39 @@ async fn restored_session_rebuilds_the_index_cache() {
     assert_eq!(agent.listed_tools_section().as_deref(), Some(before.as_str()));
 }
 
-/// Tools whose first sentence was rewritten to fit the index row.
-const INDEX_FITTED_TOOLS: [&str; 5] = ["ask", "mcp", "monitor", "swarm", "undo"];
+/// Tools whose first sentence is short enough to end the index row.
+const INDEX_SENTENCE_TOOLS: [&str; 5] = ["ask", "mcp", "monitor", "swarm", "undo"];
 
-/// Every index row ends at its tool's first sentence, so no row is cut
-/// mid-word, except `todo`, whose model-visible text is left as written.
-/// The session fixture lists a stand-in `mcp`, so the real tool's row is
-/// rendered from its own description with the helper the index uses.
+/// Every index row is one bounded line: the tool's first sentence when that
+/// fits the cap, and the first 60 characters with an ellipsis when it does not.
+/// `todo` is the row left as written. The session fixture lists a stand-in
+/// `mcp`, so the real tool's row is rendered from its own description with the
+/// helper the index uses.
 #[tokio::test]
-async fn listed_tool_index_rows_end_at_a_sentence() {
+async fn listed_tool_index_rows_are_one_bounded_line() {
     let _guard = crate::storage::lock_test_env();
     let _env = ProfileEnv::new(CORE_TOOL_PROFILE, None);
     let mut agent = agent_with_mcp_management_tool().await;
     agent.tool_definitions().await;
     let rows = agent.listed_tools_rows().expect("a core session lists its tools");
 
-    for name in INDEX_FITTED_TOOLS {
+    for name in INDEX_SENTENCE_TOOLS {
+        let description = rows
+            .iter()
+            .find(|(row, _)| row == name)
+            .map(|(_, description)| description.clone())
+            .unwrap_or_else(|| panic!("{name} is not listed: {rows:?}"));
         assert!(
-            rows.iter().any(|(row, _)| row == name),
-            "{name} is not listed: {rows:?}"
+            !description.ends_with("..."),
+            "{name} is a fitted row, so it must end at its sentence: {description}"
         );
     }
     for (name, description) in &rows {
-        if name == "todo" {
-            assert!(
-                description.ends_with("..."),
-                "todo's row is no longer cut: {description}"
-            );
-        } else {
-            assert!(!description.ends_with("..."), "{name} is clipped: {description}");
-        }
+        assert!(
+            description.chars().count() <= crate::prompt::ONE_LINE_DESCRIPTION_MAX_CHARS,
+            "{name}'s row is over the cap: {description}"
+        );
     }
-
     let manager = crate::mcp::McpManager::with_config(crate::mcp::McpConfig::default());
     let mcp_tool = crate::tool::mcp::McpManagementTool::new(Arc::new(tokio::sync::RwLock::new(manager)));
     let mcp_row = crate::prompt::one_line_description(crate::tool::Tool::description(&mcp_tool));

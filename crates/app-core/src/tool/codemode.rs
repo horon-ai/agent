@@ -26,7 +26,7 @@ const EXCLUDED: &[&str] = &["codemode", "batch"];
 /// Maximum characters of the final report returned to the model.
 const MAX_REPORT_CHARS: usize = 60_000;
 
-const DESCRIPTION: &str = r#"Run a JavaScript program in a sandbox that can call any of your other tools, including MCP tools. Use it to chain, loop over, filter, or parallelize many tool calls in one step, so intermediate results never enter the conversation. Only what you `return` (plus console output) comes back.
+const DESCRIPTION: &str = r#"Run a sandboxed JavaScript program that calls other tools. It can call any of your other tools, including MCP tools. Use it to chain, loop over, filter, or parallelize many tool calls in one step, so intermediate results never enter the conversation. Only what you `return` (plus console output) comes back.
 
 The code is the body of an async function: use `await` and `return`.
 - `await tools.<name>(args)` calls a tool with the same arguments it normally takes. JSON output is parsed into objects, other output is a string. Failures throw an Error.
@@ -84,11 +84,26 @@ impl Host for RegistryHost {
                 other => return Err(format!("arguments must be an object, got {other}")),
             };
             match registry.execute(&name, args, sub_ctx).await {
+                // "Failures throw an Error": a call the tool itself judged
+                // failed, or a command that exited non-zero, is a failure the
+                // script must see, not a string that reads like success.
+                Ok(output) if call_failed(&output) => Err(output.output),
                 Ok(output) => Ok(horon_agent_codemode::decode_tool_output(&output.output)),
                 Err(err) => Err(crate::util::format_error_chain(&err)),
             }
         })
     }
+}
+
+/// Whether a tool call that returned output still failed.
+fn call_failed(output: &ToolOutput) -> bool {
+    output.verdict == Some(horon_agent_tool_types::ToolVerdict::Failed)
+        || output
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.pointer("/exit_status/exit_code"))
+            .and_then(Value::as_i64)
+            .is_some_and(|code| code != 0)
 }
 
 /// Whether the opt-in codemode tool is enabled in config.

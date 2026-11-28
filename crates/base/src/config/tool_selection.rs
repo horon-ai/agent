@@ -43,24 +43,22 @@ impl ToolConfig {
             allowed.insert(PLAN_TOOL.to_string());
         }
 
-        // The IRC tool follows plan mode: it joins every non-empty allow-list
-        // when the switch is on and leaves the empty `none` profile alone.
-        if self.irc
-            && let Some(allowed) = allowed_tools.as_mut()
-            && !allowed.is_empty()
-        {
-            allowed.insert(IRC_TOOL.to_string());
-        }
-
-        // The checkpoint pair follows the same terms: both tools are registered
-        // only when the switch is on, and registration alone does not make them
+        // The IRC tool and the checkpoint pair are part of the open default
+        // surface: they join the `core` profile's list while their switches are
+        // on. A list the operator or an editor profile spelled out (`acp`,
+        // `minimal`, an explicit `enabled`) stays exactly as written, so naming
+        // a tool there is how it joins one. Registration alone never makes them
         // reachable past this allow-list.
-        if self.checkpoint
+        if self.is_core_surface()
             && let Some(allowed) = allowed_tools.as_mut()
-            && !allowed.is_empty()
         {
-            for name in CHECKPOINT_TOOLS {
-                allowed.insert((*name).to_string());
+            if self.irc {
+                allowed.insert(IRC_TOOL.to_string());
+            }
+            if self.checkpoint {
+                for name in CHECKPOINT_TOOLS {
+                    allowed.insert((*name).to_string());
+                }
             }
         }
 
@@ -74,6 +72,19 @@ impl ToolConfig {
             allowed_tools,
             disabled_tools,
         }
+    }
+
+    /// Whether this configuration is the untouched default `core` surface: the
+    /// `core` profile with no list the operator spelled out. Only that surface
+    /// is open; every other list stays exactly as written. `enabled = ["*"]` is
+    /// a list spelled out too: it asks for every tool, not for the core set.
+    pub fn is_core_surface(&self) -> bool {
+        !self.disable_base_tools
+            && self.profile.trim().eq_ignore_ascii_case(super::CORE_TOOL_PROFILE)
+            && self
+                .enabled
+                .iter()
+                .all(|name| super::normalized_tool_name(name).is_empty())
     }
 }
 

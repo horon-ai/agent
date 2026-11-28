@@ -5,27 +5,20 @@ use super::*;
 /// The boundary carries no generated summary, so this text stands in its place
 /// in the provider projection. It has to name `history://current`: the covered
 /// messages are still stored, and that URL is the only way back to them. The
-/// working notes stay in the dynamic system prompt, not here.
-pub(super) const CONTEXT_ROLLOVER_MARKER: &str = "The model rolled this session's context over: earlier turns are out of the active context but stored in full at history://current, and the working notes in the system prompt hold the state to continue from.";
+/// working notes stay in the turn context, not here.
+pub(super) const CONTEXT_ROLLOVER_MARKER: &str = "The model rolled this session's context over: earlier turns are out of the active context but stored in full at history://current, and the working notes in the turn context hold the state to continue from.";
 
 /// Index of the newest user message that carries text and no tool result.
 ///
 /// A rollover boundary starts the active context here. It must never land on a
 /// tool-result message: the call that produced the result would sit before the
 /// boundary, the result would replay as an orphan pair, and the session
-/// projection rejects that transcript.
+/// projection rejects that transcript. A `<system-reminder>` message (the turn
+/// context, a memory summary) is the harness speaking, not a user turn.
 fn last_user_turn_start(messages: &[crate::session::StoredMessage]) -> Option<usize> {
-    messages.iter().rposition(|message| {
-        matches!(message.role, Role::User)
-            && message
-                .content
-                .iter()
-                .any(|block| matches!(block, crate::message::ContentBlock::Text { .. }))
-            && !message
-                .content
-                .iter()
-                .any(|block| matches!(block, crate::message::ContentBlock::ToolResult { .. }))
-    })
+    messages
+        .iter()
+        .rposition(|message| crate::compaction::pruning::is_turn_start_content(&message.role, &message.content))
 }
 
 impl Agent {
@@ -39,8 +32,8 @@ impl Agent {
     /// The rebuild is a compaction boundary over every message before the
     /// newest user turn. No summary is generated: the boundary carries
     /// `CONTEXT_ROLLOVER_MARKER`, or a text summary the session already had
-    /// followed by it, so the next request is the dynamic system prompt (with
-    /// the working notes), that user message, and the marker. Nothing is
+    /// followed by it, so the next request is the marker, that user message,
+    /// and a fresh turn context with the working notes. Nothing is
     /// removed from the stored transcript: `history://current` still serves all
     /// of it.
     ///

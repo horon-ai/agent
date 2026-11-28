@@ -3,8 +3,6 @@ title: "Release installation"
 description: "Release asset verification and install-release, installing from npm, running on a Linux server, and the TLS trust set."
 ---
 
-{/* Generated from docs/release/INSTALL.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 The installers download the release assets and then hand them to the agent binary's `install-release` instead of unpacking the archive themselves. Verification, extraction, the immutable version directory and channel activation all run through one path (`src/cli/install_release.rs`, `crates/app-core/src/update.rs` `install_release_from_directory`).
 
 ```bash
@@ -54,7 +52,7 @@ FreeBSD is the one platform with no interactive client: the release publishes th
 
 ## Package support
 
-A user-installed Rust package (an extension or a plugin) runs as a child process of the agent, so a platform is supported only where the package was installed, called and removed. The `Package compat` workflow (`.github/workflows/package-compat.yml`) builds the agent binary and the worked example `examples/packages/example` on a native runner for each target below, then runs `cargo test --locked --test package_end_to_end` against them. The report covers both kinds: the install, a tool call from a later turn, a plugin resource call, a cancelled call, a replacement, removal with new calls refused, every descendant process reaped, a refused wrong target and a refused corrupted copy.
+A user-installed Rust package (an extension or a plugin) runs as a child process of the agent, so a platform is supported only where the package was installed, called and removed. The `Package compat` workflow (`.github/workflows/package-compat.yml`) builds the agent binary and the worked example `tests/fixtures/package-example` on a native runner for each target below, then runs `cargo test --locked --test package_end_to_end` against them. The report covers both kinds: the install, a tool call from a later turn, a plugin resource call, a cancelled call, a replacement, removal with new calls refused, every descendant process reaped, a refused wrong target and a refused corrupted copy.
 
 Only a target whose native run passed every step says `Yes` here. A target whose run fails stays in the table as `No` until it passes: the six rows are the complete statement of support, and the checker refuses a table that omits one. A `No` row is not a passing state and does not make the workflow green; a red run is the warning to fix that target, and the row changes to `Yes` in a follow-up once the run passes.
 
@@ -69,7 +67,7 @@ A log from a cross-compiled build is not execution evidence: a report whose `cro
 | `aarch64-pc-windows-msvc` | Windows on arm64 | Yes |
 | `x86_64-pc-windows-msvc` | Windows on x86-64 | Yes |
 
-`scripts/ci/package_compat.py docs-claims` reads this table inside the `Package support matrix` (`support-matrix`) job after the six native targets run and fails when a row says `Yes` for a target that has no passing report, so a claim here can only follow a green native run. On pull requests and pushes that edit only prose in `docs/release/INSTALL.md` or `docs/release/INSTALL.ko.md` without changing the advertised target table, `Check if install claims changed` verifies the table is unchanged and skips rebuilding the six native targets as well as `support-matrix`, while `Documentation Checks` still validates table consistency (`scripts/ci/test_docs_install_claims.py`). A pull request is compared with its base, and a push with the head of the last successful push run of `Package compat` on the same branch, so the range of a cancelled or failed run is checked again by the next one. A branch with no successful run, a lookup or diff failure, and a manual dispatch always run the matrix. FreeBSD and the other platforms have no runner in that workflow, so they are not listed and this page claims no package support there. The package format and the six declaration targets are described in [`../runtime/PACKAGES.md`](/reference/runtime/packages).
+`scripts/ci/package_compat.py docs-claims` reads this table inside the `Package support matrix` (`support-matrix`) job after the six native targets run and fails when a row says `Yes` for a target that has no passing report, so a claim here can only follow a green native run. On pull requests and pushes that edit only prose in `packages/docs-site/reference/release/install.mdx` or `packages/docs-site/ko/reference/release/install.mdx` without changing the advertised target table, `Check if install claims changed` verifies the table is unchanged and skips rebuilding the six native targets as well as `support-matrix`, while `Documentation Checks` still validates table consistency (`scripts/ci/test_docs_install_claims.py`). A pull request is compared with its base, and a push with the head of the last successful push run of `Package compat` on the same branch, so the range of a cancelled or failed run is checked again by the next one. A branch with no successful run, a lookup or diff failure, and a manual dispatch always run the matrix. FreeBSD and the other platforms have no runner in that workflow, so they are not listed and this page claims no package support there. The package format and the six declaration targets are described in [`../runtime/PACKAGES.md`](/reference/runtime/packages).
 
 ## How the install scripts use it
 
@@ -95,11 +93,9 @@ The Windows install locations and signing procedure are in [`WINDOWS.md`](/refer
 - A damaged entry, an entry this release does not list, or a cache that cannot be written falls back to the download path. The cache never fails an install.
 - `HORON_AGENT_NO_DOWNLOAD_CACHE=1` disables the cache for one run. `rm -rf <cache root>/horon-agent` removes it; the immutable version store, the launcher and uninstall do not depend on it.
 
-## Installing from npm (not published yet)
+## Installing from npm
 
-The npm distribution is built and tested, but nothing has been published: the registry holds only the `0.0.0` placeholder packages that reserve the seven names, and those carry no binaries, so `npm i -g @horon-ai/horon` installs a launcher that cannot find a runtime. Use the installers above, the container image, or a source checkout until publishing is enabled.
-
-When it is, `@horon-ai/horon` installs the same two binaries without a release download: one small launcher and one platform package pinned to the same version, chosen through `optionalDependencies`, so a global install fetches only the one that matches the machine.
+Each release is published to npm as `@horon-ai/horon` and six platform packages, starting with `v0.1.16`. `@horon-ai/horon` installs the same two binaries without a release download: one small launcher and one platform package pinned to the same version, chosen through `optionalDependencies`, so a global install fetches only the one that matches the machine.
 
 ```bash
 npm i -g @horon-ai/horon
@@ -184,7 +180,7 @@ The shell installer verifies the checksum and checks every member name before pr
 
 `scripts/ci/check_linux_bare_runtime.sh <binary>` runs the binary in `debian:trixie-slim`. It deletes the OpenSSL libraries and the CA store inside the container and checks that `ldd` lists only the allowed glibc family and libgcc entries. It then runs `--version` and one `run` turn against a mock provider. The Linux entry of the CI `build` job runs this script after the release-profile build. The same command can run on a developer machine that has Docker.
 
-On pull requests, `.github/workflows/ci.yml` scopes crate compilation (`scripts/ci/workspace_impact.py`), TUI PTY smoke (`tui_smoke`), OS runners (running `ubuntu-latest` and the Windows cross-checks for portable Rust edits, adding `macos-latest` and `windows-build-test` when platform code, shared Linux-macOS `#[path]` sources, manifests, lockfiles or `ci:all-os` are present), and attach/detach soak length (`HORON_AGENT_SOAK_CYCLES=20`), while documentation-only pull requests (the generated `packages/docs-site/` pages count as documentation) run only `Documentation Checks`, the embedded `horon_agent_docs` corpus test and, for site pages, `Documentation Site`, and workflow-only pull requests skip Rust builds altogether while satisfying `CI Required` and `Structural performance required`. Pushes to `dev` that change more than documentation, and every push to `main`, run the full 3-OS suite, the 200-cycle soak, and every mandatory release job verified by `scripts/release/check_ci.py`. On `dev` a newer push waits for the running CI instead of cancelling it, so the next push is compared with that run's head.
+On pull requests, `.github/workflows/ci.yml` scopes crate compilation (`scripts/ci/workspace_impact.py`), TUI PTY smoke (`tui_smoke`), OS runners (running `ubuntu-latest` and the Windows cross-checks for portable Rust edits, adding `macos-latest` and `windows-build-test` when platform code, shared Linux-macOS `#[path]` sources, manifests, lockfiles or `ci:all-os` are present), and attach/detach soak length (`HORON_AGENT_SOAK_CYCLES=20`), while documentation-only pull requests (`packages/docs-site/` pages count as documentation) run only `Documentation Checks`, the embedded `horon_agent_docs` corpus test and, for site pages, `Documentation Site`, and workflow-only pull requests skip Rust builds altogether while satisfying `CI Required` and `Structural performance required`. Pushes to `dev` that change more than documentation, and every push to `main`, run the full 3-OS suite, the 200-cycle soak, and every mandatory release job verified by `scripts/release/check_ci.py`. On `dev` a newer push waits for the running CI instead of cancelling it, so the next push is compared with that run's head.
 
 A release pull request (base `main`) whose head is the head of the last successful `dev` push run of the same workflow, and whose merge commit differs from that head only in documentation, runs only the documentation gates: that push run already ran every gate on the same code. The merge commit is compared rather than `main`'s history, so a change `main` received by cherry-pick does not count. The push to `main` after the merge still runs everything.
 
@@ -202,6 +198,8 @@ A release pull request (base `main`) whose head is the head of the last successf
 
 `prepare_source.py` allows a build only when the tag shares MAJOR.MINOR with `Cargo.toml` and its patch is at least that value. A new MINOR or MAJOR needs only the root version in `Cargo.toml` and `Cargo.lock` bumped and merged to main. With the repository variable `RELEASE_AUTO` set to `false` no tag is created. A manual run of `release-tag.yml` reports the tag it would create and creates nothing.
 
+A release tag may also carry a semver prerelease suffix (`v0.2.0-alpha`, `v0.2.0-alpha.1`), which publishes a GitHub prerelease instead of a release. `prepare_source.py` accepts the next minor of the `Cargo.toml` major at patch 0 for a prerelease tag, so `v0.2.0-alpha` can be cut from a commit that still reads `0.1.x`; every other line change still needs the root version bumped first.
+
 ### Rerunning a release
 
 A published tag is never moved. To rebuild a release that stopped, dispatch the reviewed workflow from `dev` with the existing tag; the checkout is detached at that tag's commit and `prepare_source.py` refuses a mismatched tree, while `check_ci.py` still requires the successful push CI run for that exact commit.
@@ -211,6 +209,19 @@ gh workflow run release.yml --ref dev -f tag=vX.Y.Z
 ```
 
 Every asset is uploaded with `--clobber`, so a platform that failed is replaced and the ones that succeeded stay. The release remains a draft until the full asset set exists. The container image has its own path that touches neither the tag nor the release: `gh workflow run release-tag.yml --ref dev -f republish_container=vX.Y.Z` verifies the tag, its exact-commit CI and the published assets, then rebuilds and pushes the image.
+
+### Publishing a prerelease
+
+A prerelease tag reaches no automatic path: `next_version.py` ignores every tag with a suffix, so `release-tag.yml` never creates one, and the tag has to be made by hand on a commit whose CI push run is green. The release run then publishes a GitHub prerelease that never becomes `Latest`, so `/releases/latest`, the installers and `horon-agent update` keep serving the last stable release.
+
+```bash
+git tag v0.2.0-alpha <commit>
+git push origin v0.2.0-alpha
+gh release create v0.2.0-alpha --draft --prerelease --title v0.2.0-alpha --notes "Prerelease"
+gh workflow run release.yml --ref dev -f tag=v0.2.0-alpha
+```
+
+The draft is required because `prepare_source.py --check-public-state` refuses a dispatch that has no existing draft. The final step publishes with `--prerelease --latest=false`, leaving the release out of `Latest`, and the "close issues" step is skipped so no issue claims `horon-agent update` delivers the prerelease. The npm packages of a prerelease go out under their own dist-tag (`alpha` for `v0.2.0-alpha*`) and never move `latest`. Later alphas of the same series only need a new tag on a green commit and the same sequence.
 
 The update check only updates when the release version is higher than the current version. An installation built from 0.98.x therefore does not treat a 0.1.x release as newer. Such an installation is reinstalled once with `scripts/install/install.sh`.
 

@@ -1,6 +1,6 @@
 use super::{
-    ApprovalMode, AskPolicy, BashInterceptorMode, BashPatternApproval, BashPatternRule, BashPtyMode, CORE_TOOL_PROFILE,
-    Config, DisplayConfig, ForeignRulesMode, HookCommands, LoadMode, McpToolsMode, ProviderConfig, SecretsMode,
+    ApprovalMode, AskPolicy, BashInterceptorMode, BashPatternApproval, BashPatternRule, BashPtyMode, Config,
+    DisplayConfig, ForeignRulesMode, HookCommands, LoadMode, McpToolsMode, ProviderConfig, SecretsMode,
     StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, ToolConfig, TurnRecoveryMode,
     config_env_fingerprint, populate_context_limits_from_config_ref,
 };
@@ -237,15 +237,15 @@ fn new_feature_and_tool_toggles_default_and_parse() {
     assert!(!defaults.features.stream_rules);
     assert!(!defaults.features.repeat_guard);
     assert_eq!(defaults.features.turn_recovery, TurnRecoveryMode::Conservative);
-    assert!(!defaults.tools.redo);
-    assert!(!defaults.tools.hashline_edit);
-    assert!(!defaults.tools.ast_tools);
+    assert!(defaults.tools.redo);
+    assert!(defaults.tools.hashline_edit);
+    assert!(defaults.tools.ast_tools);
     assert!(!defaults.tools.read_summary);
     assert!(!defaults.tools.edit_fuzzy);
-    assert!(!defaults.tools.managed_skills);
-    assert!(!defaults.tools.context_notes);
+    assert!(defaults.tools.managed_skills);
+    assert!(defaults.tools.context_notes);
     assert!(defaults.tools.block_auto_generated);
-    assert!(!defaults.tools.lsp);
+    assert!(defaults.tools.lsp);
     assert_eq!(defaults.tools.bash_pty, BashPtyMode::Auto);
     assert!(defaults.tools.bash_non_interactive_env);
     assert!(!defaults.tools.bash_minimizer);
@@ -757,7 +757,8 @@ fn tool_config_acp_profile_allows_core_coding_plus_batch() {
 
 /// The editor's surface is exactly this list: a tool that silently joins it
 /// widens what the editor's sessions can do, and one that drops out breaks the
-/// plan and question surfaces the client renders.
+/// plan and question surfaces the client renders. The open default surface,
+/// irc and the checkpoint pair included, belongs to `core` and never joins it.
 #[test]
 fn acp_profile_is_exact_twelve() {
     let cfg = ToolConfig {
@@ -873,61 +874,6 @@ fn tool_config_explicit_enabled_and_disabled_lists_compose() {
 }
 
 #[test]
-fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
-    let cfg = ToolConfig {
-        profile: CORE_TOOL_PROFILE.to_string(),
-        ..ToolConfig::default()
-    };
-    // Default ambient switches, not a developer's `~/.horon`: plan mode,
-    // clientless approvals, IRC and checkpoints each join a restricted list.
-    let allowed = cfg
-        .selection_with_ambient(&crate::config::AmbientConfig::default())
-        .allowed_tools
-        .expect("core profile is an allow-list");
-
-    // The kept set: file, shell, search, web, skill, mcp, monitor, undo, ask.
-    for kept in [
-        "bash",
-        "read",
-        "write",
-        "edit",
-        "replace",
-        "apply_patch",
-        "undo",
-        "ask",
-        "agentgrep",
-        "ls",
-        "webfetch",
-        "websearch",
-        "skill_manage",
-        "mcp",
-        "monitor",
-        "todo",
-        "session_search",
-        "swarm",
-    ] {
-        assert!(allowed.contains(kept), "core profile must keep {kept}");
-    }
-    assert!(
-        allowed.contains("skill_manage") && allowed.contains("mcp"),
-        "core profile must keep the skill and mcp tools registered"
-    );
-
-    // Tools outside `CORE_TOOLS` stay off under the default profile.
-    for off in ["batch", "bg", "memory", "irc", "schedule", "conversation_search"] {
-        assert!(!allowed.contains(off), "core profile must exclude {off}");
-    }
-
-    // The kept set plus the dispatcher, so a stray addition cannot widen the
-    // default silently.
-    assert_eq!(
-        allowed.len(),
-        crate::config::CORE_TOOLS.len() + 1,
-        "core profile is the kept set plus the toolbox dispatcher"
-    );
-}
-
-#[test]
 fn tool_config_none_profile_disables_all_tools() {
     let cfg = ToolConfig {
         profile: "none".to_string(),
@@ -991,15 +937,19 @@ fn test_generated_default_config_has_expected_user_defaults() {
         "crash_bundles = true",
         "stream_rules = false",
         "turn_recovery = \"conservative\"",
-        "redo = false",
-        "hashline_edit = false",
-        "ast_tools = false",
+        "redo = true",
+        "hashline_edit = true",
+        "ast_tools = true",
         "read_summary = false",
         "edit_fuzzy = false",
-        "managed_skills = false",
-        "context_notes = false",
+        "managed_skills = true",
+        "context_notes = true",
         "block_auto_generated = true",
-        "lsp = false",
+        "lsp = true",
+        "codemode = true",
+        "eval = true",
+        "checkpoint = true",
+        "irc = true",
         "bash_pty = \"auto\"",
         "ask_policy = \"recommended\"",
         "plan_mode = false",
@@ -1580,64 +1530,6 @@ fn migrate_legacy_swarm_spawn_mode_noops_without_visible_value() {
     assert!(content.contains("swarm_spawn_mode = \"headless\""));
 
     restore_env_var("HORON_HOME", prev_home);
-}
-
-#[test]
-fn sponsors_optout_survives_config_save_and_reload() {
-    let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_HOME");
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_HOME", dir.path());
-    Config::invalidate_cache();
-
-    let path = Config::path().expect("config path");
-    for endpoint in [
-        None,
-        Some("https://api.horon-agent.sh/v1/discovery"),
-        Some("https://api.solosystems.dev/v1/discovery"),
-        Some("https://api.horon-agent.sh/v1/discovery/"),
-        Some("https://discovery.internal/v1"),
-    ] {
-        let mut raw = String::from("[sponsors]\nenabled = false\n");
-        if let Some(endpoint) = endpoint {
-            raw.push_str(&format!("endpoint = {endpoint:?}\n"));
-        }
-        std::fs::write(&path, &raw).expect("write opt-out");
-        let expected_endpoint = endpoint.unwrap_or("https://api.horon-agent.sh/v1/discovery");
-
-        for round in 0..3 {
-            let loaded = Config::load();
-            assert!(
-                !loaded.sponsors.enabled,
-                "explicit opt-out must survive load {round}: {raw}"
-            );
-            assert_eq!(loaded.sponsors.endpoint, expected_endpoint);
-            loaded.save().expect("save config");
-
-            // Exercise the strict read-modify-write path used by preferences too.
-            Config::set_default_model_only(Some("test-model")).expect("update preference");
-            let reloaded = Config::load_strict().expect("reload config");
-            assert!(!reloaded.sponsors.enabled, "opt-out lost on round {round}: {raw}");
-            assert_eq!(reloaded.sponsors.endpoint, expected_endpoint);
-            assert_eq!(reloaded.provider.default_model.as_deref(), Some("test-model"));
-            let saved = std::fs::read_to_string(&path).expect("read saved config");
-            let saved: toml::Value = toml::from_str(&saved).expect("parse saved config");
-            assert_eq!(saved["sponsors"]["enabled"].as_bool(), Some(false));
-        }
-    }
-
-    restore_env_var("HORON_HOME", prev_home);
-    Config::invalidate_cache();
-}
-
-#[test]
-fn default_sponsors_section_is_not_written_back() {
-    let config = Config::default();
-    let rendered = toml::to_string_pretty(&config).expect("serialize");
-    assert!(
-        !rendered.contains("[sponsors]"),
-        "default discovery settings must not be baked into config.toml"
-    );
 }
 
 #[test]

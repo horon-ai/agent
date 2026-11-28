@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Mirror `docs/` into the Mintlify project `packages/docs-site` as MDX.
+"""Generate the documentation-site pages whose source lives outside the site.
 
-`docs/` is the source of truth: it is compiled into the binary and every page
-has a Korean pair. The Mintlify site cannot read those files as they are, so
-this script writes an MDX copy of each page under `reference/` and the SVG files
-they show under `images/reference/`, and checks that `docs.json` lists exactly
-the pages it wrote. Nothing generated is edited by hand.
+The developer reference under `packages/docs-site/reference/` (and its Korean
+pair under `ko/reference/`) is written in place as MDX; nothing generates it.
+Four pages are the exception, because their text is maintained beside the code
+they describe: `PHILOSOPHY.md` (with its Korean pair) and the READMEs of the
+TypeScript SDK, the Python SDK and the npm launcher. This script writes their
+MDX copies and checks that `docs.json` lists each of them.
 
-    python3 scripts/ci/sync_docs_site.py           # rewrite the generated files
+    python3 scripts/ci/sync_docs_site.py           # rewrite the generated pages
     python3 scripts/ci/sync_docs_site.py --check   # exit 1 when they are stale
 
-What changes between a source page and its copy:
+What changes between a source file and its page:
 
 * the `# Title` line and the `Language:` switch line move into the front matter
   and the site's language switcher;
-* relative links to other docs become site routes, links to other repository
-  files become GitHub links, and image paths point at `images/reference/`;
+* links to site pages (`packages/docs-site/**/*.mdx`) and to the other generated
+  pages become site routes, links to other repository files become GitHub links;
 * MDX reads `{`, `}` and `<name` outside code as JSX, so those are escaped there
   (code spans and fences are left alone);
 * HTML comments, which MDX rejects, are dropped, and `<https://...>` autolinks
@@ -30,15 +31,12 @@ import argparse
 import functools
 import json
 import re
-import shutil
 import sys
 from pathlib import Path, PurePosixPath
 
 REPO = Path(__file__).resolve().parents[2]
-DOCS = REPO / "docs"
 SITE = REPO / "packages" / "docs-site"
 REFERENCE = "reference"
-IMAGES = "images/reference"
 GITHUB_BLOB = "https://github.com/horon-ai/agent/blob/dev/"
 
 # Language code -> (path prefix inside the site, source suffix, language line).
@@ -47,10 +45,10 @@ LANGUAGES = {
     "ko": ("ko/", ".ko.md", re.compile(r"^언어:\s")),
 }
 
-# Pages whose source is not under `docs/`, keyed by their virtual path under
-# `docs/` (which fixes the route) and valued by the English source in the
-# repository. A Korean pair beside the source (`PHILOSOPHY.ko.md`) is used when
-# it exists; a page with none appears in the English tab only.
+# Generated pages, keyed by their path under `reference/` (which fixes the route)
+# and valued by the English source in the repository. A Korean pair beside the
+# source (`PHILOSOPHY.ko.md`) is used when it exists; a page with none appears in
+# the English tab only.
 EXTRA_SOURCES = {
     "philosophy.md": "PHILOSOPHY.md",
     "sdk/typescript.md": "packages/sdk/typescript/README.md",
@@ -61,14 +59,6 @@ EXTRA_SOURCES = {
 # Sidebar labels for pages whose title is too long for a sidebar. Keyed by the
 # source path under `docs/`; a page not listed uses its title.
 SIDEBAR_TITLES = {
-    "README.md": "Overview",
-    "diagram/README.md": "Diagrams",
-    "architecture/CRATES.md": "Crates",
-    "performance/RESULTS.md": "Measured results",
-    "performance/BENCHMARK.md": "Benchmarks",
-    "performance/MEMORY.md": "Memory budgets",
-    "runtime/SWARM_TASK_GRAPH.md": "Swarm task graph",
-    "runtime/TOOL_SCHEDULING.md": "Tool scheduling",
     "philosophy.md": "Philosophy",
     "sdk/typescript.md": "TypeScript SDK",
     "sdk/python.md": "Python SDK",
@@ -78,43 +68,13 @@ SIDEBAR_TITLES = {
 # Descriptions for pages whose first paragraph does not read as one. A page not
 # listed uses its first prose paragraph, cut at a sentence end.
 DESCRIPTIONS = {
-    "README.md": "How the reference documentation is organized, the fixed requirements, and the rules for keeping it current.",
-    "architecture/CRATES.md": "Crate ownership boundaries, platform adapters, storage durability and the TLS trust set.",
-    "architecture/SERVER.md": "The daemon, its sessions and sockets, and how clients attach to it.",
-    "diagram/README.md": "Eight diagrams of the code: system overview, run modes, turn lifecycle, provider wires, ACP negotiation, session storage, tool loading and the release flow.",
-    "performance/BENCHMARK.md": "The measurement standard, per-OS benchmarks, the structural gate, A/B measurement, and the skill and MCP config loading comparison.",
-    "performance/MEMORY.md": "Memory regression budgets, idle session derived-cache release, and the incident response procedure.",
-    "performance/RESULTS.md": "Measured results, how they were taken, and the limits of what they show.",
-    "protocol/HARNESS_API.md": "Harness API credential setup and the request and event surface that SDK and desktop clients use.",
-    "protocol/SESSION_STORE.md": "The session event log format, its delivery contract, the writer pool and the durable runtime journal.",
-    "release/INSTALL.md": "Release asset verification and install-release, installing from npm, running on a Linux server, and the TLS trust set.",
-    "release/NPM.md": "The npm packages of the CLI: installing and running them, versioning, the publish workflow and provenance.",
-    "release/WINDOWS.md": "Windows build, native named pipes, process management, PowerShell installation and signing.",
-    "runtime/IRC.md": "The inter-agent IRC mailbox bus: the irc tool, configuration and its performance gate.",
-    "runtime/PROMPT.md": "How the system prompt is assembled, where skills come from and how they are invoked, and how tokens are estimated.",
-    "runtime/SWARM_TASK_GRAPH.md": "The swarm task DAG design, a feature that is off by default, and the rationale of the horon-agent-plan crate.",
-    "runtime/TOOLS.md": "Tool loading tiers, effect and approval tiers, edit safety, skill and memory reads, MCP config sources and large-output handling.",
-    "runtime/TOOL_SCHEDULING.md": "How a message's tool calls are grouped and run, and how repeated calls are stopped.",
-    "runtime/TURNS.md": "Turn recovery, mid-run message insertion, the prewalk handoff, goal continuation, runtime commands and --resume.",
 }
 
 SIDEBAR_TITLES_KO = {
-    "README.md": "개요",
-    "diagram/README.md": "다이어그램",
-    "architecture/CRATES.md": "크레이트",
-    "performance/RESULTS.md": "측정 결과",
-    "performance/BENCHMARK.md": "성능 측정",
-    "performance/MEMORY.md": "메모리 예산",
-    "runtime/SWARM_TASK_GRAPH.md": "Swarm 태스크 그래프",
-    "runtime/TOOL_SCHEDULING.md": "도구 스케줄링",
     "philosophy.md": "철학",
 }
 
 DESCRIPTIONS_KO = {
-    "README.md": "참조 문서가 어떻게 구성되어 있는지, 고정 요구사항, 문서를 최신으로 유지하는 규칙을 설명한다.",
-    "diagram/README.md": "코드를 그린 다이어그램 여덟 장: 시스템 개요, 실행 모드, 턴 생명주기, 프로바이더 와이어, ACP 협상, 세션 저장, 도구 로딩, 릴리스 흐름.",
-    "performance/RESULTS.md": "측정 결과와 측정 방법, 그 결과가 보여 주는 것의 한계를 기록한다.",
-    "runtime/SWARM_TASK_GRAPH.md": "Swarm 태스크 DAG 설계. 기본으로 꺼져 있는 기능이며 horon-agent-plan 크레이트의 설계 근거를 담는다.",
 }
 
 SIDEBAR_BY_LANG = {"en": SIDEBAR_TITLES, "ko": SIDEBAR_TITLES_KO}
@@ -135,26 +95,13 @@ BLOCK_TAG = re.compile(r"^(?:</?(?:details|summary)(?:\s[^<>]*)?>|<summary>[^<>]
 
 
 def source_pages() -> list[PurePosixPath]:
-    """English pages as virtual paths under `docs/`, in a stable order."""
-    docs = (
-        PurePosixPath(path.relative_to(DOCS).as_posix())
-        for path in DOCS.rglob("*.md")
-        if not path.name.endswith(".ko.md")
-    )
-    return sorted([*docs, *(PurePosixPath(key) for key in EXTRA_SOURCES)])
-
-
-def source_for(page: PurePosixPath, lang: str) -> PurePosixPath:
-    suffix = LANGUAGES[lang][1]
-    return page if suffix == ".md" else page.with_name(page.stem + suffix)
+    """Generated pages as paths under `reference/`, in a stable order."""
+    return sorted(PurePosixPath(key) for key in EXTRA_SOURCES)
 
 
 def repo_source(page: PurePosixPath, lang: str) -> PurePosixPath | None:
     """Repository path of the page's source in `lang`, or None when it has none."""
-    extra = EXTRA_SOURCES.get(page.as_posix())
-    if extra is None:
-        return PurePosixPath("docs") / source_for(page, lang)
-    path = PurePosixPath(extra)
+    path = PurePosixPath(EXTRA_SOURCES[page.as_posix()])
     if lang != "en":
         path = path.with_name(path.stem + LANGUAGES[lang][1])
     return path if (REPO / path).is_file() else None
@@ -184,10 +131,6 @@ def site_url(route_path: str, lang: str) -> str:
 
 def mdx_path(page: PurePosixPath, lang: str) -> Path:
     return SITE / (LANGUAGES[lang][0] + route(page) + ".mdx")
-
-
-def image_url(rel: PurePosixPath) -> str:
-    return f"/{IMAGES}/{rel.as_posix()}"
 
 
 @functools.lru_cache(maxsize=None)
@@ -235,14 +178,11 @@ def rewrite_target(target: str, origin: PurePosixPath, pages: set[PurePosixPath]
             resolved = resolved / part
     exists = (REPO / resolved).is_file()
     anchor = mapped_anchor(fragment, resolved) if exists else (f"#{fragment}" if fragment else "")
+    site_parts = SITE.relative_to(REPO).parts
+    if resolved.parts[: len(site_parts)] == site_parts and resolved.suffix == ".mdx":
+        # A hand-written site page: its route is its path inside the site.
+        return "/" + PurePosixPath(*resolved.parts[len(site_parts):]).with_suffix("").as_posix() + anchor
     page = extra_page_for(resolved)
-    if page is None and resolved.parts[:1] == ("docs",):
-        inside = PurePosixPath(*resolved.parts[1:])
-        if inside.suffix == ".svg" and exists:
-            return image_url(inside) + anchor
-        page = inside
-        if inside.name.endswith(".ko.md"):
-            page = inside.with_name(inside.name[: -len(".ko.md")] + ".md")
     if page is not None and page in pages:
         shown = lang if repo_source(page, lang) is not None else "en"
         return site_url(route(page), shown) + anchor
@@ -361,95 +301,75 @@ def convert_page(page: PurePosixPath, lang: str, pages: set[PurePosixPath]) -> s
     return "\n".join([*front, "", note, "", *out]).rstrip() + "\n"
 
 
-def expected_files() -> dict[Path, str | Path]:
-    """Every generated file: MDX pages as text, images as the source path to copy."""
+def expected_files() -> dict[Path, str]:
+    """Every generated page and its MDX text."""
     pages = set(source_pages())
-    files: dict[Path, str | Path] = {}
+    files: dict[Path, str] = {}
     for lang in LANGUAGES:
         for page in sorted(pages):
             if repo_source(page, lang) is not None:
                 files[mdx_path(page, lang)] = convert_page(page, lang, pages)
-    for svg in sorted(DOCS.rglob("*.svg")):
-        files[SITE / IMAGES / svg.relative_to(DOCS).as_posix()] = svg
     return files
 
 
-def generated_roots() -> list[Path]:
-    roots = [SITE / REFERENCE, SITE / IMAGES]
-    roots += [SITE / prefix.rstrip("/") / REFERENCE for prefix, _, _ in LANGUAGES.values() if prefix]
-    return roots
-
-
-def existing_files() -> set[Path]:
-    return {path for root in generated_roots() if root.exists() for path in root.rglob("*") if path.is_file()}
-
-
 def navigation_pages(node) -> list[str]:
-    if isinstance(node, str):
-        return [node]
+    """Every page path listed under a `pages` key of the navigation."""
     if isinstance(node, list):
         return [page for item in node for page in navigation_pages(item)]
     if isinstance(node, dict):
-        return [page for value in node.values() for page in navigation_pages(value)]
+        found: list[str] = []
+        for key, value in node.items():
+            if key == "pages" and isinstance(value, list):
+                found += [item for item in value if isinstance(item, str)]
+                found += [page for item in value if not isinstance(item, str) for page in navigation_pages(item)]
+            elif isinstance(value, (list, dict)):
+                found += navigation_pages(value)
+        return found
     return []
 
 
-def navigation_problems(expected: dict[Path, str | Path]) -> list[str]:
-    listed = {
-        page
-        for page in navigation_pages(json.loads((SITE / "docs.json").read_text(encoding="utf-8"))["navigation"])
-        if "reference/" in page or page.endswith("reference")
-    }
-    wanted = {path.relative_to(SITE).with_suffix("").as_posix() for path in expected if path.suffix == ".mdx"}
+def navigation_problems(expected: dict[Path, str]) -> list[str]:
+    """Generated pages `docs.json` does not list, and listed pages with no file."""
+    listed = set(navigation_pages(json.loads((SITE / "docs.json").read_text(encoding="utf-8"))["navigation"]))
+    wanted = {path.relative_to(SITE).with_suffix("").as_posix() for path in expected}
     problems = [f"docs.json does not list {page}" for page in sorted(wanted - listed)]
-    problems += [f"docs.json lists {page}, which no source page produces" for page in sorted(listed - wanted)]
+    problems += [
+        f"docs.json lists {page}, which has no page file"
+        for page in sorted(listed)
+        if not (SITE / f"{page}.mdx").is_file() and not (SITE / f"{page}.md").is_file()
+    ]
     return problems
-
-
-def current(path: Path) -> bytes | None:
-    return path.read_bytes() if path.is_file() else None
-
-
-def wanted_bytes(value: str | Path) -> bytes:
-    return value.encode("utf-8") if isinstance(value, str) else value.read_bytes()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--check", action="store_true", help="exit 1 instead of rewriting stale files")
+    parser.add_argument("--check", action="store_true", help="exit 1 instead of rewriting stale pages")
     args = parser.parse_args()
 
     expected = expected_files()
-    stale = [path for path, value in expected.items() if current(path) != wanted_bytes(value)]
-    orphans = sorted(existing_files() - set(expected))
+    stale = [
+        path for path, text in expected.items()
+        if not path.is_file() or path.read_text(encoding="utf-8") != text
+    ]
     problems = navigation_problems(expected)
 
     if args.check:
         for path in stale:
             print(f"stale:  {path.relative_to(REPO).as_posix()}")
-        for path in orphans:
-            print(f"orphan: {path.relative_to(REPO).as_posix()}")
         for problem in problems:
             print(f"nav:    {problem}")
-        if stale or orphans or problems:
+        if stale or problems:
             print("run `python3 scripts/ci/sync_docs_site.py` and commit the result", file=sys.stderr)
             return 1
-        print(f"sync_docs_site: {len(expected)} generated files are current")
+        print(f"sync_docs_site: {len(expected)} generated pages are current")
         return 0
 
     for path in stale:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(wanted_bytes(expected[path]))
-    for path in orphans:
-        path.unlink()
-    for root in generated_roots():
-        if root.exists():
-            for folder in sorted((p for p in root.rglob("*") if p.is_dir()), reverse=True):
-                if not any(folder.iterdir()):
-                    shutil.rmtree(folder)
+        path.write_text(expected[path], encoding="utf-8")
     for problem in problems:
         print(f"nav:    {problem}", file=sys.stderr)
-    print(f"sync_docs_site: wrote {len(stale)}, removed {len(orphans)}, {len(expected)} generated files")
+    print(f"sync_docs_site: wrote {len(stale)}, {len(expected)} generated pages")
     return 1 if problems else 0
 
 

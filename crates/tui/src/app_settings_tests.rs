@@ -181,7 +181,7 @@ fn a_saved_status_line_style_reaches_the_drawn_bottom_line() {
     let (text, backgrounds) = drawn_status_row(&mut app);
     let themed = app.theme.status.status_bg;
     assert_ne!(themed, Color::Reset, "the default paints the theme's colour");
-    assert!(text.contains("idle · anthropic/claude-sonnet-4"), "{text:?}");
+    assert!(text.contains("idle · claude-sonnet-4"), "{text:?}");
     assert!(
         backgrounds.iter().all(|background| *background == themed),
         "the theme's colour is not on every cell of the row: {backgrounds:?}"
@@ -195,7 +195,7 @@ fn a_saved_status_line_style_reaches_the_drawn_bottom_line() {
     );
     crate::apply_settings(&mut app, &styled, &mut themes);
     let (text, backgrounds) = drawn_status_row(&mut app);
-    assert!(text.contains("idle | anthropic/claude-sonnet-4"), "{text:?}");
+    assert!(text.contains("idle | claude-sonnet-4"), "{text:?}");
     assert!(!text.contains('·'), "the glyph set's mark survived: {text:?}");
     assert!(
         backgrounds.iter().all(|background| *background == Color::Reset),

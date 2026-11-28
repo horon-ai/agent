@@ -38,7 +38,7 @@ fn irc_switch_on_config() -> &'static str {
 }
 
 fn irc_switch_off_config() -> &'static str {
-    "[tools]\nprofile = \"core\"\n"
+    "[tools]\nprofile = \"core\"\nirc = false\n"
 }
 
 struct RunningDaemon {

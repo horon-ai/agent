@@ -126,6 +126,7 @@ fn build_noted_app(count: usize) -> App {
             content,
             answer: None,
             message_id: Some(format!("msg-{i:04}")),
+            tool: None,
         });
     }
     app.attach_session(
@@ -203,6 +204,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         prompt: None,
         cwd: Some("/Users/alpox/dev/horon-ai/agent"),
         home: Some("/Users/alpox"),
+        tps: None,
         tokens: Some(TokenTotals {
             input: 12_340,
             output: 4_560,
@@ -219,6 +221,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         cost: Some(0.42),
         spinner: None,
         now: None,
+        elapsed_ms: None,
+        branch: None,
     };
     measure("tui_statusline_render_20000", || {
         let mut total = 0usize;

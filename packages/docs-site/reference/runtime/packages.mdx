@@ -3,8 +3,6 @@ title: "Rust packages"
 description: "A user-installed package is one Rust executable plus declarations."
 ---
 
-{/* Generated from docs/runtime/PACKAGES.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 A user-installed package is one Rust executable plus declarations. An extension
 ships `extension.toml`; a plugin ships `plugin.toml` that bundles one
 `extension.toml` with resource files. The host starts the installed executable as
@@ -71,7 +69,7 @@ The program is one handler and one call. `main` reads the package root the host
 passes as its first argument, loads the declaration, checks that the code and the
 declaration name the same surface, and serves stdio. The tool, executable command
 and event observer of the worked example are in
-[src/main.rs](https://github.com/horon-ai/agent/blob/dev/examples/packages/example/src/main.rs):
+[src/main.rs](https://github.com/horon-ai/agent/blob/dev/tests/fixtures/package-example/src/main.rs):
 
 ```rust
 use std::process::ExitCode;
@@ -188,7 +186,7 @@ stage its declaration beside the executable:
 ```sh
 cargo build --locked --release -p horon-package-example --target aarch64-apple-darwin
 mkdir -p package/bin/aarch64-apple-darwin
-cp examples/packages/example/layouts/extension.toml package/
+cp tests/fixtures/package-example/layouts/extension.toml package/
 cp target/aarch64-apple-darwin/release/horon-package-example package/bin/aarch64-apple-darwin/
 ```
 
@@ -198,8 +196,8 @@ under `extension/` and add the plugin declaration and resources:
 ```sh
 mkdir -p plugin
 cp -R package plugin/extension
-cp examples/packages/example/layouts/plugin.toml plugin/
-cp -R examples/packages/example/layouts/resources plugin/
+cp tests/fixtures/package-example/layouts/plugin.toml plugin/
+cp -R tests/fixtures/package-example/layouts/resources plugin/
 ```
 
 The installer verifies every declared target, not only the host's, so a staged
@@ -348,7 +346,7 @@ another source already answers to.
 
 ## The example
 
-`examples/packages/example` is the worked example: a tool (`greet`), an
+`tests/fixtures/package-example` is the worked example: a tool (`greet`), an
 executable command (`hello`), a Markdown command (`greeting`), an observer for
 `turn.start` and `turn.end`, and the plugin resources in both layouts. Its test
 starts the built binary under each layout over real pipes:

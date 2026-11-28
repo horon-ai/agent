@@ -37,7 +37,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag (vMAJOR.MINOR.PATCH)
+        description: Existing release tag (vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-PRERELEASE)
         required: true
         type: string
       package_only:
@@ -89,6 +89,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       tag_sha: ${{ steps.source.outputs.tag_sha }}
+      prerelease: ${{ steps.source.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -106,7 +107,22 @@ jobs:
           RELEASE_PROVENANCE_PATH: ${{ runner.temp }}/release-provenance.json
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag" >&2; exit 1; }
+          # A release tag is vMAJOR.MINOR.PATCH with an optional semver
+          # prerelease suffix. Build metadata stays refused so one tag always
+          # names one artifact set.
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] \
+            || { echo "Invalid release tag" >&2; exit 1; }
+          # Every later step reads this instead of re-parsing the tag: a
+          # prerelease publishes with `--prerelease` and never moves `latest`.
+          # It is a shell variable first because GITHUB_ENV does not reach the
+          # rest of this step.
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
+          fi
+          echo "PRERELEASE=$PRERELEASE" >> "$GITHUB_ENV"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           # package_only builds the triggering commit as a dry run: no tag, no
           # draft release and no exact-commit CI evidence is required, and every
           # release-mutating or signing step in this workflow is skipped.
@@ -171,18 +187,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # The draft carries the prerelease bit from the start, so the
+          # pre-publication verifier sees the flag that matches the tag. A
+          # draft is never `Latest`, so only publication decides that.
+          prerelease=()
+          if [ "$PRERELEASE" = true ]; then
+            prerelease=(--prerelease)
+          fi
           if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             # release.sh can race this job after pushing the tag. If it
             # creates the draft first, verify that release and continue.
             if ! gh release create "${RELEASE_TAG}" \
               --draft \
               --title "${RELEASE_TAG}" \
+              "${prerelease[@]+"${prerelease[@]}"}" \
               --notes-file release_notes.md; then
               sleep 2
               gh release view "${RELEASE_TAG}" >/dev/null
             fi
           fi
-          gh release edit "${RELEASE_TAG}" --notes-file release_notes.md
+          if [ "${#prerelease[@]}" -ne 0 ]; then
+            gh release edit "${RELEASE_TAG}" "${prerelease[@]}" --notes-file release_notes.md
+          else
+            gh release edit "${RELEASE_TAG}" --notes-file release_notes.md
+          fi
 
   build-linux-macos:
     name: Build (${{ matrix.target }})
@@ -690,7 +718,7 @@ jobs:
           $signingRequired = $env:WINDOWS_SIGNING_REQUIRED -eq 'true'
 
           if (-not $configured -and $signingRequired) {
-            Write-Output "::error::WINDOWS_SIGNING_REQUIRED is 'true' but Azure Artifact Signing is not configured. Set AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID secrets and WINDOWS_SIGNING_ENDPOINT, WINDOWS_SIGNING_ACCOUNT, WINDOWS_SIGNING_CERTIFICATE_PROFILE variables, or unset WINDOWS_SIGNING_REQUIRED. See docs/release/WINDOWS.md."
+            Write-Output "::error::WINDOWS_SIGNING_REQUIRED is 'true' but Azure Artifact Signing is not configured. Set AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID secrets and WINDOWS_SIGNING_ENDPOINT, WINDOWS_SIGNING_ACCOUNT, WINDOWS_SIGNING_CERTIFICATE_PROFILE variables, or unset WINDOWS_SIGNING_REQUIRED. See packages/docs-site/reference/release/windows.mdx."
             throw 'Windows code signing is required but its configuration is incomplete.'
           }
           if (-not $configured) {
@@ -1224,13 +1252,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
+          PRERELEASE: ${{ needs.create-release.outputs.prerelease }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = workflow_dispatch ]; then
             python3 "$RUNNER_TEMP/prepare-source.py" --check-public-state "$RELEASE_TAG"
           fi
           if [ "$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)" = "true" ]; then
-            gh release edit "${RELEASE_TAG}" --draft=false --latest
+            if [ "$PRERELEASE" = true ]; then
+              # The REST API rejects `make_latest` on a prerelease, and `Latest`
+              # must stay on the last stable release, so neither flag is
+              # implicit here: `--prerelease --latest=false` is the only
+              # accepted combination.
+              gh release edit "${RELEASE_TAG}" --draft=false --prerelease --latest=false
+            else
+              gh release edit "${RELEASE_TAG}" --draft=false --latest
+            fi
           else
             echo "Release ${RELEASE_TAG} is already public; leaving it public."
           fi
@@ -1290,7 +1327,9 @@ jobs:
           }
 
       - name: Close issues included in the published release
-        if: github.event_name != 'workflow_dispatch'
+        # An alpha does not deliver `horon-agent update`, which is what the
+        # closing comment promises, so issues close only on a stable release.
+        if: github.event_name != 'workflow_dispatch' && needs.create-release.outputs.prerelease != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

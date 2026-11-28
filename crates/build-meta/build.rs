@@ -19,15 +19,17 @@ fn main() {
     let repo_root = repo_root();
 
     let pkg_version = root_package_version(&repo_root).unwrap_or_else(|| "0.0.0".to_string());
-    let base_version = parse_semver(&pkg_version).unwrap_or((0, 0, 0));
-    let build_semver = resolve_build_semver(base_version).unwrap_or_else(|err| {
-        eprintln!("cargo:warning=failed to resolve auto build semver: {err}");
-        pkg_version.clone()
+    let base_version = parse_semver(&pkg_version).unwrap_or(BuildSemver {
+        major: 0,
+        minor: 0,
+        patch: 0,
+        prerelease: None,
     });
-    let (major, minor, patch) = parse_semver(&build_semver).unwrap_or(base_version);
-    let base_semver = format!("{}.{}.{}", base_version.0, base_version.1, base_version.2);
-    let update_semver = if explicit_build_semver_override().is_some() {
-        build_semver.clone()
+    let build_semver = resolve_build_semver(&base_version);
+    let full_semver = build_semver.full();
+    let base_semver = base_version.full();
+    let update_semver = if parse_semver_from_env().is_some() {
+        full_semver.clone()
     } else {
         base_semver.clone()
     };
@@ -108,23 +110,32 @@ fn main() {
         .join("\x1f");
 
     // Build version string:
-    //   Release: v0.2.17 (abc1234)
-    //   Dev:     v0.2.17-dev (abc1234)
-    //   Dirty:   v0.2.17-dev (abc1234, dirty)
+    //   Release:    v0.2.17 (abc1234)
+    //   Prerelease: v0.2.0-alpha.1 (abc1234)
+    //   Dev:        v0.2.17-dev (abc1234)
+    //   Dirty:      v0.2.17-dev (abc1234, dirty)
     let is_release = std::env::var("HORON_AGENT_RELEASE_BUILD").is_ok();
     let version = if is_release {
-        format!("v{}.{}.{} ({})", major, minor, patch, git_hash)
+        format!("v{full_semver} ({git_hash})")
+    } else if build_semver.prerelease.is_some() {
+        // The suffix already names the stage, so `-dev` would invent a version
+        // no tag names (`v0.2.0-alpha-dev`); a dirty tree stays visible.
+        if dirty {
+            format!("v{full_semver} ({git_hash}, dirty)")
+        } else {
+            format!("v{full_semver} ({git_hash})")
+        }
     } else if dirty {
-        format!("v{}.{}.{}-dev ({}, dirty)", major, minor, patch, git_hash)
+        format!("v{full_semver}-dev ({git_hash}, dirty)")
     } else {
-        format!("v{}.{}.{}-dev ({})", major, minor, patch, git_hash)
+        format!("v{full_semver}-dev ({git_hash})")
     };
 
     // Set environment variables for compilation
     println!("cargo:rustc-env=HORON_AGENT_GIT_HASH={}", git_hash);
     println!("cargo:rustc-env=HORON_AGENT_GIT_DATE={}", git_date);
     println!("cargo:rustc-env=HORON_AGENT_VERSION={}", version);
-    println!("cargo:rustc-env=HORON_AGENT_SEMVER={}", build_semver);
+    println!("cargo:rustc-env=HORON_AGENT_SEMVER={}", full_semver);
     println!("cargo:rustc-env=HORON_AGENT_BASE_SEMVER={}", base_semver);
     println!("cargo:rustc-env=HORON_AGENT_UPDATE_SEMVER={}", update_semver);
     println!("cargo:rustc-env=HORON_AGENT_GIT_TAG={}", git_tag);
@@ -221,25 +232,82 @@ fn root_package_version(repo_root: &Path) -> Option<String> {
     None
 }
 
-fn parse_semver(value: &str) -> Option<(u32, u32, u32)> {
+/// A release tag as `MAJOR.MINOR.PATCH` plus an optional prerelease suffix.
+///
+/// The suffix is kept because a release build of `v0.2.0-alpha.1` must report
+/// exactly that: the release workflow, the archive installer and the Windows
+/// installer all compare `--version` against the tag.
+#[derive(Clone)]
+struct BuildSemver {
+    major: u32,
+    minor: u32,
+    patch: u32,
+    prerelease: Option<String>,
+}
+
+impl BuildSemver {
+    /// `MAJOR.MINOR.PATCH`, with `-PRERELEASE` when the tag carries one.
+    fn full(&self) -> String {
+        match &self.prerelease {
+            Some(prerelease) => format!("{}.{}.{}-{}", self.major, self.minor, self.patch, prerelease),
+            None => format!("{}.{}.{}", self.major, self.minor, self.patch),
+        }
+    }
+
+    /// `MAJOR.MINOR.PATCH`, the release line without a prerelease suffix.
+    fn core(&self) -> (u32, u32, u32) {
+        (self.major, self.minor, self.patch)
+    }
+}
+
+/// Parse `[v]MAJOR.MINOR.PATCH[-PRERELEASE]`; build metadata is refused.
+fn parse_semver(value: &str) -> Option<BuildSemver> {
     let trimmed = value.trim().trim_start_matches('v');
-    let mut parts = trimmed.split('.');
+    let (core, prerelease) = match trimmed.split_once('-') {
+        Some((core, prerelease)) => (core, Some(prerelease)),
+        None => (trimmed, None),
+    };
+    // `+build` has no release identity of its own, so it is not a version here.
+    if core.contains('+') || prerelease.is_some_and(|pre| pre.is_empty() || pre.contains('+')) {
+        return None;
+    }
+    if let Some(prerelease) = prerelease {
+        let valid = prerelease
+            .split('.')
+            .all(|identifier| !identifier.is_empty() && identifier.bytes().all(|byte| byte.is_ascii_alphanumeric()));
+        if !valid {
+            return None;
+        }
+    }
+    let mut parts = core.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
     let patch = parts.next()?.parse().ok()?;
-    Some((major, minor, patch))
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(BuildSemver {
+        major,
+        minor,
+        patch,
+        prerelease: prerelease.map(str::to_string),
+    })
 }
 
-fn explicit_build_semver_override() -> Option<String> {
+/// The `HORON_AGENT_BUILD_SEMVER` override CI passes as the release tag.
+///
+/// Parsed rather than copied so a suffix is kept and a malformed value is not
+/// embedded in the binary; the pruning is deliberate, because a bad override
+/// must not silently rename a release.
+fn parse_semver_from_env() -> Option<BuildSemver> {
     std::env::var("HORON_AGENT_BUILD_SEMVER")
         .ok()
-        .map(|value| value.trim().trim_start_matches('v').to_string())
-        .filter(|value| parse_semver(value).is_some())
+        .and_then(|value| parse_semver(&value))
 }
 
-fn resolve_build_semver(base_version: (u32, u32, u32)) -> Result<String, String> {
-    if let Some(explicit) = explicit_build_semver_override() {
-        return Ok(explicit);
+fn resolve_build_semver(base_version: &BuildSemver) -> BuildSemver {
+    if let Some(explicit) = parse_semver_from_env() {
+        return explicit;
     }
 
     // Dev builds derive the patch number deterministically from committed git
@@ -254,9 +322,13 @@ fn resolve_build_semver(base_version: (u32, u32, u32)) -> Result<String, String>
     // turn invalidated `horon-agent-build-meta` and force-recompiled the entire crate
     // graph (base -> app-core -> tui -> cli). Deriving the value deterministically
     // keeps incremental rebuilds incremental.
-    let offset = commits_since_base_tag(base_version).unwrap_or(0);
-    let patch = base_version.2.saturating_add(offset);
-    Ok(format!("{}.{}.{}", base_version.0, base_version.1, patch))
+    let offset = commits_since_base_tag(base_version.core()).unwrap_or(0);
+    BuildSemver {
+        major: base_version.major,
+        minor: base_version.minor,
+        patch: base_version.patch.saturating_add(offset),
+        prerelease: base_version.prerelease.clone(),
+    }
 }
 
 /// Count commits between the base-version tag (`vMAJOR.MINOR.PATCH`) and HEAD.

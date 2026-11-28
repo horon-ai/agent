@@ -142,6 +142,56 @@ async fn ast_edit_guards_generated_files() {
     assert_eq!(std::fs::read_to_string(&file).expect("unchanged"), content);
 }
 
+#[tokio::test]
+async fn ast_grep_matches_metavariables_in_python_and_go() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    seed(dir.path(), "app.py", "def f(a):\n    print(a)\n");
+    seed(
+        dir.path(),
+        "main.go",
+        "package main\n\nfunc f(a int) int {\n\treturn a\n}\n",
+    );
+
+    let output = AstGrepTool::new()
+        .execute(json!({"pattern": "print($A)"}), context(dir.path(), "ast-grep-py"))
+        .await
+        .expect("python search");
+    assert!(output.output.contains("app.py:2-2: print(a)"), "{}", output.output);
+
+    let output = AstGrepTool::new()
+        .execute(json!({"pattern": "return $A"}), context(dir.path(), "ast-grep-go"))
+        .await
+        .expect("go search");
+    assert!(output.output.contains("main.go:4-4: return a"), "{}", output.output);
+}
+
+#[tokio::test]
+async fn ast_edit_keeps_the_statement_terminator() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = seed(
+        dir.path(),
+        "a.ts",
+        "function f(a: number, b: number): number {\n  return a - b;\n}\n",
+    );
+
+    AstEditTool::new()
+        .execute(
+            json!({
+                "ops": [{"pattern": "return a - b;", "rewrite": "return a - b;"}],
+                "paths": ["a.ts"],
+                "expected_replacements": 1
+            }),
+            context(dir.path(), "ast-terminator"),
+        )
+        .await
+        .expect("apply");
+
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("after apply"),
+        "function f(a: number, b: number): number {\n  return a - b;\n}\n"
+    );
+}
+
 struct HomeGuard {
     previous: Option<std::ffi::OsString>,
 }
@@ -190,7 +240,7 @@ impl crate::provider::Provider for MockProvider {
 }
 
 #[test]
-fn ast_tools_stay_off_by_default_and_register_when_the_gate_is_on() {
+fn ast_tools_register_by_default_and_the_gate_removes_them() {
     let _env = crate::storage::lock_test_env();
     let home = tempfile::tempdir().expect("home");
     let _guard = HomeGuard::new(home.path());
@@ -209,8 +259,12 @@ fn ast_tools_stay_off_by_default_and_register_when_the_gate_is_on() {
         .await;
         let names = registry.tool_names().await;
         assert!(
-            !names.iter().any(|name| name == "ast_grep" || name == "ast_edit"),
-            "ast tools must stay unregistered by default, got {names:?}"
+            names.iter().any(|name| name == "ast_grep"),
+            "ast_grep must be registered by default, got {names:?}"
+        );
+        assert!(
+            names.iter().any(|name| name == "ast_edit"),
+            "ast_edit must be registered by default, got {names:?}"
         );
         assert!(!crate::config::CORE_TOOLS.contains(&"ast_grep"));
         assert!(!crate::config::CORE_TOOLS.contains(&"ast_edit"));
@@ -218,7 +272,7 @@ fn ast_tools_stay_off_by_default_and_register_when_the_gate_is_on() {
 
     let path = crate::config::Config::path().expect("config path");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
-    std::fs::write(&path, "[tools]\nast_tools = true\n").expect("write config");
+    std::fs::write(&path, "[tools]\nast_tools = false\n").expect("write config");
     crate::config::Config::invalidate_cache();
 
     runtime().block_on(async {
@@ -228,12 +282,45 @@ fn ast_tools_stay_off_by_default_and_register_when_the_gate_is_on() {
         .await;
         let names = registry.tool_names().await;
         assert!(
-            names.iter().any(|name| name == "ast_grep"),
-            "[tools] ast_tools = true must register ast_grep, got {names:?}"
-        );
-        assert!(
-            names.iter().any(|name| name == "ast_edit"),
-            "[tools] ast_tools = true must register ast_edit, got {names:?}"
+            !names.iter().any(|name| name == "ast_grep" || name == "ast_edit"),
+            "[tools] ast_tools = false must remove both tools, got {names:?}"
         );
     });
+}
+
+#[tokio::test]
+async fn ast_grep_searches_what_paths_names_and_says_where_it_looked() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    seed(dir.path(), "src/a.rs", "fn a() {\n    foo(1);\n}\n");
+    seed(dir.path(), "other/b.rs", "fn b() {\n    foo(2);\n}\n");
+
+    // `paths`, the edit tool's field name, narrows the search instead of
+    // being ignored.
+    let output = AstGrepTool::new()
+        .execute(
+            json!({"pattern": "foo($A)", "paths": ["src"]}),
+            context(dir.path(), "ast-grep-paths"),
+        )
+        .await
+        .expect("search");
+    assert!(output.output.contains("a.rs:2-2: foo(1)"), "{}", output.output);
+    assert!(!output.output.contains("foo(2)"), "{}", output.output);
+
+    let none = AstGrepTool::new()
+        .execute(
+            json!({"pattern": "bar($A)", "path": "src"}),
+            context(dir.path(), "ast-grep-none"),
+        )
+        .await
+        .expect("search");
+    assert!(
+        none.output.starts_with("No matches for `bar($A)` in "),
+        "{}",
+        none.output
+    );
+    assert!(
+        none.output.contains("(1 file(s) of a supported language scanned)"),
+        "{}",
+        none.output
+    );
 }

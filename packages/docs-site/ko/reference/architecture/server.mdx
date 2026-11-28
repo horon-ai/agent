@@ -3,8 +3,6 @@ title: "서버 구조"
 description: "horon agent는 서버 하나, 클라이언트 여럿 구조를 쓴다. 서버 프로세스 하나가 모든 세션과 상태를 관리한다. 클라이언트는 Unix 소켓으로 서버에 붙고 연결이 끊기거나 서버가 다시 읽힌 뒤에도 투명하게 다시 연결한다."
 ---
 
-{/* Generated from docs/architecture/SERVER.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 ## 개요
 
 horon agent는 **서버 하나, 클라이언트 여럿** 구조를 쓴다. 서버 프로세스 하나가 모든 세션과 상태를 관리한다. 클라이언트는 Unix 소켓으로 서버에 붙고 연결이 끊기거나 서버가 다시 읽힌 뒤에도 투명하게 다시 연결한다. 클라이언트는 TypeScript·Rust SDK, ACP로 붙는 에디터, 그리고 이 저장소의 `crates/tui`로 함께 배포되는 `horon-agent-sdk` 기반 터미널 클라이언트 `horon-tui`다. 터미널 클라이언트는 별도 실행 파일이며 `horon-agent` 패키지(에이전트 바이너리)는 이를 링크하지 않는다.

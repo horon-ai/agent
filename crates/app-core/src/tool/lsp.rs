@@ -97,7 +97,7 @@ impl Tool for LspTool {
     }
 
     fn description(&self) -> &str {
-        "Ask the project's language server for diagnostics, definitions, references, hover text, symbols, a rename, or code actions."
+        "Language server queries: diagnostics, references, renames."
     }
 
     fn effects(&self) -> ToolEffects {

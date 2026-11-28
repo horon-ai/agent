@@ -814,7 +814,7 @@ def build_incident_assessment(
         "summary": summary,
         "evidence": evidence,
         "recommended_actions": actions,
-        "runbook": "docs/performance/MEMORY.md",
+        "runbook": "packages/docs-site/reference/performance/memory.mdx",
     }
 
 

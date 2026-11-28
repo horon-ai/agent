@@ -43,7 +43,6 @@ impl SymbolPreset {
                 tool_running: "◐",
                 tool_done: "✓",
                 tool_error: "✕",
-                tool_lead: "›",
                 prompt_marker: "❯",
                 more_below: "↓",
                 separator: "·",
@@ -52,13 +51,13 @@ impl SymbolPreset {
                 bar_full: "█",
                 bar_empty: "░",
                 spinner: &["⠋", "⠙", "⠹", "⠸"],
+                border: Border::ROUNDED,
             },
             Self::Nerd => Symbols {
                 bullet: "\u{f111}",
                 tool_running: "\u{f110}",
                 tool_done: "\u{f00c}",
                 tool_error: "\u{f00d}",
-                tool_lead: "\u{f105}",
                 prompt_marker: "\u{f054}",
                 more_below: "\u{f063}",
                 separator: "\u{e0b1}",
@@ -67,13 +66,13 @@ impl SymbolPreset {
                 bar_full: "\u{2588}",
                 bar_empty: "\u{2591}",
                 spinner: &["\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}"],
+                border: Border::ROUNDED,
             },
             Self::Ascii => Symbols {
                 bullet: "*",
                 tool_running: "~",
                 tool_done: "+",
                 tool_error: "x",
-                tool_lead: ">",
                 prompt_marker: ">",
                 more_below: "v",
                 separator: "|",
@@ -82,6 +81,7 @@ impl SymbolPreset {
                 bar_full: "#",
                 bar_empty: "-",
                 spinner: &["-", "\\", "|", "/"],
+                border: Border::ASCII,
             },
         }
     }
@@ -98,8 +98,6 @@ pub struct Symbols {
     pub tool_done: &'static str,
     /// A tool call that failed.
     pub tool_error: &'static str,
-    /// The mark before a tool call's name.
-    pub tool_lead: &'static str,
     /// The mark before the input line.
     pub prompt_marker: &'static str,
     /// The mark before the count of rows hidden below a held transcript view.
@@ -122,6 +120,55 @@ pub struct Symbols {
     /// tool row waiting on a decision and a turn in flight are two different
     /// things, and the same mark would read as one.
     pub spinner: &'static [&'static str],
+    /// The box a tool call's card is drawn in.
+    pub border: Border,
+}
+
+/// The pieces of a card's box, each one column wide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Border {
+    /// The corner that opens the title row.
+    pub top_left: &'static str,
+    /// The corner that closes the title row.
+    pub top_right: &'static str,
+    /// The corner that opens the closing row.
+    pub bottom_left: &'static str,
+    /// The corner that closes the closing row.
+    pub bottom_right: &'static str,
+    /// The line the top, the bottom and a divider are drawn with.
+    pub horizontal: &'static str,
+    /// The side of every row between the top and the bottom.
+    pub vertical: &'static str,
+    /// Where a divider meets the left side.
+    pub tee_left: &'static str,
+    /// Where a divider meets the right side.
+    pub tee_right: &'static str,
+}
+
+impl Border {
+    /// Box-drawing characters with rounded corners.
+    pub const ROUNDED: Self = Self {
+        top_left: "╭",
+        top_right: "╮",
+        bottom_left: "╰",
+        bottom_right: "╯",
+        horizontal: "─",
+        vertical: "│",
+        tee_left: "├",
+        tee_right: "┤",
+    };
+
+    /// Plain ASCII, for terminals without box-drawing characters.
+    pub const ASCII: Self = Self {
+        top_left: "+",
+        top_right: "+",
+        bottom_left: "+",
+        bottom_right: "+",
+        horizontal: "-",
+        vertical: "|",
+        tee_left: "+",
+        tee_right: "+",
+    };
 }
 
 impl Default for Symbols {

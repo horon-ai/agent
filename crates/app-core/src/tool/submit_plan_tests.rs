@@ -299,11 +299,15 @@ fn plan_tool_joins_allow_list_only_when_enabled() {
             allowed.contains(super::SUBMIT_PLAN_TOOL),
             "plan mode on must join the tool into the allow-list, got {allowed:?}"
         );
-        assert_eq!(
-            allowed.len(),
-            crate::config::CORE_TOOLS.len() + 2,
-            "the plan tool joins the core surface and its dispatcher"
-        );
+        let without = crate::config::ToolConfig {
+            plan_mode: false,
+            ..core.clone()
+        }
+        .selection_with_ambient(&crate::config::AmbientConfig::default())
+        .allowed_tools
+        .expect("core is an allow-list");
+        let joined: Vec<&String> = allowed.difference(&without).collect();
+        assert_eq!(joined, [super::SUBMIT_PLAN_TOOL], "the plan tool is the only addition");
 
         let none = crate::config::ToolConfig {
             profile: "none".to_string(),

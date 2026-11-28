@@ -4,8 +4,6 @@ sidebarTitle: "성능 측정"
 description: "horon의 성능은 세 가지 장치로 본다. 무엇을 묻는지가 서로 다르다."
 ---
 
-{/* Generated from docs/performance/BENCHMARK.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 horon의 성능은 세 가지 장치로 본다. 무엇을 묻는지가 서로 다르다.
 
 | 장치 | 묻는 것 | 언제 도는가 | 실패 조건 | 결과가 남는 곳 |
@@ -98,7 +96,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 세 시나리오를 같은 표의 행으로 각각 잰다.
 
 - **`empty`**: 패키지 영역이 아예 없는 개인 홈이다. 턴은 패키지 파일을 읽지 않고, 디렉터리를 훑지 않고, 영역에 아무것도 쓰지 않고, 자식 프로세스를 띄우지 않는다. 패키지를 설치한 적 없는 모든 사용자가 치르는 경로다.
-- **`installed`**: 예제(`examples/packages/example/layouts`)를 `horon package install`로 설치하고 한 번도 호출하지 않는다. 턴은 선언을 읽고 도구를 목록에 올리며, 모델은 호출 없이 답하므로 아무것도 뜨지 않는다. 이 셀의 선언에서만 예제의 `turn.start`·`turn.end` 구독을 뺀다. 턴을 구독하는 패키지는 그 턴이 *시작*시키므로 그대로 두면 자식 기동을 재게 되고, 이 선언은 실행 중인 자식에게 넘어가지도 않는다.
+- **`installed`**: 예제(`tests/fixtures/package-example/layouts`)를 `horon package install`로 설치하고 한 번도 호출하지 않는다. 턴은 선언을 읽고 도구를 목록에 올리며, 모델은 호출 없이 답하므로 아무것도 뜨지 않는다. 이 셀의 선언에서만 예제의 `turn.start`·`turn.end` 구독을 뺀다. 턴을 구독하는 패키지는 그 턴이 *시작*시키므로 그대로 두면 자식 기동을 재게 되고, 이 선언은 실행 중인 자식에게 넘어가지도 않는다.
 - **`called`**: 같은 설치에서 모델이 `Registry::execute`를 거쳐 실제 `ext__hello__greet` 호출을 한 번 낸다. 이 복사본은 호스트 전용 `[targets]` 줄 말고는 선언을 그대로 유지한다. 작성자 SDK가 코드와 events가 어긋난 선언을 거부하기 때문이다(`SurfaceError::UndeclaredEvent`). 자식이 뜨고 `hello, <nonce>`로 답하며, 그 턴의 관찰도 자식에게 전달되므로 이것도 이 셀의 실제 비용이다. 표본마다 프로세스 하나이므로 자식 재사용 확인은 이 묶음이 아니라 구조 게이트가 맡는다. 호출이 돌아오지 않으면 행의 `last_tool_result`에 호스트가 실제로 답한 내용이 남고 실패 줄에 그대로 보이므로, 거부된 호출을 다시 돌리지 않고 읽을 수 있다.
 
 표본마다 기록하는 값은 턴의 전체 시간, 프로세스 시작부터 첫 모델 요청까지의 시간(모의 서버가 남긴 요청 시각 기준), 프로세스 트리 최대 RSS, 도구 왕복이 실제로 돌아왔는지 여부다. 크기는 절대값이다. 설치 영역의 바이트와 파일 수, 패키지 바이너리, 에이전트 바이너리다. `horon-tui`는 여기서 재지 않는다. 그 묶음은 `tui`다.
@@ -164,7 +162,7 @@ macOS를 포함한 모든 플랫폼에서 위 명령으로 측정을 시작한�
 1. **코드 변경 확인(push 자동 실행).** 직전 측정 커밋(`RESULTS.md`의 `<!-- bench-auto:start commit=... -->`) 이후 `src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, `scripts/perf` 중 하나가 바뀌었는지 본다. 기록이 없거나 이력에 없는 커밋이면 부모 커밋과 비교한다. 바뀐 것이 없으면 끝낸다.
 2. **구조 게이트 대기.** 자동 push 실행은 같은 커밋의 `structural-perf.yml` push 실행이 성공할 때까지 최대 80분 기다린다.
 3. **벤치마크.** `benchmark.yml`을 `ref=main`, `os=all`, `suites=all`로 부른다(수동 `workflow_dispatch`에서는 전달한 `run_id`의 아티팩트를 내려받는다). 세 OS가 따로 돌고, `resolve`가 `horon`에 태그 기반 semver를 각인하는 한편 모든 경쟁 도구(`jcode --per-platform`과 npm `dist-tags.latest`)를 최신 안정 버전으로 해석한다.
-4. **문서 갱신.** OS별 아티팩트를 모두 받아 `scripts/perf/bench_docs.py render`로 `RESULTS.md`, `RESULTS.ko.md`, `README.md`, `README.ko.md`의 생성 구간을 다시 쓰고, `docs/performance/charts`의 차트를 다시 그리며, 브랜치에 `scripts/ci/sync_docs_site.py`가 있으면 같은 문서에서 사이트 미러를 다시 만든다. 그다음 `docs(perf): record benchmark for <sha> [skip ci]` 커밋 하나를 `main`과 `dev`에 push한다. 스크립트 단계는 측정한 커밋에 `scripts/perf/*.py`가 있으면 그 사본을 읽어 렌더링하고, 없으면 체크아웃한 커밋의 사본을 쓴다.
+4. **문서 갱신.** OS별 아티팩트를 모두 받아 `scripts/perf/bench_docs.py render`로 결과 페이지(`packages/docs-site/reference/performance/results.mdx`와 한국어 짝), `README.md`, `README.ko.md`의 생성 구간을 다시 쓰고, `packages/docs-site/images/reference/performance/charts`의 차트를 다시 그린다. 결과 페이지를 아직 `docs/performance/RESULTS.md`에 두는 브랜치(이전하기 전의 `main`)는 그곳에 쓰고 사이트로 복사한다. 그다음 `docs(perf): record benchmark for <sha> [skip ci]` 커밋 하나를 `main`과 `dev`에 push한다. 스크립트 단계는 측정한 커밋에 `scripts/perf/*.py`가 있으면 그 사본을 읽어 렌더링하고, 없으면 체크아웃한 커밋의 사본을 쓴다.
 
 문서 구간에는 OS 요약표(러너, 바이너리, 상태)와 OS별 절이 Linux, macOS, Windows 순서로 들어간다. 실패한 OS는 "일부 실패"로 표시하고 그때까지 잰 값을 남긴다. 결과가 없는 OS도 절을 지우지 않고 "결과 없음"으로 적는다. 구간 밖의 글은 바이트 단위로 그대로 둔다.
 
@@ -220,7 +218,7 @@ jcode 릴리스는 벤치마크 회차마다 한 번 해석한다. `scripts/perf
 | --- | --- |
 | `version_ms` | `--version` 실행 N회(기본 5)의 통계 |
 | `oneshot_ms` | one-shot `run` 질문 1건(기동, `ls` 도구 1회, 최종 응답)의 시간, 그동안의 최대 프로세스 트리 메모리, 도구 왕복 여부 |
-| `oneshot_core` | 같은 one-shot 질문에서 `--tools`를 뺀 실행. 요청이 기본 `core` 표면을 싣는다. 즉시 보내는 도구 7개와 `toolbox`, 시스템 프롬프트의 도구 인덱스다. 행마다 plain one-shot의 home과 작업 폴더를 다시 쓰므로 두 행은 도구 표면만 다르다. JSON `oneshot_core.{ms,peak_rss_bytes,status,error,runs}`이고 실행마다 `oneshot_core.runs[*].request_bytes`가 남는다. 첫 요청이 도구를 하나도 싣지 않은 실행은 시간 없이 `core surface missing`으로 기록한다. core 프로필이 없는 도구(horon과 두 번째 horon 빌드를 뺀 모든 도구)는 `{"skipped": "<label> has no core tool profile"}`을 남긴다. `oneshot_ms` 행은 `RESULTS.md`와 비교할 수 있도록 `--tools bash`를 그대로 쓴다 |
+| `oneshot_core` | 같은 one-shot 질문에서 `--tools`를 뺀 실행. 요청이 기본 `core` 표면을 싣는다. 즉시 보내는 도구 11개와 `toolbox`, 시스템 프롬프트의 도구 인덱스다. 행마다 plain one-shot의 home과 작업 폴더를 다시 쓰므로 두 행은 도구 표면만 다르다. JSON `oneshot_core.{ms,peak_rss_bytes,status,error,runs}`이고 실행마다 `oneshot_core.runs[*].request_bytes`가 남는다. 첫 요청이 도구를 하나도 싣지 않은 실행은 시간 없이 `core surface missing`으로 기록한다. core 프로필이 없는 도구(horon과 두 번째 horon 빌드를 뺀 모든 도구)는 `{"skipped": "<label> has no core tool profile"}`을 남긴다. `oneshot_ms` 행은 `RESULTS.md`와 비교할 수 있도록 `--tools bash`를 그대로 쓴다 |
 | `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. 시간을 재는 실행과 별도로, 같은 횟수만큼 `strace`를 씌운 실행을 더 돌려 센다. 정상 종료했지만 플러시가 없는 경우(`pi --no-session`, `Claude Code -p` 등)는 `null`이 아니라 `0`으로 기록한다. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
 | `fsync_paths` | `--syscalls`를 켰을 때 행마다 one-shot을 한 번 더 돌린다. 시간도 재지 않고 호출 수에도 넣지 않는 이 실행을 `strace -f -y`로 추적해 `fsync`·`fdatasync`마다 그 fd 뒤의 파일이나 폴더 이름을 얻는다. JSON `oneshot.fsync_paths[*].{path,count,fsync,fdatasync}`이고 호출이 많은 순서다. 실행의 임시 루트는 `<root>`로, 세션 폴더 이름(`session_<word>_<millis>_<hex>`)은 `session_<id>`로, UUID와 긴 hex id, 긴 숫자열은 `<id>`로 적어 두 실행과 두 빌드가 같은 묶음으로 나뉜다. `strace`가 이름을 얻지 못한 fd는 `fd:<n>`이다. 묶음 수의 합은 추적한 그 실행이 한 flush 수와 같다. `strace`가 없으면 값은 `{"skipped": "strace unavailable"}`이다 |
 | `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다. 표본마다 그 트리에 살아 있는 프로세스 수도 `idle_process_count`, `post_turn_process_count`로 함께 남긴다 |
@@ -279,7 +277,7 @@ jcode 릴리스는 벤치마크 회차마다 한 번 해석한다. `scripts/perf
 
 | 도구 | 스킬 픽스처 위치와 호출 | MCP 설정 |
 | --- | --- | --- |
-| `horon` | 작업 폴더 `.horon/skills/bench-skill/SKILL.md`를 `read` 도구로 읽음(`file-read`) | `<HORON_HOME>/mcp.json`의 `servers`. 도구 목록이 캐시 때문에 고정이라 서버 도구는 고정 도구 `mcp_call`(`server: bench`, `tool: bench_echo`)로 부른다(`mcp-call`). 이 시나리오만 `HORON_AGENT_RUN_MCP=1` |
+| `horon` | 작업 폴더 `.horon/skills/bench-skill/SKILL.md`를 `read` 도구로 읽음(`file-read`) | `<HORON_HOME>/mcp.json`의 `servers`(이 파일은 Claude Code 키 `mcpServers`도 받는다). 도구 목록이 캐시 때문에 고정이라 서버 도구는 고정 도구 `mcp_call`(`server: bench`, `tool: bench_echo`)로 부른다(`mcp-call`). 이 시나리오만 `HORON_AGENT_RUN_MCP=1` |
 | `jcode` | `<JCODE_HOME>/skills`의 픽스처를 `skill_manage`로 호출(`skill-tool`) | `<JCODE_HOME>/mcp.json`과 작업 폴더 `.jcode/mcp.json`의 `mcpServers`. OpenAI 호환 제공자에는 MCP 도구를 목록에 넣지 않고(`[tools] mcp_tools = "auto"`의 기본 동작) `mcp` 도구의 `action: "call"`, `server: bench`, `tool: bench_echo`로 부른다(`mcp-action`) |
 | `claude_code` | `CLAUDE_CONFIG_DIR/skills`의 픽스처를 `Skill` 도구로 호출(`skill-tool`) | `--mcp-config <파일> --strict-mcp-config`. `--mcp-config` 서버는 기본으로 백그라운드에서 연결되어 첫 요청이 도구를 모른 채 나가므로, 문서가 안내하는 `MCP_CONNECTION_NONBLOCKING=0`으로 시작 때 서버를 기다린다. 도구 검색은 기본값 그대로라 프롬프트가 `mcp__bench__bench_echo`를 지연 도구로 적고, 가짜 모델은 `ToolSearch`(`select:mcp__bench__bench_echo`)로 스키마를 불러온 뒤 도구를 부른다. 그래서 모델 요청이 하나 더 든다 |
 | `codex` | 작업 폴더 `.agents/skills`의 픽스처를 셸 도구로 `cat`(`file-read`). Codex는 이 위치를 프로젝트 스킬로 찾아 프롬프트에 올린다. 샌드박스는 끄지 않고 러너에서 동작하게 맞춘다. Linux 러너는 Codex 문서의 Ubuntu 24.04 절차(bubblewrap 설치, AppArmor `bwrap-userns-restrict` 적재)를 먼저 밟는다. 그러지 않으면 명령마다 `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`로 실패한다. Windows는 모든 Codex 실행에 `-c windows.sandbox="unelevated"`를 준다. 지정이 없으면 새 러너에는 준비된 샌드박스가 없어 `-s read-only` 명령이 `rejected: blocked by policy`로 거부되고, `unelevated`는 관리자 설정 없이 쓰도록 문서가 안내하는 방식이다. 또 Windows의 측정 폴더는 `tempfile.mkdtemp`가 아니라 `os.mkdir`로 만들어 `%TEMP%`의 ACL을 물려받는다. `mkdtemp`의 0o700은 CPython 3.12.4 이상에서 SYSTEM, Administrators, 소유자만 허용하는 보호 ACL이 되고, 관리자 러너에서는 소유자가 Administrators 그룹이라 관리자 권한을 뺀 샌드박스 토큰이 그 아래를 `Access to the path ... is denied`로 읽지 못한다 | `$CODEX_HOME/config.toml`의 `[mcp_servers.bench]`와 `tools.bench_echo.approval_mode = "approve"`. 서버는 네임스페이스 도구 `mcp__bench`로 보이고, `name: bench_echo`, `namespace: mcp__bench`로 부른다(`mcp-tool`) |

@@ -3,13 +3,11 @@ title: "External integrations"
 description: "Remote MCP servers and custom web search."
 ---
 
-{/* Generated from docs/provider/INTEGRATIONS.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 Remote MCP servers and custom web search.
 
 ## Image generation
 
-The `generate_image` tool (`docs/runtime/TOOLS.md`) covers the OpenAI Images
+The `generate_image` tool (`packages/docs-site/reference/runtime/tools.mdx`) covers the OpenAI Images
 shape: `/images/generations` and `/images/edits` on a profile that names
 `roles.image`. That covers any gateway that speaks the same shape, including the
 Horon AI Gateway.
@@ -252,7 +250,7 @@ Each navigation defaults to a 15-second deadline. A snapshot returns up to 500 a
 ### Implementation boundaries
 
 1. Define the external connector's local stdio contract and verify installation under the existing MCP trust model. Keep browser dependencies, processes and profile cleanup in the external connector.
-2. Document setup in this guide and `docs/runtime/TOOLS.md`. Exercise discovery and calls through `crates/app-core/src/tool/mcp.rs`. Use the existing MCP manager and lifecycle unless a demonstrated failure calls for a narrow change there.
+2. Document setup in this guide and `packages/docs-site/reference/runtime/tools.mdx`. Exercise discovery and calls through `crates/app-core/src/tool/mcp.rs`. Use the existing MCP manager and lifecycle unless a demonstrated failure calls for a narrow change there.
 3. Validate a selected local fixture and disconnect in GitHub Actions. Record bounded response metadata and process and profile removal. Review consent, origin isolation and artifact handling before offering the connector.
 
 | Fixture action | Expected observation |

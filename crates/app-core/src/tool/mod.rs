@@ -27,8 +27,6 @@ pub(crate) use consult::{mark_session_consult_policy, session_is_consult};
 mod context_notes;
 mod conversation_search;
 pub mod diagnostics_list;
-mod discover;
-mod discover_secrets;
 mod edit;
 mod edit_stats;
 pub(crate) mod eval;
@@ -95,7 +93,9 @@ mod tool_names;
 use tool_names::is_fixed_mcp_tool;
 pub(crate) use tool_names::{tool_name_is_allowed, tool_name_is_disabled};
 mod toolbox;
-pub(crate) use self::toolbox::session_can_reach;
+#[cfg(test)]
+pub(crate) use self::toolbox::request_direct;
+pub(crate) use self::toolbox::{session_can_reach, take_direct_requests};
 pub(crate) use a2ui::A2UI_TOOL;
 mod undo;
 mod user_response;
@@ -813,12 +813,7 @@ impl Registry {
         if build_allows("irc") {
             Self::insert_tool_timed(&mut m, &mut timings, "irc", irc::IrcTool::new);
         }
-        Self::insert_tool_timed(
-            &mut m,
-            &mut timings,
-            "horon_agent_docs",
-            horon_agent_docs::HoronAgentDocsTool::new,
-        );
+        Self::insert_tool_timed(&mut m, &mut timings, "horon", horon_agent_docs::HoronAgentDocsTool::new);
         if build_allows("todo") {
             Self::insert_tool_timed(&mut m, &mut timings, "todo", todo::TodoTool::new);
         }
@@ -945,12 +940,6 @@ impl Registry {
                 crate::config::TOOLBOX_TOOL,
                 toolbox::ToolboxTool::new(registry.downgrade()),
             );
-        }
-        // Integration discovery is on by default (opt-out); when disabled the
-        // tool is never registered and no discovery endpoint is ever
-        // contacted.
-        if crate::config::config().sponsors.enabled {
-            Self::insert_tool(&mut tools_map, "integration_tools", discover::DiscoverToolsTool::new());
         }
         let session_tools_ms = session_tools_start.elapsed().as_millis();
 
@@ -1290,11 +1279,6 @@ impl Registry {
                     let mut open = Self::open_approval_requests()
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if resolved_name == eval::NAME && open.get(&key) != Some(&request_id) {
-                        return Some(
-                            "Python eval approval was already consumed. Request approval for a new cell.".into(),
-                        );
-                    }
                     open.remove(&key);
                 }
                 // Clear the prompt a client was shown for this request. Emitting
@@ -1425,10 +1409,8 @@ impl Registry {
         let input = prompt.input;
         let now = horon_agent_time::Timestamp::now();
         // The approver sees this queued request without the registry's effects.
-        // Carry scoped-grant capability only for tools that accept grants.
-        let grant_capability = (resolved_name != eval::NAME)
-            .then(|| crate::approval_grants::GrantCapability::from_effects(effects))
-            .flatten();
+        // Carry scoped-grant capability for every tool that accepts grants.
+        let grant_capability = crate::approval_grants::GrantCapability::from_effects(effects);
         PermissionRequest {
             id,
             action: resolved_name.to_string(),
@@ -1437,8 +1419,6 @@ impl Registry {
                 "This tool belongs to a class the configuration lists as requiring a second \
                  confirmation, so it asks even when approval mode is off."
                     .to_string()
-            } else if resolved_name == eval::NAME {
-                eval::APPROVAL_REASON.to_owned()
             } else {
                 format!("The configured approval mode asks before {resolved_name} runs.")
             },
@@ -1895,34 +1875,26 @@ impl Registry {
                 crate::tool::path_policy::named_paths(resolved_name, &input, ctx.working_dir.as_deref());
             let restricted =
                 crate::approval_grants::restricted_match(resolved_name, &input, ctx.working_dir.as_deref());
-            let evaluation = if is_eval {
-                crate::approval::ApprovalEvaluation::RequiresApproval {
-                    reason: eval::APPROVAL_REASON.to_owned(),
-                    is_dual_confirm: false,
-                }
-            } else {
-                crate::approval::evaluate_and_audit(
-                    crate::approval::ApprovalCall {
-                        tool: resolved_name,
-                        effects: approval_effects,
-                        mode: approval_mode,
-                        dual_confirm: &dual_confirm,
-                        danger,
-                        bash_pattern: bash_pattern.as_ref(),
-                        paths: &approval_paths,
-                        restricted: restricted.as_deref(),
-                    },
-                    &ctx.tool_call_id,
-                )
-            };
+            let evaluation = crate::approval::evaluate_and_audit(
+                crate::approval::ApprovalCall {
+                    tool: resolved_name,
+                    effects: approval_effects,
+                    mode: approval_mode,
+                    dual_confirm: &dual_confirm,
+                    danger,
+                    bash_pattern: bash_pattern.as_ref(),
+                    paths: &approval_paths,
+                    restricted: restricted.as_deref(),
+                },
+                &ctx.tool_call_id,
+            );
             // A scoped grant answers a call the mode would otherwise ask about.
             // It never answers a dual-confirm class, a restricted path, a bash
             // pattern verdict, or a call that mutates nothing a grant can name.
             let evaluation = match evaluation {
                 crate::approval::ApprovalEvaluation::RequiresApproval {
                     is_dual_confirm: false, ..
-                } if !is_eval
-                    && restricted.is_none()
+                } if restricted.is_none()
                     && bash_pattern.is_none()
                     && crate::approval_grants::covered(
                         resolved_name,

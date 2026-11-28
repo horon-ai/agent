@@ -2513,6 +2513,7 @@ dependencies = [
  "crossterm",
  "horon-agent-sdk",
  "horon-agent-tool-types",
+ "image",
  "libc",
  "open",
  "ratatui",

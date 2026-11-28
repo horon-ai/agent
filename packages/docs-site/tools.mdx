@@ -1,20 +1,25 @@
 ---
 title: Tools
-description: The 18-tool core set, three loading tiers, deferred loading through toolbox, and edit safety.
+description: The open default tool surface, three loading tiers, deferred loading through toolbox, and edit safety.
 ---
 
 ## The core tool set
 
-The `core` profile allows eighteen tools: `bash`, `read`, `write`, `edit`,
-`replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
-`skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search` and
-`swarm`.
+The default `core` profile reaches every built-in tool. Its allow-list is the
+eighteen `CORE_TOOLS` (`bash`, `read`, `write`, `edit`, `replace`,
+`apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`,
+`mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`) plus
+`CORE_DISCOVERABLE_TOOLS` (`eval`, `bg`, `batch`, `memory`, `goal`, `lsp`,
+`ast_grep`, `ast_edit`, `redo`, `hashline_edit`, `context_notes`, `codemode`
+and the rest) plus `toolbox`; `irc`, `checkpoint` and `rewind` join through
+their switches. A switch set to `false` removes its tool.
 
-Seven of them are sent eagerly with schemas in every session (`read`, `write`,
-`edit`, `apply_patch`, `bash`, `ls`, `agentgrep`), because almost every coding
-turn touches them. The other eleven are named in a system-prompt index and reached
-through `toolbox`, which keeps the first request small and leaves the prompt cache
-stable when a tool is added or removed.
+Eleven of them are sent eagerly with schemas in every session (`read`, `write`,
+`edit`, `apply_patch`, `bash`, `ls`, `agentgrep`, `todo`, `bg`, `websearch`,
+`webfetch`), and `eval` joins them when a Python interpreter is on `PATH`,
+because sessions call them often. Every other tool is named in a system-prompt
+index and reached through `toolbox`, which keeps the first request small and
+leaves the prompt cache stable when a tool is added or removed.
 
 Profiles: `core` (default), `full`, `acp`, `minimal`/`lite`, `none`. Choose one
 with `--tool-profile`, `HORON_AGENT_TOOL_PROFILE`, or `[tools] profile`.
@@ -37,7 +42,7 @@ ask = "essential"
 ```
 
 `toolbox = "off"`, or adding `toolbox` to `[tools] disabled`, turns listing mode
-off and puts all eighteen core tools back on the eager surface. An explicit
+off and puts every reachable tool back on the eager surface. An explicit
 `discoverable` entry for `toolbox` is promoted to `essential`, because listing
 would otherwise create a tool with no way to reach it.
 
@@ -49,21 +54,26 @@ never moves a tool between tiers mid-session.
 ## The listing index
 
 A listing `core` session's system prompt gains an `# Additional tools` section:
-one instruction line — `Call one with toolbox: action "run", tool "<name>", args {}.`
-— then one `- <name>: <description>` row per tool. A row carries only the first
+one instruction line telling the model to call `toolbox` with `{"action":"run","tool":"<name>","args":{...}}`, the tool's own arguments inside `args`,
+then one `- <name>: <description>` row per tool. A row carries only the first
 sentence of the tool description's first non-empty line, capped at 60 characters
 including the trailing `...`; the model fetches parameters with `toolbox describe`.
-Each listed core tool opens with a sentence that fits the row, so only `todo`, whose
-model-visible text is kept as written, is still cut.
+Some descriptions open with a sentence that fits the row; the rest are cut at the
+cap, so a row is a hint and `toolbox describe` gives the full text.
+
+A `run` without `args` for a tool that takes arguments is refused (or run with
+`{}` when the tool has no required field), and from the next request that tool
+is sent with its own schema as a direct tool: some models never fill the
+free-form `args` object, and a direct schema is the form they fill.
 
 The index freezes when the first tool list is locked and does not change
-afterwards. `/clear` keeps it because it is the same session; only a session
+afterwards, except for that one promotion. `/clear` keeps it because it is the same session; only a session
 restore rebuilds it.
 
 ## Edit safety
 
-- A journal backs `undo` for file edits; `redo` and hashline anchors are opt-in
-  (`[tools] redo`, `[tools] hashline_edit`).
+- A journal backs `undo` for file edits; `redo` and hashline anchors are on by
+  default (`[tools] redo`, `[tools] hashline_edit`).
 - `apply_patch` is the multi-file patch tool; `replace` is the single-string edit.
 - Tool output over the condense threshold is summarized rather than dropped, and
   `read` deduplicates content it has already returned in the session.
@@ -76,4 +86,12 @@ is refused with `HOSTED_POLICY` and exit `1`). Everything external comes in over
 skipped until its digest is trusted (`--trust-workspace` records the decision).
 
 Skills are read through `skill://` and managed with `skill_manage`; the workspace
-convention is `.horon/skills/<name>/SKILL.md`.
+convention is `.horon/skills/<name>/SKILL.md`. A skill read returns the whole
+`SKILL.md` without line numbers in one call.
+
+## Built-in documentation
+
+The agent's own documentation is compiled into the binary from the repository's
+`docs/` folder. `read horon://` lists it, `read horon://<path>` returns one page
+(`horon://tools.md`), and the `horon` tool searches it. It describes the version
+that is running, with no network access.

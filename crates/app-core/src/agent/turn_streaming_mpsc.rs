@@ -118,12 +118,11 @@ impl Agent {
             // of copying the whole transcript again.
             // Memory guidance is the consolidation summary; recall is the agent's own `memory` call.
             let memory_pending = self.build_memory_prompt_nonblocking_shared(std::sync::Arc::clone(&messages));
-            // Use split prompt for better caching - static content cached, dynamic not
+            // The static part is the cached system prompt; the dynamic part becomes the turn context.
             self.log_prompt_prefix_accounting(&split_prompt, &tools);
 
-            // Check for client-side cache violations before memory injection.
-            // Memory is an ephemeral suffix that changes each turn; tracking it would cause
-            // false-positive violations every turn (prior turn's memory ≠ current history prefix).
+            // Check for client-side cache violations on the stored transcript, before the
+            // reminders below are stored and appended.
             self.record_client_cache_request(&messages);
 
             // `messages` now owns the provider-facing request snapshot. Do not
@@ -131,16 +130,21 @@ impl Agent {
             // wait and response stream.
             self.session.release_provider_messages_cache();
 
-            // Only the appended tail is owned; the transcript prefix stays borrowed.
+            // Only the appended tail is owned; the transcript prefix stays borrowed. The turn
+            // context and a persisted memory summary are stored as they are sent, so the next
+            // request starts with this one; a request-only summary is hashed on its own.
+            // The persisted reminders come first and a request-only summary last, so the
+            // signature below reads both as slices of the suffix instead of copies.
             let mut request_suffix: Vec<Message> = Vec::new();
-            // A persisted memory message joins the cache prefix, while an
-            // ephemeral one is tracked as its own hash so it cannot look like a
-            // prefix edit on the next turn.
-            let mut persisted_signature_suffix: Vec<Message> = Vec::new();
-            let mut ephemeral_signature_messages: Vec<Message> = Vec::new();
+            let mut persisted_suffix_len = 0usize;
 
-            // Inject memory as a user message at the end (preserves cache prefix)
-            if let Some(memory) = memory_pending.as_ref() {
+            if let Some(turn_context) = self.store_turn_context(&messages, &split_prompt.dynamic_part) {
+                request_suffix.push(turn_context);
+                persisted_suffix_len += 1;
+            }
+            if let Some(memory) = memory_pending.as_ref()
+                && let Some((memory_msg, persisted)) = self.prepare_memory_injection_message(&messages, memory)
+            {
                 let memory_count = memory.count.max(1);
                 let computed_age_ms = memory.computed_at.elapsed().as_millis() as u64;
                 crate::memory::record_injected_prompt(&memory.prompt, memory_count, computed_age_ms);
@@ -152,11 +156,8 @@ impl Agent {
                     prompt_chars: memory.prompt.chars().count(),
                     computed_age_ms,
                 });
-                let (memory_msg, persisted) = self.prepare_memory_injection_message(memory);
-                if !persisted {
-                    ephemeral_signature_messages.push(memory_msg.clone());
-                } else {
-                    persisted_signature_suffix.push(memory_msg.clone());
+                if persisted {
+                    persisted_suffix_len += 1;
                 }
                 request_suffix.push(memory_msg);
             }
@@ -167,7 +168,7 @@ impl Agent {
             ));
             let api_start = Instant::now();
 
-            // A suffix (memory, plan-limit notice) is the only reason the request
+            // A suffix (turn context, memory) is the only reason the request
             // grows; an unmodified request stays a borrow of the snapshot.
             let joined_request =
                 (!request_suffix.is_empty()).then(|| join_request_messages(&messages, &request_suffix));
@@ -217,19 +218,16 @@ impl Agent {
                 Some(stamped) => &stamped[..messages.len()],
                 None => &messages,
             };
+            let (persisted_suffix, ephemeral_suffix) = request_suffix.split_at(persisted_suffix_len);
             let kv_request = kv_cache_request_event_ref(
-                signature_base.iter().chain(persisted_signature_suffix.iter()),
-                signature_base.len() + persisted_signature_suffix.len(),
+                signature_base.iter().chain(persisted_suffix),
+                signature_base.len() + persisted_suffix.len(),
                 &tools,
                 &split_prompt.static_part,
-                &ephemeral_signature_messages,
+                ephemeral_suffix,
             );
             self.begin_kv_cache_monitor_request(&kv_request, &model_at_request_start);
             let _ = event_tx.send(kv_request);
-            // Only the signature's small derived vectors are released here; the
-            // request itself is still borrowed by `send_messages`.
-            drop(persisted_signature_suffix);
-            drop(ephemeral_signature_messages);
             let mut keepalive = stream_keepalive_ticker();
             // The provider gets this session's lineage with every call, so it can
             // pin its cache key to the same family on a retry as on the first
@@ -247,7 +245,8 @@ impl Agent {
                     send_messages,
                     &tools,
                     &split_prompt.static_part,
-                    &split_prompt.dynamic_part,
+                    // The turn context already rides in the transcript.
+                    "",
                     resume_session_id.as_deref(),
                     &provider_context,
                 ));

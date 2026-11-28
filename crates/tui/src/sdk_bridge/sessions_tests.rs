@@ -38,6 +38,7 @@ fn message(role: &str, content: &str) -> HistoryMessage {
         response_stats: None,
         answer: None,
         message_id: None,
+        tool: None,
     }
 }
 
@@ -375,6 +376,7 @@ fn stored(role: &str, content: &str, id: &str) -> HistoryMessage {
         response_stats: None,
         answer: None,
         message_id: Some(id.to_string()),
+        tool: None,
     }
 }
 
@@ -427,6 +429,7 @@ fn the_newest_assistant_line_is_the_summary_a_finished_child_reports() {
         answer: Some("the answer".to_string()),
         response_stats: None,
         message_id: None,
+        tool: None,
     };
     assert_eq!(last_assistant_text(&[named]).as_deref(), Some("the answer"));
 }

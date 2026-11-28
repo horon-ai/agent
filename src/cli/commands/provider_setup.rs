@@ -184,6 +184,7 @@ pub(crate) fn configure_provider_profile(options: ProviderAddOptions) -> Result<
         }],
         extra_body: None,
         prompt_cache_key: None,
+        session_header: None,
         stream_first_event_timeout_secs: None,
         stream_idle_timeout_secs: None,
         max_in_flight_requests: None,

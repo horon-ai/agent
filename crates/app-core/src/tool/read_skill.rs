@@ -14,6 +14,7 @@
 
 use super::{ReadInput, page_text};
 use crate::skill::{Skill, SkillRegistry};
+use crate::tool::read_selector::Selector;
 use crate::tool::{ToolContext, ToolOutput};
 use anyhow::{Result, anyhow};
 use serde_json::json;
@@ -23,6 +24,16 @@ pub(super) const SCHEME: &str = "skill://";
 
 pub(super) async fn read_skill_url(params: &ReadInput, ctx: &ToolContext) -> Result<ToolOutput> {
     let (uri, selector) = crate::tool::read_selector::split_uri_and_selector(&params.file_path)?;
+    // A skill is read to be followed, not edited: whole and without line
+    // numbers, so a long skill costs one call and no number column. An
+    // explicit selector or range still pages with numbers.
+    let explicit_range =
+        params.start_line.is_some() || params.end_line.is_some() || params.offset.is_some() || params.limit.is_some();
+    let selector = if matches!(selector, Selector::None) && !explicit_range {
+        Selector::Raw
+    } else {
+        selector
+    };
     let reference = uri
         .get(..SCHEME.len())
         .filter(|scheme| scheme.eq_ignore_ascii_case(SCHEME))
@@ -35,8 +46,7 @@ pub(super) async fn read_skill_url(params: &ReadInput, ctx: &ToolContext) -> Res
     }
 
     let registry = effective_registry(ctx).await;
-    let (skill, relative) = split_reference(&registry, reference)
-        .ok_or_else(|| anyhow!("skill:// names no installed skill: {reference}"))?;
+    let (skill, relative) = split_reference(&registry, reference).ok_or_else(|| unknown_skill(&registry, reference))?;
 
     let output = match relative {
         None => {
@@ -66,6 +76,27 @@ async fn effective_registry(ctx: &ToolContext) -> SkillRegistry {
     let global = SkillRegistry::shared_registry();
     let base = global.read().await.clone();
     SkillRegistry::effective_for_working_dir(&base, ctx.working_dir.as_deref())
+}
+
+/// The refusal for a name no skill has, listing the names that exist so the
+/// next call can use one instead of asking for the list first.
+fn unknown_skill(registry: &SkillRegistry, reference: &str) -> anyhow::Error {
+    const LISTED: usize = 40;
+    let mut names: Vec<&str> = registry.list().into_iter().map(|skill| skill.name.as_str()).collect();
+    names.sort_unstable();
+    if names.is_empty() {
+        return anyhow!("skill:// names no installed skill: {reference}. No skills are installed.");
+    }
+    let more = names.len().saturating_sub(LISTED);
+    names.truncate(LISTED);
+    let mut message = format!(
+        "skill:// names no installed skill: {reference}. Available: {}",
+        names.join(", ")
+    );
+    if more > 0 {
+        message.push_str(&format!(" (and {more} more)"));
+    }
+    anyhow!(message)
 }
 
 /// Split `reference` into the longest registered skill name it starts with and

@@ -4,8 +4,6 @@ sidebarTitle: "Swarm task graph"
 description: "The swarm task DAG design, a feature that is off by default, and the rationale of the horon-agent-plan crate."
 ---
 
-{/* Generated from docs/runtime/SWARM_TASK_GRAPH.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
-
 Status: complete (it replaces the earlier agent-first shape). The DAG engine,
 deep/light modes, gates, the growth machinery, and all four communication migration
 steps are done: artifact dataflow, subtree-scoped broadcast, moving flows off the chat
@@ -479,7 +477,7 @@ so it was staged. All four steps are done.
    written before the removal still replays its calls (both are pinned by tests:
    `tool::communicate::tests::input_format::retired_channel_and_shared_context_actions_are_rejected`
    and `session::tests::retired_swarm_actions`). The public Harness API never carried
-   this surface, so no client-visible version bump was needed; `docs/protocol/HARNESS_API.md`
+   this surface, so no client-visible version bump was needed; `packages/docs-site/reference/protocol/harness-api.mdx`
    records the removal under protocol 1.21.
 
 ---

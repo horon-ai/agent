@@ -996,7 +996,7 @@ pub struct ResponseStats {
     pub cache_creation_tokens: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct HistoryMessage {
     /// Present only on the final visible assistant row of a completed stored
     /// user turn. Tool-only intermediate rounds contribute to these totals.
@@ -1023,6 +1023,28 @@ pub struct HistoryMessage {
     /// request, and synthetic rows, omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_id: Option<String>,
+    /// The call a `tool` row shows, when the daemon stored it with the row.
+    ///
+    /// Additive: `content` keeps the call's result text, and this names the
+    /// tool, its arguments and whether the result was an error, so a client can
+    /// draw a stored call the way it drew the live one. Absent on every other
+    /// row and on rows from a daemon that does not report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<HistoryToolCall>,
+}
+
+/// The stored call a `tool` history row was rendered from.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HistoryToolCall {
+    /// The provider's id for the call.
+    pub call_id: String,
+    /// The tool the model called.
+    pub name: String,
+    /// The call's arguments, as the JSON text the model sent.
+    pub input: String,
+    /// The stored result was marked as an error.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_error: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

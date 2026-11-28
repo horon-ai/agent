@@ -53,5 +53,5 @@
 <rect x="234.5" y="432.0" width="431.5" height="18" rx="3" fill="#0b84de"/>
 <text x="733.9" y="445.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">302.51 → 268.93 ms</text>
 <text x="32.0" y="472.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">행마다 이전 값을 기준으로 크기를 맞췄습니다. 막대 길이가 아니라 수치를 읽습니다.</text>
-<text x="32.0" y="498.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: docs/performance/RESULTS.md · 시간과 메모리 (중앙값 ms, 괄호는 최소–최대)</text>
+<text x="32.0" y="498.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: agent.horon.ai/ko/reference/performance/results · 시간과 메모리 (중앙값 ms, 괄호는 최소–최대)</text>
 </svg>

@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """Check that the documentation is a complete English/Korean pair set.
 
-English is the default language: `X.md` is canonical and `X.ko.md` is its Korean
-counterpart in the same folder. The checked set is `README.md`/`README.ko.md`,
-`PHILOSOPHY.md`/`PHILOSOPHY.ko.md` and every Markdown file under `docs/`.
+English is the default language. In the repository root `X.md` is canonical and
+`X.ko.md` is its Korean counterpart (`README`, `PHILOSOPHY`). On the documentation
+site every developer reference page `packages/docs-site/reference/<path>.mdx`
+has its Korean counterpart at `packages/docs-site/ko/reference/<path>.mdx`.
+`docs/` is the English-only corpus bundled into the binary and has no pairs.
 
 Failures (all reported, exit status 1):
 
 * a document without its counterpart;
 * a pair whose structure differs: heading count per level, table rows, code
   fences, or inline links;
-* a missing language switch line (docs only; the READMEs carry theirs in HTML);
-* a relative link whose file or `#anchor` does not exist, or a link that leaves
-  the document's own language (an English document linking a `.ko.md` file, or
-  the reverse) other than the language switch;
+* a relative link in a root document whose file or `#anchor` does not exist,
+  or a link that leaves the document's own language (an English document
+  linking a `.ko.md` file, or the reverse) other than the language switch (site
+  pages link by route; the site build checks those);
 * Hangul in an English document outside code, or no Hangul at all in a Korean
   one. The generated benchmark block (`bench-auto`) is exempt because it is
   rewritten by CI.
+
+The language switch line of a Markdown document below the root is required too;
+site pages switch language through the site itself.
 
 Standard library only; runs in well under a second.
 """
@@ -37,21 +42,38 @@ LINK = re.compile(r"(?<!!)\[(?:[^\]\\]|\\.)*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 HTML_REF = re.compile(r"""(?:href|src)="([^"]+)\"""")
 HANGUL = re.compile(r"[\u3131-\u318e\uac00-\ud7a3]")
 INLINE_CODE = re.compile(r"`[^`\n]*`")
-BENCH_BLOCK = re.compile(r"<!-- bench-auto:start.*?<!-- bench-auto:end -->", re.DOTALL)
+BENCH_BLOCK = re.compile(
+    r"(?:<!-- bench-auto:start.*?<!-- bench-auto:end -->|\{/\* bench-auto:start.*?\{/\* bench-auto:end \*/\})",
+    re.DOTALL,
+)
+SITE = REPO / "packages" / "docs-site"
 
 
 def pair_files() -> list[Path]:
     files = [REPO / "README.md", REPO / "README.ko.md"]
     files += [REPO / "PHILOSOPHY.md", REPO / "PHILOSOPHY.ko.md"]
-    files += sorted((REPO / "docs").rglob("*.md"))
+    # The SDK and npm pages are generated from English-only READMEs
+    # (`sync_docs_site.py`) and have no Korean page.
+    site = [path for path in sorted((SITE / "reference").rglob("*.mdx")) if path.parent.name != "sdk"]
+    files += site + [counterpart(path) for path in site]
     return files
 
 
+def is_site(path: Path) -> bool:
+    return path.suffix == ".mdx"
+
+
 def is_ko(path: Path) -> bool:
+    if is_site(path):
+        return SITE / "ko" in path.parents
     return path.name.endswith(".ko.md")
 
 
 def counterpart(path: Path) -> Path:
+    if is_site(path):
+        site = path.parents[[parent.name for parent in path.parents].index("docs-site")]
+        rel = path.relative_to(site)
+        return site / (rel.relative_to("ko") if is_ko(path) else Path("ko") / rel)
     if is_ko(path):
         return path.with_name(path.name[: -len(".ko.md")] + ".md")
     return path.with_name(path.name[: -len(".md")] + ".ko.md")
@@ -121,6 +143,8 @@ def links(text: str) -> list[str]:
 
 
 def check_links(path: Path, text: str, errors: list[str]) -> None:
+    if is_site(path):
+        return
     rel = path.relative_to(REPO)
     ko = is_ko(path)
     own_anchors = anchors(text)
@@ -136,7 +160,15 @@ def check_links(path: Path, text: str, errors: list[str]) -> None:
                 continue
             if dest.suffix == ".md" and REPO in dest.parents:
                 is_switch = dest == counterpart(path).resolve()
-                if not is_switch and is_ko(dest) != ko and dest.name not in ("AGENTS.md", "AGENTS.ko.md"):
+                # `docs/` is the English-only agent corpus, so either language
+                # may link it.
+                english_only = REPO / "docs" in dest.parents
+                if (
+                    not is_switch
+                    and not english_only
+                    and is_ko(dest) != ko
+                    and dest.name not in ("AGENTS.md", "AGENTS.ko.md")
+                ):
                     side = "Korean" if ko else "English"
                     errors.append(f"{rel}: {side} document links the other language: {raw}")
             if fragment and dest.suffix == ".md" and fragment not in anchors(dest.read_text(encoding="utf-8")):
@@ -161,7 +193,7 @@ def check_language(path: Path, text: str, errors: list[str]) -> None:
 
 def check_switch_line(path: Path, text: str, errors: list[str]) -> None:
     rel = path.relative_to(REPO)
-    if path.parent == REPO:
+    if path.parent == REPO or is_site(path):
         return
     other = counterpart(path).name
     if is_ko(path):

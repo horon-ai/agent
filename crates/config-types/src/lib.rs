@@ -887,34 +887,6 @@ pub struct AutoReviewConfig {
     pub model: Option<String>,
 }
 
-/// Integration discovery configuration (the `[sponsors]` section).
-///
-/// Integration discovery makes third-party developer tools discoverable to
-/// the agent via the `integration_tools` tool backed by a hosted directory.
-/// Some providers may share revenue with HoronAgent when a referred user
-/// becomes a customer, but partnership status never influences
-/// recommendations. See <https://horon-agent.sh/discovery-tools>.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SponsorsConfig {
-    /// Enable integration discovery. Enabled by default; set to false to opt
-    /// out. When false, no discovery categories are added to the prompt, the
-    /// `integration_tools` tool is not registered, and horon-agent never
-    /// contacts the discovery endpoint.
-    pub enabled: bool,
-    /// Base URL of the discovery endpoint.
-    pub endpoint: String,
-}
-
-impl Default for SponsorsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            endpoint: "https://api.horon-agent.sh/v1/discovery".to_string(),
-        }
-    }
-}
-
 /// How much automatic continuation the turn loops perform after a turn stops
 /// in a way the harness did not expect (default: conservative).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]

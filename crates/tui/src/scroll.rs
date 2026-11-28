@@ -22,8 +22,13 @@ use std::io::Write;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 
-/// Rows one wheel notch moves the view.
-pub const WHEEL_ROWS: usize = 3;
+/// Rows one wheel event moves the view.
+///
+/// One, as a terminal's own scrollback moves: the terminal already sends one
+/// event per row a trackpad travels and several per notch of a wheel (its
+/// scroll multiplier), so a larger step here would multiply that again and
+/// make the view jump where the hand glides.
+pub const WHEEL_ROWS: usize = 1;
 
 /// What the content held the last time the pane drew it.
 ///
@@ -264,13 +269,15 @@ impl Scroll {
     /// which is what keeps the rows on screen from sliding while output arrives;
     /// a block above that edge moves the content without changing the rows the
     /// view shows, so it does not move the view. Everything already measured is
-    /// reused except the newest item, so the cost of a frame is that item, the
-    /// items that are new, and the block still streaming — never the whole
+    /// reused except the newest item and the items the transcript changed in
+    /// place (`changed_from` onwards), so the cost of a frame is those items,
+    /// the items that are new, and the block still streaming — never the whole
     /// conversation.
     pub fn measure(
         &mut self,
         width: u16,
         items: usize,
+        changed_from: Option<usize>,
         open: [usize; 2],
         view: usize,
         rows_of: impl FnMut(usize) -> usize,
@@ -305,12 +312,42 @@ impl Scroll {
                 items: heights,
                 open,
             });
-        } else if let Some(tally) = self.tally.as_mut() {
+        }
+        let mut above_top = 0i64;
+        if !rebuilt && let Some(tally) = self.tally.as_mut() {
             // The newest item is the one that keeps changing: a tool call's
             // input and the output preview that replaces its running line both
             // land on it, so its height is measured again instead of trusted.
-            tally.items.truncate(items.saturating_sub(1));
-            for index in tally.items.len()..items {
+            // An older item the transcript changed in place (a result or a
+            // preview that landed after newer items) is counted again from
+            // there on, or the height falls short and the view cannot reach the
+            // first messages.
+            let counted = tally.items.len();
+            let keep = items
+                .saturating_sub(1)
+                .min(changed_from.unwrap_or(usize::MAX))
+                .min(counted);
+            // A change above the view's top edge moves the content without
+            // changing the rows on screen, so it is kept out of the offset.
+            let top = self
+                .height
+                .map_or(0, |height| height.saturating_sub(self.offset).saturating_sub(view));
+            let mut start = if keep + 1 < counted {
+                tally.items[..keep].iter().sum::<usize>()
+            } else {
+                usize::MAX
+            };
+            for index in keep..counted {
+                let old = tally.items[index];
+                let new = rows_of(index);
+                let end = start.saturating_add(old);
+                if end <= top {
+                    above_top = above_top.saturating_add(row_delta(old, new));
+                }
+                start = end;
+                tally.items[index] = new;
+            }
+            for index in counted..items {
                 let height = rows_of(index);
                 tally.items.push(height);
             }
@@ -344,7 +381,9 @@ impl Scroll {
                     _ => 0,
                 }
             } else if !rebuilt {
-                i64::try_from(height).unwrap_or(i64::MAX) - i64::try_from(previous_height).unwrap_or(i64::MAX)
+                i64::try_from(height).unwrap_or(i64::MAX)
+                    - i64::try_from(previous_height).unwrap_or(i64::MAX)
+                    - above_top
             } else {
                 0
             };

@@ -553,12 +553,7 @@ pub(super) async fn await_permission(
 ) -> Option<String> {
     let resolved_name = prompt.resolved_name;
     let input = prompt.input;
-    let mut key = Registry::approval_key(&ctx.session_id, resolved_name, input, ctx);
-    if resolved_name == super::eval::NAME {
-        // Unlike a daemon retry, these are distinct live calls awaiting answers.
-        key.push('|');
-        key.push_str(&crate::safety::new_request_id());
-    }
+    let key = Registry::approval_key(&ctx.session_id, resolved_name, input, ctx);
     let claim = bridge.claim(&key);
     let mut waiter = Waiter {
         bridge,

@@ -10,7 +10,7 @@ pub use horon_agent_message_types::{
     CacheControl, ConnectionPhase, ContentBlock, InputShellResult, Message, Role, StreamEvent,
     TOOL_OUTPUT_MISSING_TEXT, ToolCall, ToolDefinition, cache_relevant_message_hashes, cache_relevant_message_value,
     cache_relevant_messages, ends_with_fresh_user_turn, extend_stable_hash, messages_with_dynamic_system_context,
-    provider_native, replace_text_suffix, sanitize_tool_id, stable_message_hash,
+    provider_native, reminder_update, replace_text_suffix, sanitize_tool_id, stable_message_hash, turn_context_update,
 };
 
 mod notifications;

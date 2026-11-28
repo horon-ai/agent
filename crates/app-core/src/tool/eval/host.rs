@@ -374,6 +374,13 @@ impl Kernel {
                     .iter()
                     .filter_map(|key| std::env::var_os(key).map(|value| (key, value))),
             )
+            .envs(
+                // The same scratch folder the bash tool hands its commands, so a
+                // cell finds the `HORON_AGENT_SCRATCH_DIR` the guidance names.
+                crate::tool::bash::tool_scratch_dir()
+                    .into_iter()
+                    .flat_map(|dir| [("TMPDIR", dir.clone()), ("HORON_AGENT_SCRATCH_DIR", dir)]),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -534,12 +541,17 @@ pub(in crate::tool) fn stop_child(mut child: Child) {
 async fn find_python(cwd: &Path) -> Result<PathBuf> {
     let path = std::env::var_os("PATH").context("PATH is missing; install Python 3.10 or later for eval")?;
     let cwd = cwd.to_path_buf();
-    tokio::task::spawn_blocking(move || find_python_sync(&cwd, &path))
+    tokio::task::spawn_blocking(move || find_python_sync(Some(&cwd), &path))
         .await
         .context("search PATH for Python interpreter")?
 }
 
-fn find_python_sync(cwd: &Path, path: &std::ffi::OsStr) -> Result<PathBuf> {
+/// The first Python interpreter on an absolute `path` entry.
+///
+/// `exclude` is the directory a cell must not load its interpreter from (the
+/// session's working directory); `None` only asks whether one exists.
+pub(super) fn find_python_sync(exclude: Option<&Path>, path: &std::ffi::OsStr) -> Result<PathBuf> {
+    let inside = |candidate: &Path| exclude.is_some_and(|dir| candidate.starts_with(dir));
     let suffix = std::env::consts::EXE_SUFFIX;
     let (py3, py): (Cow<'static, str>, Cow<'static, str>) = if suffix.is_empty() {
         (Cow::Borrowed("python3"), Cow::Borrowed("python"))
@@ -557,7 +569,7 @@ fn find_python_sync(cwd: &Path, path: &std::ffi::OsStr) -> Result<PathBuf> {
         let Ok(canonical_dir) = std::fs::canonicalize(&dir) else {
             continue;
         };
-        if canonical_dir.starts_with(cwd) {
+        if inside(&canonical_dir) {
             continue;
         }
         for name in names {
@@ -566,7 +578,7 @@ fn find_python_sync(cwd: &Path, path: &std::ffi::OsStr) -> Result<PathBuf> {
                 continue;
             }
             if let Ok(target) = std::fs::canonicalize(&candidate)
-                && !target.starts_with(cwd)
+                && !inside(&target)
                 && horon_agent_platform::fs::is_executable(&target)
             {
                 return Ok(candidate);

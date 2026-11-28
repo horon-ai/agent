@@ -6,10 +6,12 @@ fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let repo = manifest.join("../..");
     let docs_dir = repo.join("docs");
-    println!("cargo:rerun-if-changed={}", repo.join("README.md").display());
     println!("cargo:rerun-if-changed={}", docs_dir.display());
 
-    let mut files = vec![repo.join("README.md")];
+    // `docs/` is the agent-facing documentation `read horon://<path>` serves.
+    // The developer reference lives on the documentation site and is not
+    // bundled.
+    let mut files = Vec::new();
     collect_markdown(&docs_dir, &mut files);
     files.sort();
 
@@ -35,11 +37,7 @@ fn collect_markdown(dir: &Path, files: &mut Vec<PathBuf>) {
         if path.is_dir() {
             println!("cargo:rerun-if-changed={}", path.display());
             collect_markdown(&path, files);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md")
-            && !path.to_string_lossy().ends_with(".ko.md")
-        {
-            // English is the bundled language. The `.ko.md` pairs stay in the
-            // repository and are not compiled into the binary.
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
             files.push(path);
         }
     }

@@ -217,6 +217,17 @@ pub(super) async fn create_headless_session(
                 switch_error = None;
             }
         }
+        // An older session can carry a family key (`openai`) for a model its
+        // named profile discovered (a gateway route such as
+        // `group/deepseek-v4.1-flash`): rebuilt as `openai:<id>`, the built-in
+        // catalog refuses it. The bare id runs on the profile this process
+        // serves, and the outcome check below still guards the model.
+        if switch_error.is_some() && model_request != model.trim() && new_agent.set_model(&model).is_ok() {
+            crate::logging::warn(&format!(
+                "Headless session route '{model_request}' was refused; running '{model}' on the active profile"
+            ));
+            switch_error = None;
+        }
         if let Some(error) = switch_error.as_ref() {
             crate::logging::warn(&format!(
                 "Failed to set headless session model override '{model}' (request '{model_request}'): {error}"
@@ -227,10 +238,12 @@ pub(super) async fn create_headless_session(
             let detail = switch_error
                 .map(|error| format!(": {error}"))
                 .unwrap_or_else(|| " (the switch reported success)".to_string());
+            let inherited = provider_key_override.as_deref().unwrap_or("none");
             anyhow::bail!(
-                "Cannot spawn session on model '{model}' (request '{model_request}'){detail}. \
-                 It would run '{resolved}' instead; refusing to silently use a different \
-                 model. Check the model id and that its provider is authenticated."
+                "Cannot spawn session on model '{model}' (request '{model_request}', inherited provider key \
+                 '{inherited}'){detail}. It would run '{resolved}' instead; refusing to silently use a \
+                 different model. Pass `model` as '<profile>:{model}' naming the provider profile that \
+                 serves it, or check that its provider is authenticated."
             );
         }
     }

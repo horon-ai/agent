@@ -608,7 +608,7 @@ async fn build_server_memory_incident_payload(
         },
         "next_actions": actions,
         "safety": "Preserve active work. Stop the producer first, then clean only sessions confirmed disposable by their owning coordinator.",
-        "runbook": "docs/performance/MEMORY.md",
+        "runbook": "https://agent.horon.ai/reference/performance/memory",
     })
 }
 

@@ -12,9 +12,11 @@
 pub mod a2ui;
 pub mod app;
 mod artifact;
+pub mod attachments;
 mod clipboard;
 pub mod commands;
 pub mod context;
+mod dock;
 mod editor;
 mod fuzzy;
 pub mod gallery;
@@ -23,6 +25,7 @@ pub mod help;
 pub mod history;
 pub mod input;
 mod item_lines;
+pub mod keyboard;
 pub mod keys;
 mod links;
 mod loop_io;
@@ -38,6 +41,7 @@ pub mod recording;
 pub mod report;
 pub mod scroll;
 pub mod sdk_bridge;
+mod selection;
 mod session_pins;
 pub mod settings;
 pub mod statusline;
@@ -535,12 +539,19 @@ fn run_interactive(
     // not leave a mode on, or the window named after a session that is gone, for
     // the next program in this terminal.
     paste::guard_panics();
+    keyboard::guard_panics();
     scroll::guard_panics();
     progress::guard_panics();
     // A terminal that refuses the mode is not a reason to stop: a paste then
     // arrives as ordinary keystrokes, which the editor already handles.
     if let Err(error) = paste::enable() {
         app.warn(format!("paste: {error}"));
+    }
+    // Pushed inside the alternate screen, which keeps its own flag stack, so the
+    // pop on the way out lands on the stack this push went to. A terminal that
+    // refuses keeps its plain keys, where `alt+enter` still starts a new line.
+    if let Err(error) = keyboard::enable() {
+        app.warn(format!("keyboard: {error}"));
     }
     let title_enabled = reloader.settings().boolean("title.enabled").unwrap_or(true);
     let mut title = title::WindowTitle::stdout(title_enabled);
@@ -902,13 +913,24 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // the transcript's expense: three rows of conversation stay readable on a
     // short terminal, and a taller draft scrolls inside its own pane.
     let marker_width = symbols.prompt_marker_width();
-    let text_width = frame.area().width.saturating_sub(marker_width).saturating_sub(1);
+    // The draft's blocks (a skill, the images) sit between the marker and the
+    // text on its first row; every row spends the same lead so the text lines
+    // up under itself.
+    let chips = app.attachments.chip_spans();
+    let lead_width = marker_width
+        .saturating_add(1)
+        .saturating_add(app.attachments.chip_cells());
+    let text_width = frame.area().width.saturating_sub(lead_width);
+    let panel_rows = app.attachments.panel_rows();
+    let queue_rows = dock::queue_rows(app.queue.len());
     // The popup takes its rows from the transcript, so it is held to what is
     // left once the conversation keeps its minimum: on a terminal too short for
     // both, the conversation wins and the popup shows fewer commands.
     let fixed = u16::from(app.banner.is_some())
         .saturating_add(u16::try_from(prompt_rows.len()).unwrap_or(u16::MAX))
         .saturating_add(u16::from(hint.is_some()))
+        .saturating_add(panel_rows)
+        .saturating_add(queue_rows)
         .saturating_add(MIN_TRANSCRIPT_ROWS)
         .saturating_add(1);
     let popup_rows = match popup {
@@ -927,6 +949,8 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         .saturating_add(u16::from(hint.is_some()))
         .saturating_add(popup_rows)
         .saturating_add(todo_rows)
+        .saturating_add(panel_rows)
+        .saturating_add(queue_rows)
         .saturating_add(1);
     let input_rows = frame
         .area()
@@ -941,6 +965,15 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     constraints.push(Constraint::Length(u16::try_from(view.rows.len()).unwrap_or(1)));
     if hint.is_some() {
         constraints.push(Constraint::Length(1));
+    }
+    // The queued messages and the thumbnail cards sit right above the status
+    // line, which is the row after the transcript until the prompt and the
+    // todo list are put above it.
+    if queue_rows > 0 {
+        constraints.insert(1, Constraint::Length(queue_rows));
+    }
+    if panel_rows > 0 {
+        constraints.insert(1, Constraint::Length(panel_rows));
     }
     if !prompt_rows.is_empty() {
         constraints.insert(1, Constraint::Length(prompt_rows.len() as u16));
@@ -966,18 +999,23 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
     let transcript_area: Rect = areas[index];
     app.viewport_height = Some(transcript_area.height);
-    let pane = transcript_pane(app, transcript_area.width, transcript_area.height);
-    // The pane measured the scrollback through a mutable borrow; the rest of the
-    // frame reads the theme again from the app it was borrowed from.
+    // The rightmost column is the scrollbar's, so the conversation wraps one
+    // column narrower and never runs under it.
+    let content_width = transcript_area.width.saturating_sub(1).max(1);
+    let pane = transcript_pane(app, content_width, transcript_area.height);
+    app.pane.top = transcript_area.y;
+    // The pane measured through a mutable borrow; the theme is read again below.
     let theme: &Theme = &app.theme;
     let rows_height = transcript_area
         .height
         .saturating_sub(u16::from(pane.indicator.is_some()));
     let rows_area = Rect {
         height: rows_height,
+        width: content_width,
         ..transcript_area
     };
     frame.render_widget(Paragraph::new(pane.rows), rows_area);
+    dock::draw_scrollbar(frame.buffer_mut(), transcript_area, rows_height, app);
     if let Some(indicator) = pane.indicator {
         let indicator_area = Rect {
             y: transcript_area.y.saturating_add(rows_height),
@@ -996,6 +1034,20 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
     if !prompt_rows.is_empty() {
         frame.render_widget(Paragraph::new(prompt_rows), areas[index]);
+        index += 1;
+    }
+
+    if panel_rows > 0 {
+        frame.render_widget(
+            Paragraph::new(app.attachments.panel_lines(areas[index].width)),
+            areas[index],
+        );
+        index += 1;
+    }
+
+    if queue_rows > 0 {
+        let lines = dock::queue_lines(&app.queue, usize::from(queue_rows), theme);
+        frame.render_widget(Paragraph::new(lines), areas[index]);
         index += 1;
     }
 
@@ -1033,7 +1085,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         crate::input::Placement {
             x: input_area.x,
             y: input_area.y,
-            lead: marker_width.saturating_add(1),
+            lead: lead_width,
         },
         &view,
     );
@@ -1041,7 +1093,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // marker; the rest are padded to the same column so the text lines up under
     // itself instead of under the marker.
     let marker = format!("{} ", symbols.prompt_marker);
-    let padding = " ".repeat(usize::from(marker_width) + 1);
+    let padding = " ".repeat(usize::from(lead_width));
     // The ghost suffix is drawn after the caret on the row the caret is on.
     // The offer was checked against the exact draft before this frame, so what
     // is drawn here is a suffix of the text already on screen.
@@ -1051,11 +1103,17 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         .iter()
         .enumerate()
         .map(|(row, text)| {
-            let lead = if row == 0 { marker.as_str() } else { padding.as_str() };
-            let mut spans = vec![
-                Span::styled(lead, Style::default().fg(theme.core.accent)),
-                Span::styled(text.as_str(), Style::default().fg(theme.prompt.prompt_text)),
-            ];
+            let mut spans = if row == 0 {
+                let mut first = vec![Span::styled(marker.as_str(), Style::default().fg(theme.core.accent))];
+                first.extend(chips.iter().cloned());
+                first
+            } else {
+                vec![Span::raw(padding.as_str())]
+            };
+            spans.push(Span::styled(
+                text.as_str(),
+                Style::default().fg(theme.prompt.prompt_text),
+            ));
             if row == view.cursor_row
                 && let Some(ghost) = ghost
             {
@@ -1076,13 +1134,13 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             areas[index],
         );
     }
-    // The side question covers the conversation rather than the input, so
-    // closing it reveals the transcript unchanged. It sits above the settings
-    // screen and the picker because it is opened from the draft, where neither
-    // can be open, and every key it takes is one they would not see.
+    // A side question or a report panel covers the conversation and takes every key.
     if let Some(side) = app.side.as_mut() {
         overlays::side::draw(frame, transcript_area, side, theme, symbols);
         return;
+    }
+    if let Some(info) = app.info.as_mut() {
+        return overlays::info::draw(frame, transcript_area, info, theme);
     }
     // The settings screen covers the conversation rather than the input, so
     // closing it reveals the transcript unchanged and the message being typed
@@ -1098,11 +1156,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             }
         }
         None => {
-            let mut cursor_x = input_area
-                .x
-                .saturating_add(marker_width)
-                .saturating_add(1)
-                .saturating_add(view.cursor_cell);
+            let mut cursor_x = input_area.x.saturating_add(lead_width).saturating_add(view.cursor_cell);
             if input_area.width > 0 {
                 // The caret never paints past the pane, and the terminal cannot
                 // place it at the cell after the last column.
@@ -1115,6 +1169,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             frame.set_cursor_position((cursor_x, cursor_y));
         }
     }
+    crate::selection::paint(frame, app);
 }
 
 /// The bottom line: the segments the status-line layout names, joined by the
@@ -1123,6 +1178,9 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
     let mut data = app.status_data();
     data.now = Some(statusline::local_now());
+    data.elapsed_ms = app.transcript.turn_elapsed_ms();
+    let branch = statusline::git_branch(app.cwd.as_deref());
+    data.branch = branch.as_deref();
     let mut symbols = app.symbols;
     symbols.separator = app.status_separator.unwrap_or(symbols.separator);
     let line = statusline::render(&data, &app.statusline, &app.theme, symbols, width);

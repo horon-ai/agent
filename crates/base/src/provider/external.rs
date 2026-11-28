@@ -42,6 +42,8 @@ pub struct DirectOpenAiCompatibleSpec {
     pub extra_body: Option<serde_json::Value>,
     /// Explicit `prompt_cache_key` policy; `None` keeps the per-host default.
     pub prompt_cache_key: Option<bool>,
+    /// Header that carries each request's session id; `None` sends none.
+    pub session_header: Option<String>,
     /// Configured legacy `prompt_cache_retention` override. The model-support
     /// policy is applied per request, so a model switch re-evaluates it.
     pub prompt_cache_retention: Option<String>,
@@ -78,6 +80,16 @@ fn build_direct_runtime(spec: DirectOpenAiCompatibleSpec) -> anyhow::Result<Open
             }));
     if !spec.headers.is_empty() {
         provider = provider.with_headers(spec.headers);
+    }
+    if let Some(name) = spec
+        .session_header
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let header = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| anyhow::anyhow!("session_header '{name}' is not a valid HTTP header name"))?;
+        provider = provider.with_session_header(Some(header));
     }
     if let Some(extra_body) = spec.extra_body {
         provider = provider.with_extra_body(extra_body);
@@ -147,6 +159,7 @@ pub fn build_openai_compatible_profile_runtime(
         headers,
         extra_body: None,
         prompt_cache_key: None,
+        session_header: None,
         prompt_cache_retention: super::openai::prompt_cache_retention_from_env(),
         // A built-in catalog profile names no per-model effort.
         model_reasoning_efforts: std::collections::BTreeMap::new(),
@@ -298,6 +311,7 @@ fn build_named_runtime(
         headers,
         extra_body: profile.extra_body.clone(),
         prompt_cache_key: profile.prompt_cache_key,
+        session_header: profile.session_header.clone(),
         prompt_cache_retention: super::openai::prompt_cache_retention_from_env(),
         model_reasoning_efforts: profile
             .models

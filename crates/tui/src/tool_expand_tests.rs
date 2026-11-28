@@ -25,10 +25,16 @@ fn state_with(calls: &[(&str, &str)]) -> ExpandState {
     state
 }
 
-/// The text a set of rendered rows shows, one row per line.
-fn drawn(rows: &[ratatui::text::Line<'static>]) -> String {
+/// The text a set of card lines shows, one line per row.
+fn drawn(rows: &[crate::wrap::Indented]) -> String {
     rows.iter()
-        .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
+        .map(|row| {
+            row.line()
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -104,8 +110,21 @@ fn draw_to_string(app: &mut App) -> String {
 }
 
 /// The first `count` rows of a drawn screen, where the transcript sits.
+/// The first `count` rows of the conversation, without the scrollbar column:
+/// the thumb moves with the height, and these compare the rows the view shows.
 fn top_rows(screen: &str, count: usize) -> String {
-    screen.lines().take(count).collect::<Vec<_>>().join("\n")
+    screen
+        .lines()
+        .take(count)
+        .map(|row| {
+            let mut characters: Vec<char> = row.chars().collect();
+            if characters.len() >= 2 && characters.last() == Some(&'"') {
+                characters.remove(characters.len() - 2);
+            }
+            characters.into_iter().collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// An app whose transcript holds `count` one-row notices.
@@ -372,7 +391,12 @@ fn an_open_call_is_drawn_as_every_row_of_its_output() {
         100,
         frame.retained("c1"),
     );
-    assert_eq!(rows.len(), 201, "the whole output is not drawn: {} rows", rows.len());
+    assert_eq!(
+        rows.len(),
+        202,
+        "the title, every output row and the closing row: {} rows",
+        rows.len()
+    );
     let text = drawn(&rows);
     assert!(text.contains("row-200"), "the last row is missing: {text:?}");
     assert!(!text.contains("+197 lines"), "an open call still counts hidden rows");
@@ -398,21 +422,22 @@ fn an_expanded_call_wraps_inside_the_pane_like_the_preview_does() {
     };
     let frame = tool_expand::Frame::new(transcript.expand_state(), &Bindings::default());
     let wrapped = crate::wrap::wrap_rows(crate::item_lines::lines(&Item::Tool(call), &look, Some(&frame)), 40);
-    assert!(wrapped.len() > 2, "the long row did not wrap: {wrapped:?}");
+    assert!(wrapped.len() > 3, "the long row did not wrap: {wrapped:?}");
     for row in &wrapped {
         let text: String = row.spans.iter().map(|span| span.content.as_ref()).collect();
-        assert!(
-            unicode_width::UnicodeWidthStr::width(text.as_str()) <= 40,
-            "a row is wider than the pane: {text:?}"
+        assert_eq!(
+            unicode_width::UnicodeWidthStr::width(text.as_str()),
+            40,
+            "a card row is not the pane's width: {text:?}"
         );
     }
-    // Every row under the head keeps the preview's own column, so an expanded
-    // call reads as one block instead of sliding back to the left edge.
-    for row in wrapped.iter().skip(1) {
+    // Every row between the title and the closing row sits inside the card's
+    // sides, wrapped rows included, so an expanded call reads as one block.
+    for row in &wrapped[1..wrapped.len() - 1] {
         let text: String = row.spans.iter().map(|span| span.content.as_ref()).collect();
         assert!(
-            text.starts_with("  "),
-            "an expanded row slid back to the first column: {text:?}"
+            text.starts_with("│ ") && text.ends_with(" │"),
+            "an expanded row left the card: {text:?}"
         );
     }
 }
@@ -682,7 +707,7 @@ fn the_key_label_costs_the_line_no_rows_at_any_width() {
     older.record("c2", "c\nd\n");
     let bindings = Bindings::default();
     let theme = crate::theme::Theme::default();
-    for width in [16, 20, 40, 100] {
+    for width in [16, 20, 30, 31, 40, 100] {
         let look = crate::item_lines::Look {
             theme: &theme,
             symbols: crate::theme::Symbols::default(),
@@ -708,9 +733,10 @@ fn the_key_label_costs_the_line_no_rows_at_any_width() {
             .iter()
             .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
             .collect();
-        // `  +197 lines · ctrl+o expands` is 29 cells, so it fits on the marker's
-        // one row from 29 columns up and is dropped below that.
-        if width >= 29 {
+        // `+197 lines · ctrl+o expands` is 27 cells and a card's sides take
+        // six more, so it fits on the marker's one row from 33 columns up and
+        // is dropped below that.
+        if width >= 33 {
             assert!(
                 text.contains("expands"),
                 "the hint is missing at width {width}: {text:?}"
@@ -886,19 +912,19 @@ fn an_earlier_result_opens_and_folds_without_moving_the_view() {
 fn a_block_that_changes_above_the_view_leaves_its_offset_alone() {
     let mut scroll = crate::scroll::Scroll::new();
     scroll.up(1);
-    scroll.measure(20, 3, [0, 0], 2, |_| 2);
+    scroll.measure(20, 3, None, [0, 0], 2, |_| 2);
     assert_eq!(scroll.offset(), 1);
 
     // The first block grows by eight rows, all above the two rows on screen.
     // The rows being read move down with the block, but the view shows the same
     // rows, which is exactly what leaving the offset alone does.
     scroll.reflow();
-    scroll.measure(20, 3, [0, 0], 2, |index| if index == 0 { 10 } else { 2 });
+    scroll.measure(20, 3, None, [0, 0], 2, |index| if index == 0 { 10 } else { 2 });
     assert_eq!(scroll.offset(), 1, "a block growing above the view moved it");
 
     // Hiding it again has the same answer in the other direction.
     scroll.reflow();
-    scroll.measure(20, 3, [0, 0], 2, |_| 2);
+    scroll.measure(20, 3, None, [0, 0], 2, |_| 2);
     assert_eq!(scroll.offset(), 1, "a block shrinking above the view moved it");
 }
 
@@ -906,13 +932,13 @@ fn a_block_that_changes_above_the_view_leaves_its_offset_alone() {
 fn a_block_that_changes_below_the_view_moves_its_offset_by_that_change() {
     let mut scroll = crate::scroll::Scroll::new();
     scroll.up(1);
-    scroll.measure(20, 3, [0, 0], 2, |_| 2);
+    scroll.measure(20, 3, None, [0, 0], 2, |_| 2);
     assert_eq!(scroll.offset(), 1);
 
     // The last block grows by eight rows below the view's top edge: those rows
     // sit between the view and the end, so the offset grows with them.
     scroll.reflow();
-    scroll.measure(20, 3, [0, 0], 2, |index| if index == 2 { 10 } else { 2 });
+    scroll.measure(20, 3, None, [0, 0], 2, |index| if index == 2 { 10 } else { 2 });
     assert_eq!(scroll.offset(), 9, "rows below the view did not push the offset");
 }
 

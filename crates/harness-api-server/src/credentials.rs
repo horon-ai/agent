@@ -10,7 +10,7 @@
 //!
 //! Hosted processes get per-user credentials for free: the path is under
 //! `HORON_HOME`, and a per-user container's `HORON_HOME` is that tenant's
-//! volume (`docs/architecture/HOSTING.md`).
+//! volume (`packages/docs-site/reference/architecture/hosting.mdx`).
 
 use horon_agent_base::storage::horon_agent_dir;
 use serde::{Deserialize, Serialize};

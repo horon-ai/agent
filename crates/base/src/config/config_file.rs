@@ -575,6 +575,8 @@ const NAMED_PROVIDER_KNOWN_KEYS: &[&str] = &[
     "extra-body",
     "prompt_cache_key",
     "prompt-cache-key",
+    "session_header",
+    "session-header",
     "stream_first_event_timeout_secs",
     "stream_idle_timeout_secs",
     "max_in_flight_requests",

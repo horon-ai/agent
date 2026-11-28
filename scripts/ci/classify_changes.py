@@ -59,10 +59,10 @@ FORCE_ALL_OS_LABELS = frozenset({"ci:all-os", "ci:full"})
 
 # Paths whose change cannot alter a build, a test or a binary except through the
 # embedded documentation corpus (covered separately by the `docs` gates).
-# `packages/docs-site/` is the Mintlify site, mostly pages generated from
-# `docs/`; it never reaches a binary, and the `docs_site` lane builds it. As
-# code, every documentation pull request (which regenerates those pages) would
-# lose the corpus test, and its `dev` push would run the full OS matrix.
+# `packages/docs-site/` is the Mintlify site, which holds the developer
+# reference; it never reaches a binary, and the `docs_site` lane builds it. As
+# code, every documentation pull request would lose the corpus test, and its
+# `dev` push would run the full OS matrix.
 DOC_PATTERNS = (
     "README*.md",
     "PHILOSOPHY*.md",
@@ -201,7 +201,7 @@ FULL_MATRIX_PATTERNS = (
     ".cargo/*",
     "build.rs",
     "crates/*/build.rs",
-    "examples/packages/*",
+    "tests/fixtures/package-example/*",
 )
 
 PLATFORM_MACOS_PATTERNS = (

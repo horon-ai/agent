@@ -322,13 +322,13 @@ fn a_session_change_waits_until_both_held_values_have_left() {
 
     assert_eq!(app.take_queued(), Some(Action::Model("mock-large".to_string())));
     assert_eq!(
-        submit(&mut app, "/switch"),
+        submit(&mut app, "/resume"),
         None,
         "the list opened with a change still held"
     );
     assert_eq!(
         last_line(&app),
-        "a held model or effort change is still being applied; /switch works in a moment"
+        "a held model or effort change is still being applied; /resume works in a moment"
     );
 
     assert_eq!(app.take_queued(), Some(Action::Effort("high".to_string())));

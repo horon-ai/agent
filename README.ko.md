@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="horon agent: 헤드리스와 TUI 두 모드가 동등한 에이전트 하나. Chat Completions, Responses, Anthropic Messages, Gemini generateContent 엔드포인트를 쓴다" width="720">
+  <img src="packages/docs-site/images/reference/assets/hero.svg" alt="horon agent: 헤드리스와 TUI 두 모드가 동등한 에이전트 하나. Chat Completions, Responses, Anthropic Messages, Gemini generateContent 엔드포인트를 쓴다" width="720">
 </p>
 
 <p align="center">
@@ -30,14 +30,14 @@ horon agent는 엔진 하나 위에 동등한 모드 두 개를 둔 에이전트
 
 ## 숫자
 
-![벤치마크 요약: horon 대 도구 일곱 개](docs/performance/charts/00-summary.ko.svg)
+![벤치마크 요약: horon 대 도구 일곱 개](packages/docs-site/images/reference/performance/charts/00-summary.ko.svg)
 
 - 이벤트 10만 개 세션의 이력 페이지 한 장은 62,169,922 B 대신 18,554 B를 읽고, 26.2 s 대신 5.9 ms가 걸린다. 200 MiB 소스 해시의 최고 할당은 268,435,520 B 대신 65,600 B다.
 - jcode와 다른 도구 여섯 개를 비교한 값은 [벤치마크](#벤치마크)의 자동 생성 표에 있다. 수치는 개발자 기계가 아니라 GitHub Actions 실행에서 나온다.
 
-![세션 저장소: 요청 하나의 이전과 이후](docs/performance/charts/record-01-session-store.ko.svg)
+![세션 저장소: 요청 하나의 이전과 이후](packages/docs-site/images/reference/performance/charts/record-01-session-store.ko.svg)
 
-위 수치는 모두 측정값이며 실행 기록은 [docs/performance/RESULTS.ko.md](docs/performance/RESULTS.ko.md)에, 방법과 한계는 [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md)에 있다. [설치](#설치)는 명령 한 줄로 끝난다.
+위 수치는 모두 측정값이며 실행 기록은 [agent.horon.ai/ko/reference/performance/results](https://agent.horon.ai/ko/reference/performance/results)에, 방법과 한계는 [agent.horon.ai/ko/reference/performance/benchmark](https://agent.horon.ai/ko/reference/performance/benchmark)에 있다. [설치](#설치)는 명령 한 줄로 끝난다.
 
 ## 설치
 
@@ -66,7 +66,7 @@ cargo build --release -p horon-agent
 ./target/release/horon-agent --version
 ```
 
-설치 스크립트는 릴리스 압축 파일과 `SHA256SUMS`를 함께 받아 `horon install-release`에 넘긴다. 이 명령이 체크섬을 확인하고, 바뀌지 않는 버전 디렉터리를 만든 뒤 `stable`·`current` 링크를 바꾼다. 같은 버전 디렉터리에 다른 바이트가 이미 있으면 덮어쓰지 않고 거부한다([자세히](docs/release/INSTALL.ko.md)).
+설치 스크립트는 릴리스 압축 파일과 `SHA256SUMS`를 함께 받아 `horon install-release`에 넘긴다. 이 명령이 체크섬을 확인하고, 바뀌지 않는 버전 디렉터리를 만든 뒤 `stable`·`current` 링크를 바꾼다. 같은 버전 디렉터리에 다른 바이트가 이미 있으면 덮어쓰지 않고 거부한다([자세히](https://agent.horon.ai/ko/reference/release/install)).
 
 설치 스크립트가 만드는 실행 이름은 셋이다. 이 문서의 모든 예제가 쓰는 `horon`, 같은 명령을 짧게 부르는 `hrn`, 실행 파일 자체의 이름인 `horon-agent`다. 셋 다 같은 파일을 가리킨다. 데이터는 `~/.horon`에 두고 `HORON_HOME`으로 바꿀 수 있으며, v0.1.1까지의 릴리스는 `~/.horon-agent`를 쓴다.
 
@@ -96,17 +96,17 @@ horon run "summarize this repo"
 ```
 
 <p align="center">
-  <img src="docs/assets/terminal-run.svg" alt="터미널 기록: provider current가 ready를 보고하고, horon run이 ls 도구 호출을 실행한 뒤 모델이 mock-ok로 답한다" width="860">
+  <img src="packages/docs-site/images/reference/assets/terminal-run.svg" alt="터미널 기록: provider current가 ready를 보고하고, horon run이 ls 도구 호출을 실행한 뒤 모델이 mock-ok로 답한다" width="860">
 </p>
 
 <sub>`dev` 빌드를 저장소의 결정적 모의 모델 서버(`scripts/perf/mock_llm_server.py`)에 붙여 격리된 홈 디렉터리에서 실제로 실행해 얻은 출력이다. 모델 응답은 모의 서버의 고정 문구다.</sub>
 
-프로파일을 정하지 않으면 모델 호출은 네트워크에 닿기 전에 멈추고 빠진 `[providers.<name>]` 표를 알려 준다. `headers`, `extra_body`, `context_window`와 `openrouter`·`zai`·`kimi`·`ollama` 같은 내장 프로파일까지 모든 키는 [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md)에 있다.
+프로파일을 정하지 않으면 모델 호출은 네트워크에 닿기 전에 멈추고 빠진 `[providers.<name>]` 표를 알려 준다. `headers`, `extra_body`, `context_window`와 `openrouter`·`zai`·`kimi`·`ollama` 같은 내장 프로파일까지 모든 키는 [agent.horon.ai/ko/reference/provider/model](https://agent.horon.ai/ko/reference/provider/model)에 있다.
 
 이름 있는 프로파일에 `stream_first_event_timeout_secs`와 `stream_idle_timeout_secs`를 두면 첫 응답과 응답 도중 대기 시간을 따로 제한할 수 있다.
 `max_in_flight_requests`를 지정하면 같은 프로파일을 쓰는 여러 세션의 동시 요청 수를 제한할 수 있다.
-터미널에서 `/modelpreset`으로 이름을 붙인 [세션 모델 설정](docs/provider/MODEL.ko.md#세션-모델-프리셋)을 미리 보고 적용할 수 있다.
-`horon --isolated-profile <name>`으로 설정, 세션, 인증 자료, 데몬 소켓을 격리된 로컬 프로필에 둘 수 있다([설치 문서](docs/release/INSTALL.ko.md#런처-별칭-horon-hrn)).
+터미널에서 `/modelpreset`으로 이름을 붙인 [세션 모델 설정](https://agent.horon.ai/ko/reference/provider/model#세션-모델-프리셋)을 미리 보고 적용할 수 있다.
+`horon --isolated-profile <name>`으로 설정, 세션, 인증 자료, 데몬 소켓을 격리된 로컬 프로필에 둘 수 있다([설치 문서](https://agent.horon.ai/ko/reference/release/install#런처-별칭-horon-hrn)).
 
 ## 실행 방법
 
@@ -114,16 +114,16 @@ horon run "summarize this repo"
 
 | 명령 | 하는 일 |
 | --- | --- |
-| `horon`(하위 명령 없음) | 먼저 터미널 인계 조건을 확인하고, 모두 맞으면 필요 시 서버를 띄운 뒤 형제 파일 `horon-tui`로 자기 프로세스를 넘긴다. 키 바인딩, 사용자 파일, 설정 화면이 있다([문서](docs/runtime/TUI.ko.md)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재 중 하나면 데몬을 띄우지 않고 조건과 해결책(설치 안내는 형제 파일 부재 시에만)을 출력한 뒤 종료 코드 `1`로 끝난다. |
-| `horon run "<메시지>"` | 메시지 하나를 보내고, 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. `--thinking`과 `--service-tier`로 [모델 옵션](docs/provider/MODEL.ko.md#설정)을 지정한다. `--no-pty`로 셸 도구에 파이프를 쓰며 `--no-session`으로 실행을 메모리에만 두고, `--add-dir <path>`(반복 가능)로 추가 워크스페이스 디렉터리를 세션 컨텍스트에 올리고, [`--max-time`](docs/runtime/TURNS.ko.md#실행-시간-제한)으로 실행 시간을 제한하며 `--warn-cost`와 `--max-cost`로 추정 비용을 감시한다. |
+| `horon`(하위 명령 없음) | 먼저 터미널 인계 조건을 확인하고, 모두 맞으면 필요 시 서버를 띄운 뒤 형제 파일 `horon-tui`로 자기 프로세스를 넘긴다. 키 바인딩, 사용자 파일, 설정 화면이 있다([문서](https://agent.horon.ai/ko/reference/runtime/tui)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재 중 하나면 데몬을 띄우지 않고 조건과 해결책(설치 안내는 형제 파일 부재 시에만)을 출력한 뒤 종료 코드 `1`로 끝난다. |
+| `horon run "<메시지>"` | 메시지 하나를 보내고, 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. `--thinking`과 `--service-tier`로 [모델 옵션](https://agent.horon.ai/ko/reference/provider/model#설정)을 지정한다. `--no-pty`로 셸 도구에 파이프를 쓰며 `--no-session`으로 실행을 메모리에만 두고, `--add-dir <path>`(반복 가능)로 추가 워크스페이스 디렉터리를 세션 컨텍스트에 올리고, [`--max-time`](https://agent.horon.ai/ko/reference/runtime/turns#실행-시간-제한)으로 실행 시간을 제한하며 `--warn-cost`와 `--max-cost`로 추정 비용을 감시한다. |
 | `horon repl` | 전체 화면 클라이언트 없이 터미널에서 한 줄씩 입력한다. |
 | `horon serve` | 유닉스 소켓(`HORON_AGENT_SOCKET`)에서 도는 백그라운드 에이전트 데몬. |
 | `horon api-bridge` | SDK 클라이언트용 하네스 API 로컬 소켓(`HORON_AGENT_API_SOCKET`). Unix 소켓이거나 Windows의 네임드 파이프다. `--api-bind IP:PORT`를 주면 베어러 자격 증명을 요구하는 TCP 리스너도 함께 연다. |
-| `horon api-credentials issue\|rotate\|revoke\|list` | TCP로 노출한 하네스 API가 받는 베어러 토큰을 발급·회전·폐기·조회한다. 토큰은 한 번만 출력된다([문서](docs/protocol/HARNESS_API.ko.md)). |
+| `horon api-credentials issue\|rotate\|revoke\|list` | TCP로 노출한 하네스 API가 받는 베어러 토큰을 발급·회전·폐기·조회한다. 토큰은 한 번만 출력된다([문서](https://agent.horon.ai/ko/reference/protocol/harness-api)). |
 | `horon acp` | 에디터용 표준 입출력 ACP v1·v2 어댑터. |
 | `horon stats --from 2026-11-01 --through 2026-11-21` | 저장한 토큰 사용량을 UTC 날짜, 제공자와 모델별로 표시한다. `--json`으로 구조화된 결과를 받고, 터미널 클라이언트에서는 `/stats`로 연결된 세션의 사용량을 본다. |
 | `horon config show` / `horon config check` | `show`는 읽기 전용으로 유효 설정과 출처(default, file, env, cli)를 표시하며 자격 증명은 표시하지 않는다(`--json` 지원). `check`는 시작 때 쓰는 로더로 `config.toml`을 검증해(레거시 `swarm_spawn_mode` 1회 마이그레이션 적용) 잘못된 TOML, 알 수 없는 키, 미등록 `[provider] default_provider`를 거부하고 잘못된 항목을 알리며 종료 코드 `1`로 끝난다. |
-| `horon rpc` | 프로세스를 직접 소유한 호스트 프로그램용 표준 입출력 JSONL RPC 어댑터. 표준 입력으로 한 줄에 JSON 명령 하나, 표준 출력으로 한 줄에 프레임 하나를 주고받는다([문서](docs/protocol/RPC.ko.md)). `--mode rpc`도 같은 어댑터를 고른다. |
+| `horon rpc` | 프로세스를 직접 소유한 호스트 프로그램용 표준 입출력 JSONL RPC 어댑터. 표준 입력으로 한 줄에 JSON 명령 하나, 표준 출력으로 한 줄에 프레임 하나를 주고받는다([문서](https://agent.horon.ai/ko/reference/protocol/rpc)). `--mode rpc`도 같은 어댑터를 고른다. |
 | `horon completions <bash\|zsh\|fish>` | 데몬을 시작하지 않고 셸 자동완성 스크립트를 출력한다. |
 | `horon stream-rules [TEXT]` | 스트림 규칙을 검사하고 모델 답변 예시에 맞는 규칙을 오프라인에서 확인한다. |
 | `horon tokens [TEXT]` | UTF-8 텍스트를 인자나 표준 입력으로 받거나 `--file`에서 읽어 오프라인으로 토큰 수를 추정한다. `--model`로 알려진 토크나이저 계열을 고르며 기본 추정 방식을 사용하면 결과에 표시한다. |
@@ -135,10 +135,10 @@ horon run "summarize this repo"
 | `horon compact-text <FILE\|->` | UTF-8 텍스트 파일(또는 표준 입력, 48 KiB 이하)을 요약해 표준 출력에 내고 생략한 항목을 표준 오류에 나열한다. 원본은 고치지 않는다. `--max-tokens`로 요약 길이를 제한한다. |
 | `horon cloud doctor [--host <별칭>]` | 세션을 옮기기 전에 SSH 호스트에 접속할 수 있고 `cloud move`를 지원하는 horon-agent가 있는지 확인한다. 다음 조치와 함께 `ready`, `unreachable`, `incompatible` 중 한 줄을 표시하고 세션 데이터는 보내지 않으며 준비되지 않았으면 0이 아닌 코드로 종료한다. |
 | `horon changelog [VERSION] [--json]` | VERSION(기본값은 실행 중인 릴리스)의 공개된 릴리스 노트를 업데이트나 설치 없이 표시한다. 노트를 읽지 못하면 버전과 릴리스 페이지를 대신 표시한다. 노트의 제어 문자는 제거한다. |
-| `horon package install\|list\|verify\|disable\|remove` | 별도 자식 프로세스로 도는 사용자 설치 Rust 확장과 플러그인을 설치·나열·해시 검증·비활성화·제거한다([문서](docs/runtime/PACKAGES.ko.md)). |
-| `horon memory migrate [--dry-run]` | 위키 이전 `memory/*.json` 파일을 사용자별 마크다운 위키로 가져오고, 기록한 페이지와 건너뛴 페이지를 보고한다. 멱등이며 JSON 원본은 수정하지 않는다([문서](docs/runtime/MEMORY.ko.md#json에서-마이그레이션)). |
-| `horon memory export <출력경로> [--scope ...]` | 저장된 기억 항목을 로컬 파일로 내보내고, 내보낸 필드의 자격 증명을 마스킹하며 소유자 전용 권한(`0o600`, `O_NOFOLLOW`)으로 저장한다([문서](docs/runtime/MEMORY.ko.md#기억-항목-내보내기)). |
-| `horon volume export\|import\|quiesce\|resume\|key\|delete-user\|deletion-status` | 사용자 볼륨 하나를 백업하고, 복원하고, 스냅숏 전에 동결하고, 삭제한다. `export`는 기억 페이지와 메타데이터·manifest 파일을 tar로 쓰고, `import`는 새 빈 홈에 검증해 풀고 인덱스를 다시 만들며, `quiesce`는 스냅숏 전에 체크포인트하고 쓰기를 막고 `resume`은 그 펜스를 풀며, `delete-user`는 영속 삭제 단계를 돌려 모든 단계가 끝난 뒤에만 `deleted`를 보고한다([문서](docs/runtime/MEMORY.ko.md#볼륨-내보내기-가져오기-삭제)). |
+| `horon package install\|list\|verify\|disable\|remove` | 별도 자식 프로세스로 도는 사용자 설치 Rust 확장과 플러그인을 설치·나열·해시 검증·비활성화·제거한다([문서](https://agent.horon.ai/ko/reference/runtime/packages)). |
+| `horon memory migrate [--dry-run]` | 위키 이전 `memory/*.json` 파일을 사용자별 마크다운 위키로 가져오고, 기록한 페이지와 건너뛴 페이지를 보고한다. 멱등이며 JSON 원본은 수정하지 않는다([문서](https://agent.horon.ai/ko/reference/runtime/memory#json에서-마이그레이션)). |
+| `horon memory export <출력경로> [--scope ...]` | 저장된 기억 항목을 로컬 파일로 내보내고, 내보낸 필드의 자격 증명을 마스킹하며 소유자 전용 권한(`0o600`, `O_NOFOLLOW`)으로 저장한다([문서](https://agent.horon.ai/ko/reference/runtime/memory#기억-항목-내보내기)). |
+| `horon volume export\|import\|quiesce\|resume\|key\|delete-user\|deletion-status` | 사용자 볼륨 하나를 백업하고, 복원하고, 스냅숏 전에 동결하고, 삭제한다. `export`는 기억 페이지와 메타데이터·manifest 파일을 tar로 쓰고, `import`는 새 빈 홈에 검증해 풀고 인덱스를 다시 만들며, `quiesce`는 스냅숏 전에 체크포인트하고 쓰기를 막고 `resume`은 그 펜스를 풀며, `delete-user`는 영속 삭제 단계를 돌려 모든 단계가 끝난 뒤에만 `deleted`를 보고한다([문서](https://agent.horon.ai/ko/reference/runtime/memory#볼륨-내보내기-가져오기-삭제)). |
 | `horon images --session <id> [--json] [--copy <번호> <대상>]` | 세션이 생성한 이미지를 그 세션에 저장된 `generate_image` 결과에서 읽어 나열한다. `generated-images/` 바로 아래의 일반 파일만 나열하며, 그 밖의 경로, 심볼릭 링크, 없는 파일은 거부로 표시하고 복사할 수 없다. `--copy`는 이미지 하나를 새 로컬 파일로 쓰며 덮어쓰지 않는다. 업로드는 하지 않는다. |
 
 `horon run --wait-async "<메시지>"`는 그 실행이 시작한 작업을 기다리고 각 작업의 최종 상태를 한 번씩 표시한다. `--max-time`은 응답과 작업 대기를 합친 시간을 제한한다. 시간을 넘기면 확인한 작업 상태를 표시하고 0이 아닌 코드로 종료한다.
@@ -147,9 +147,9 @@ horon run "summarize this repo"
 
 `horon run --no-session "<메시지>"`는 실행을 메모리에만 둔다. `$HORON_HOME` 아래에 세션 로그, 체크포인트, 카탈로그 행, 실행 저널을 쓰지 않으므로 실행 뒤에 이어가거나 복구할 수 없고, 실패한 실행도 흔적을 남기지 않는다. `--json`과 `--ndjson` 출력의 세션 ID는 저장된 세션을 가리키지 않는다. 로그와 사용량 기록 같은 세션 밖 상태는 평소처럼 기록한다. 저장된 세션이 필요한 `--resume`, `--continue`, `--goal`과는 함께 쓸 수 없다. `todo`처럼 세션별 파일을 따로 쓰는 도구는 이 보장에 포함되지 않는다.
 
-`horon run --warn-cost <USD>`는 실행의 추정 비용이 그 금액에 닿으면 표준 오류에 경고를 한 번 표시한다. `--max-cost <USD>`는 가격이 등록되지 않은 원격 경로(`auth = "none"`을 포함한 비로컬 `base_url`)를 요청 전에 종료 코드 `1`로 거부하고, 명시적 로컬 엔드포인트(루프백·사설·링크 로컬 대역, `localhost`, `.local`, `.lan`, `host.docker.internal`)의 미가격 모델은 표준 오류 경고와 함께 실행하며 미가격 사용량을 상한 없이 따로 보고한다. 가격이 있는 경로에서는 추정 비용이 상한에 닿은 뒤 새 모델 요청을 보내지 않고 비용 상한 오류로 끝난다. 추정은 응답이 보고한 토큰과 가격 카탈로그로 계산하며, 이미 보낸 요청은 끝까지 처리해 합산하므로 처리 중이던 만큼 상한을 넘을 수 있다. 같은 프로세스가 소유한 자식 에이전트도 같은 실행에 합산한다. 두 옵션이 없으면 요청은 달라지지 않는다. (`horon run`은 가드레일·`length`·빈 응답 턴을 종료 코드 `1`로 실패시키며 `auto_poke` 기본 상한은 `6`회다. [TURNS.ko.md](docs/runtime/TURNS.ko.md#비정상-종료-자동-재촉-상한-비용-상한) 참고.)
+`horon run --warn-cost <USD>`는 실행의 추정 비용이 그 금액에 닿으면 표준 오류에 경고를 한 번 표시한다. `--max-cost <USD>`는 가격이 등록되지 않은 원격 경로(`auth = "none"`을 포함한 비로컬 `base_url`)를 요청 전에 종료 코드 `1`로 거부하고, 명시적 로컬 엔드포인트(루프백·사설·링크 로컬 대역, `localhost`, `.local`, `.lan`, `host.docker.internal`)의 미가격 모델은 표준 오류 경고와 함께 실행하며 미가격 사용량을 상한 없이 따로 보고한다. 가격이 있는 경로에서는 추정 비용이 상한에 닿은 뒤 새 모델 요청을 보내지 않고 비용 상한 오류로 끝난다. 추정은 응답이 보고한 토큰과 가격 카탈로그로 계산하며, 이미 보낸 요청은 끝까지 처리해 합산하므로 처리 중이던 만큼 상한을 넘을 수 있다. 같은 프로세스가 소유한 자식 에이전트도 같은 실행에 합산한다. 두 옵션이 없으면 요청은 달라지지 않는다. (`horon run`은 가드레일·`length`·빈 응답 턴을 종료 코드 `1`로 실패시키며 `auto_poke` 기본 상한은 `6`회다. [TURNS.ko.md](https://agent.horon.ai/ko/reference/runtime/turns#비정상-종료-자동-재촉-상한-비용-상한) 참고.)
 
-`horon run --role plan=<모델>`, `--prewalk <모델|role:<이름>>`, `--no-prewalk`는 `config.toml`을 건드리지 않고 그 한 번의 실행에만 모델 역할과 `[prewalk]` 핸드오프를 바꾼다. 모르는 역할, 빈 모델, 활성 프로파일이 나열하지 않는 모델은 요청을 보내기 전에 실패하고, `--no-prewalk`는 `[prewalk]`와 `--prewalk` 모두보다 우선한다([문서](docs/provider/MODEL.ko.md#실행-한-번의-역할프리워크-덮어쓰기)).
+`horon run --role plan=<모델>`, `--prewalk <모델|role:<이름>>`, `--no-prewalk`는 `config.toml`을 건드리지 않고 그 한 번의 실행에만 모델 역할과 `[prewalk]` 핸드오프를 바꾼다. 모르는 역할, 빈 모델, 활성 프로파일이 나열하지 않는 모델은 요청을 보내기 전에 실패하고, `--no-prewalk`는 `[prewalk]`와 `--prewalk` 모두보다 우선한다([문서](https://agent.horon.ai/ko/reference/provider/model#실행-한-번의-역할프리워크-덮어쓰기)).
 
 `horon run --config overlay.toml "<메시지>"`는 그 실행 한 번에 한해 `config.toml` 위에 TOML 파일을 겹쳐 적용한다. 여러 번 쓸 수 있고, 뒤의 파일이 키 단위로 이기며, 적지 않은 키는 그대로 이어받고 표는 키별로 합쳐진다. 파싱할 수 없는 파일은 자기 이름을 알리고, 합친 결과는 공급자를 쓰기 전에 검증한다.
 
@@ -175,7 +175,7 @@ horon run "summarize this repo"
 
 추가 워크스페이스 디렉터리를 함께 열어 세션을 시작하려면 `horon --add-dir <path>`(반복 가능)를 쓴다. 각 경로는 실제 존재하는 디렉터리로 해석하고, 같은 디렉터리를 다른 표기로 다시 넘겨도 하나로 합치며, 목록은 세션 컨텍스트에 들어가고 세션과 함께 저장된다. 클라이언트에서는 `/dirs`로 목록을 보고 `/dirs add <path>`나 `/dirs remove <path>`로 바꾸며, 목록에서 빼도 디렉터리 자체는 건드리지 않는다. 목록에 오른 루트는 워크스페이스 컨텍스트일 뿐 승인 허용은 아니다.
 
-설치 스크립트는 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`도 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 그대로 둔다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
+설치 스크립트는 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`도 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 그대로 둔다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [agent.horon.ai/ko/reference/runtime/tui](https://agent.horon.ai/ko/reference/runtime/tui)에 있다.
 
 ### 에디터 (ACP)
 
@@ -193,11 +193,11 @@ horon run "summarize this repo"
 }
 ```
 
-JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 입출력 계약과 v2의 차이는 [docs/protocol/ACP.ko.md](docs/protocol/ACP.ko.md)에 있다.
+JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 입출력 계약과 v2의 차이는 [agent.horon.ai/ko/reference/protocol/acp](https://agent.horon.ai/ko/reference/protocol/acp)에 있다.
 
 ### 호스트 프로그램 (RPC)
 
-프로세스를 직접 소유한 프로그램은 터미널을 넘겨받는 대신 에이전트를 직접 구동할 수 있다. `horon rpc` 또는 `horon --mode rpc`는 표준 입력에서 한 줄에 JSON 명령 하나를 읽고 표준 출력으로 한 줄에 프레임 하나를 쓴다. 스트리밍 턴, 취소, 세션 제어를 지원하고, 호스트가 둘 다 넘기면 서브커맨드가 이긴다. 표준 출력에는 프레임만 나가고 진단은 표준 오류로 가며, 표준 입력을 닫으면 프로세스가 끝난다. 이 모드는 프로토콜 버전 1을 쓰므로 1 MiB를 넘는 프레임은 쪼개지 않고 오류가 된다. 터미널 클라이언트도 ACP도 아니다. `horon-tui`는 하네스 API로 붙고, RPC는 ACP를 쓸 수 없는 호스트를 받는다([문서](docs/protocol/RPC.ko.md)).
+프로세스를 직접 소유한 프로그램은 터미널을 넘겨받는 대신 에이전트를 직접 구동할 수 있다. `horon rpc` 또는 `horon --mode rpc`는 표준 입력에서 한 줄에 JSON 명령 하나를 읽고 표준 출력으로 한 줄에 프레임 하나를 쓴다. 스트리밍 턴, 취소, 세션 제어를 지원하고, 호스트가 둘 다 넘기면 서브커맨드가 이긴다. 표준 출력에는 프레임만 나가고 진단은 표준 오류로 가며, 표준 입력을 닫으면 프로세스가 끝난다. 이 모드는 프로토콜 버전 1을 쓰므로 1 MiB를 넘는 프레임은 쪼개지 않고 오류가 된다. 터미널 클라이언트도 ACP도 아니다. `horon-tui`는 하네스 API로 붙고, RPC는 ACP를 쓸 수 없는 호스트를 받는다([문서](https://agent.horon.ai/ko/reference/protocol/rpc)).
 
 ### SDK
 
@@ -215,25 +215,25 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 �
 
 | 기능 | 설명 |
 | --- | --- |
-| 핵심 도구 18개 | `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`. core 세션은 이 중 일곱 개와 `toolbox`를 처음부터 보내고, 나머지 열한 개는 시스템 프롬프트에 이름만 적어 `toolbox`로 부르게 하므로 첫 요청이 작다. 프로필은 `core`(기본), `full`, `acp`, `minimal`, `none`이다([문서](docs/runtime/TOOLS.ko.md)). |
-| 추가만 하는 세션 | 이력은 `<홈>/sessions/<id>/events.jsonl` 이벤트 로그이고, 큰 페이로드는 내용 주소 blob에 둔다. 보관, 압축, 되감기는 기록을 덧붙일 뿐 원본을 지우지 않는다. `horon session` 하위 명령이 그 저장소를 조회·점검·내보내기·가져오기·이전·복구·보관·복원하고, 파괴적인 명령은 `delete <id> --yes` 하나뿐이며 실행 중인 데몬이 열고 있는 세션은 거부한다([문서](docs/protocol/SESSION_STORE.ko.md)). |
-| 편집 안전 장치 | 저널이 파일 편집의 `undo`를 받쳐 주고, `redo`와 hashline 앵커는 켜야 쓴다([문서](docs/runtime/TOOLS.ko.md)). |
-| 목표 예산 | 이어 가는 목표에 `budget_tokens`를 둘 수 있다. 세션 지출이 그 값에 닿으면 목표가 `budget_limited`가 되고, 지금까지의 결과를 기록하라고 모델에 알리는 마무리 턴을 한 번 준 뒤 멈춘다. 예산을 올리고 목표를 `active`로 되돌리는 일은 운영자가 정한다([문서](docs/runtime/TURNS.ko.md)). |
+| 기본으로 모든 내장 도구 | core 세션은 내장 도구에 모두 닿는다. 자주 쓰는 열한 개(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`, `todo`, `bg`, `websearch`, `webfetch`)와 `toolbox`, 그리고 `PATH`에 Python이 있으면 `eval`을 처음부터 보내고, 나머지는 시스템 프롬프트에 이름만 적어 `toolbox`로 부르게 하므로 첫 요청이 작다. 스위치를 `false`로 두면 도구가 빠진다. 프로필은 `core`(기본), `full`, `acp`, `minimal`, `none`이다([문서](https://agent.horon.ai/ko/reference/runtime/tools)). |
+| 추가만 하는 세션 | 이력은 `<홈>/sessions/<id>/events.jsonl` 이벤트 로그이고, 큰 페이로드는 내용 주소 blob에 둔다. 보관, 압축, 되감기는 기록을 덧붙일 뿐 원본을 지우지 않는다. `horon session` 하위 명령이 그 저장소를 조회·점검·내보내기·가져오기·이전·복구·보관·복원하고, 파괴적인 명령은 `delete <id> --yes` 하나뿐이며 실행 중인 데몬이 열고 있는 세션은 거부한다([문서](https://agent.horon.ai/ko/reference/protocol/session-store)). |
+| 편집 안전 장치 | 저널이 파일 편집의 `undo`를 받쳐 주고, `redo`와 hashline 앵커는 기본으로 켜져 있다([문서](https://agent.horon.ai/ko/reference/runtime/tools)). |
+| 목표 예산 | 이어 가는 목표에 `budget_tokens`를 둘 수 있다. 세션 지출이 그 값에 닿으면 목표가 `budget_limited`가 되고, 지금까지의 결과를 기록하라고 모델에 알리는 마무리 턴을 한 번 준 뒤 멈춘다. 예산을 올리고 목표를 `active`로 되돌리는 일은 운영자가 정한다([문서](https://agent.horon.ai/ko/reference/runtime/turns)). |
 | MCP와 스킬 | `horon mcp`가 설정된 MCP 서버를 나열하고 원격 서버의 OAuth 자격 증명을 관리한다. 스킬은 `skill://`로 읽고 `skill_manage`로 관리한다. |
-| 무인 실행 | 턴 복구, 영속 대기 입력을 다루는 `horon runtime-state`, 사람을 기다리다 멈춘 실행에 사람의 판정을 기록하는 `horon approvals`가 사람이 자리에 없는 실행을 받친다([문서](docs/safety/SAFETY.ko.md)). |
-| 에이전트 간 메시지 | 켜야 쓰는 `irc` 메일박스 버스(`[tools] irc = true`)로 한 데몬 안의 에이전트가 `send`, `wait`, `inbox`, `list`를 쓴다([문서](docs/runtime/IRC.ko.md)). |
-| 워크스페이스 신뢰 | 프로젝트 안의 MCP 설정은 다이제스트를 신뢰하기 전까지 건너뛰고, `--trust-workspace`가 그 결정을 기록한다([문서](docs/safety/SECURITY.ko.md)). |
-| OpenSSL 없는 TLS | 내장 webpki 루트와 OS 신뢰 저장소를 합쳐 쓰는 rustls다. Linux 바이너리는 glibc, libm, libgcc_s만 있으면 뜬다([문서](docs/release/INSTALL.ko.md)). |
+| 무인 실행 | 턴 복구, 영속 대기 입력을 다루는 `horon runtime-state`, 사람을 기다리다 멈춘 실행에 사람의 판정을 기록하는 `horon approvals`가 사람이 자리에 없는 실행을 받친다([문서](https://agent.horon.ai/ko/reference/safety/safety)). |
+| 에이전트 간 메시지 | 기본으로 켜진 `irc` 메일박스 버스(`[tools] irc = false`로 끈다)로 한 데몬 안의 에이전트가 `send`, `wait`, `inbox`, `list`를 쓴다([문서](https://agent.horon.ai/ko/reference/runtime/irc)). |
+| 워크스페이스 신뢰 | 프로젝트 안의 MCP 설정은 다이제스트를 신뢰하기 전까지 건너뛰고, `--trust-workspace`가 그 결정을 기록한다([문서](https://agent.horon.ai/ko/reference/safety/security)). |
+| OpenSSL 없는 TLS | 내장 webpki 루트와 OS 신뢰 저장소를 합쳐 쓰는 rustls다. Linux 바이너리는 glibc, libm, libgcc_s만 있으면 뜬다([문서](https://agent.horon.ai/ko/reference/release/install)). |
 
 </details>
 
 ## 구조
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="구조: SDK와 ACP로 연결한 에디터는 하네스 API와 ACP 어댑터로, 터미널 클라이언트 horon-tui도 같은 경로로 에이전트 데몬에 닿고, 인자 없는 run은 에이전트를 프로세스 안에서 돌린다. 데몬은 세션을 이벤트 로그에 저장하며 프로파일의 엔드포인트를 직접 호출한다" width="860">
+  <img src="packages/docs-site/images/reference/assets/architecture.svg" alt="구조: SDK와 ACP로 연결한 에디터는 하네스 API와 ACP 어댑터로, 터미널 클라이언트 horon-tui도 같은 경로로 에이전트 데몬에 닿고, 인자 없는 run은 에이전트를 프로세스 안에서 돌린다. 데몬은 세션을 이벤트 로그에 저장하며 프로파일의 엔드포인트를 직접 호출한다" width="860">
 </p>
 
-크레이트 경계와 플랫폼 어댑터는 [docs/architecture/CRATES.ko.md](docs/architecture/CRATES.ko.md), 데몬·세션·소켓은 [docs/architecture/SERVER.ko.md](docs/architecture/SERVER.ko.md)에 있다. 터미널 라이브러리가 에이전트 바이너리에 들어오지 않도록 CI에서 `scripts/ci/check_headless_graph.py`가 확인하며, `horon-agent`에서 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트 중 하나라도 닿으면 실패한다.
+크레이트 경계와 플랫폼 어댑터는 [agent.horon.ai/ko/reference/architecture/crates](https://agent.horon.ai/ko/reference/architecture/crates), 데몬·세션·소켓은 [agent.horon.ai/ko/reference/architecture/server](https://agent.horon.ai/ko/reference/architecture/server)에 있다. 터미널 라이브러리가 에이전트 바이너리에 들어오지 않도록 CI에서 `scripts/ci/check_headless_graph.py`가 확인하며, `horon-agent`에서 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트 중 하나라도 닿으면 실패한다.
 
 ## 벤치마크
 
@@ -278,7 +278,7 @@ jcode v1.1.2(Linux: 릴리스 `v1.1.2`, 커밋 `4f874c9ea6b7c3e228045fa8269e4d84
 
 <!-- bench-summary:end -->
 
-이 값은 한 커밋에서 CI로 얻은 표본이며 보장이 아니다. 도구 여덟 개의 전체 표, TUI 측정, 측정 방법, 수치가 말해 주지 않는 것은 [docs/performance/RESULTS.ko.md](docs/performance/RESULTS.ko.md)와 [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md)에 있다.
+이 값은 한 커밋에서 CI로 얻은 표본이며 보장이 아니다. 도구 여덟 개의 전체 표, TUI 측정, 측정 방법, 수치가 말해 주지 않는 것은 [agent.horon.ai/ko/reference/performance/results](https://agent.horon.ai/ko/reference/performance/results)와 [agent.horon.ai/ko/reference/performance/benchmark](https://agent.horon.ai/ko/reference/performance/benchmark)에 있다.
 
 ## 설정 기본값
 
@@ -306,23 +306,23 @@ jcode v1.1.2(Linux: 릴리스 `v1.1.2`, 커밋 `4f874c9ea6b7c3e228045fa8269e4d84
 
 ## 문서
 
-문서는 영어(기본)와 한국어(`.ko.md`, `docs/README.ko.md`처럼 같은 폴더에 나란히) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. [agent.horon.ai](https://agent.horon.ai)는 [packages/docs-site](packages/docs-site)에 있는 Mintlify 사이트다. Reference 탭은 `scripts/ci/sync_docs_site.py`가 `docs/`, `PHILOSOPHY.md`, SDK·npm README에서 생성하고, 안내 페이지는 영어로 손수 쓴다. 그래서 안내 페이지가 되풀이하는 동작이 바뀌면 그 페이지도 함께 고친다.
+문서는 두 벌이다. 개발자 레퍼런스는 [agent.horon.ai](https://agent.horon.ai)의 Reference 탭이며 [packages/docs-site](packages/docs-site)에 영어와 한국어로 쓰고, 안내 페이지는 영어로 쓴다. 에이전트용 문서는 영어로 쓴 [docs/](docs/README.md) 폴더이고 바이너리에 들어가 `horon` 도구가 검색하며 `read horon://<페이지>`로 읽는다(`horon://tools.md`).
 
 | 주제 | 문서 |
 | --- | --- |
 | 문서 사이트(`agent.horon.ai`) | [https://agent.horon.ai](https://agent.horon.ai) |
 | 문서 사이트 원본 | [packages/docs-site](packages/docs-site) |
-| 색인과 고정 요구사항 | [docs/README.ko.md](docs/README.ko.md) |
+| 색인과 고정 요구사항 | [agent.horon.ai/ko/reference](https://agent.horon.ai/ko/reference) |
 | 설계 원칙 | [PHILOSOPHY.ko.md](PHILOSOPHY.ko.md) |
-| 터미널 클라이언트와 사용자 파일 | [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md) |
-| 모델 엔드포인트와 API 키 | [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md) |
-| 에디터와 ACP | [docs/protocol/ACP.ko.md](docs/protocol/ACP.ko.md) |
-| 표준 입출력 RPC 호스트 프로그램 | [docs/protocol/RPC.ko.md](docs/protocol/RPC.ko.md) |
-| SDK용 하네스 API | [docs/protocol/HARNESS_API.ko.md](docs/protocol/HARNESS_API.ko.md) |
-| 도구, 승인, 편집 안전 장치 | [docs/runtime/TOOLS.ko.md](docs/runtime/TOOLS.ko.md) |
-| 턴, 복구, `--resume` | [docs/runtime/TURNS.ko.md](docs/runtime/TURNS.ko.md) |
-| 릴리스 설치와 Linux 서버 | [docs/release/INSTALL.ko.md](docs/release/INSTALL.ko.md) |
-| 성능 측정 방법과 결과 | [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md) |
+| 터미널 클라이언트와 사용자 파일 | [agent.horon.ai/ko/reference/runtime/tui](https://agent.horon.ai/ko/reference/runtime/tui) |
+| 모델 엔드포인트와 API 키 | [agent.horon.ai/ko/reference/provider/model](https://agent.horon.ai/ko/reference/provider/model) |
+| 에디터와 ACP | [agent.horon.ai/ko/reference/protocol/acp](https://agent.horon.ai/ko/reference/protocol/acp) |
+| 표준 입출력 RPC 호스트 프로그램 | [agent.horon.ai/ko/reference/protocol/rpc](https://agent.horon.ai/ko/reference/protocol/rpc) |
+| SDK용 하네스 API | [agent.horon.ai/ko/reference/protocol/harness-api](https://agent.horon.ai/ko/reference/protocol/harness-api) |
+| 도구, 승인, 편집 안전 장치 | [agent.horon.ai/ko/reference/runtime/tools](https://agent.horon.ai/ko/reference/runtime/tools) |
+| 턴, 복구, `--resume` | [agent.horon.ai/ko/reference/runtime/turns](https://agent.horon.ai/ko/reference/runtime/turns) |
+| 릴리스 설치와 Linux 서버 | [agent.horon.ai/ko/reference/release/install](https://agent.horon.ai/ko/reference/release/install) |
+| 성능 측정 방법과 결과 | [agent.horon.ai/ko/reference/performance/benchmark](https://agent.horon.ai/ko/reference/performance/benchmark) |
 
 ## 기여
 

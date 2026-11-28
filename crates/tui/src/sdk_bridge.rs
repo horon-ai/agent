@@ -397,10 +397,10 @@ fn run_worker(
                     // The text is captured before the command is moved, so a
                     // failure can hand it back to the client.
                     let sent_text = match &command {
-                        Command::Text(text) => Some(text.clone()),
+                        Command::Text(text, _) => Some(text.clone()),
                         _ => None,
                     };
-                    let description = describe(&command);
+                    let description = messages::describe(&command);
                     // The commands that create or move a session answer here
                     // rather than in `serve`, because each also touches the
                     // connection the worker holds. The create and the attach
@@ -422,8 +422,12 @@ fn run_worker(
                         Command::NewSession { .. } | Command::Attach(_) | Command::Fork(_)
                     );
                     let applies_preset = matches!(&command, Command::Runtime { command: horon_agent_sdk::RuntimeCommand::ModelPreset, arguments } if arguments.first().is_some_and(|action| action == "apply"));
+                    let mut delete_left = match &command {
+                        Command::NewSession { delete, .. } => delete.clone(),
+                        _ => None,
+                    };
                     let served = match command {
-                        Command::NewSession { working_dir } => {
+                        Command::NewSession { working_dir, .. } => {
                             match sessions::created(&dial, working_dir.as_deref(), &socket) {
                                 Ok((fresh, next, attached, working_dir)) => {
                                     client = fresh;
@@ -506,6 +510,12 @@ fn run_worker(
                                 && events.send(info).is_err()
                             {
                                 return;
+                            }
+                            // `/session delete`: the session left behind goes
+                            // once the client is attached elsewhere, and its
+                            // notice follows the new session's own.
+                            if let Some(old) = delete_left.take() {
+                                sessions::delete_left(dial.clone(), old, events.clone());
                             }
                             // Read against the connection and the id the worker
                             // holds now, never the ones captured before the
@@ -744,7 +754,27 @@ fn take_command(commands: &Receiver<Command>, flowing: bool) -> CommandPoll {
 fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Result<Option<Incoming>, Error> {
     match command {
         Command::Models => {
-            let (models, current) = client.list_models(session_id)?;
+            // Opening the list is the request to see what the endpoint offers
+            // now: a profile that reads its live `/models` catalog only on an
+            // explicit refresh would otherwise list just its configured models.
+            // The refresh answers with the catalog it built, which is merged
+            // into the list so a model the endpoint just reported is offered at
+            // once. A daemon that cannot refresh, or an endpoint that did not
+            // answer, still lists the catalog it has.
+            let refreshed: Vec<String> = match client.runtime_command(
+                session_id,
+                horon_agent_sdk::api::RuntimeCommand::RefreshModelList,
+                Vec::new(),
+            ) {
+                Ok(output) => runtime::refreshed_models(&output.data),
+                Err(_) => Vec::new(),
+            };
+            let (mut models, current) = client.list_models(session_id)?;
+            for model in refreshed {
+                if !models.contains(&model) {
+                    models.push(model);
+                }
+            }
             Ok(Some(Incoming::Models { models, current }))
         }
         Command::Sessions { working_dir, archived } => {
@@ -835,6 +865,7 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             display,
         } => package_commands::run(client, session_id, &package_id, &command, &arguments, &display).map(Some),
         Command::Stats => runtime::stats(client, session_id).map(Some),
+        Command::SessionInfo => runtime::session_info(client, session_id).map(Some),
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
     }
 }
@@ -842,7 +873,7 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
 /// Perform one command whose result is a line of information.
 fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Result<Option<String>, Error> {
     match command {
-        Command::Text(text) => client.send_message(session_id, &text, Vec::new(), None).map(|_| None),
+        Command::Text(text, images) => client.send_message(session_id, &text, images, None).map(|_| None),
         Command::Model(name) => client
             .set_model(session_id, &name)
             .map(|()| Some(format!("model set to {name}"))),
@@ -897,6 +928,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Runtime { .. }
         | Command::PackageCommand { .. }
         | Command::Stats
+        | Command::SessionInfo
         | Command::NewSession { .. }
         | Command::Attach(_)
         | Command::SideQuestion { .. }
@@ -929,44 +961,6 @@ fn context_report(command: RuntimeCommand, data: &serde_json::Value) -> Option<C
     match command {
         RuntimeCommand::Context => ContextReport::from_data(data),
         _ => None,
-    }
-}
-
-/// How a command's failure is worded in the transcript.
-fn describe(command: &Command) -> &'static str {
-    match command {
-        Command::Text(_) => "could not send the message",
-        Command::Runtime { .. } => "could not run the command",
-        Command::PackageCommand { .. } => "could not run the package command",
-        Command::Stats => "could not read session token usage",
-        Command::Context(crate::commands::ContextCommand::Clear) => "could not clear model context",
-        Command::Context(crate::commands::ContextCommand::Compact) => "could not compact model context",
-        Command::Model(_) => "could not switch the model",
-        Command::Effort(_) => "could not set the reasoning effort",
-        Command::Models => "could not list the models",
-        Command::Sessions { .. } => "could not list the sessions",
-        Command::Tools => "could not list the session tools",
-        Command::Forks => "could not list the recorded messages",
-        Command::Archive { archived: true, .. } => "could not archive the session",
-        Command::Archive { archived: false, .. } => "could not restore the session",
-        Command::CheckSessions(_) => "could not check the noted sessions",
-        Command::Swarm => "could not list the swarm children",
-        Command::Skills { .. } => "could not list the skills",
-        Command::BackgroundJobs => "could not list the background jobs",
-        Command::Export { .. } => "could not write the HTML report",
-        Command::CancelBackgroundTerminal(_) => "could not cancel the background terminal",
-        Command::DaemonSettings => "could not read the daemon settings",
-        Command::Steer(_) => "could not send the queued messages into the turn",
-        Command::SetTodoStatus { .. } => "could not change the todo list",
-        Command::NewSession { .. } => "could not start a new session",
-        Command::Attach(_) => "could not attach to the session",
-        Command::SideQuestion { .. } => "could not start the side question",
-        Command::Fork(_) => "could not fork the session",
-        Command::Rename(_) => "could not rename the session",
-        Command::Cancel => "could not cancel the turn",
-        Command::Retry => "could not continue the failed turn",
-        Command::Approval { .. } => "could not answer the approval",
-        Command::Ask { .. } => "could not answer the question",
     }
 }
 

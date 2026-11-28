@@ -1508,7 +1508,7 @@ fn is7_permission() {
 
     // `ask-commands` maps to the daemon's `write` mode (`src/cli/acp/modes.rs`),
     // and `write` asks before a file mutation that names a path
-    // (`docs/runtime/TOOLS.md`, approval tiers). The gate therefore prompts for
+    // (`packages/docs-site/reference/runtime/tools.mdx`, approval tiers). The gate therefore prompts for
     // this write, and the default scripted handler cancels it.
     let session = conn.new_session(&work);
     conn.set_mode(&session, "ask-commands");

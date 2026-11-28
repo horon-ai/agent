@@ -95,7 +95,7 @@ impl TestSession {
         let refusal = registry
             .execute(NAME, input, self.context("request"))
             .await
-            .expect_err("eval requires explicit approval")
+            .expect_err("eval asks under this approval mode")
             .to_string();
         assert!(refusal.contains("needs approval before it runs"), "{refusal}");
         refusal
@@ -105,7 +105,17 @@ impl TestSession {
             .to_owned()
     }
 
+    /// A cell under the default `yolo` mode, which runs it without asking.
     async fn approved(&self, registry: &Registry, input: Value) -> ToolOutput {
+        registry
+            .execute(NAME, input, self.context("approved"))
+            .await
+            .expect("eval runs under the default approval mode")
+    }
+
+    /// A cell under a mode that asks: the request is answered yes, then the
+    /// same call runs.
+    async fn approved_after_asking(&self, registry: &Registry, input: Value) -> ToolOutput {
         let request = self.request(registry, input.clone()).await;
         crate::safety::record_permission_via_file(&request, true, "api_client", None).expect("approve this cell");
         registry
@@ -135,13 +145,14 @@ fn isolated(test: impl AsyncFnOnce(&Home)) {
 fn eval_opt_in_follows_profile_and_disabled_tools() {
     isolated(async |home| {
         for (tools, available) in [
-            ("profile = 'full'", false),
-            ("profile = 'full'\neval = true", true),
-            ("profile = 'core'\neval = true", false),
-            ("profile = 'acp'\neval = true", false),
-            ("profile = 'none'\neval = true", false),
-            ("eval = true\nenabled = ['eval']", true),
-            ("profile = 'full'\neval = true\ndisabled = ['eval']", false),
+            ("profile = 'full'", true),
+            ("profile = 'full'\neval = false", false),
+            ("profile = 'core'", true),
+            ("profile = 'core'\neval = false", false),
+            ("profile = 'acp'", false),
+            ("profile = 'none'", false),
+            ("enabled = ['eval']", true),
+            ("profile = 'full'\ndisabled = ['eval']", false),
         ] {
             home.config(tools);
             let registry = Registry::new(Arc::new(OfflineProvider)).await;
@@ -169,34 +180,43 @@ fn eval_opt_in_follows_profile_and_disabled_tools() {
 }
 
 #[test]
-fn eval_requires_explicit_approval_even_in_permissive_modes() {
+fn eval_follows_the_approval_mode_like_a_shell_command() {
     isolated(async |home| {
         for (mode, id) in [("yolo", "eval-yolo"), ("off", "eval-off")] {
-            home.config(&format!("profile = 'full'\neval = true\napproval_mode = '{mode}'"));
+            home.config(&format!("profile = 'full'\napproval_mode = '{mode}'"));
             let registry = Registry::new(Arc::new(OfflineProvider)).await;
             let session = TestSession::new(id, &home.cwd);
-            let input = json!({"code": "from pathlib import Path\nPath('side-effect').write_text('ran')"});
-            let request = session.request(&registry, input.clone()).await;
-            assert!(!home.cwd.join("side-effect").exists());
-            crate::safety::record_permission_via_file(&request, false, "api_client", None).expect("deny the cell");
-            let denied = registry
-                .execute(NAME, input, session.context("retry"))
+            let output = registry
+                .execute(NAME, json!({"code": "print('ran')"}), session.context("run"))
                 .await
-                .expect_err("denied cell stays denied");
-            assert!(denied.to_string().contains("answered no"), "{denied:#}");
-            assert!(!home.cwd.join("side-effect").exists());
-
-            crate::plan_mode::set_state(id, crate::plan_mode::PlanState::Planning);
-            let blocked = registry
-                .execute(
-                    NAME,
-                    json!({"code": "print('must not run')"}),
-                    session.context("plan-mode"),
-                )
-                .await
-                .expect_err("eval has a plan-mode barrier");
-            assert!(blocked.to_string().to_lowercase().contains("plan"), "{blocked:#}");
+                .expect("a permissive mode runs the cell without asking");
+            assert_eq!(output.output, "ran\n", "{mode}");
         }
+
+        home.config("profile = 'full'\napproval_mode = 'all'");
+        let registry = Registry::new(Arc::new(OfflineProvider)).await;
+        let session = TestSession::new("eval-all", &home.cwd);
+        let input = json!({"code": "from pathlib import Path\nPath('side-effect').write_text('ran')"});
+        let request = session.request(&registry, input.clone()).await;
+        assert!(!home.cwd.join("side-effect").exists());
+        crate::safety::record_permission_via_file(&request, false, "api_client", None).expect("deny the cell");
+        let denied = registry
+            .execute(NAME, input, session.context("retry"))
+            .await
+            .expect_err("denied cell stays denied");
+        assert!(denied.to_string().contains("answered no"), "{denied:#}");
+        assert!(!home.cwd.join("side-effect").exists());
+
+        crate::plan_mode::set_state(session.id, crate::plan_mode::PlanState::Planning);
+        let blocked = registry
+            .execute(
+                NAME,
+                json!({"code": "print('must not run')"}),
+                session.context("plan-mode"),
+            )
+            .await
+            .expect_err("eval has a plan-mode barrier");
+        assert!(blocked.to_string().to_lowercase().contains("plan"), "{blocked:#}");
     });
 }
 
@@ -232,6 +252,23 @@ fn eval_retains_state_until_reset_or_idle_reclamation() {
             .await;
         assert!(idle.output.contains("previous state is unavailable"), "{}", idle.output);
         assert!(idle.output.ends_with("False\n"), "{}", idle.output);
+    });
+}
+
+#[test]
+fn eval_cells_see_the_scratch_folder_bash_commands_get() {
+    isolated(async |home| {
+        home.config("profile = 'full'\neval = true");
+        let registry = Registry::new(Arc::new(OfflineProvider)).await;
+        let session = TestSession::new("eval-scratch", &home.cwd);
+        let output = session
+            .approved(
+                &registry,
+                json!({"code": "import os\nprint(os.environ.get('HORON_AGENT_SCRATCH_DIR'))"}),
+            )
+            .await;
+        let expected = home.dir.path().join("scratch");
+        assert_eq!(output.output, format!("{}\n", expected.display()));
     });
 }
 
@@ -308,8 +345,6 @@ fn eval_aborted_call_cleans_up_before_the_next_cell() {
         let registry = Arc::new(Registry::new(Arc::new(OfflineProvider)).await);
         let session = TestSession::new("eval-cancel", &home.cwd);
         let input = json!({"code": "import os, time\nfrom pathlib import Path\nPath('ready').write_text(str(os.getpid()))\nmarker = 9\ntime.sleep(60)"});
-        let request = session.request(&registry, input.clone()).await;
-        crate::safety::record_permission_via_file(&request, true, "api_client", None).expect("approve the cell");
         let parent = Arc::clone(&registry);
         let ctx = session.context("aborted");
         let task = tokio::spawn(async move { parent.execute(NAME, input, ctx).await });
@@ -350,8 +385,6 @@ fn eval_oversized_cell_preserves_previous_state() {
         let session = TestSession::new("eval-size", &home.cwd);
         session.approved(&registry, json!({"code": "saved = 23"})).await;
         let input = json!({"code": "\\".repeat(140_000)});
-        let request = session.request(&registry, input.clone()).await;
-        crate::safety::record_permission_via_file(&request, true, "api_client", None).expect("approve the cell");
         let error = registry
             .execute(NAME, input, session.context("oversized"))
             .await
@@ -381,78 +414,6 @@ fn eval_accepts_model_tool_arguments() {
             )
             .await;
         assert_eq!(output.output, "37\n");
-    });
-}
-
-#[test]
-fn eval_daemon_approval_is_consumed_once() {
-    isolated(async |home| {
-        home.config("profile = 'full'\neval = true");
-        let registry = Registry::new(Arc::new(OfflineProvider)).await;
-        let session = TestSession::new("eval-single-approval", &home.cwd);
-        let input = json!({"code": "print('approved cell')"});
-        let request = session.request(&registry, input.clone()).await;
-        crate::safety::record_permission_via_file(&request, true, "api_client", None).expect("approve the cell");
-        let (first, second) = tokio::join!(
-            registry.execute(NAME, input.clone(), session.context("retry-1")),
-            registry.execute(NAME, input, session.context("retry-2")),
-        );
-        let runs: Vec<_> = [first, second].into_iter().filter_map(Result::ok).collect();
-        assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].output, "approved cell\n");
-    });
-}
-
-#[test]
-fn eval_editor_approves_one_cell_without_releasing_another() {
-    use crate::protocol::ServerEvent;
-    use crate::tool::{acp_session, permission_bridge};
-
-    isolated(async |home| {
-        home.config("profile = 'full'\neval = true\napproval_mode = 'yolo'");
-        let registry = Registry::new(Arc::new(OfflineProvider)).await;
-        let session = TestSession::new("eval-editor", &home.cwd);
-        let connection = "eval-test-editor";
-        let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
-        let acp_token = acp_session::install(session.id, connection, tx.clone());
-        let token = permission_bridge::install(session.id, connection, tx);
-        let _turn = acp_session::claim_turn(session.id, Some(connection));
-        let bridge = permission_bridge::bridge_for_connection(session.id, connection).expect("editor bridge");
-        let input = json!({"code": "print('one editor approval')"});
-        let first_registry = registry.clone();
-        let first_input = input.clone();
-        let first_ctx = session.context("editor-1");
-        let first = tokio::spawn(async move { first_registry.execute(NAME, first_input, first_ctx).await });
-        let second_ctx = session.context("editor-2");
-        let second = tokio::spawn(async move { registry.execute(NAME, input, second_ctx).await });
-
-        let mut ask = async || {
-            loop {
-                if let Some(ServerEvent::ToolPermissionRequested { request_id, .. }) = events.recv().await {
-                    return request_id;
-                }
-            }
-        };
-        let first_id = tokio::time::timeout(Duration::from_secs(5), ask())
-            .await
-            .expect("first prompt");
-        let second_id = tokio::time::timeout(Duration::from_secs(5), ask())
-            .await
-            .expect("second prompt");
-        assert_ne!(first_id, second_id);
-        for (id, allow) in [(&first_id, true), (&second_id, false)] {
-            assert_eq!(bridge.begin_editor_answer(id), permission_bridge::EditorAnswer::Pending);
-            crate::safety::record_permission_via_file(id, allow, "api_client", None).expect("record editor answer");
-            bridge.finish_editor_answer(id, allow, "api_client");
-        }
-        let runs: Vec<_> = [first.await.expect("first call"), second.await.expect("second call")]
-            .into_iter()
-            .filter_map(Result::ok)
-            .collect();
-        permission_bridge::clear(session.id, token);
-        acp_session::clear(session.id, acp_token);
-        assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].output, "one editor approval\n");
     });
 }
 
@@ -491,7 +452,7 @@ fn eval_bridge_requires_separate_approval_for_a_shell_call() {
         let registry = Registry::new(Arc::new(OfflineProvider)).await;
         let session = TestSession::new("eval-tool-approval", &home.cwd);
         let output = session
-            .approved(
+            .approved_after_asking(
                 &registry,
                 json!({"code": r#"
 try:

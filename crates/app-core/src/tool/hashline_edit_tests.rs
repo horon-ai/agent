@@ -453,7 +453,7 @@ fn runtime() -> tokio::runtime::Runtime {
 }
 
 #[test]
-fn hashline_edit_stays_off_by_default_and_joins_no_core_profile() {
+fn hashline_edit_is_on_by_default_and_outside_core_tools() {
     let _env = crate::storage::lock_test_env();
     let home = tempfile::tempdir().expect("home");
     let _guard = HomeGuard::new(home.path());
@@ -462,17 +462,21 @@ fn hashline_edit_stays_off_by_default_and_joins_no_core_profile() {
         let registry =
             Registry::new(std::sync::Arc::new(MockProvider) as std::sync::Arc<dyn crate::provider::Provider>).await;
         assert!(
-            !crate::config::ToolConfig::default().hashline_edit,
-            "hashline_edit must default to off"
+            crate::config::ToolConfig::default().hashline_edit,
+            "hashline_edit is part of the default surface"
         );
         let names = registry.tool_names().await;
         assert!(
-            !names.iter().any(|name| name == "hashline_edit"),
-            "hashline_edit must stay unregistered by default, got {names:?}"
+            names.iter().any(|name| name == "hashline_edit"),
+            "hashline_edit must be registered by default, got {names:?}"
         );
         assert!(
             !crate::config::CORE_TOOLS.contains(&"hashline_edit"),
-            "hashline_edit must never join CORE_TOOLS"
+            "hashline_edit is listed on the open surface, not in CORE_TOOLS"
+        );
+        assert!(
+            crate::config::CORE_DISCOVERABLE_TOOLS.contains(&"hashline_edit"),
+            "a core session must still reach it through toolbox"
         );
     });
 }
@@ -773,4 +777,27 @@ async fn undo_reverses_a_delete() {
         .expect("undo");
 
     assert_eq!(std::fs::read_to_string(&file).expect("restored"), original);
+}
+
+/// A client that fills every field sends `""` for `move_to` and `end_anchor`;
+/// the call edits the one line in place instead of being refused.
+#[tokio::test]
+async fn hashline_edit_reads_empty_move_to_and_end_anchor_as_omitted() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let original = "alpha\nbeta\n";
+    let file = seed(dir.path(), "fill.txt", original);
+    let ctx = context(dir.path(), "hashline-empty-fields", "hashline-1");
+    HashlineEditTool::new()
+        .execute(
+            json!({
+                "file_path": "fill.txt",
+                "move_to": "",
+                "delete": false,
+                "ops": [{"start_anchor": anchor(original, 1), "end_anchor": "", "new_text": "ALPHA", "kind": "replace"}]
+            }),
+            ctx,
+        )
+        .await
+        .expect("empty optional fields are omitted");
+    assert_eq!(std::fs::read(&file).expect("read after edit"), b"ALPHA\nbeta\n");
 }

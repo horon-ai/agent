@@ -67,8 +67,10 @@ swarm = true
 auto_poke = true
 # Inject timestamps into user messages and tool results sent to the model
 message_timestamps = true
-# Persist memory injections into session history instead of sending them as request-only ephemeral context
-persist_memory_injections = false
+# Persist memory injections into session history instead of sending them as request-only
+# ephemeral context. `false` makes the next request drop the summary, which a provider
+# cache or a session-aware gateway reads as a rewritten history.
+persist_memory_injections = true
 # Import rule files written for other agent tools (.cursor/rules/*.mdc, .cursorrules,
 # .clinerules, Copilot instructions, Windsurf rules, GEMINI.md) into the system
 # prompt, read-only. AGENTS.md and CLAUDE.md are skipped because they are injected
@@ -140,7 +142,7 @@ bing_market = "en-US"
 
 # Custom HTTP JSON search: set engine = "custom" above.
 # Set fallback_engines = [] above if private queries must not reach Bing on failure.
-# See docs/provider/INTEGRATIONS.md for GET/POST, authentication and JSON pointers.
+# See packages/docs-site/reference/provider/integrations.mdx for GET/POST, authentication and JSON pointers.
 # [websearch.custom]
 # endpoint = "https://search.example.org/api"
 # method = "GET"
@@ -209,15 +211,17 @@ disable_base_tools = false
 # kept only so existing configs still parse.
 mcp_tools = "auto"
 mcp_tools_token_threshold = 8000
-# Experimental, opt-in Codemode. Adds a `codemode` tool that runs
-# model-written JavaScript in an embedded QuickJS sandbox. Scripts call any
-# other tool (including MCP tools) via `await tools.<name>(args)`, chain and
-# parallelize calls, and keep intermediate results out of the conversation.
-# Env override: HORON_AGENT_CODEMODE=1.
-codemode = false
-# Experimental Python cells. Requires full or an explicit enabled list,
-# Python 3.10 or later, and explicit approval before each cell.
-eval = false
+# Codemode. Adds a `codemode` tool that runs model-written JavaScript in an
+# embedded QuickJS sandbox. Scripts call any other tool (including MCP tools) via
+# `await tools.<name>(args)`, chain and parallelize calls, and keep intermediate
+# results out of the conversation. Set false to remove it.
+# Env override: HORON_AGENT_CODEMODE=0.
+codemode = true
+# Python cells. Runs Python 3.10 or later from PATH and keeps one kernel per
+# session. A cell asks for approval exactly like `bash`: `yolo` and `off`
+# auto-approve it, `write` and `all` ask, and a bash pattern or grant applies the
+# same way. Set false to remove the tool.
+eval = true
 # On by default: when `read` returns a file, append the `AGENTS.md` of the
 # directories above it (up to the session working directory) so the rules of the
 # component being read arrive with the file. Capped at 16 KiB per file and 32 KiB
@@ -244,18 +248,18 @@ block_auto_generated = true
 # refuses the call so the model continues on its own judgment. `ask` never
 # blocks in either mode.
 ask_policy = "recommended"
-# Opt-in `redo`: expose the tool that re-applies the mutation the last `undo`
-# removed. `undo` is always available; this only adds the reverse direction.
-redo = false
-# Opt-in `hashline_edit`: replaces line spans named by the anchors `read` emits
-# with `hashline: true`. Every anchor is checked against the file before any
-# write, so a stale anchor refuses the whole call.
-hashline_edit = false
-# Opt-in `ast_grep`/`ast_edit`: structural search and rewrite over tree-sitter
-# grammars (rust, typescript, tsx, javascript, python, go). `ast_edit` previews
-# a unified diff unless `expected_replacements` is given, so a preview never
-# touches a file.
-ast_tools = false
+# `redo`: expose the tool that re-applies the mutation the last `undo` removed.
+# `undo` is always available; this adds the reverse direction.
+redo = true
+# `hashline_edit`: replaces line spans named by the anchors `read` emits with
+# `hashline: true`. Every anchor is checked against the file before any write, so
+# a stale anchor refuses the whole call.
+hashline_edit = true
+# `ast_grep`/`ast_edit`: structural search and rewrite over tree-sitter grammars
+# (rust, typescript, tsx, javascript, python, go). `ast_edit` previews a unified
+# diff unless `expected_replacements` is given, so a preview never touches a
+# file.
+ast_tools = true
 # Opt-in structural `read` summary: a whole-file read of a supported language
 # with more than 400 lines keeps item signatures and elides long bodies, with a
 # footer naming the ranges to read for the elided lines.
@@ -265,20 +269,21 @@ read_summary = false
 # similarity. Off by default, so an edit either matches exactly or reports the
 # closest match for the next attempt.
 edit_fuzzy = false
-# Opt-in `lsp`: adds an `lsp` tool that asks the project's language server for
+# `lsp`: adds an `lsp` tool that asks the project's language server for
 # diagnostics, definitions, references, hover text, and symbols. The server is
 # rust-analyzer for Rust, typescript-language-server for TypeScript/JavaScript,
 # gopls for Go, or pyright for Python; it must be on PATH. A server starts on
 # the first call and shuts down after ten idle minutes.
-lsp = false
-# Opt-in managed skills: let `skill_manage create`/`update` write skill files
-# into ~/.horon/managed-skills/. An authored skill of the same name always
-# wins, and descriptions are sanitized before they reach the prompt.
-managed_skills = false
-# Opt-in `context_notes`: exposes a tool that keeps a small notes file per
-# session (read it back with `read history://current`) and appends it to every
-# request as "# Context Notes". Cleared when the conversation is cleared.
-context_notes = false
+lsp = true
+# Managed skills: let `skill_manage create`/`update` write skill files into
+# ~/.horon/managed-skills/. An authored skill of the same name always wins, and
+# descriptions are sanitized before they reach the prompt. Set false to stop a
+# managed skill from being authored.
+managed_skills = true
+# `context_notes`: exposes a tool that keeps a small notes file per session
+# (read it back with `read history://current`) and appends it to every request
+# as "# Context Notes". Cleared when the conversation is cleared.
+context_notes = true
 # Terminal allocation for `bash`: "auto" (default) allocates one only for commands
 # that need it, "off" never allocates, "always" always does. A call's own `pty`
 # argument overrides this value.
@@ -290,12 +295,11 @@ plan_mode = false
 # Model-callable checkpoints: expose the `checkpoint` and `rewind` tools so the
 # model can mark a point of this session and later fold everything after it
 # into one written report. Files, background tasks and process state are not
-# restored. Off by default, so the tool surface and history are unchanged.
-checkpoint = false
+# restored. Set false to remove both tools.
+checkpoint = true
 # IRC bus: expose the `irc` tool so agents of the same daemon can send, wait
-# for, and read each other's messages. Off by default because it opens a
-# message path between sessions. Env override: HORON_AGENT_IRC.
-irc = false
+# for, and read each other's messages. Env override: HORON_AGENT_IRC.
+irc = true
 # Let `bash` start the next call in the directory the previous command ended in.
 # On by default: an agent that must prefix every command with `cd` misreads its
 # own working directory. Set false to pin every call to the session directory.
@@ -438,6 +442,9 @@ tool_profile = "acp"
 #   prompt_cache_key = true                   # lineage-stable cache key: true, false, or omitted
 #                                             # (omitted sends it only to api.openai.com and openrouter.ai;
 #                                             #  the OpenAI wires send it, Anthropic and Gemini do not)
+#   session_header = "x-session-affinity"     # header carrying the session id on every request,
+#                                             # for a gateway that keeps one upstream conversation
+#                                             # per session (omitted sends no session header)
 #   [[providers.myprofile.models]]
 #   id = "my-model"
 # Every model request posts to the endpoint of that profile's `type` with the
@@ -767,16 +774,6 @@ prevent_sleep_while_streaming = true
 # Desktop notifications via notify-send (default: true)
 desktop_notifications = true
 
-# [sponsors]
-# Integration discovery (enabled by default; set enabled = false to opt out).
-# When enabled, the agent gains an `integration_tools` tool listing third-party
-# developer tools from HoronAgent's hosted integration directory. These providers
-# have integrated with the agent to make setup and use seamless. Some providers
-# may share revenue with HoronAgent when a referred user becomes a customer, but
-# commercial relationships never influence recommendations.
-# See https://horon-agent.sh/discovery-tools
-# enabled = true
-# endpoint = "https://api.horon-agent.sh/v1/discovery"
 	"##;
         default_content.to_string()
     }
